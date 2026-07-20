@@ -418,6 +418,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   // role on the unplace path. Cleared by the effect below once the
   // real assignment row arrives in `assignmentRows`.
   const [pendingHireWorkerIds, setPendingHireWorkerIds] = useState<Set<string>>(new Set());
+  /** Which SHIFT each pending hire targets. One-step drops (Phase 2a) can
+   *  hire onto a non-selected card, and the optimistic injection below is
+   *  per-selected-shift — without this scoping, switching cards during the
+   *  snapshot round-trip painted the pending worker as a phantom tile on
+   *  whatever shift was open (review fix 2026-07-19). */
+  const pendingHireShiftByWorkerRef = useRef<Map<string, string>>(new Map());
   const [cancelAssignmentWorker, setCancelAssignmentWorker] = useState<Worker | null>(null);
   // Open-shift close-out: removing a worker from the standing crew stamps
   // an endDate on their assignment (keeps past timecards) rather than
@@ -1893,6 +1899,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     // `assignmentRows` clears these entries as soon as the real
     // server-side assignment row arrives.
     pendingHireWorkerIds.forEach((uid) => {
+      // Only inject onto the shift the hire actually targets — a drop on
+      // card B must not paint a phantom tile on whichever card is open.
+      const targetShift = pendingHireShiftByWorkerRef.current.get(uid);
+      if (targetShift !== undefined && targetShift !== selectedShiftId) return;
       if (!statusByUser.has(uid)) statusByUser.set(uid, 'proposed');
     });
     return {
@@ -1917,6 +1927,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     pendingHireWorkerIds.forEach((uid) => {
       if (realUserIds.has(uid)) {
         next.delete(uid);
+        pendingHireShiftByWorkerRef.current.delete(uid);
         changed = true;
       }
     });
@@ -2579,6 +2590,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       if (skipped.length > 0) {
         const skippedUserIds = new Set(skipped.map((s) => s?.userId).filter(Boolean) as string[]);
         if (skippedUserIds.size > 0) {
+          skippedUserIds.forEach((uid) => pendingHireShiftByWorkerRef.current.delete(uid));
           setPendingHireWorkerIds((prev) => {
             let changed = false;
             const next = new Set(prev);
@@ -2861,6 +2873,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     setConfirmingPlacementUserId(worker.id);
     // Optimistic — flip the chip from "Click to Hire" → "Accepted"
     // before the callable RTT. Reverted in the catch block on failure.
+    pendingHireShiftByWorkerRef.current.set(worker.id, selectedShiftId);
     setPendingHireWorkerIds((prev) => {
       const next = new Set(prev);
       next.add(worker.id);
@@ -2882,6 +2895,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       console.error('Error offering position:', err);
       setError(err?.message || 'Failed to offer position');
       // Revert optimistic hire so the chip flips back to "Click to Hire".
+      pendingHireShiftByWorkerRef.current.delete(worker.id);
       setPendingHireWorkerIds((prev) => {
         if (!prev.has(worker.id)) return prev;
         const next = new Set(prev);
@@ -3914,8 +3928,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       setError('Missing required information to hire worker');
       return;
     }
-    if (pendingHireWorkerIds.has(worker.id)) return;
+    if (pendingHireWorkerIds.has(worker.id)) {
+      // Second drop while the first hire is in flight — tell the recruiter
+      // instead of silently ignoring the gesture (review fix 2026-07-19).
+      setAssignToast({
+        message: `Already hiring ${worker.displayName || 'this worker'} — give it a second.`,
+        severity: 'info',
+      });
+      return;
+    }
     setConfirmingPlacementUserId(worker.id);
+    pendingHireShiftByWorkerRef.current.set(worker.id, targetShiftId);
     setPendingHireWorkerIds((prev) => new Set(prev).add(worker.id));
     try {
       setError(null);
@@ -3925,6 +3948,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     } catch (err: any) {
       console.error('Error hiring worker on drop:', err);
       setError(err?.message || 'Failed to hire worker');
+      pendingHireShiftByWorkerRef.current.delete(worker.id);
       setPendingHireWorkerIds((prev) => {
         if (!prev.has(worker.id)) return prev;
         const next = new Set(prev);
@@ -5329,11 +5353,15 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             }}>Cancel</Button>
             <Button
               variant="contained"
-              onClick={() =>
-                doubleBookConfirmWorker &&
-                pendingPlacementShiftId &&
-                void hireWorkerOnShift(doubleBookConfirmWorker, pendingPlacementShiftId)
-              }
+              onClick={() => {
+                if (doubleBookConfirmWorker && pendingPlacementShiftId) {
+                  void hireWorkerOnShift(doubleBookConfirmWorker, pendingPlacementShiftId);
+                } else {
+                  // Defensive: never leave a dead button on an open modal.
+                  setDoubleBookConfirmWorker(null);
+                  setPendingPlacementShiftId(null);
+                }
+              }}
             >
               Hire anyway
             </Button>

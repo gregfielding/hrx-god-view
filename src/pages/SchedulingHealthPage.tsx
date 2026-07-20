@@ -268,7 +268,7 @@ const SchedulingHealthPage: React.FC = () => {
             <Typography variant="subtitle1" fontWeight={700} flex={1}>
               Upcoming shifts that still need people
             </Typography>
-            <Chip label={`${snapshot?.counts.totalGapSeats ?? 0} spots`} color="error" size="small" />
+            <Chip label={`${snapshot?.counts?.totalGapSeats ?? 0} spots`} color="error" size="small" />
           </Stack>
           <Typography variant="body2" color="text.secondary" mb={1.5}>
             Soonest first. If a shift is already covered in Indeed Flex or Fieldglass, add those

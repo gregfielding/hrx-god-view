@@ -196,7 +196,7 @@ const ShiftsLog: React.FC = () => {
           when the Apply path shipped for cancellations.) */}
       <Alert severity="info" sx={{ mb: 2 }}>
         <Typography variant="body2">
-          Updates from the portals land here. A red <strong>Apply in HRX</strong> button means
+          Updates from the portals land here. An <strong>Apply in HRX</strong> button means
           HRX can make the change for you — one click and it&apos;s done.
           &quot;Mark applied&quot; means you already handled it yourself; &quot;Reject&quot; means
           ignore this update. Neither of those changes any schedules.

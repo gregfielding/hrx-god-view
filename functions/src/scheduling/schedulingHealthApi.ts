@@ -65,7 +65,10 @@ export const getScheduleDivergence = onCall(
     const col = db.collection('tenants').doc(tenantId).collection('schedule_divergence');
     const latest = await col.doc('latest').get();
     const runDate = latest.exists ? String(latest.data()?.runDate ?? '') : '';
-    if (runDate) {
+    // Only serve TODAY's snapshot — a pre-cron morning visit must compute
+    // fresh rather than hand back yesterday's list (review fix 2026-07-19;
+    // the docstring always promised this but the date check was missing).
+    if (runDate === todayUtcIso()) {
       const snap = await col.doc(runDate).get();
       if (snap.exists) return { ok: true, fresh: false, snapshot: snap.data() };
     }
@@ -103,6 +106,22 @@ export const completeStaleAssignments = onCall(
     let completed = 0;
     const skipped: Array<{ id: string; reason: string }> = [];
     const batch = db.batch();
+    // The sweep flags stale on TWO axes: past end date OR live assignment on
+    // a killed job order (whose end date may be far in the future). The
+    // completion guard must accept both or killed-JO rows have no
+    // resolution path (review fix 2026-07-19).
+    const KILLED_JO = new Set(['cancelled', 'canceled', 'completed', 'closed']);
+    const joStatusCache = new Map<string, string>();
+    const joIsKilled = async (joId: string): Promise<boolean> => {
+      if (!joId) return false;
+      let st = joStatusCache.get(joId);
+      if (st === undefined) {
+        const jo = await db.doc(`tenants/${tenantId}/job_orders/${joId}`).get();
+        st = jo.exists ? String((jo.data() || {}).status ?? '').toLowerCase() : '';
+        joStatusCache.set(joId, st);
+      }
+      return KILLED_JO.has(st);
+    };
     for (const id of ids) {
       const ref = db.doc(`tenants/${tenantId}/assignments/${id}`);
       const snap = await ref.get();
@@ -116,7 +135,9 @@ export const completeStaleAssignments = onCall(
       const start = asIso(a.startDate) ?? asIso(a.start);
       const end = asIso(a.endDate) ?? start;
       const effEnd = end && start && end >= start ? end : start;
-      if (!effEnd || effEnd >= today) {
+      const dateStale = Boolean(effEnd && effEnd < today);
+      const killedJo = dateStale ? false : await joIsKilled(String(a.jobOrderId ?? ''));
+      if (!dateStale && !killedJo) {
         skipped.push({ id, reason: 'shift has not ended yet' });
         continue;
       }
@@ -124,7 +145,9 @@ export const completeStaleAssignments = onCall(
         status: 'completed',
         previousStatus: a.status ?? '',
         completedAt: admin.firestore.FieldValue.serverTimestamp(),
-        completedReason: 'scheduling-health: shift ended, marked finished',
+        completedReason: dateStale
+          ? 'scheduling-health: shift ended, marked finished'
+          : 'scheduling-health: job order closed, marked finished',
         notificationsSuppressed: true,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedBy: request.auth!.uid,

@@ -230,6 +230,16 @@ async function applyShiftUpdate(
       : evStart
         ? eachDateInclusive(evStart, evEnd ?? evStart).filter((d) => dateSchedule[d])
         : Object.keys(dateSchedule);
+  // Review fix 2026-07-19: if the email names a date the shift doesn't
+  // have, refuse rather than "succeeding" with only the shift-level count
+  // touched — the per-day workersNeeded (which drives coverage math)
+  // would be unchanged while the row got stamped applied.
+  if (dateSchedule != null && evStart && targetDates.length === 0) {
+    throw new HttpsError(
+      'failed-precondition',
+      `The email's date (${evStart}) isn't on the matched shift — handle manually and use Mark applied.`,
+    );
+  }
 
   let summary: string;
   if (eventType === 'change_headcount') {
@@ -302,8 +312,18 @@ async function applyNewRequest(ctx: ApplyCtx): Promise<Record<string, unknown>> 
   const joSnap = await joRef.get();
   if (!joSnap.exists) throw new HttpsError('not-found', 'The matched job order no longer exists.');
 
+  const headcount = Number(event.headcount);
+  const need = Number.isFinite(headcount) && headcount > 0 ? headcount : 1;
+  const startTime = typeof event.startTime === 'string' ? event.startTime : '';
+  const endTime = typeof event.endTime === 'string' ? event.endTime : '';
+  const roleName = typeof event.roleName === 'string' ? event.roleName : '';
+  const venueName = typeof event.venueName === 'string' ? event.venueName : '';
+
   // Idempotency on the Indeed Job ID: re-applying (or a second email for
-  // the same order) must not mint a duplicate shift.
+  // the same order) must not mint a duplicate shift. When the email had
+  // NO parseable Job ID (extractFields writes '' — real Indeed gap),
+  // fall back to (same date + same role, previously auto-created) so a
+  // re-sent ID-less email still can't double-mint (review fix 2026-07-19).
   if (jobId) {
     const dupes = await joRef.collection('shifts').where('poNumber', '==', jobId).limit(1).get();
     if (!dupes.empty) {
@@ -315,14 +335,25 @@ async function applyNewRequest(ctx: ApplyCtx): Promise<Record<string, unknown>> 
       });
       return { ok: true, alreadyApplied: true, summary: 'Shift already existed — nothing created' };
     }
+  } else {
+    const sameDay = await joRef.collection('shifts').where('shiftDate', '==', workDate).limit(25).get();
+    const dupe = sameDay.docs.find((d) => {
+      const s = d.data() as Record<string, unknown>;
+      return (
+        String(s.source ?? '') === 'indeed_flex_apply' &&
+        String(s.defaultJobTitle ?? '').toLowerCase() === roleName.toLowerCase()
+      );
+    });
+    if (dupe) {
+      await stampApplied(ctx, {
+        action: 'new_request',
+        jobOrderId: joId,
+        shiftId: dupe.id,
+        summary: `A ${roleName || 'Flex'} shift for ${workDate} was already created from a previous email`,
+      });
+      return { ok: true, alreadyApplied: true, summary: 'Shift already existed — nothing created' };
+    }
   }
-
-  const headcount = Number(event.headcount);
-  const need = Number.isFinite(headcount) && headcount > 0 ? headcount : 1;
-  const startTime = typeof event.startTime === 'string' ? event.startTime : '';
-  const endTime = typeof event.endTime === 'string' ? event.endTime : '';
-  const roleName = typeof event.roleName === 'string' ? event.roleName : '';
-  const venueName = typeof event.venueName === 'string' ? event.venueName : '';
   const payRate = Number(event.payRateUsd);
 
   const dateSchedule: Record<string, Record<string, unknown>> = {};
@@ -338,8 +369,15 @@ async function applyNewRequest(ctx: ApplyCtx): Promise<Record<string, unknown>> 
     defaultJobTitle: roleName,
     shiftDate: workDate,
     ...(endDate !== workDate ? { endDate } : {}),
+    // shiftMode drives multi-day expansion in gigFinance/occurrence logic —
+    // without it a 3-day dateSchedule bills as one day (review fix 2026-07-19).
+    shiftMode: endDate !== workDate ? 'multi' : 'single',
     defaultStartTime: startTime,
     defaultEndTime: endTime,
+    // Top-level times too — ShiftSelector's single-day fallback reads
+    // shift.startTime, not defaultStartTime.
+    ...(startTime ? { startTime } : {}),
+    ...(endTime ? { endTime } : {}),
     dateSchedule,
     totalStaffRequested: need,
     ...(Number.isFinite(payRate) && payRate > 0 ? { payRate } : {}),

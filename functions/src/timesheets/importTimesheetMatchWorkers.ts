@@ -667,45 +667,59 @@ export const importTimesheetMatchWorkers = onCall(
       }
       return null;
     };
-    const venueAliasResultCache = new Map<string, Partial<MatchRowResult> | null>();
+    // Cache the ROLE-INDEPENDENT half only (alias hit + inbox JO) — the
+    // field resolution picks a JO position (pay/WC/title) BY ROLE, so
+    // caching the final result under the site alone handed the first
+    // row's rate to every other role at the same venue (review fix
+    // 2026-07-19).
+    const venueAliasTargetCache = new Map<
+      string,
+      { accountId: string; accountName: string; joId: string; jo: Record<string, any>; exact: boolean } | null
+    >();
     const resolveViaVenueAlias = async (
       site: string,
       role: string,
     ): Promise<Partial<MatchRowResult> | null> => {
       const siteKey = aliasKeyFor(site);
-      if (siteKey.length < 8) return null; // too short to trust containment
-      if (venueAliasResultCache.has(siteKey)) return venueAliasResultCache.get(siteKey) ?? null;
-      const aliases = await loadVenueAliases();
-      // Exact key first, then containment either way — the email venue
-      // string usually carries prefixes/suffixes the CSV site omits.
-      const hit =
-        aliases.find((a) => a.key === siteKey) ??
-        aliases.find((a) => a.key.includes(siteKey) || siteKey.includes(a.key)) ??
-        null;
-      let result: Partial<MatchRowResult> | null = null;
-      if (hit) {
-        const inbox = await findInboxGigJo(hit.accountId);
-        if (inbox) {
-          const { fields: f, filledWorksite, filledWc } = await backfillFromAccount(
-            hit.accountId,
-            resolveJobOrderFields(inbox.jo, role),
+      if (siteKey.length < 8) return null;
+      let target = venueAliasTargetCache.get(siteKey);
+      if (target === undefined) {
+        const aliases = await loadVenueAliases();
+        // Exact key first. Containment is a FALLBACK with guards (review
+        // fix 2026-07-19 — unguarded substring matching could hijack a
+        // different customer's similarly-named venue): the shorter string
+        // must be ≥12 chars AND exactly ONE alias may match — any
+        // ambiguity means no match.
+        const exactHit = aliases.find((a) => a.key === siteKey) ?? null;
+        let hit = exactHit;
+        if (!hit) {
+          const contains = aliases.filter(
+            (a) =>
+              Math.min(a.key.length, siteKey.length) >= 12 &&
+              (a.key.includes(siteKey) || siteKey.includes(a.key)),
           );
-          result = {
-            assignmentId: null,
-            jobOrderId: inbox.id,
-            shiftId: null,
-            jobTitle: f.jobTitle,
-            worksiteId: f.worksiteId,
-            worksiteName: f.worksiteName,
-            worksiteAddress: f.worksiteAddress,
-            workersCompCode: f.workersCompCode,
-            workersCompRate: f.workersCompRate,
-            payRate: f.payRate || null,
-            workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
-            worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
-          };
-          // Self-write the site mapping (fire-and-forget) so future imports
-          // resolve without the alias scan.
+          hit = contains.length === 1 ? contains[0] : null;
+        }
+        if (hit) {
+          const inbox = await findInboxGigJo(hit.accountId);
+          target = inbox
+            ? {
+                accountId: hit.accountId,
+                accountName: hit.accountName,
+                joId: inbox.id,
+                jo: inbox.jo,
+                exact: hit === exactHit,
+              }
+            : null;
+        } else {
+          target = null;
+        }
+        venueAliasTargetCache.set(siteKey, target);
+        // Self-write the site mapping ONLY for exact alias matches — a
+        // containment guess resolves today's rows but must not become a
+        // permanent mapping without a human confirming it (the Import tab
+        // mapping UI remains the way to lock it in).
+        if (target?.exact) {
           const c = String(customer || '').trim();
           if (c) {
             db.doc(`tenants/${tenantId}/timesheet_site_mappings/${siteMappingDocId(c, site)}`)
@@ -715,10 +729,10 @@ export const importTimesheetMatchWorkers = onCall(
                   customer: c,
                   site,
                   normalizedSite: normalizeSite(site),
-                  jobOrderId: inbox.id,
+                  jobOrderId: target.joId,
                   positionJobTitle: '',
-                  accountId: hit.accountId,
-                  accountName: hit.accountName || null,
+                  accountId: target.accountId,
+                  accountName: target.accountName || null,
                   source: 'venue_alias_auto',
                   createdAt: admin.firestore.FieldValue.serverTimestamp(),
                   updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -729,8 +743,25 @@ export const importTimesheetMatchWorkers = onCall(
           }
         }
       }
-      venueAliasResultCache.set(siteKey, result);
-      return result;
+      if (!target) return null;
+      const { fields: f, filledWorksite, filledWc } = await backfillFromAccount(
+        target.accountId,
+        resolveJobOrderFields(target.jo, role),
+      );
+      return {
+        assignmentId: null,
+        jobOrderId: target.joId,
+        shiftId: null,
+        jobTitle: f.jobTitle,
+        worksiteId: f.worksiteId,
+        worksiteName: f.worksiteName,
+        worksiteAddress: f.worksiteAddress,
+        workersCompCode: f.workersCompCode,
+        workersCompRate: f.workersCompRate,
+        payRate: f.payRate || null,
+        workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
+        worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
+      };
     };
 
     // Auto JO-name match (for rows with no manual mapping): partial-match the

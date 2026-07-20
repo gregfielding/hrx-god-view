@@ -74,6 +74,20 @@ async function completeStale(
   let completed = 0;
   let batch = db.batch();
   let inBatch = 0;
+  // Killed-JO stale rows may have future/no end dates — accept both axes,
+  // matching the sweep's definition (review fix 2026-07-19).
+  const KILLED_JO = new Set(['cancelled', 'canceled', 'completed', 'closed']);
+  const joStatusCache = new Map<string, string>();
+  const joIsKilled = async (joId: string): Promise<boolean> => {
+    if (!joId) return false;
+    let st = joStatusCache.get(joId);
+    if (st === undefined) {
+      const jo = await db.doc(`tenants/${tenantId}/job_orders/${joId}`).get();
+      st = jo.exists ? String((jo.data() || {}).status ?? '').toLowerCase() : '';
+      joStatusCache.set(joId, st);
+    }
+    return KILLED_JO.has(st);
+  };
   for (const row of staleRows) {
     const id = String(row.assignmentId ?? '').trim();
     if (!id) continue;
@@ -86,12 +100,15 @@ async function completeStale(
     const start = asIso(a.startDate) ?? asIso(a.start);
     const end = asIso(a.endDate) ?? start;
     const effEnd = end && start && end >= start ? end : start;
-    if (!effEnd || effEnd >= today) continue;
+    const dateStale = Boolean(effEnd && effEnd < today);
+    if (!dateStale && !(await joIsKilled(String(a.jobOrderId ?? '')))) continue;
     batch.update(ref, {
       status: 'completed',
       previousStatus: a.status ?? '',
       completedAt: admin.firestore.FieldValue.serverTimestamp(),
-      completedReason: 'ai-triage: shift ended, auto-completed overnight',
+      completedReason: dateStale
+        ? 'ai-triage: shift ended, auto-completed overnight'
+        : 'ai-triage: job order closed, auto-completed overnight',
       notificationsSuppressed: true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedBy: ACTOR,

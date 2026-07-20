@@ -353,11 +353,19 @@ export default function ShiftLogEntry({
         return { label: `Apply in HRX — cancel ${n} assignment${n === 1 ? '' : 's'}`, color: 'error' };
       }
       case 'change_headcount': {
-        if (!request.matchedShiftId || ev.newHeadcount == null) return null;
+        // Server requires BOTH matched ids (review fix 2026-07-19: a shift
+        // doc missing its jobOrderId denorm yielded a button that always
+        // errored) — mirror the server's precondition here.
+        if (!request.matchedShiftId || !request.matchedJobOrderId || ev.newHeadcount == null) return null;
         return { label: `Apply in HRX — set headcount to ${String(ev.newHeadcount)}`, color: 'primary' };
       }
       case 'change_time': {
-        if (!request.matchedShiftId || (!ev.newStartTime && !ev.newEndTime)) return null;
+        if (
+          !request.matchedShiftId ||
+          !request.matchedJobOrderId ||
+          (!ev.newStartTime && !ev.newEndTime)
+        )
+          return null;
         const t = [ev.newStartTime, ev.newEndTime].filter(Boolean).join('–');
         return { label: `Apply in HRX — change time to ${t}`, color: 'primary' };
       }
