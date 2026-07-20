@@ -29,6 +29,15 @@ export const onAssignmentUpdatedPush = onDocumentUpdated(
     const after = event.data?.after.data();
     if (!before || !after) return;
 
+    // Same notificationsSuppressed contract the SMS/notification triggers
+    // honor (retroactive adds, separation cascades, quiet-hours portal
+    // cancels): a suppressed transition must not push either — the
+    // quiet-hours notifier delivers the worker notice at 8am local instead.
+    if (after.retroactive === true || after.notificationsSuppressed === true) {
+      logger.info('[PUSH][assignment_updated] skipped: suppressed', { assignmentId });
+      return;
+    }
+
     const afterRaw = String(after.status ?? '').trim();
     const afterCanon = normalizeAssignmentStatus(after.status);
     const beforeCanon = normalizeAssignmentStatus(before.status);

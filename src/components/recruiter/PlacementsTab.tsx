@@ -3914,32 +3914,35 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   };
 
   /**
-   * One-step placement (Phase 2, 2026-07-19): a drop hires immediately —
-   * no staging placement doc, no separate "Click to Hire" step to forget.
-   * Same optimistic bookkeeping as the legacy chip path
-   * (handleConfirmPlacement, kept for pre-existing "Placed" tiles), but
-   * targets the DROPPED shift explicitly via shiftOverride.
+   * One-step placement with a 60-second undo window (Greg, 2026-07-19):
+   * a drop shows the hire optimistically at once, but the offer itself
+   * fires after 60s — the Undo snackbar cancels everything unsent. Timers
+   * flush immediately on unmount/tab-close so navigating away can never
+   * silently lose a hire. Notification behavior is unchanged server-side
+   * (placementsCreateAssignments + the JO mute system own that).
    */
-  const hireWorkerOnShift = async (worker: Worker, targetShiftId: string) => {
-    setDoubleBookConfirmWorker(null);
-    setPendingPlacementShiftId(null);
+  const pendingUndoHiresRef = useRef<
+    Map<string, { timer: ReturnType<typeof setTimeout>; fire: () => void }>
+  >(new Map());
+  const [undoHireCount, setUndoHireCount] = useState(0);
+
+  const executeDelayedHire = async (worker: Worker, targetShiftId: string) => {
     const shift = shifts.find((s) => s.id === targetShiftId);
-    if (!shift || !tenantId || !jobOrderId || !user?.uid) {
-      setError('Missing required information to hire worker');
-      return;
-    }
-    if (pendingHireWorkerIds.has(worker.id)) {
-      // Second drop while the first hire is in flight — tell the recruiter
-      // instead of silently ignoring the gesture (review fix 2026-07-19).
-      setAssignToast({
-        message: `Already hiring ${worker.displayName || 'this worker'} — give it a second.`,
-        severity: 'info',
+    const revert = () => {
+      pendingHireShiftByWorkerRef.current.delete(worker.id);
+      setPendingHireWorkerIds((prev) => {
+        if (!prev.has(worker.id)) return prev;
+        const next = new Set(prev);
+        next.delete(worker.id);
+        return next;
       });
+    };
+    if (!shift || !tenantId || !jobOrderId) {
+      setError('Missing required information to hire worker');
+      revert();
       return;
     }
     setConfirmingPlacementUserId(worker.id);
-    pendingHireShiftByWorkerRef.current.set(worker.id, targetShiftId);
-    setPendingHireWorkerIds((prev) => new Set(prev).add(worker.id));
     try {
       setError(null);
       const placementStartDate = placementStartDateByUserId.get(worker.id);
@@ -3948,17 +3951,73 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     } catch (err: any) {
       console.error('Error hiring worker on drop:', err);
       setError(err?.message || 'Failed to hire worker');
-      pendingHireShiftByWorkerRef.current.delete(worker.id);
-      setPendingHireWorkerIds((prev) => {
-        if (!prev.has(worker.id)) return prev;
-        const next = new Set(prev);
-        next.delete(worker.id);
-        return next;
-      });
+      revert();
     } finally {
       setConfirmingPlacementUserId(null);
     }
   };
+
+  const hireWorkerOnShift = async (worker: Worker, targetShiftId: string) => {
+    setDoubleBookConfirmWorker(null);
+    setPendingPlacementShiftId(null);
+    if (!tenantId || !jobOrderId || !user?.uid) {
+      setError('Missing required information to hire worker');
+      return;
+    }
+    if (pendingHireWorkerIds.has(worker.id)) {
+      // Second drop while the first hire is pending — tell the recruiter
+      // instead of silently ignoring the gesture (review fix 2026-07-19).
+      setAssignToast({
+        message: `Already hiring ${worker.displayName || 'this worker'} — give it a second.`,
+        severity: 'info',
+      });
+      return;
+    }
+    // Optimistic immediately; the offer fires when the undo window closes.
+    pendingHireShiftByWorkerRef.current.set(worker.id, targetShiftId);
+    setPendingHireWorkerIds((prev) => new Set(prev).add(worker.id));
+    const fire = () => {
+      pendingUndoHiresRef.current.delete(worker.id);
+      setUndoHireCount(pendingUndoHiresRef.current.size);
+      void executeDelayedHire(worker, targetShiftId);
+    };
+    const timer = setTimeout(fire, 60_000);
+    pendingUndoHiresRef.current.set(worker.id, { timer, fire });
+    setUndoHireCount(pendingUndoHiresRef.current.size);
+  };
+
+  const undoAllPendingHires = () => {
+    const uids = [...pendingUndoHiresRef.current.keys()];
+    pendingUndoHiresRef.current.forEach(({ timer }, uid) => {
+      clearTimeout(timer);
+      pendingHireShiftByWorkerRef.current.delete(uid);
+    });
+    pendingUndoHiresRef.current.clear();
+    setUndoHireCount(0);
+    setPendingHireWorkerIds((prev) => {
+      const next = new Set(prev);
+      uids.forEach((u) => next.delete(u));
+      return next;
+    });
+    setAssignToast({ message: 'Hiring cancelled — nothing was sent.', severity: 'info' });
+  };
+
+  // Navigating away (or closing the tab) fires all pending hires NOW —
+  // the undo window is a grace period, never a way to lose a hire.
+  useEffect(() => {
+    const flush = () => {
+      pendingUndoHiresRef.current.forEach(({ timer, fire }) => {
+        clearTimeout(timer);
+        fire();
+      });
+    };
+    window.addEventListener('beforeunload', flush);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      flush();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // (createPlacement — the two-stage "Placed, no message sent" staging
   // write — was removed in Phase 2's one-step placement, 2026-07-19.
@@ -5325,6 +5384,18 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             <Button onClick={() => { setPreviewEmailOpen(false); setPreviewEmailError(null); }}>Close</Button>
           </DialogActions>
         </Dialog>
+
+        {/* 60-second undo window for one-step hires (Greg, 2026-07-19). */}
+        <Snackbar
+          open={undoHireCount > 0}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          message={`Hiring ${undoHireCount} worker${undoHireCount === 1 ? '' : 's'} — the offer text sends in 60 seconds`}
+          action={
+            <Button color="secondary" size="small" onClick={undoAllPendingHires}>
+              Undo
+            </Button>
+          }
+        />
 
         {/* Double-book warning: worker already placed/assigned/confirmed on same day */}
         <Dialog open={!!doubleBookConfirmWorker} onClose={() => setDoubleBookConfirmWorker(null)} maxWidth="sm" fullWidth>

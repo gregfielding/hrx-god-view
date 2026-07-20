@@ -268,6 +268,7 @@ export { completeExpiredOpenShiftAssignments } from './completeExpiredOpenShiftA
 export { scheduleDivergenceSweep, runScheduleDivergenceSweep } from './scheduling/scheduleDivergenceSweep';
 export { getScheduleDivergence, completeStaleAssignments } from './scheduling/schedulingHealthApi';
 export { schedulingTriageNightly } from './scheduling/schedulingTriageNightly';
+export { schedulingQuietHoursNotifier } from './scheduling/schedulingQuietHoursNotifier';
 export { syncJobOrderWorksiteToPostings } from './syncJobOrderWorksiteToPostings';
 export { updateExternalOnboardingStepVerification } from './onboardingGate';
 export {

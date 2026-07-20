@@ -39,11 +39,41 @@ const db = admin.firestore();
  * appliedBy/canceledBy for the audit trail (uid or 'ai_triage_nightly').
  * Throws HttpsError on precondition failures; the cron catches per-row.
  */
+/** Rough state→IANA timezone for quiet-hours math. Worksites we serve are
+ *  mapped explicitly; unknown states fall back to Pacific (latest 8am in
+ *  the continental US, so a notice is never EARLY). */
+const STATE_TZ: Record<string, string> = {
+  CA: 'America/Los_Angeles', OR: 'America/Los_Angeles', WA: 'America/Los_Angeles', NV: 'America/Los_Angeles',
+  AZ: 'America/Phoenix', CO: 'America/Denver', UT: 'America/Denver', MT: 'America/Denver', NM: 'America/Denver',
+  IL: 'America/Chicago', WI: 'America/Chicago', MN: 'America/Chicago', MO: 'America/Chicago',
+  TX: 'America/Chicago', KS: 'America/Chicago', OK: 'America/Chicago', IA: 'America/Chicago', TN: 'America/Chicago',
+  NY: 'America/New_York', MD: 'America/New_York', PA: 'America/New_York', GA: 'America/New_York',
+  NC: 'America/New_York', OH: 'America/New_York', KY: 'America/New_York', FL: 'America/New_York',
+  MI: 'America/New_York', VA: 'America/New_York', NJ: 'America/New_York', MA: 'America/New_York',
+};
+
+/** Next 8:00am in the given zone, as a JS Date (now if already past 8am). */
+function next8amLocal(tz: string): Date {
+  const now = new Date();
+  const local = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+  if (local.getHours() >= 8) return now; // already past 8am local — send now
+  const msUntil8 = (8 - local.getHours()) * 3600_000 - local.getMinutes() * 60_000 - local.getSeconds() * 1000;
+  return new Date(now.getTime() + msUntil8);
+}
+
 export async function applyShiftRequestCore(
   tenantId: string,
   requestId: string,
   actor: string,
+  options?: {
+    /** Quiet hours (Greg, 2026-07-19): suppress the immediate worker
+     *  cancellation push/SMS and queue a deferred notice for 8am
+     *  worksite-local instead. Used by the overnight AI triage; recruiter
+     *  clicks stay immediate. */
+    quietNotifications?: boolean;
+  },
 ): Promise<Record<string, unknown>> {
+  const quiet = options?.quietNotifications === true;
     const rowRef = db.doc(`tenants/${tenantId}/external_shift_requests/${requestId}`);
     const rowSnap = await rowRef.get();
     if (!rowSnap.exists) throw new HttpsError('not-found', 'Shift request not found');
@@ -103,16 +133,37 @@ export async function applyShiftRequestCore(
         continue;
       }
       // Flip first so the standard cancellation notification fires…
+      // (quiet mode suppresses it — same notificationsSuppressed contract
+      // separateWorker uses — and queues an 8am-worksite-local notice.)
       await aRef.update({
         status: 'cancelled',
         cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
         canceledBy: actor,
         cancellationReason: 'Indeed Flex booking removed (portal sync)',
+        ...(quiet ? { notificationsSuppressed: true } : {}),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       // …then hard-delete so no grid/live query can ever resurface it.
       await aRef.delete();
       cancelled.push(assignmentId);
+      if (quiet && String(a.userId ?? '')) {
+        const tz = STATE_TZ[String(a.worksiteState ?? '').toUpperCase()] ?? 'America/Los_Angeles';
+        const title = 'Shift Cancelled';
+        const shiftName = String(a.jobTitle ?? a.shiftTitle ?? 'your shift');
+        const when = String(a.startDate ?? '');
+        await db.collection(`tenants/${tenantId}/deferred_notices`).add({
+          tenantId,
+          userId: String(a.userId),
+          jobOrderId: String(a.jobOrderId ?? ''),
+          assignmentId,
+          title,
+          body: `${shiftName}${when ? ` — ${when}` : ''} was cancelled by the client. You're all set — no need to go in.`,
+          sendAfter: admin.firestore.Timestamp.fromDate(next8amLocal(tz)),
+          sent: false,
+          createdBy: actor,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
     }
 
     await rowRef.update({

@@ -150,7 +150,11 @@ async function applyExactCancels(
       continue;
     }
     try {
-      const result = await applyShiftRequestCore(tenantId, doc.id, ACTOR);
+      // Quiet hours (Greg, 2026-07-19): 4:30am cancellations must not
+      // buzz workers' phones — the notice is queued for 8am worksite-local.
+      const result = await applyShiftRequestCore(tenantId, doc.id, ACTOR, {
+        quietNotifications: true,
+      });
       rows += 1;
       assignments += Number(result.cancelled ?? 0);
     } catch (err) {
