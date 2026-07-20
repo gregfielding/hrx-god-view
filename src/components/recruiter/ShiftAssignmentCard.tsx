@@ -72,6 +72,15 @@ import {
  * inside the component since they're written by varied callers.
  * Phase 2 tightens the typing once the multi-shift refactor settles.
  */
+/** One worker on a shift's live-board roster (Phase 2b). `level` drives the
+ *  chip color: confirmed (green) > accepted/offer-out (blue) > placed
+ *  (grey, legacy staged tiles). */
+export interface ShiftRosterEntry {
+  userId: string;
+  name: string;
+  level: 'confirmed' | 'accepted' | 'placed';
+}
+
 export interface ShiftForCard {
   id: string;
   shiftTitle?: string;
@@ -98,6 +107,11 @@ export interface ShiftAssignmentCardProps {
   selectedShift: ShiftForCard | undefined;
   /** Per-shift placed/confirmed counts for the header (undefined while loading). */
   fillCounts?: { placed: number; confirmed: number };
+  /** Phase 2b live board: who's on this shift, shown as a compact chip
+   *  strip while the card is COLLAPSED (the expanded body renders the
+   *  full interactive tiles instead). Sourced from the parent's
+   *  all-shifts snapshots — names come from the assignment denorm. */
+  roster?: ShiftRosterEntry[];
   selectedDay: string;
   dayOptions: DayOptionForCard[];
   jobOrder: JobOrder | null;
@@ -270,6 +284,7 @@ export function ShiftAssignmentCard({
   formatDateDisplay,
   isExpanded,
   onToggleExpand,
+  roster,
 }: ShiftAssignmentCardProps) {
   // Accordion mode = parent passed in a defined `isExpanded` (Phase 2).
   // Legacy single-shift mode (Phase 1 + drawer) leaves it undefined and
@@ -520,6 +535,35 @@ export function ShiftAssignmentCard({
             </Tooltip>
           </Box>
         </Box>
+        {/* Phase 2b live board: collapsed cards still show who's on the
+            shift — a compact chip per worker, colored by state. Clicking
+            anywhere on the strip expands the card (same as the header). */}
+        {isAccordionMode && !showBody && roster && roster.length > 0 && (
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 0.5,
+              px: 1.5,
+              pb: 1.25,
+              cursor: 'pointer',
+            }}
+            onClick={onToggleExpand}
+          >
+            {roster.slice(0, 20).map((r) => (
+              <Chip
+                key={r.userId}
+                size="small"
+                variant={r.level === 'placed' ? 'outlined' : 'filled'}
+                color={r.level === 'confirmed' ? 'success' : r.level === 'accepted' ? 'info' : 'default'}
+                label={r.name || 'Worker'}
+              />
+            ))}
+            {roster.length > 20 && (
+              <Chip size="small" variant="outlined" label={`+${roster.length - 20} more`} />
+            )}
+          </Box>
+        )}
         <Collapse in={showBody} timeout="auto" unmountOnExit={false}>
         {isSomeAssignmentsSelected && (
           <Box

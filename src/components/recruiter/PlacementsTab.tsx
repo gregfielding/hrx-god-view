@@ -97,7 +97,7 @@ import {
   PlacementProfileActionIcons,
   PlacementWorkerTileMainColumn,
 } from './placementsTileShared';
-import { ShiftAssignmentCard } from './ShiftAssignmentCard';
+import { ShiftAssignmentCard, type ShiftRosterEntry } from './ShiftAssignmentCard';
 import {
   getEffectiveJobOrderField,
   type JobOrderForEffectiveRead,
@@ -608,6 +608,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   // Per-shift placed/confirmed counts for the shift-card headers (derived from
   // the same all-shifts listener below — no extra reads).
   const [shiftFillCounts, setShiftFillCounts] = useState<Map<string, { placed: number; confirmed: number }>>(new Map());
+  /** Phase 2b live board: per-shift roster rendered on COLLAPSED cards so
+   *  every shift shows who's on it at a glance (expanded card keeps the
+   *  full interactive tiles). Fed by the same all-shifts snapshots as
+   *  `shiftFillCounts` — no extra reads. */
+  const [shiftRosters, setShiftRosters] = useState<Map<string, ShiftRosterEntry[]>>(new Map());
 
   const placementEntityKey = useMemo(
     () => deriveC1EntityKeyFromEntityName(hiringEntityName || ''),
@@ -1993,12 +1998,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   // placed/confirmed counts. We keep the raw (shiftId, userId, status) rows per
   // chunk so both the global exclusion set and the per-shift counts come from
   // the same snapshots (no extra reads).
-  type AllShiftRow = { kind: 'placement' | 'assignment'; shiftId: string; userId: string; status: string };
+  type AllShiftRow = {
+    kind: 'placement' | 'assignment';
+    shiftId: string;
+    userId: string;
+    status: string;
+    /** Denormalized display name off the assignment doc — powers the
+     *  Phase 2b live-board roster on collapsed cards without extra reads. */
+    name?: string;
+  };
   const allShiftsRowsRef = useRef<Map<string, AllShiftRow[]>>(new Map());
   useEffect(() => {
     if (!tenantId || shifts.length === 0) {
       setAllShiftsPlacedOrAssignedUserIds(new Set());
       setShiftFillCounts(new Map());
+      setShiftRosters(new Map());
       allShiftsRowsRef.current = new Map();
       return;
     }
@@ -2047,6 +2061,43 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         if (!counts.has(sid)) counts.set(sid, { placed: 0, confirmed: set.size });
       });
       setShiftFillCounts(counts);
+
+      // Phase 2b live board: per-shift roster (name + level) so COLLAPSED
+      // cards show who's on every shift. Assignment rows win over placement
+      // rows for the same (shift, worker); cancelled assignments drop out.
+      const rosters = new Map<string, Map<string, ShiftRosterEntry>>();
+      const upsertRoster = (sid: string, uid: string, entry: ShiftRosterEntry, force: boolean) => {
+        let m = rosters.get(sid);
+        if (!m) rosters.set(sid, (m = new Map()));
+        if (force || !m.has(uid)) m.set(uid, entry);
+      };
+      allShiftsRowsRef.current.forEach((rows) => {
+        rows.forEach((r) => {
+          if (!r.userId || !r.shiftId) return;
+          if (r.kind === 'assignment') {
+            const st = r.status.toLowerCase();
+            if (CANCELLED.has(st)) return;
+            const level: ShiftRosterEntry['level'] =
+              st === 'confirmed' || st === 'active' || st === 'in_progress'
+                ? 'confirmed'
+                : 'accepted';
+            upsertRoster(r.shiftId, r.userId, { userId: r.userId, name: r.name || '', level }, true);
+          } else {
+            upsertRoster(r.shiftId, r.userId, { userId: r.userId, name: r.name || '', level: 'placed' }, false);
+          }
+        });
+      });
+      const rosterArrays = new Map<string, ShiftRosterEntry[]>();
+      const levelRank = { confirmed: 0, accepted: 1, placed: 2 } as const;
+      rosters.forEach((m, sid) => {
+        rosterArrays.set(
+          sid,
+          [...m.values()].sort(
+            (a, b) => levelRank[a.level] - levelRank[b.level] || a.name.localeCompare(b.name),
+          ),
+        );
+      });
+      setShiftRosters(rosterArrays);
     };
 
     for (let i = 0; i < shiftIds.length; i += chunkSize) {
@@ -2086,12 +2137,18 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                   userId?: string;
                   candidateId?: string;
                   status?: string;
+                  workerDisplayName?: string;
+                  firstName?: string;
+                  lastName?: string;
                 };
                 return {
                   kind: 'assignment' as const,
                   shiftId: String(x?.shiftId || ''),
                   userId: String(x?.userId || x?.candidateId || ''),
                   status: String(x?.status || ''),
+                  name:
+                    String(x?.workerDisplayName || '').trim() ||
+                    [x?.firstName, x?.lastName].filter(Boolean).join(' ').trim(),
                 };
               }),
             );
@@ -4337,6 +4394,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         selectedShiftId={isExpanded ? selectedShiftId : shift.id}
                         selectedShift={shift}
                         fillCounts={shiftFillCounts.get(shift.id)}
+                        roster={shiftRosters.get(shift.id)}
                         selectedDay={selectedDay}
                         dayOptions={isExpanded ? dayOptions : []}
                         jobOrder={jobOrder}
