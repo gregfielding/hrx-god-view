@@ -43,6 +43,19 @@ import TodayIcon from '@mui/icons-material/Today';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as ChartTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { FormControl, InputLabel, MenuItem, Select } from '@mui/material';
+
 import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import AssignmentDrawer, {
@@ -146,6 +159,76 @@ interface BuilderSuggestion {
   currentHours: number;
   gap: GapRow;
 }
+
+/** Weekly metrics — shape mirrors the getSchedulingMetrics callable. */
+interface MetricsPayload {
+  weeks: Array<{ start: string; end: string; label: string }>;
+  accounts: string[];
+  totals: Array<{ hours: number; workers: number; ftWorkers: number }>;
+  byAccount: Record<string, Array<{ hours: number; workers: number; ftWorkers: number }>>;
+}
+
+/** Single-series chart hue — categorical slot 1 of the validated default
+ *  palette (dataviz skill). One hue for all three small multiples: each
+ *  chart holds ONE measure, so identity comes from the chart title, never
+ *  a legend or color coding. */
+const CHART_HUE = '#2a78d6';
+
+const MetricChart: React.FC<{
+  title: string;
+  caption: string;
+  data: Array<{ label: string; value: number }>;
+  area?: boolean;
+}> = ({ title, caption, data, area }) => (
+  <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+    <Typography variant="subtitle1" fontWeight={700}>{title}</Typography>
+    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+      {caption}
+    </Typography>
+    <Box sx={{ width: '100%', height: 220 }}>
+      <ResponsiveContainer>
+        {area ? (
+          <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.08)" vertical={false} />
+            <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} />
+            <YAxis tickLine={false} axisLine={false} fontSize={12} allowDecimals={false} />
+            <ChartTooltip
+              formatter={(v: number | string) => [v, title]}
+              labelFormatter={(l) => `Week of ${l}`}
+            />
+            <Area
+              type="monotone"
+              dataKey="value"
+              stroke={CHART_HUE}
+              strokeWidth={2}
+              fill={CHART_HUE}
+              fillOpacity={0.12}
+              activeDot={{ r: 5 }}
+            />
+          </AreaChart>
+        ) : (
+          <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.08)" vertical={false} />
+            <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} />
+            <YAxis tickLine={false} axisLine={false} fontSize={12} allowDecimals={false} />
+            <ChartTooltip
+              formatter={(v: number | string) => [v, title]}
+              labelFormatter={(l) => `Week of ${l}`}
+            />
+            <Line
+              type="monotone"
+              dataKey="value"
+              stroke={CHART_HUE}
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 5 }}
+            />
+          </LineChart>
+        )}
+      </ResponsiveContainer>
+    </Box>
+  </Paper>
+);
 
 /** One ongoing (open-ended) assignment — the Full-Time Workers tab.
  *  Shape mirrors the getOngoingAssignments callable. */
@@ -469,6 +552,32 @@ const WhosWorkingPage: React.FC = () => {
     if (tab === 1 && ongoing === null) void loadOngoing();
   }, [tab, ongoing, loadOngoing]);
 
+  // Metrics tab — one fetch covers every account (the filter is instant).
+  const [metrics, setMetrics] = useState<MetricsPayload | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsAccount, setMetricsAccount] = useState<string>('');
+
+  useEffect(() => {
+    if (tab !== 2 || metrics !== null || !tenantId) return;
+    setMetricsLoading(true);
+    const fn = httpsCallable(functions, 'getSchedulingMetrics');
+    fn({ tenantId, weeks: 12 })
+      .then((res) => setMetrics(res.data as MetricsPayload))
+      .catch(() => setMetrics({ weeks: [], accounts: [], totals: [], byAccount: {} }))
+      .finally(() => setMetricsLoading(false));
+  }, [tab, metrics, tenantId]);
+
+  const metricSeries = useMemo(() => {
+    if (!metrics) return null;
+    const src = metricsAccount ? metrics.byAccount[metricsAccount] ?? [] : metrics.totals;
+    const point = (i: number) => src[i] ?? { hours: 0, workers: 0, ftWorkers: 0 };
+    return {
+      hours: metrics.weeks.map((w, i) => ({ label: w.label, value: point(i).hours })),
+      workers: metrics.weeks.map((w, i) => ({ label: w.label, value: point(i).workers })),
+      ftWorkers: metrics.weeks.map((w, i) => ({ label: w.label, value: point(i).ftWorkers })),
+    };
+  }, [metrics, metricsAccount]);
+
   const openWorker = useCallback((target: AssignmentDrawerTarget) => {
     setDrawerTarget(target);
   }, []);
@@ -683,7 +792,9 @@ const WhosWorkingPage: React.FC = () => {
           <Typography variant="body2" color="text.secondary">
             {tab === 0
               ? 'Everyone assigned for the week — by account, with their days and hours.'
-              : 'Workers on ongoing, open-ended assignments — your full-time crew.'}
+              : tab === 1
+                ? 'Workers on ongoing, open-ended assignments — your full-time crew.'
+                : 'Weekly trends — hours, workers, and full-timers over the last 12 weeks.'}
           </Typography>
         </Box>
         {tab === 0 && (
@@ -715,6 +826,7 @@ const WhosWorkingPage: React.FC = () => {
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mt: 1, borderBottom: 1, borderColor: 'divider' }}>
         <Tab label="Who's Working" />
         <Tab label="Full-time workers" />
+        <Tab label="Metrics" />
       </Tabs>
 
       {tab === 0 && (
@@ -1170,6 +1282,57 @@ const WhosWorkingPage: React.FC = () => {
           </Box>
         )}
       </Paper>
+      </>
+      )}
+
+      {tab === 2 && (
+      <>
+      {metricsLoading || !metricSeries ? (
+        <Stack alignItems="center" sx={{ py: 8 }}>
+          <CircularProgress />
+        </Stack>
+      ) : (
+        <>
+          <Stack direction="row" sx={{ mt: 2 }}>
+            <FormControl size="small" sx={{ minWidth: 220 }}>
+              <InputLabel id="metrics-account-label">Account</InputLabel>
+              <Select
+                labelId="metrics-account-label"
+                label="Account"
+                value={metricsAccount}
+                onChange={(e) => setMetricsAccount(e.target.value)}
+              >
+                <MenuItem value="">All accounts</MenuItem>
+                {(metrics?.accounts ?? []).map((a) => (
+                  <MenuItem key={a} value={a}>
+                    {a}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Stack>
+          <MetricChart
+            title="Total hours"
+            caption="Scheduled assignment hours plus imported (CSV) worked hours, per week."
+            data={metricSeries.hours}
+            area
+          />
+          <MetricChart
+            title="Total workers"
+            caption="Distinct workers with any hours that week."
+            data={metricSeries.workers}
+          />
+          <MetricChart
+            title="Full-time workers"
+            caption="Workers on an ongoing, open-ended assignment active that week."
+            data={metricSeries.ftWorkers}
+          />
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>
+            Trend estimates — hours are start-to-end times without break deductions; payroll-grade
+            numbers live on the Timesheets grid.
+          </Typography>
+        </>
+      )}
       </>
       )}
 
