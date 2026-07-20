@@ -39,8 +39,9 @@ import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import TodayIcon from '@mui/icons-material/Today';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 
-import { db } from '../firebase';
+import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   resolveTimesheetGrid,
@@ -112,6 +113,54 @@ interface FullTimeRow {
   weekHours: number[];
   latestHours: number;
   trendingUp: boolean;
+}
+
+/** Full-time builder: a coverage-gap seat matched to an under-full-time
+ *  worker who is free that day. Shape mirrors the divergence sweep's
+ *  coverageGaps rows (getScheduleDivergence). */
+interface GapRow {
+  jobOrderId: string;
+  jobTitle: string;
+  accountName: string;
+  date: string;
+  needed: number;
+  filled: number;
+  gap: number;
+}
+
+interface BuilderSuggestion {
+  workerId: string;
+  workerName: string;
+  currentHours: number;
+  gap: GapRow;
+}
+
+/** Match workers sitting under full-time with open seats on days they
+ *  don't already work. At most 2 suggestions per worker so one busy JO
+ *  doesn't drown the list; workers closest to 35 rank first (fastest
+ *  wins). DNR and readiness are enforced by the placement flow itself. */
+function buildSuggestions(
+  ftRows: FullTimeRow[],
+  workerWeekDates: Map<string, Set<string>>,
+  gaps: GapRow[],
+  maxTotal = 10,
+): BuilderSuggestion[] {
+  const out: BuilderSuggestion[] = [];
+  const candidates = ftRows
+    .filter((w) => w.latestHours > 0 && w.latestHours < 35)
+    .sort((a, b) => b.latestHours - a.latestHours);
+  for (const w of candidates) {
+    if (out.length >= maxTotal) break;
+    const busy = workerWeekDates.get(w.workerId) ?? new Set<string>();
+    let perWorker = 0;
+    for (const g of gaps) {
+      if (perWorker >= 2 || out.length >= maxTotal) break;
+      if (busy.has(g.date)) continue;
+      out.push({ workerId: w.workerId, workerName: w.workerName, currentHours: w.latestHours, gap: g });
+      perWorker += 1;
+    }
+  }
+  return out;
 }
 
 interface JoNames {
@@ -273,6 +322,11 @@ function marginPct(pay: number, bill: number): string {
 
 const SHOW_MONEY_KEY = 'whosWorking.showMoney';
 
+function friendlyGapDate(iso: string): string {
+  const d = new Date(`${iso}T12:00:00`);
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' });
+}
+
 /** Hours per row for people-math: actual when a timesheet entry exists,
  *  scheduled otherwise. Shared by the money rollup and the full-time
  *  tracker so both agree with the hours the report displays. */
@@ -354,6 +408,7 @@ const WhosWorkingPage: React.FC = () => {
   const [ftOpen, setFtOpen] = useState(false);
   const [ftLoading, setFtLoading] = useState(false);
   const [ftRows, setFtRows] = useState<FullTimeRow[] | null>(null);
+  const [suggestions, setSuggestions] = useState<BuilderSuggestion[]>([]);
   const ftWeeks = useMemo<PeriodRange[]>(
     () => [-3, -2, -1, 0].map((delta) => shiftWeeklyPeriod(period, delta)),
     [period],
@@ -374,13 +429,49 @@ const WhosWorkingPage: React.FC = () => {
           hiringEntityIds: entitiesSnap.docs.map((d) => d.id),
         },
       });
-      setFtRows(buildFullTimeRows(resolution.rows, ftWeeks));
+      const rows = buildFullTimeRows(resolution.rows, ftWeeks);
+      setFtRows(rows);
+
+      // Full-time builder: only actionable when the selected week isn't
+      // already over — the divergence sweep's coverage gaps are
+      // today-forward.
+      const today = todayIsoLocal();
+      if (period.end >= today) {
+        try {
+          const fn = httpsCallable(functions, 'getScheduleDivergence');
+          const res = await fn({ tenantId });
+          const allGaps = ((res.data as { coverageGaps?: GapRow[] })?.coverageGaps ?? []).filter(
+            (g) => g.date >= today && g.date >= period.start && g.date <= period.end && g.gap > 0,
+          );
+          // The selected week's per-worker busy days, from the same
+          // 4-week resolution (no extra reads).
+          const busyDays = new Map<string, Set<string>>();
+          for (const row of resolution.rows) {
+            if (row.kind !== 'entry' && row.kind !== 'empty') continue;
+            if (row.workDate < period.start || row.workDate > period.end) continue;
+            const wid = row.assignment.workerId || row.assignment.candidateId;
+            if (!wid) continue;
+            let set = busyDays.get(wid);
+            if (!set) {
+              set = new Set();
+              busyDays.set(wid, set);
+            }
+            set.add(row.workDate);
+          }
+          setSuggestions(buildSuggestions(rows, busyDays, allGaps));
+        } catch {
+          setSuggestions([]);
+        }
+      } else {
+        setSuggestions([]);
+      }
     } catch {
       setFtRows([]);
+      setSuggestions([]);
     } finally {
       setFtLoading(false);
     }
-  }, [tenantId, ftWeeks]);
+  }, [tenantId, ftWeeks, period]);
 
   useEffect(() => {
     // Period changed — 4-week window moved, so stale tracker data must
@@ -719,6 +810,62 @@ const WhosWorkingPage: React.FC = () => {
               </Typography>
             ) : (
               <>
+                {suggestions.length === 0 && period.end >= todayIsoLocal() && (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                    No ways to add hours right now — every upcoming shift this week is fully
+                    staffed. When a shift needs people, workers under 35 hrs who are free that day
+                    will be suggested here.
+                  </Typography>
+                )}
+                {suggestions.length > 0 && (
+                  <Box
+                    sx={{
+                      mb: 2,
+                      p: 1.5,
+                      borderRadius: 1,
+                      bgcolor: 'info.main',
+                      color: 'info.contrastText',
+                      '& .MuiTypography-root': { color: 'inherit' },
+                    }}
+                  >
+                    <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
+                      Ways to add hours this week
+                    </Typography>
+                    {suggestions.map((s, i) => (
+                      <Stack
+                        key={`${s.workerId}-${s.gap.jobOrderId}-${s.gap.date}-${i}`}
+                        direction="row"
+                        alignItems="center"
+                        spacing={1}
+                        flexWrap="wrap"
+                        useFlexGap
+                        sx={{ py: 0.25 }}
+                      >
+                        <Typography variant="body2">
+                          <strong>{s.workerName}</strong> is at {Math.round(s.currentHours)}h —{' '}
+                          {s.gap.accountName || 'an account'} · {s.gap.jobTitle || 'a shift'} still
+                          needs {s.gap.gap} {s.gap.gap === 1 ? 'person' : 'people'} on{' '}
+                          {friendlyGapDate(s.gap.date)}
+                        </Typography>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="inherit"
+                          sx={{ ml: 'auto', whiteSpace: 'nowrap' }}
+                          onClick={() =>
+                            navigate(`/jobs/job-orders/${s.gap.jobOrderId}?tab=placements`)
+                          }
+                        >
+                          Open placements
+                        </Button>
+                      </Stack>
+                    ))}
+                    <Typography variant="caption" sx={{ display: 'block', mt: 0.5, opacity: 0.85 }}>
+                      Workers under 35 hrs matched to open seats on days they're free. Drop them on
+                      the shift from Placements — the usual offer text (and 60-second undo) applies.
+                    </Typography>
+                  </Box>
+                )}
                 <Stack direction="row" spacing={1} sx={{ mb: 1.5 }} flexWrap="wrap" useFlexGap>
                   <Chip
                     size="small"
