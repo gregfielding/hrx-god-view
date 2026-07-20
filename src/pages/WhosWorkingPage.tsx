@@ -31,6 +31,8 @@ import {
   IconButton,
   Paper,
   Stack,
+  Tab,
+  Tabs,
   Tooltip,
   Typography,
   Button,
@@ -43,6 +45,9 @@ import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import AssignmentDrawer, {
+  type AssignmentDrawerTarget,
+} from '../components/recruiter/AssignmentDrawer';
 import {
   resolveTimesheetGrid,
   scheduledHoursForRow,
@@ -72,11 +77,18 @@ interface WorkerLine {
   scheduledHours: number;
   actualHours: number;
   hasEntries: boolean;
+  /** Drawer target — first-seen assignment context for this worker. */
+  shiftId: string | null;
+  assignmentId: string | null;
+  /** Import-only rows have no real assignment to open/end. */
+  isImport: boolean;
 }
 
 interface JobOrderGroup {
   jobOrderId: string;
   label: string;
+  /** "Child account · worksite · address" — shown under each worker name. */
+  subLine: string | null;
   workers: Map<string, WorkerLine>;
   scheduledHours: number;
   actualHours: number;
@@ -135,6 +147,28 @@ interface BuilderSuggestion {
   gap: GapRow;
 }
 
+/** One ongoing (open-ended) assignment — the Full-Time Workers tab.
+ *  Shape mirrors the getOngoingAssignments callable. */
+interface OngoingRow {
+  assignmentId: string;
+  userId: string;
+  workerName: string;
+  phone: string;
+  accountName: string;
+  jobOrderId: string;
+  jobOrderName?: string;
+  shiftId: string;
+  jobTitle: string;
+  worksiteName: string;
+  worksiteAddress?: string;
+  startDate: string | null;
+  weeklyDays: string[];
+  isOpenShift: boolean;
+  payRate: number | null;
+  billRate: number | null;
+  status: string;
+}
+
 /** Match workers sitting under full-time with open seats on days they
  *  don't already work. At most 2 suggestions per worker so one busy JO
  *  doesn't drown the list; workers closest to 35 rank first (fastest
@@ -167,6 +201,10 @@ interface JoNames {
   accountKey: string;
   accountLabel: string;
   joLabel: string;
+  /** Child/site account when the JO carries one (carrier-style lineage). */
+  childAccountLabel: string | null;
+  /** "Worksite name · street, city, state" line for under the worker name. */
+  worksiteLine: string | null;
 }
 
 function buildGroups(
@@ -212,6 +250,8 @@ function buildGroups(
       jo = {
         jobOrderId: joId,
         label: joLabel,
+        subLine:
+          [names?.childAccountLabel, names?.worksiteLine].filter(Boolean).join(' · ') || null,
         workers: new Map(),
         scheduledHours: 0,
         actualHours: 0,
@@ -223,6 +263,7 @@ function buildGroups(
     }
 
     const workerId = row.assignment.workerId || row.assignment.candidateId || row.key;
+    const rowIsImport = row.kind === 'entry' && row.isImport === true;
     let worker = jo.workers.get(workerId);
     if (!worker) {
       worker = {
@@ -232,10 +273,19 @@ function buildGroups(
         scheduledHours: 0,
         actualHours: 0,
         hasEntries: false,
+        shiftId: row.assignment.shiftId,
+        assignmentId: row.assignment.id || null,
+        isImport: rowIsImport,
       };
       jo.workers.set(workerId, worker);
     } else if (worker.workerName === 'Worker' && row.assignment.workerDisplayName) {
       worker.workerName = row.assignment.workerDisplayName;
+    }
+    // A real assignment row beats an import row as the drawer target.
+    if (worker.isImport && !rowIsImport) {
+      worker.shiftId = row.assignment.shiftId;
+      worker.assignmentId = row.assignment.id || null;
+      worker.isImport = false;
     }
 
     const sched = scheduledHoursForRow(row);
@@ -396,6 +446,33 @@ const WhosWorkingPage: React.FC = () => {
   const [showMoney, setShowMoney] = useState<boolean>(
     () => localStorage.getItem(SHOW_MONEY_KEY) === '1',
   );
+  const [tab, setTab] = useState(0);
+  const [drawerTarget, setDrawerTarget] = useState<AssignmentDrawerTarget | null>(null);
+  const [ongoing, setOngoing] = useState<OngoingRow[] | null>(null);
+  const [ongoingLoading, setOngoingLoading] = useState(false);
+
+  const loadOngoing = useCallback(async () => {
+    if (!tenantId) return;
+    setOngoingLoading(true);
+    try {
+      const fn = httpsCallable(functions, 'getOngoingAssignments');
+      const res = await fn({ tenantId });
+      setOngoing(((res.data as { rows?: OngoingRow[] })?.rows ?? []) as OngoingRow[]);
+    } catch {
+      setOngoing([]);
+    } finally {
+      setOngoingLoading(false);
+    }
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (tab === 1 && ongoing === null) void loadOngoing();
+  }, [tab, ongoing, loadOngoing]);
+
+  const openWorker = useCallback((target: AssignmentDrawerTarget) => {
+    setDrawerTarget(target);
+  }, []);
+
   const toggleMoney = useCallback(() => {
     setShowMoney((prev) => {
       localStorage.setItem(SHOW_MONEY_KEY, prev ? '0' : '1');
@@ -530,10 +607,25 @@ const WhosWorkingPage: React.FC = () => {
             const joLabel = String(
               jo.jobOrderName || jo.jobTitle || jo.title || 'Job order',
             );
+            const childAccountLabel =
+              typeof jo.recruiterAccountName === 'string' &&
+              jo.recruiterAccountName.trim() &&
+              jo.recruiterAccountName !== accountLabel
+                ? jo.recruiterAccountName
+                : null;
+            const addr = (jo.worksiteAddress ?? {}) as Record<string, unknown>;
+            const addressStr = [addr.street, addr.city, addr.state]
+              .filter(Boolean)
+              .join(', ');
+            const worksiteName = String(jo.worksiteName || jo.locationName || '');
+            const worksiteLine =
+              [worksiteName, addressStr].filter(Boolean).join(' · ') || null;
             joNames.set(joId, {
               accountKey: String(jo.companyId || jo.accountId || accountLabel),
               accountLabel,
               joLabel,
+              childAccountLabel,
+              worksiteLine,
             });
           } catch {
             // Name-join miss just falls back to venue labels.
@@ -562,6 +654,13 @@ const WhosWorkingPage: React.FC = () => {
     void load();
   }, [load]);
 
+  const handleEnded = useCallback(() => {
+    // An end changes both tabs' data — reload the week view and invalidate
+    // the ongoing list so it refetches on next look.
+    setOngoing(null);
+    void load();
+  }, [load]);
+
   const weekDates = useMemo(() => eachDateInPeriod(period), [period]);
   const totalWorkers = useMemo(() => {
     const ids = new Set<string>();
@@ -582,33 +681,44 @@ const WhosWorkingPage: React.FC = () => {
             Who's Working
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Everyone assigned for the week — by account, with their days and hours.
+            {tab === 0
+              ? 'Everyone assigned for the week — by account, with their days and hours.'
+              : 'Workers on ongoing, open-ended assignments — your full-time crew.'}
           </Typography>
         </Box>
-        <Stack direction="row" alignItems="center" spacing={0.5}>
-          <IconButton aria-label="Previous week" onClick={() => setPeriod((p) => shiftWeeklyPeriod(p, -1))}>
-            <ChevronLeftIcon />
-          </IconButton>
-          <Typography variant="subtitle1" fontWeight={600} sx={{ minWidth: 170, textAlign: 'center' }}>
-            {formatWeekOfLabel(period)}
-          </Typography>
-          <IconButton aria-label="Next week" onClick={() => setPeriod((p) => shiftWeeklyPeriod(p, 1))}>
-            <ChevronRightIcon />
-          </IconButton>
-          {!isCurrentWeek && (
-            <Tooltip title="Jump back to this week">
-              <Button
-                size="small"
-                startIcon={<TodayIcon />}
-                onClick={() => setPeriod(currentWeeklyPeriod(0, 6))}
-              >
-                This week
-              </Button>
-            </Tooltip>
-          )}
-        </Stack>
+        {tab === 0 && (
+          <Stack direction="row" alignItems="center" spacing={0.5}>
+            <IconButton aria-label="Previous week" onClick={() => setPeriod((p) => shiftWeeklyPeriod(p, -1))}>
+              <ChevronLeftIcon />
+            </IconButton>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ minWidth: 170, textAlign: 'center' }}>
+              {formatWeekOfLabel(period)}
+            </Typography>
+            <IconButton aria-label="Next week" onClick={() => setPeriod((p) => shiftWeeklyPeriod(p, 1))}>
+              <ChevronRightIcon />
+            </IconButton>
+            {!isCurrentWeek && (
+              <Tooltip title="Jump back to this week">
+                <Button
+                  size="small"
+                  startIcon={<TodayIcon />}
+                  onClick={() => setPeriod(currentWeeklyPeriod(0, 6))}
+                >
+                  This week
+                </Button>
+              </Tooltip>
+            )}
+          </Stack>
+        )}
       </Stack>
 
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mt: 1, borderBottom: 1, borderColor: 'divider' }}>
+        <Tab label="Who's Working" />
+        <Tab label="Full-time workers" />
+      </Tabs>
+
+      {tab === 0 && (
+      <>
       {/* Week summary strip */}
       <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
         <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
@@ -745,11 +855,37 @@ const WhosWorkingPage: React.FC = () => {
                         spacing={1}
                         flexWrap="wrap"
                         useFlexGap
-                        sx={{ py: 0.5 }}
+                        onClick={
+                          !w.isImport && (w.shiftId || w.assignmentId)
+                            ? () =>
+                                openWorker({
+                                  workerId: w.workerId,
+                                  workerName: w.workerName,
+                                  jobOrderId: jo.jobOrderId || null,
+                                  shiftId: w.shiftId,
+                                  assignmentId: w.assignmentId,
+                                })
+                            : undefined
+                        }
+                        sx={{
+                          py: 0.5,
+                          ...(!w.isImport && (w.shiftId || w.assignmentId)
+                            ? {
+                                cursor: 'pointer',
+                                borderRadius: 1,
+                                '&:hover': { bgcolor: 'action.hover' },
+                              }
+                            : {}),
+                        }}
                       >
-                        <Typography variant="body2" sx={{ minWidth: 180 }}>
-                          {w.workerName}
-                        </Typography>
+                        <Box sx={{ minWidth: 180 }}>
+                          <Typography variant="body2">{w.workerName}</Typography>
+                          {jo.subLine && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                              {jo.subLine}
+                            </Typography>
+                          )}
+                        </Box>
                         <Stack direction="row" spacing={0.5}>
                           {weekDates.map((d) => {
                             const dow = dowForIso(d);
@@ -780,7 +916,110 @@ const WhosWorkingPage: React.FC = () => {
         ))
       )}
 
-      {/* Full-time tracker (3c) — who's at or near full-time hours */}
+      {!loading && rowCount > 0 && (
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block' }}>
+          Hours come from the same math as the Timesheets grid, so this report always matches payroll.
+        </Typography>
+      )}
+      </>
+      )}
+
+      {tab === 1 && (
+      <>
+      {/* Full-time workers — ongoing, open-ended assignments */}
+      {ongoingLoading || ongoing === null ? (
+        <Stack alignItems="center" sx={{ py: 6 }}>
+          <CircularProgress />
+        </Stack>
+      ) : ongoing.length === 0 ? (
+        <Paper variant="outlined" sx={{ mt: 2, p: 4, textAlign: 'center' }}>
+          <Typography variant="subtitle1" fontWeight={600}>
+            No ongoing assignments yet
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Workers appear here when they're placed on an open-ended assignment — a standing
+            weekly schedule or an open shift with no end date.
+          </Typography>
+        </Paper>
+      ) : (
+        Array.from(
+          ongoing.reduce((m, r) => {
+            const k = r.accountName || 'Account';
+            if (!m.has(k)) m.set(k, [] as OngoingRow[]);
+            m.get(k)!.push(r);
+            return m;
+          }, new Map<string, OngoingRow[]>()),
+        ).map(([acct, rows]) => (
+          <Paper key={acct} variant="outlined" sx={{ mt: 2, overflow: 'hidden' }}>
+            <Box sx={{ px: 2, py: 1.5, bgcolor: 'action.hover' }}>
+              <Stack direction="row" alignItems="center" justifyContent="space-between">
+                <Typography variant="subtitle1" fontWeight={700}>{acct}</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {rows.length} ongoing worker{rows.length === 1 ? '' : 's'}
+                </Typography>
+              </Stack>
+            </Box>
+            {rows.map((r) => (
+              <Box
+                key={r.assignmentId}
+                onClick={() =>
+                  openWorker({
+                    workerId: r.userId,
+                    workerName: r.workerName,
+                    jobOrderId: r.jobOrderId || null,
+                    shiftId: r.shiftId || null,
+                    assignmentId: r.assignmentId,
+                  })
+                }
+                sx={{
+                  px: 2,
+                  py: 1.25,
+                  borderTop: 1,
+                  borderColor: 'divider',
+                  cursor: 'pointer',
+                  '&:hover': { bgcolor: 'action.hover' },
+                }}
+              >
+                <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
+                  <Box>
+                    <Typography variant="body2" fontWeight={600}>{r.workerName}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {[r.jobOrderName || r.jobTitle, r.worksiteName, r.worksiteAddress]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </Typography>
+                  </Box>
+                  <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap>
+                    {r.startDate && (
+                      <Chip size="small" variant="outlined" label={`since ${r.startDate}`} />
+                    )}
+                    {r.isOpenShift ? (
+                      <Chip size="small" color="success" variant="outlined" label="Open shift" />
+                    ) : (
+                      r.weeklyDays.map((d) => (
+                        <Chip
+                          key={d}
+                          size="small"
+                          color="primary"
+                          label={dowShortLabel(Number(d) as 0 | 1 | 2 | 3 | 4 | 5 | 6)}
+                        />
+                      ))
+                    )}
+                  </Stack>
+                </Stack>
+              </Box>
+            ))}
+          </Paper>
+        ))
+      )}
+      {ongoing !== null && ongoing.length > 0 && (
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>
+          Click a worker to see the full assignment — and to end it as of a date when someone
+          quit or was replaced.
+        </Typography>
+      )}
+
+      {/* Full-time watch — the 4-week hours trend */}
       <Paper variant="outlined" sx={{ mt: 2, overflow: 'hidden' }}>
         <Box sx={{ px: 2, py: 1.5, bgcolor: 'action.hover' }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
@@ -931,12 +1170,16 @@ const WhosWorkingPage: React.FC = () => {
           </Box>
         )}
       </Paper>
-
-      {!loading && rowCount > 0 && (
-        <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block' }}>
-          Hours come from the same math as the Timesheets grid, so this report always matches payroll.
-        </Typography>
+      </>
       )}
+
+      <AssignmentDrawer
+        open={drawerTarget !== null}
+        tenantId={tenantId ?? ''}
+        target={drawerTarget}
+        onClose={() => setDrawerTarget(null)}
+        onEnded={handleEnded}
+      />
     </Box>
   );
 };

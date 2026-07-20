@@ -169,9 +169,18 @@ export async function computeTenantDivergence(tenantId: string): Promise<TenantD
       liveByShift.get(shiftId)!.push({ u: userId, s: start, e: end ?? null });
     }
     if (a.jobOrderId) liveJobOrderIds.add(String(a.jobOrderId));
-    // stale candidate: past its end date beyond the grace window (open/ongoing
-    // assignments with no end date are never stale on the date axis)
-    if (effEnd && effEnd < staleBefore) {
+    // stale candidate: past its end date beyond the grace window. Open/ongoing
+    // assignments — no end date plus a standing weekly schedule or open-shift
+    // flag — are never stale on the date axis. The `?? start` fallback above
+    // used to defeat that intent: an empty endDate collapsed effEnd to the
+    // START date, so week-one full-timers were flagged "stale" and the triage
+    // auto-ended them (found 9/10 ongoing assignments wrongly ended, 2026-07-20).
+    const isOngoing =
+      !asIso(a.endDate) &&
+      (a.isOpenShift === true ||
+        a.noFixedTimes === true ||
+        (a.weeklySchedule && Object.keys(a.weeklySchedule).length > 0));
+    if (!isOngoing && effEnd && effEnd < staleBefore) {
       staleCandidates.push({ id: doc.id, a, effEnd });
     }
   }

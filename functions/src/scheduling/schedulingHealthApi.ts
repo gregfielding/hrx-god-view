@@ -135,7 +135,14 @@ export const completeStaleAssignments = onCall(
       const start = asIso(a.startDate) ?? asIso(a.start);
       const end = asIso(a.endDate) ?? start;
       const effEnd = end && start && end >= start ? end : start;
-      const dateStale = Boolean(effEnd && effEnd < today);
+      // Ongoing guard (2026-07-20): no end date + standing schedule/open flag
+      // = a live full-timer, not a stale row — same rule the sweep applies.
+      const isOngoing =
+        !asIso(a.endDate) &&
+        (a.isOpenShift === true ||
+          a.noFixedTimes === true ||
+          (a.weeklySchedule && Object.keys(a.weeklySchedule).length > 0));
+      const dateStale = !isOngoing && Boolean(effEnd && effEnd < today);
       const killedJo = dateStale ? false : await joIsKilled(String(a.jobOrderId ?? ''));
       if (!dateStale && !killedJo) {
         skipped.push({ id, reason: 'shift has not ended yet' });

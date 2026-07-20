@@ -100,7 +100,14 @@ async function completeStale(
     const start = asIso(a.startDate) ?? asIso(a.start);
     const end = asIso(a.endDate) ?? start;
     const effEnd = end && start && end >= start ? end : start;
-    const dateStale = Boolean(effEnd && effEnd < today);
+    // Ongoing guard (2026-07-20): mirrors the sweep — an open-ended doc with
+    // a standing schedule must never be auto-ended on the date axis.
+    const isOngoing =
+      !asIso(a.endDate) &&
+      (a.isOpenShift === true ||
+        a.noFixedTimes === true ||
+        (a.weeklySchedule && Object.keys(a.weeklySchedule).length > 0));
+    const dateStale = !isOngoing && Boolean(effEnd && effEnd < today);
     if (!dateStale && !(await joIsKilled(String(a.jobOrderId ?? '')))) continue;
     batch.update(ref, {
       status: 'completed',

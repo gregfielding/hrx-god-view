@@ -267,6 +267,7 @@ export { placementsCreateAssignments, placementsCancelAssignment, openShiftSetEn
 export { completeExpiredOpenShiftAssignments } from './completeExpiredOpenShiftAssignments';
 export { scheduleDivergenceSweep, runScheduleDivergenceSweep } from './scheduling/scheduleDivergenceSweep';
 export { getScheduleDivergence, completeStaleAssignments } from './scheduling/schedulingHealthApi';
+export { endAssignment, getOngoingAssignments } from './scheduling/assignmentLifecycleApi';
 export { schedulingTriageNightly } from './scheduling/schedulingTriageNightly';
 export { schedulingQuietHoursNotifier } from './scheduling/schedulingQuietHoursNotifier';
 export { syncJobOrderWorksiteToPostings } from './syncJobOrderWorksiteToPostings';
