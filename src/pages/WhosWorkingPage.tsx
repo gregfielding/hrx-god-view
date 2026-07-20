@@ -793,8 +793,8 @@ const WhosWorkingPage: React.FC = () => {
             {tab === 0
               ? 'Everyone assigned for the week — by account, with their days and hours.'
               : tab === 1
-                ? 'Workers on ongoing, open-ended assignments — your full-time crew.'
-                : 'Weekly trends — hours, workers, and full-timers over the last 12 weeks.'}
+                ? 'Workers on career assignments — ongoing, open-ended placements.'
+                : 'Weekly trends — hours, workers, and career assignments over the last 12 weeks.'}
           </Typography>
         </Box>
         {tab === 0 && (
@@ -825,7 +825,7 @@ const WhosWorkingPage: React.FC = () => {
 
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mt: 1, borderBottom: 1, borderColor: 'divider' }}>
         <Tab label="Who's Working" />
-        <Tab label="Full-time Workers" />
+        <Tab label="Career Assignments" />
         <Tab label="Metrics" />
       </Tabs>
 
@@ -1046,11 +1046,11 @@ const WhosWorkingPage: React.FC = () => {
       ) : ongoing.length === 0 ? (
         <Paper variant="outlined" sx={{ mt: 2, p: 4, textAlign: 'center' }}>
           <Typography variant="subtitle1" fontWeight={600}>
-            No ongoing assignments yet
+            No career assignments yet
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Workers appear here when they're placed on an open-ended assignment — a standing
-            weekly schedule or an open shift with no end date.
+            Workers appear here when they're placed on a career job order — an ongoing
+            assignment with no end date.
           </Typography>
         </Paper>
       ) : (
@@ -1323,8 +1323,8 @@ const WhosWorkingPage: React.FC = () => {
             data={metricSeries.workers}
           />
           <MetricChart
-            title="Full-time workers"
-            caption="Workers on an ongoing, open-ended assignment active that week."
+            title="Career workers"
+            caption="Workers on a career (ongoing, open-ended) assignment active that week."
             data={metricSeries.ftWorkers}
           />
           <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>

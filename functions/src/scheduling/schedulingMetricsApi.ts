@@ -75,7 +75,11 @@ function hoursBetween(startTime: unknown, endTime: unknown): number {
 function isOngoingDoc(a: FirebaseFirestore.DocumentData): boolean {
   const noEnd = !(typeof a.endDate === 'string' && a.endDate.trim().length > 0);
   const hasWs = a.weeklySchedule && Object.keys(a.weeklySchedule).length > 0;
-  return noEnd && (a.isOpenShift === true || a.noFixedTimes === true || Boolean(hasWs));
+  // Career JOs are the canonical "full-time" signal (Greg, 2026-07-20);
+  // the schedule/open-shift flags remain as fallback for legacy docs
+  // that predate the jobOrderType denorm.
+  const isCareer = String(a.jobOrderType ?? '') === 'career';
+  return noEnd && (isCareer || a.isOpenShift === true || a.noFixedTimes === true || Boolean(hasWs));
 }
 
 /** Per-(account, week) accumulator. Account '' = tenant totals. */

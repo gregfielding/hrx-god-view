@@ -139,7 +139,8 @@ export const completeStaleAssignments = onCall(
       // = a live full-timer, not a stale row — same rule the sweep applies.
       const isOngoing =
         !asIso(a.endDate) &&
-        (a.isOpenShift === true ||
+        (String(a.jobOrderType ?? '') === 'career' ||
+        a.isOpenShift === true ||
           a.noFixedTimes === true ||
           (a.weeklySchedule && Object.keys(a.weeklySchedule).length > 0));
       const dateStale = !isOngoing && Boolean(effEnd && effEnd < today);

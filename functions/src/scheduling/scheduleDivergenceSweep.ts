@@ -177,7 +177,8 @@ export async function computeTenantDivergence(tenantId: string): Promise<TenantD
     // auto-ended them (found 9/10 ongoing assignments wrongly ended, 2026-07-20).
     const isOngoing =
       !asIso(a.endDate) &&
-      (a.isOpenShift === true ||
+      (String(a.jobOrderType ?? '') === 'career' ||
+        a.isOpenShift === true ||
         a.noFixedTimes === true ||
         (a.weeklySchedule && Object.keys(a.weeklySchedule).length > 0));
     if (!isOngoing && effEnd && effEnd < staleBefore) {
