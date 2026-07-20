@@ -2066,10 +2066,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       // cards show who's on every shift. Assignment rows win over placement
       // rows for the same (shift, worker); cancelled assignments drop out.
       const rosters = new Map<string, Map<string, ShiftRosterEntry>>();
-      const upsertRoster = (sid: string, uid: string, entry: ShiftRosterEntry, force: boolean) => {
+      const levelRank = { confirmed: 0, accepted: 1, placed: 2 } as const;
+      // Merge keeps the STRONGEST level per (shift, worker). Multi-day gigs
+      // carry one assignment doc per day — a worker confirmed for Thursday
+      // but pending Fri–Sun must read as confirmed, not whichever day's doc
+      // the snapshot happened to deliver last (2026-07-19 board fix: header
+      // said "16 confirmed", strip showed 3 green).
+      const upsertRoster = (sid: string, uid: string, entry: ShiftRosterEntry) => {
         let m = rosters.get(sid);
         if (!m) rosters.set(sid, (m = new Map()));
-        if (force || !m.has(uid)) m.set(uid, entry);
+        const existing = m.get(uid);
+        if (!existing || levelRank[entry.level] < levelRank[existing.level]) {
+          m.set(uid, { ...entry, name: entry.name || existing?.name || '' });
+        } else if (!existing.name && entry.name) {
+          m.set(uid, { ...existing, name: entry.name });
+        }
       };
       allShiftsRowsRef.current.forEach((rows) => {
         rows.forEach((r) => {
@@ -2081,14 +2092,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               st === 'confirmed' || st === 'active' || st === 'in_progress'
                 ? 'confirmed'
                 : 'accepted';
-            upsertRoster(r.shiftId, r.userId, { userId: r.userId, name: r.name || '', level }, true);
+            upsertRoster(r.shiftId, r.userId, { userId: r.userId, name: r.name || '', level });
           } else {
-            upsertRoster(r.shiftId, r.userId, { userId: r.userId, name: r.name || '', level: 'placed' }, false);
+            upsertRoster(r.shiftId, r.userId, { userId: r.userId, name: r.name || '', level: 'placed' });
           }
         });
       });
       const rosterArrays = new Map<string, ShiftRosterEntry[]>();
-      const levelRank = { confirmed: 0, accepted: 1, placed: 2 } as const;
       rosters.forEach((m, sid) => {
         rosterArrays.set(
           sid,
