@@ -1050,6 +1050,7 @@ const Layout: React.FC = function Layout() {
       'Jobs': <WorkIcon />,
       'Finances and Budgeting': <BarChartIcon />,
       'Onboarding': <HowToRegIcon />,
+      'Active Assignments': <HowToRegIcon />,
       'Workforce': <SpeedIcon />,
       'Users': <GroupsIcon />,
       'Accounts': <AccountBalanceIcon />,
