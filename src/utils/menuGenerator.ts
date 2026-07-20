@@ -285,6 +285,13 @@ export async function generateMenuItems(
         icon: 'fact_check',
         accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
       }]),
+      // Who's Working: the weekly assignment report (levels 5, 6, 7)
+      ...([{
+        text: "Who's Working",
+        to: '/whos-working',
+        icon: 'groups',
+        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
+      }]),
       // Finances & Budgeting: internal team (security levels 5, 6, 7)
       ...([{
         text: 'Finances and Budgeting',

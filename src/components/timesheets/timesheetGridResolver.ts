@@ -433,6 +433,8 @@ export function periodFromFilter(filter: TimesheetFilter): PeriodRange | null {
   switch (filter.kind) {
     case 'entity_period':
       return { start: filter.periodStart, end: filter.periodEnd };
+    case 'tenant_period':
+      return { start: filter.periodStart, end: filter.periodEnd };
     case 'worker':
       return { start: filter.periodStart, end: filter.periodEnd };
     case 'account':
@@ -521,6 +523,49 @@ export async function resolveTimesheetGrid(
         ...(d.data() as Assignment),
         id: d.id,
       }));
+    } else if (filter.kind === 'tenant_period') {
+      // Tenant-wide week view (Who's Working report). Four single-field
+      // queries — all served by Firestore's automatic indexes, no
+      // composite needed:
+      //   1. startDate within [period.start − 14d, period.end] — catches
+      //      every per-day doc in the week (the dominant shape) plus
+      //      finite multi-day docs starting up to two weeks earlier
+      //      (observed max span in prod is 8 days).
+      //   2. endDate within the period — belt for a finite multi-day doc
+      //      that started before the look-back but ends in the week.
+      //   3+4. Open-shift / standing-crew flags — those CAN run for
+      //      months and would slip past both date ranges when they span
+      //      the whole week.
+      // The overlap filter below prunes the union to the period.
+      const lookback = new Date(`${period.start}T00:00:00`);
+      lookback.setDate(lookback.getDate() - 14);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const lookbackIso = `${lookback.getFullYear()}-${pad(lookback.getMonth() + 1)}-${pad(lookback.getDate())}`;
+      const snaps = await Promise.all([
+        getDocs(
+          query(
+            assignmentsCol,
+            where('startDate', '>=', lookbackIso),
+            where('startDate', '<=', period.end),
+          ),
+        ),
+        getDocs(
+          query(
+            assignmentsCol,
+            where('endDate', '>=', period.start),
+            where('endDate', '<=', period.end),
+          ),
+        ),
+        getDocs(query(assignmentsCol, where('isOpenShift', '==', true))),
+        getDocs(query(assignmentsCol, where('noFixedTimes', '==', true))),
+      ]);
+      const byId = new Map<string, Assignment & { id: string }>();
+      for (const snap of snaps) {
+        for (const d of snap.docs) {
+          byId.set(d.id, { ...(d.data() as Assignment), id: d.id });
+        }
+      }
+      rawAssignments = Array.from(byId.values());
     } else {
       // account / shift — periodFromFilter already returned null for
       // shift; account filtering needs a JO→assignment join we haven't
@@ -701,9 +746,16 @@ export async function resolveTimesheetGrid(
   // no assignment, so the assignment-driven pass above never surfaces them.
   // Query them directly for the period and synthesize a row each, so the Grid
   // is the single source of truth — paid AND blocked import rows both show.
-  const importHiringEntityId =
-    filter.kind === 'entity_period' ? filter.hiringEntityId : null;
-  if (importHiringEntityId) {
+  // The (source, hiringEntityId, workDate) composite index requires an
+  // entity-scoped query, so tenant_period enumerates its entity ids and
+  // runs one query each.
+  const importHiringEntityIds =
+    filter.kind === 'entity_period'
+      ? [filter.hiringEntityId]
+      : filter.kind === 'tenant_period'
+        ? filter.hiringEntityIds ?? []
+        : [];
+  for (const importHiringEntityId of importHiringEntityIds) {
     try {
       const importSnap = await getDocs(
         query(

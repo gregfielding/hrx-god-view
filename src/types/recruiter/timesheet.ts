@@ -493,6 +493,15 @@ export type TimesheetFilter =
       accountId: string;
       periodStart: string;
       periodEnd: string;
+    }
+  | {
+      kind: 'tenant_period';
+      periodStart: string;
+      periodEnd: string;
+      /** Hiring-entity ids whose CSV-import entries should be included.
+       *  The (source, hiringEntityId, workDate) composite index requires
+       *  an entity-scoped query, so tenant-wide views must enumerate. */
+      hiringEntityIds?: string[];
     };
 
 export interface TimesheetTotals {
