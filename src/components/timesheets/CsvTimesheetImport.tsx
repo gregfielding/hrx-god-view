@@ -100,6 +100,8 @@ interface MatchRowResult {
   workersCompCode: string | null;
   workersCompRate: number | null;
   payRate: number | null;
+  /** Bill rate from the same resolution chain (assignment → shift → JO). */
+  billRate: number | null;
   payRateSource: 'assignment' | 'site_mapping' | 'none';
   workersCompSource: 'assignment' | 'site_mapping' | 'account' | 'none';
   worksiteSource: 'assignment' | 'site_mapping' | 'account' | 'none';
@@ -121,6 +123,7 @@ interface WorkerSuggestion {
 /** Inline, manually-entered overrides for a row's Everee-bound fields. */
 interface RowOverride {
   payRate?: number;
+  billRate?: number;
   workersCompCode?: string;
   workersCompRate?: number;
 }
@@ -141,6 +144,7 @@ interface JobOrderOption {
   state: string;
   zip: string;
   payRate: number | null;
+  billRate: number | null;
   workersCompCode: string | null;
   workersCompRate: number | null;
   label: string;        // single line shown once selected
@@ -439,6 +443,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               const key = `${d.id}::${jobTitle.toLowerCase()}`;
               if (byId.has(key)) return;
               const payRate = num(pos.payRate, jo.payRate);
+              const billRate = num(pos.billRate, jo.billRate);
               const workersCompCode = str(
                 pos.workersCompCode,
                 pos.workersCompClassCode,
@@ -462,6 +467,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 state,
                 zip,
                 payRate,
+                billRate,
                 workersCompCode,
                 workersCompRate,
                 label: `${jobOrderNumber ? `#${jobOrderNumber} ` : ''}${primary}${jobTitle && jobTitle !== title ? ` · ${jobTitle}` : ''}${accountName ? ` — ${accountName}` : ''}`,
@@ -518,6 +524,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           if (r.status !== 'importable' || (r.site || '').trim().toLowerCase() !== siteNorm) return;
           const ov = { ...(next.get(r.rowIndex) || {}) };
           if (jo.payRate != null) ov.payRate = jo.payRate;
+          if (jo.billRate != null) ov.billRate = jo.billRate;
           if (jo.workersCompCode) ov.workersCompCode = jo.workersCompCode;
           if (jo.workersCompRate != null) ov.workersCompRate = jo.workersCompRate;
           next.set(r.rowIndex, ov);
@@ -894,12 +901,19 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     const resolved = Number(match?.payRate) > 0 ? (match!.payRate as number) : null;
     const payRateCarried = o.payRate == null && resolved == null && carried != null;
     const payRate = o.payRate != null ? o.payRate : resolved != null ? resolved : carried ?? null;
+    const billRate =
+      o.billRate != null
+        ? o.billRate
+        : Number(match?.billRate) > 0
+          ? (match!.billRate as number)
+          : null;
     const workersCompCode =
       o.workersCompCode != null ? o.workersCompCode : match?.workersCompCode ?? null;
     const workersCompRate =
       o.workersCompRate != null ? o.workersCompRate : match?.workersCompRate ?? null;
     return {
       payRate,
+      billRate,
       workersCompCode,
       workersCompRate,
       needsPayRate: !(Number(payRate) > 0),
@@ -1494,7 +1508,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           payRate: eff.payRate,
           workersCompCode: is1099Entity ? null : eff.workersCompCode,
           workersCompRate: is1099Entity ? null : eff.workersCompRate,
-          billRate: r.billRate ?? null,
+          // A bill column in the customer's CSV is authoritative;
+          // otherwise use the venue-JO-resolved rate.
+          billRate: r.billRate ?? eff.billRate ?? null,
           payRateSource: typedRate ? 'typed' : eff.payRateCarried ? 'carried' : m.payRateSource,
           workersCompSource: typedWc ? 'typed' : m.workersCompSource,
           worksiteSource: worksiteOverridden ? 'manual' : m.worksiteSource,

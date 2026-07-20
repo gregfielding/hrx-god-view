@@ -100,6 +100,11 @@ interface MatchRowResult {
   /** WC rate — internal billing figure (C1 Select); NOT sent to Everee. */
   workersCompRate: number | null;
   payRate: number | null;
+  /** Client-billing rate from the same resolution chain (assignment →
+   *  shift → JO position → JO). Import rows are worker-anchored with no
+   *  assignment, so without this every imported hour reported $0 billed
+   *  in the money views even when the venue's JO had a bill rate. */
+  billRate: number | null;
   /** Where the resolved pay context came from. */
   payRateSource: 'assignment' | 'site_mapping' | 'none';
   /** Provenance of WC + worksite (assignment/JO = exact, site_mapping =
@@ -347,6 +352,7 @@ function resolveJobOrderFields(
   role: string,
 ): {
   payRate: number;
+  billRate: number;
   jobTitle: string | null;
   worksiteId: string | null;
   worksiteName: string | null;
@@ -374,10 +380,17 @@ function resolveJobOrderFields(
       : Number(jo.payRate) > 0
         ? Number(jo.payRate)
         : 0;
+  const billRate =
+    Number(pos?.billRate) > 0
+      ? Number(pos.billRate)
+      : Number(jo.billRate) > 0
+        ? Number(jo.billRate)
+        : 0;
   const firstGig =
     Array.isArray(jo.gigPositions) && jo.gigPositions.length > 0 ? jo.gigPositions[0] : null;
   return {
     payRate,
+    billRate,
     jobTitle: pickStr(pos?.jobTitle, jo.jobTitle, role) ?? null,
     worksiteId: pickStr(jo.worksiteId, jo.locationId) ?? null,
     worksiteName: pickStr(jo.worksiteName, jo.locationName) ?? null,
@@ -613,6 +626,7 @@ export const importTimesheetMatchWorkers = onCall(
         workersCompCode: f.workersCompCode,
         workersCompRate: f.workersCompRate,
         payRate: f.payRate || null,
+        billRate: f.billRate || null,
         workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
         worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
       };
@@ -759,6 +773,7 @@ export const importTimesheetMatchWorkers = onCall(
         workersCompCode: f.workersCompCode,
         workersCompRate: f.workersCompRate,
         payRate: f.payRate || null,
+        billRate: f.billRate || null,
         workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
         worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
       };
@@ -848,6 +863,7 @@ export const importTimesheetMatchWorkers = onCall(
           workersCompCode: f.workersCompCode,
           workersCompRate: f.workersCompRate,
           payRate: f.payRate || null,
+          billRate: f.billRate || null,
           workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
           worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
         };
@@ -1277,6 +1293,7 @@ export const importTimesheetMatchWorkers = onCall(
       workersCompCode: null,
       workersCompRate: null,
       payRate: null,
+      billRate: null,
       payRateSource: 'none' as const,
       workersCompSource: 'none' as const,
       worksiteSource: 'none' as const,
@@ -1415,11 +1432,20 @@ export const importTimesheetMatchWorkers = onCall(
           : Number(jo?.payRate) > 0
             ? Number(jo?.payRate)
             : 0;
+      const billRate =
+        Number(assignment.billRate) > 0
+          ? Number(assignment.billRate)
+          : Number(shift?.billRate) > 0
+            ? Number(shift?.billRate)
+            : Number(jo?.billRate) > 0
+              ? Number(jo?.billRate)
+              : 0;
       // Resolve from assignment/shift/JO, then backfill any gaps (WC code/rate,
       // worksite address) from the child account.
       const accountId = pickStr(jo?.recruiterAccountId, jo?.accountId, assignment.accountId);
       const { fields: f, filledWorksite, filledWc } = await backfillFromAccount(accountId, {
         payRate,
+        billRate,
         jobTitle: pickStr(assignment.jobTitle, shift?.defaultJobTitle, jo?.jobTitle) ?? null,
         worksiteId: pickStr(jo?.worksiteId, jo?.locationId) ?? null,
         worksiteName: pickStr(jo?.worksiteName, jo?.locationName) ?? null,
@@ -1451,6 +1477,7 @@ export const importTimesheetMatchWorkers = onCall(
         workersCompCode: f.workersCompCode,
         workersCompRate: f.workersCompRate,
         payRate: payRate || null,
+        billRate: billRate || null,
         payRateSource: payRate > 0 ? 'assignment' : 'none',
         workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'assignment') : 'none',
         worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'assignment') : 'none',
