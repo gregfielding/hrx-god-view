@@ -192,7 +192,21 @@ export const getSchedulingMetrics = onCall(
         const e = doc.data() || {};
         const w = weekIndexOf(typeof e.workDate === 'string' ? e.workDate.slice(0, 10) : '');
         if (w < 0) continue;
-        const h = Number(e.hours) > 0 ? Number(e.hours) : 0;
+        // Import entries carry computed hour buckets, not a flat `hours`
+        // field (reading `e.hours` counted every import week as 0 —
+        // caught by Greg's 2026-07-20 sanity question).
+        const bucketed =
+          (Number(e.totalRegularHours) || 0) +
+          (Number(e.totalOTHours) || 0) +
+          (Number(e.totalDoubleTimeHours) || 0);
+        const h =
+          bucketed > 0
+            ? bucketed
+            : Number(e.actualHoursOverride) > 0
+              ? Number(e.actualHoursOverride)
+              : Number(e.hours) > 0
+                ? Number(e.hours)
+                : 0;
         const workerId = String(e.workerId ?? '') || null;
         // eslint-disable-next-line no-await-in-loop
         const acct = await joAccount(String(e.jobOrderId ?? ''));
