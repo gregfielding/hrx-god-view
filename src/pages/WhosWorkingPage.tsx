@@ -161,11 +161,17 @@ interface BuilderSuggestion {
 }
 
 /** Weekly metrics — shape mirrors the getSchedulingMetrics callable. */
+type MetricSeries = Array<{ hours: number; workers: number; ftWorkers: number }>;
 interface MetricsPayload {
   weeks: Array<{ start: string; end: string; label: string }>;
   accounts: string[];
-  totals: Array<{ hours: number; workers: number; ftWorkers: number }>;
-  byAccount: Record<string, Array<{ hours: number; workers: number; ftWorkers: number }>>;
+  totals: MetricSeries;
+  byAccount: Record<string, MetricSeries>;
+  entities: Array<{ id: string; name: string }>;
+  byEntity: Record<
+    string,
+    { accounts: string[]; totals: MetricSeries; byAccount: Record<string, MetricSeries> }
+  >;
 }
 
 /** Single-series chart hue — categorical slot 1 of the validated default
@@ -523,9 +529,26 @@ const WhosWorkingPage: React.FC = () => {
   const [period, setPeriod] = useState<PeriodRange>(() => currentWeeklyPeriod(0, 6));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [groups, setGroups] = useState<AccountGroup[]>([]);
-  const [ot, setOt] = useState<OtEstimate>({ workersOver40: 0, estimatedOtHours: 0 });
+  const [weekRows, setWeekRows] = useState<TimesheetGridRow[]>([]);
+  const [weekJoNames, setWeekJoNames] = useState<Map<string, JoNames>>(new Map());
+  const [entityOptions, setEntityOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [rowCount, setRowCount] = useState(0);
+  // Week-view filters (Greg, 2026-07-20): entity + account, both optional.
+  const [wwEntity, setWwEntity] = useState<string>('');
+  const [wwAccount, setWwAccount] = useState<string>('');
+
+  const built = useMemo(() => {
+    const rows = wwEntity
+      ? weekRows.filter((r) => r.assignment.hiringEntityId === wwEntity)
+      : weekRows;
+    return buildGroups(rows, weekJoNames);
+  }, [weekRows, weekJoNames, wwEntity]);
+  const wwAccountOptions = useMemo(() => built.groups.map((g) => g.label), [built]);
+  const groups = useMemo(
+    () => (wwAccount ? built.groups.filter((g) => g.label === wwAccount) : built.groups),
+    [built, wwAccount],
+  );
+  const ot = built.ot;
   const [showMoney, setShowMoney] = useState<boolean>(
     () => localStorage.getItem(SHOW_MONEY_KEY) === '1',
   );
@@ -556,6 +579,7 @@ const WhosWorkingPage: React.FC = () => {
   const [metrics, setMetrics] = useState<MetricsPayload | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsAccount, setMetricsAccount] = useState<string>('');
+  const [metricsEntity, setMetricsEntity] = useState<string>('');
 
   useEffect(() => {
     if (tab !== 2 || metrics !== null || !tenantId) return;
@@ -563,20 +587,33 @@ const WhosWorkingPage: React.FC = () => {
     const fn = httpsCallable(functions, 'getSchedulingMetrics');
     fn({ tenantId, weeks: 12 })
       .then((res) => setMetrics(res.data as MetricsPayload))
-      .catch(() => setMetrics({ weeks: [], accounts: [], totals: [], byAccount: {} }))
+      .catch(() =>
+        setMetrics({ weeks: [], accounts: [], totals: [], byAccount: {}, entities: [], byEntity: {} }),
+      )
       .finally(() => setMetricsLoading(false));
   }, [tab, metrics, tenantId]);
 
+  /** Accounts valid for the selected entity (drives the Account options). */
+  const metricsAccountOptions = useMemo(() => {
+    if (!metrics) return [];
+    return metricsEntity
+      ? metrics.byEntity?.[metricsEntity]?.accounts ?? []
+      : metrics.accounts;
+  }, [metrics, metricsEntity]);
+
   const metricSeries = useMemo(() => {
     if (!metrics) return null;
-    const src = metricsAccount ? metrics.byAccount[metricsAccount] ?? [] : metrics.totals;
+    const scope = metricsEntity
+      ? metrics.byEntity?.[metricsEntity] ?? { totals: [], byAccount: {} }
+      : metrics;
+    const src = metricsAccount ? scope.byAccount[metricsAccount] ?? [] : scope.totals;
     const point = (i: number) => src[i] ?? { hours: 0, workers: 0, ftWorkers: 0 };
     return {
       hours: metrics.weeks.map((w, i) => ({ label: w.label, value: point(i).hours })),
       workers: metrics.weeks.map((w, i) => ({ label: w.label, value: point(i).workers })),
       ftWorkers: metrics.weeks.map((w, i) => ({ label: w.label, value: point(i).ftWorkers })),
     };
-  }, [metrics, metricsAccount]);
+  }, [metrics, metricsAccount, metricsEntity]);
 
   const openWorker = useCallback((target: AssignmentDrawerTarget) => {
     setDrawerTarget(target);
@@ -686,6 +723,12 @@ const WhosWorkingPage: React.FC = () => {
       // index is entity-scoped). Small list; loaded fresh per view.
       const entitiesSnap = await getDocs(collection(db, 'tenants', tenantId, 'entities'));
       const hiringEntityIds = entitiesSnap.docs.map((d) => d.id);
+      setEntityOptions(
+        entitiesSnap.docs.map((d) => ({
+          id: d.id,
+          name: String((d.data() as { name?: unknown }).name ?? d.id),
+        })),
+      );
 
       const resolution = await resolveTimesheetGrid({
         fdb: db,
@@ -742,9 +785,8 @@ const WhosWorkingPage: React.FC = () => {
         }),
       );
 
-      const built = buildGroups(resolution.rows, joNames);
-      setGroups(built.groups);
-      setOt(built.ot);
+      setWeekRows(resolution.rows);
+      setWeekJoNames(joNames);
       setRowCount(resolution.rows.length);
       if (resolution.errors.length > 0) {
         // Non-fatal resolver warnings — surface the first so data gaps
@@ -753,7 +795,7 @@ const WhosWorkingPage: React.FC = () => {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      setGroups([]);
+      setWeekRows([]);
     } finally {
       setLoading(false);
     }
@@ -831,6 +873,44 @@ const WhosWorkingPage: React.FC = () => {
 
       {tab === 0 && (
       <>
+      <Stack direction="row" spacing={1.5} sx={{ mt: 2 }} flexWrap="wrap" useFlexGap>
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel id="ww-entity-label">Entity</InputLabel>
+          <Select
+            labelId="ww-entity-label"
+            label="Entity"
+            value={wwEntity}
+            onChange={(e) => {
+              setWwEntity(e.target.value);
+              setWwAccount('');
+            }}
+          >
+            <MenuItem value="">All entities</MenuItem>
+            {entityOptions.map((ent) => (
+              <MenuItem key={ent.id} value={ent.id}>
+                {ent.name}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <FormControl size="small" sx={{ minWidth: 220 }}>
+          <InputLabel id="ww-account-label">Account</InputLabel>
+          <Select
+            labelId="ww-account-label"
+            label="Account"
+            value={wwAccount}
+            onChange={(e) => setWwAccount(e.target.value)}
+          >
+            <MenuItem value="">All accounts</MenuItem>
+            {wwAccountOptions.map((a) => (
+              <MenuItem key={a} value={a}>
+                {a}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      </Stack>
+
       {/* Week summary strip */}
       <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
         <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
@@ -1293,7 +1373,26 @@ const WhosWorkingPage: React.FC = () => {
         </Stack>
       ) : (
         <>
-          <Stack direction="row" sx={{ mt: 2 }}>
+          <Stack direction="row" spacing={1.5} sx={{ mt: 2 }} flexWrap="wrap" useFlexGap>
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel id="metrics-entity-label">Entity</InputLabel>
+              <Select
+                labelId="metrics-entity-label"
+                label="Entity"
+                value={metricsEntity}
+                onChange={(e) => {
+                  setMetricsEntity(e.target.value);
+                  setMetricsAccount('');
+                }}
+              >
+                <MenuItem value="">All entities</MenuItem>
+                {(metrics?.entities ?? []).map((ent) => (
+                  <MenuItem key={ent.id} value={ent.id}>
+                    {ent.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <FormControl size="small" sx={{ minWidth: 220 }}>
               <InputLabel id="metrics-account-label">Account</InputLabel>
               <Select
@@ -1303,7 +1402,7 @@ const WhosWorkingPage: React.FC = () => {
                 onChange={(e) => setMetricsAccount(e.target.value)}
               >
                 <MenuItem value="">All accounts</MenuItem>
-                {(metrics?.accounts ?? []).map((a) => (
+                {metricsAccountOptions.map((a) => (
                   <MenuItem key={a} value={a}>
                     {a}
                   </MenuItem>
