@@ -66,10 +66,16 @@ export const endAssignment = onCall(
     const assignmentId = String(request.data?.assignmentId ?? '');
     const endDate = String(request.data?.endDate ?? '');
     const reason = String(request.data?.reason ?? '').trim();
+    // mode 'delete' = "this never happened": the worker was recorded here
+    // but never actually worked (e.g. the real hire went through Indeed
+    // Flex and HRX was never corrected). Erases the whole family + its
+    // placement markers. Refused when timesheet entries exist — that
+    // means they DID work, and 'end' is the correct tool.
+    const mode = request.data?.mode === 'delete' ? 'delete' : 'end';
     if (!tenantId || !assignmentId) {
       throw new HttpsError('invalid-argument', 'tenantId and assignmentId are required');
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+    if (mode === 'end' && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
       throw new HttpsError('invalid-argument', 'endDate must be YYYY-MM-DD');
     }
     await assertRecruiter(request, tenantId);
@@ -97,12 +103,66 @@ export const endAssignment = onCall(
     }
     if (docs.length === 0) docs = [snap as FirebaseFirestore.QueryDocumentSnapshot];
 
+    if (mode === 'delete') {
+      // Safety rail: hours on the books = they worked = not deletable.
+      for (const d of docs) {
+        // eslint-disable-next-line no-await-in-loop
+        const entries = await db
+          .collection(`tenants/${tenantId}/timesheet_entries`)
+          .where('assignmentId', '==', d.id)
+          .limit(1)
+          .get();
+        if (!entries.empty) {
+          throw new HttpsError(
+            'failed-precondition',
+            'This worker has timesheet entries on this assignment — they worked here. ' +
+              'Use "End assignment" instead of deleting.',
+          );
+        }
+      }
+      let deleted = 0;
+      for (const d of docs) {
+        // eslint-disable-next-line no-await-in-loop
+        await d.ref.delete();
+        deleted += 1;
+      }
+      // Erase the pre-offer placement markers too (both id formats share
+      // the `${shiftId}__${userId}` prefix).
+      let placementsDeleted = 0;
+      if (shiftId && userId) {
+        const prefix = `${shiftId}__${userId}`;
+        const placements = await db
+          .collection(`tenants/${tenantId}/placements`)
+          .where(admin.firestore.FieldPath.documentId(), '>=', prefix)
+          .where(admin.firestore.FieldPath.documentId(), '<', `${prefix}\uf8ff`)
+          .get();
+        for (const p of placements.docs) {
+          // eslint-disable-next-line no-await-in-loop
+          await p.ref.delete();
+          placementsDeleted += 1;
+        }
+      }
+      logger.info('[endAssignment] deleted (never worked)', {
+        tenantId,
+        assignmentId,
+        familySize: docs.length,
+        deleted,
+        placementsDeleted,
+        reason: reason || null,
+        by: request.auth!.uid,
+      });
+      return { success: true, mode: 'delete', deleted, placementsDeleted };
+    }
+
     const today = todayUtcIso();
     const stamp = {
       endedAsOf: endDate,
       endedReason: reason || 'ended by recruiter',
       endedBy: request.auth!.uid,
       endedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // Every assignment notifier honors this flag — ending is silent
+      // cleanup, never a worker-facing event (Greg, 2026-07-20).
+      notificationsSuppressed: true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedBy: request.auth!.uid,
     };

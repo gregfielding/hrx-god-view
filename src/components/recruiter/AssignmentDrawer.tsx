@@ -22,6 +22,11 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   Drawer,
   IconButton,
@@ -30,6 +35,7 @@ import {
   Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import EventBusyIcon from '@mui/icons-material/EventBusy';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { useNavigate } from 'react-router-dom';
@@ -91,6 +97,8 @@ const AssignmentDrawer: React.FC<{
   const [reason, setReason] = useState('');
   const [ending, setEnding] = useState(false);
   const [endedMsg, setEndedMsg] = useState<string | null>(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     if (!target || !tenantId) return;
@@ -184,6 +192,33 @@ const AssignmentDrawer: React.FC<{
     const today = todayIsoLocal();
     return live.filter((f) => f.startDate >= today && f.startDate === (f.endDate || f.startDate));
   }, [live]);
+
+  const handleDelete = async () => {
+    if (!target || !primary) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      const fn = httpsCallable(functions, 'endAssignment');
+      const res = await fn({
+        tenantId,
+        assignmentId: target.assignmentId || primary.id,
+        mode: 'delete',
+        reason: reason.trim() || undefined,
+      });
+      const data = res.data as { deleted?: number };
+      setConfirmDeleteOpen(false);
+      setEndedMsg(
+        `Assignment deleted — ${data.deleted ?? 0} record${(data.deleted ?? 0) === 1 ? '' : 's'} removed as if it never happened. Use Open in Placements to add the correct worker.`,
+      );
+      onEnded();
+      void load();
+    } catch (err) {
+      setConfirmDeleteOpen(false);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleEnd = async () => {
     if (!target || !primary) return;
@@ -339,6 +374,50 @@ const AssignmentDrawer: React.FC<{
                 End assignment
               </Button>
             </Stack>
+
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="subtitle2" fontWeight={700} gutterBottom>
+              Never actually worked here?
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+              If this assignment was a mistake — the real hire happened elsewhere and HRX was
+              never updated — delete it entirely, then add the correct worker from Placements.
+            </Typography>
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<DeleteForeverIcon />}
+              disabled={deleting || !primary || Boolean(endedMsg)}
+              onClick={() => setConfirmDeleteOpen(true)}
+            >
+              Delete this assignment
+            </Button>
+
+            <Dialog open={confirmDeleteOpen} onClose={() => setConfirmDeleteOpen(false)}>
+              <DialogTitle>Delete {target?.workerName}'s assignment?</DialogTitle>
+              <DialogContent>
+                <DialogContentText>
+                  This erases every record of this assignment — as if it never happened. Use it
+                  only when {target?.workerName} never actually worked here. If they have hours on
+                  a timesheet, deleting is blocked and you should use End assignment instead. This
+                  can't be undone, and no text goes out.
+                </DialogContentText>
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setConfirmDeleteOpen(false)}>Keep it</Button>
+                <Button
+                  color="error"
+                  variant="contained"
+                  startIcon={
+                    deleting ? <CircularProgress size={16} color="inherit" /> : <DeleteForeverIcon />
+                  }
+                  disabled={deleting}
+                  onClick={handleDelete}
+                >
+                  Delete forever
+                </Button>
+              </DialogActions>
+            </Dialog>
             {endedMsg && (
               <Alert severity="success" sx={{ mt: 2 }}>
                 {endedMsg}
