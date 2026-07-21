@@ -61,6 +61,17 @@ function next8amLocal(tz: string): Date {
   return new Date(now.getTime() + msUntil8);
 }
 
+/**
+ * Greg, 2026-07-21: no worker-facing cancel notices AT ALL for Flex
+ * cancels — Indeed already notifies its workers in its own app, so an
+ * HRX text on top is redundant noise. Cancel applies always stamp
+ * notificationsSuppressed and skip the 8am deferred-notice queue.
+ * Flip this to true to resume the quiet-hours notices (the
+ * schedulingQuietHoursNotifier cron + deferred_notices queue are still
+ * deployed and will pick right back up).
+ */
+const SEND_CANCEL_NOTICES = false;
+
 export async function applyShiftRequestCore(
   tenantId: string,
   requestId: string,
@@ -68,8 +79,9 @@ export async function applyShiftRequestCore(
   options?: {
     /** Quiet hours (Greg, 2026-07-19): suppress the immediate worker
      *  cancellation push/SMS and queue a deferred notice for 8am
-     *  worksite-local instead. Used by the overnight AI triage; recruiter
-     *  clicks stay immediate. */
+     *  worksite-local instead. Used by the overnight AI triage.
+     *  2026-07-21: moot for cancel_booking while SEND_CANCEL_NOTICES is
+     *  false — cancels are always fully silent. */
     quietNotifications?: boolean;
   },
 ): Promise<Record<string, unknown>> {
@@ -132,21 +144,22 @@ export async function applyShiftRequestCore(
         skipped.push({ id: assignmentId, reason: `already ${status}` });
         continue;
       }
-      // Flip first so the standard cancellation notification fires…
-      // (quiet mode suppresses it — same notificationsSuppressed contract
-      // separateWorker uses — and queues an 8am-worksite-local notice.)
+      // Flip, then hard-delete. notificationsSuppressed is ALWAYS
+      // stamped (Greg, 2026-07-21): Indeed Flex tells its workers about
+      // cancels in its own app, so HRX push/SMS on a Flex cancel is
+      // redundant noise. Same suppression contract separateWorker uses.
       await aRef.update({
         status: 'cancelled',
         cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
         canceledBy: actor,
         cancellationReason: 'Indeed Flex booking removed (portal sync)',
-        ...(quiet ? { notificationsSuppressed: true } : {}),
+        notificationsSuppressed: true,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       // …then hard-delete so no grid/live query can ever resurface it.
       await aRef.delete();
       cancelled.push(assignmentId);
-      if (quiet && String(a.userId ?? '')) {
+      if (SEND_CANCEL_NOTICES && quiet && String(a.userId ?? '')) {
         const tz = STATE_TZ[String(a.worksiteState ?? '').toUpperCase()] ?? 'America/Los_Angeles';
         const title = 'Shift Cancelled';
         const shiftName = String(a.jobTitle ?? a.shiftTitle ?? 'your shift');
