@@ -1036,7 +1036,8 @@
   "jobs": {
     "title": "Trabajos",
     "applyNow": "Aplicar",
-    "applyForShift": "Solicitar este turno",
+    "applyForShift": "Puedo trabajar este turno",
+    "invitedBanner": "Te invitaron a solicitar este turno. Las primeras solicitudes calificadas se confirman: te enviaremos un mensaje de texto en cuanto estés confirmado.",
     "reapplyToShift": "Volver a solicitar turno",
     "shiftRequested": "Turno solicitado",
     "shiftFull": "Lleno",

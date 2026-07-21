@@ -1036,7 +1036,8 @@
   "jobs": {
     "title": "Jobs",
     "applyNow": "Apply",
-    "applyForShift": "Apply for Shift",
+    "applyForShift": "I Can Work This Shift",
+    "invitedBanner": "You've been invited to request this shift. First qualified requests get confirmed — we'll text you as soon as you're confirmed.",
     "reapplyToShift": "Re-apply to Shift",
     "shiftRequested": "Shift Requested",
     "shiftFull": "Full",

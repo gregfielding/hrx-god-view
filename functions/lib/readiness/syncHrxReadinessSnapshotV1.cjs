@@ -821,7 +821,8 @@ function getWorkAuthorizedStatus(user) {
   const u = user;
   const attestation = u.workEligibilityAttestation;
   if (attestation != null && typeof attestation === "object" && typeof attestation.authorizedToWorkUS === "boolean") {
-    return attestation.authorizedToWorkUS ? "yes" : "no";
+    if (attestation.authorizedToWorkUS) return "yes";
+    if (typeof attestation.requireSponsorship === "boolean") return "no";
   }
   return "skipped";
 }
