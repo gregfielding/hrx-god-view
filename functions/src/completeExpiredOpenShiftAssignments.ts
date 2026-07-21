@@ -102,6 +102,15 @@ export const completeExpiredOpenShiftAssignments = onSchedule(
             .then((snap) => {
               if (!snap.exists) return '';
               const s = snap.data() || {};
+              // Rolling standing-crew shifts (shiftType 'open') have no
+              // natural end — their shiftDate is when the crew STARTED,
+              // not when it ends. Only an explicitly stamped endDate
+              // ends them (the "End open shift" button). Treating them
+              // as single-mode killed every standing crew the morning
+              // after creation (Proof of the Pudding crews, 2026-07-21).
+              if (String(s.shiftType || '').toLowerCase() === 'open') {
+                return toDateOnly(s.endDate);
+              }
               const mode = String(s.shiftMode || 'single').toLowerCase();
               if (mode === 'single') return toDateOnly(s.shiftDate);
               return toDateOnly(s.endDate);
