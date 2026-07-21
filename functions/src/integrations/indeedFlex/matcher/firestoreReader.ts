@@ -10,17 +10,40 @@
  *                 `tenants/{tid}/jobOrders/{joId}` → fallback
  *                 `tenants/{tid}/recruiter_jobOrders/{joId}`
  *                 (same chain the timesheet backfill uses)
- *   - Shifts:     top-level `/shifts` with `tenantId` denormalized
- *                 (per `backfillShiftsAndAssignments.ts` + canon)
+ *   - Shifts:     `tenants/{tid}/job_orders/{joId}/shifts` — the
+ *                 SUBCOLLECTION the apply path and the rest of the
+ *                 system treat as canonical. (2026-07-20 fix: this
+ *                 reader originally queried a top-level `/shifts`
+ *                 collection that turned out to hold 2 docs vs 600
+ *                 real subcollection shifts — cancels/changes could
+ *                 never match, which is why every stuck cancel row
+ *                 sat at confidence 'none'.)
  *   - Worksites:  `tenants/{tid}/locations` — venues are recruiter
  *                 location docs
- *   - Assignments: top-level `/assignments` with `tenantId` denormalized
+ *   - Assignments: `tenants/{tid}/assignments` (same 2026-07-20 fix —
+ *                 the top-level `/assignments` collection is empty)
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
 
 import type { Reader, ReaderDoc } from './types';
 import { aliasDocIdFor } from './venueAliases';
+
+/** Does a shift doc cover the given YYYY-MM-DD work date? Handles all
+ *  three shift shapes: single-day (`shiftDate`), multi-day
+ *  (`shiftDate`..`endDate` and/or a per-day `dateSchedule` map), and
+ *  open/standing shifts (no end date = covers every future date). */
+function shiftCoversDate(data: Record<string, unknown>, workDate: string): boolean {
+  const day = (v: unknown) => (typeof v === 'string' ? v.slice(0, 10) : '');
+  const start = day(data.shiftDate) || day(data.startDate);
+  const end = day(data.endDate);
+  const ds = data.dateSchedule;
+  if (ds && typeof ds === 'object' && workDate in (ds as Record<string, unknown>)) return true;
+  if (start && start === workDate) return true;
+  if (start && end && start <= workDate && workDate <= end) return true;
+  if (data.shiftType === 'open' && start && start <= workDate && !end) return true;
+  return false;
+}
 
 export function createFirestoreReader(db: Firestore): Reader {
   return {
@@ -49,24 +72,67 @@ export function createFirestoreReader(db: Firestore): Reader {
     },
 
     async listShiftsForJobOrder({ tenantId, jobOrderId, workDate }) {
-      let q = db
+      const snap = await db
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('job_orders')
+        .doc(jobOrderId)
         .collection('shifts')
-        .where('tenantId', '==', tenantId)
-        .where('jobOrderId', '==', jobOrderId);
-      if (workDate) q = q.where('shiftDate', '==', workDate);
-      const snap = await q.limit(20).get();
-      return snap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+        .limit(50)
+        .get();
+      const all = snap.docs.map((d) => {
+        const data = d.data() as Record<string, unknown>;
+        // Subcollection shift docs don't all denorm jobOrderId; the
+        // parent id is authoritative here, so guarantee it for callers.
+        if (!data.jobOrderId) data.jobOrderId = jobOrderId;
+        return { id: d.id, data };
+      });
+      if (!workDate) return all;
+      return all.filter((s) => shiftCoversDate(s.data, workDate));
     },
 
     async listShiftsByWorksiteDate({ tenantId, worksiteId, workDate }) {
-      const snap = await db
-        .collection('shifts')
-        .where('tenantId', '==', tenantId)
-        .where('worksiteId', '==', worksiteId)
-        .where('shiftDate', '==', workDate)
-        .limit(20)
-        .get();
-      return snap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+      // Shifts live under each JO, so resolve the worksite's job orders
+      // first (both field spellings), then scan their subcollections.
+      // JOs-per-worksite is small; this stays within automatic indexes.
+      const joCol = db.collection('tenants').doc(tenantId).collection('job_orders');
+      const [byWorksite, byLocation] = await Promise.all([
+        joCol.where('worksiteId', '==', worksiteId).limit(15).get(),
+        joCol.where('locationId', '==', worksiteId).limit(15).get(),
+      ]);
+      const joIds = Array.from(
+        new Set([...byWorksite.docs, ...byLocation.docs].map((d) => d.id)),
+      );
+      const out: ReaderDoc[] = [];
+      for (const joId of joIds) {
+        const snap = await joCol.doc(joId).collection('shifts').limit(50).get();
+        for (const d of snap.docs) {
+          const data = d.data() as Record<string, unknown>;
+          if (!data.jobOrderId) data.jobOrderId = joId;
+          if (shiftCoversDate(data, workDate)) out.push({ id: d.id, data });
+          if (out.length >= 20) return out;
+        }
+      }
+      return out;
+    },
+
+    async listShiftsForAccountDate({ tenantId, accountId, workDate }) {
+      // `recruiterAccountId` is the ONLY JO→account linkage field
+      // populated in prod (probed 2026-07-20: companyId/accountId are
+      // always absent on account-linked JOs). JOs-per-account is small.
+      const joCol = db.collection('tenants').doc(tenantId).collection('job_orders');
+      const jos = await joCol.where('recruiterAccountId', '==', accountId).limit(25).get();
+      const out: ReaderDoc[] = [];
+      for (const jo of jos.docs) {
+        const snap = await joCol.doc(jo.id).collection('shifts').limit(50).get();
+        for (const d of snap.docs) {
+          const data = d.data() as Record<string, unknown>;
+          if (!data.jobOrderId) data.jobOrderId = jo.id;
+          if (shiftCoversDate(data, workDate)) out.push({ id: d.id, data });
+          if (out.length >= 20) return out;
+        }
+      }
+      return out;
     },
 
     async findWorksiteByName({ tenantId, venueName }) {
@@ -104,8 +170,9 @@ export function createFirestoreReader(db: Firestore): Reader {
 
     async listAssignmentsForShift({ tenantId, shiftId }) {
       const snap = await db
+        .collection('tenants')
+        .doc(tenantId)
         .collection('assignments')
-        .where('tenantId', '==', tenantId)
         .where('shiftId', '==', shiftId)
         .limit(50)
         .get();

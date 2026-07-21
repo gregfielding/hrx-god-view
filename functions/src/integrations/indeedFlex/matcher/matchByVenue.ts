@@ -41,8 +41,8 @@ export interface VenueMatchOutcome {
    *  recruiter can override our pick from the dry-run log. */
   candidates: Array<{ id: string; name: string }>;
   /**
-   * `exact` — token Jaccard ≥ 0.8 AND the top score beats the runner-up
-   *           by a clear margin (≥ 0.15)
+   * `exact` — top score ≥ MATCH_THRESHOLD (0.5) AND it beats the
+   *           runner-up by a clear margin (≥ TIE_MARGIN, 0.15)
    * `multiple` — top score above threshold but ties / near-ties with
    *              other candidates → recruiter must pick
    * `none`  — nothing above the threshold
@@ -50,6 +50,9 @@ export interface VenueMatchOutcome {
   confidence: 'exact' | 'multiple' | 'none';
   /** Human-readable diagnostic. */
   notes: string;
+  /** True when the match came from a recruiter-taught venue alias
+   *  (skip downstream sanity vetoes — the human already confirmed). */
+  viaAlias?: boolean;
 }
 
 // Indeed prepends a 2-4 letter region/venue code, optionally followed
@@ -72,6 +75,11 @@ const STOPWORDS = new Set([
   'company',
   'co',
 ]);
+
+/** Exported for `matchByFallback`'s client-consistency veto. */
+export function tokenizeVenueName(s: string): Set<string> {
+  return tokenize(s);
+}
 
 function tokenize(s: string): Set<string> {
   return new Set(
@@ -99,6 +107,20 @@ function stripBrandPrefix(name: string): string {
  */
 export function normalizeVenueName(raw: string): string {
   let s = raw.trim();
+  // **Address-tail cut (2026-07-20).** Cancel/change emails append the
+  // full street address to the venue: "Domino's, Colorado, 10252 E.
+  // 51st Ave, Denver 80239, US". Drop everything from the first
+  // comma-segment that starts with a street number. Split/rejoin keeps
+  // commas inside parentheticals ("(Hanover, MD)") intact because we
+  // only ever cut at a street-number segment, never mid-name.
+  const segs = s.split(',');
+  const cut = segs.findIndex((seg, i) => i > 0 && /^\s*\d+\s+\S/.test(seg));
+  if (cut > 0) s = segs.slice(0, cut).join(',');
+  // Leading brand-with-comma form ("CORT, CHI (…) - …") — the dash
+  // prefix/suffix strips below can't see past it.
+  for (const brand of COMMON_BRAND_PREFIXES) {
+    s = s.replace(new RegExp(`^${brand}\\s*,\\s*`, 'i'), '');
+  }
   s = s.replace(NOISE_PREFIX_REGEX, '');
   s = s.replace(NOISE_SUFFIX_REGEX, '');
   s = s.replace(/\s+/g, ' ').trim();
@@ -288,6 +310,7 @@ export async function matchByVenue(
       candidates: [{ id: aliased.accountId, name: aliased.accountName }],
       confidence: 'exact',
       notes: `matched via alias (recruiter-linked) → ${aliased.accountName}`,
+      viaAlias: true,
     };
   }
   const venueTokens = tokenize(venueKey);

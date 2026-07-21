@@ -8,6 +8,7 @@
 
 import { expect } from 'chai';
 
+import { normalizeVenueName } from '../../../../integrations/indeedFlex/matcher/matchByVenue';
 import { matchShiftRequest } from '../../../../integrations/indeedFlex/matcher/matchShiftRequest';
 import {
   matchWorkerAssignments,
@@ -27,8 +28,12 @@ interface MockData {
   jobOrdersByPoNumber?: Record<string, ReaderDoc>;
   shiftsByJobOrder?: Record<string, ReaderDoc[]>;
   shiftsByWorksiteDate?: Record<string, ReaderDoc[]>; // key: `${worksiteId}::${workDate}`
+  shiftsByAccountDate?: Record<string, ReaderDoc[]>; // key: `${accountId}::${workDate}`
   worksitesByName?: Record<string, ReaderDoc>;
   assignmentsByShift?: Record<string, ReaderDoc[]>;
+  accounts?: ReaderDoc[];
+  inboxJoByAccount?: Record<string, ReaderDoc>;
+  venueAliases?: Record<string, { accountId: string; accountName: string }>; // key: raw venue string
 }
 
 function mockReader(d: MockData): Reader {
@@ -56,6 +61,18 @@ function mockReader(d: MockData): Reader {
     async listAssignmentsForShift({ shiftId }) {
       return d.assignmentsByShift?.[shiftId] ?? [];
     },
+    async listShiftsForAccountDate({ accountId, workDate }) {
+      return d.shiftsByAccountDate?.[`${accountId}::${workDate}`] ?? [];
+    },
+    async listAccounts() {
+      return d.accounts ?? [];
+    },
+    async findInboxGigJobOrder({ accountId }) {
+      return d.inboxJoByAccount?.[accountId] ?? null;
+    },
+    async getVenueAlias({ rawVenueName }) {
+      return d.venueAliases?.[rawVenueName] ?? null;
+    },
   };
 }
 
@@ -81,14 +98,16 @@ describe('matchShiftRequest — new_request', () => {
     expect(result.matchConfidence).to.equal('exact');
   });
 
-  it('none: no JO with that poNumber', async () => {
+  it('none: no JO with that poNumber and no venue to fall back on', async () => {
+    // Post-2026-05-24 rewrite: a jobId miss falls through to the
+    // venue→account path, so with no venueName the note reflects that.
     const reader = mockReader({});
     const result = await matchShiftRequest(reader, {
       tenantId: 'T',
       event: { type: 'new_request', jobId: '999999', headcount: 4 },
     });
     expect(result.matchConfidence).to.equal('none');
-    expect(result.matchNotes ?? '').to.contain('999999');
+    expect(result.matchNotes ?? '').to.contain('no venueName');
   });
 });
 
@@ -456,6 +475,18 @@ describe('matchShiftRequest — error handling', () => {
       async listAssignmentsForShift() {
         return [];
       },
+      async listShiftsForAccountDate() {
+        return [];
+      },
+      async listAccounts() {
+        return [];
+      },
+      async findInboxGigJobOrder() {
+        return null;
+      },
+      async getVenueAlias() {
+        return null;
+      },
     };
     const result = await matchShiftRequest(throwing, {
       tenantId: 'T',
@@ -477,5 +508,91 @@ describe('normalizeName / tokenize', () => {
 
   it('tokenize drops single-letter "initials" like "p."', () => {
     expect(tokenize('John P. Smith')).to.deep.equal(['john', 'smith']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// 2026-07-20 — account-leg fallback for cancel/change venue strings
+// ─────────────────────────────────────────────────────────────────────
+
+describe('normalizeVenueName — address-tail cut', () => {
+  it('drops the street-address tail from cancel-format strings', () => {
+    expect(
+      normalizeVenueName("Domino's, Colorado, 10252 E. 51st Ave, Denver 80239, US"),
+    ).to.equal("Domino's, Colorado");
+  });
+
+  it('handles brand-comma prefix + mid-string SVC code + parenthetical commas', () => {
+    expect(
+      normalizeVenueName(
+        'CORT, WBI (Hanover, MD) - Maryland Warehouse - SVC07/44/00, 7466 Candlewood Rd., Suite G, Hanover 21076, US',
+      ),
+    ).to.equal('Maryland Warehouse');
+  });
+});
+
+describe('matchByFallback — account leg', () => {
+  it('cancel resolves venue → account → shift when no worksite matches', async () => {
+    const reader = mockReader({
+      accounts: [
+        { id: 'acctCO', data: { name: "Domino's Distribution Center Colorado" } },
+      ],
+      shiftsByAccountDate: {
+        'acctCO::2026-07-12': [
+          {
+            id: 'shift1',
+            data: { jobOrderId: 'jo1', shiftDate: '2026-07-12' },
+          },
+        ],
+      },
+    });
+    const result = await matchShiftRequest(reader, {
+      tenantId: 'T',
+      event: {
+        type: 'cancel_booking',
+        venueName: "Domino's, Colorado, 10252 E. 51st Ave, Denver 80239, US",
+        workDate: '2026-07-12',
+        workerNames: [],
+      },
+    });
+    expect(result.matchConfidence).to.equal('fuzzy');
+    expect(result.matchedShiftId).to.equal('shift1');
+    expect(result.matchedJobOrderId).to.equal('jo1');
+    expect(result.matchedAccountName).to.equal("Domino's Distribution Center Colorado");
+  });
+
+  it('vetoes a fuzzy account whose name shares no token with the client segment', async () => {
+    // "CORT …" venue must never land on a Domino's account just
+    // because both contain the rare token "maryland". The extra
+    // Warehouse accounts mirror the prod corpus shape: they make
+    // 'warehouse' a cheap token so the wrong account clears the
+    // exact-match threshold on 'maryland' alone — which is exactly
+    // the failure the veto exists to catch.
+    const reader = mockReader({
+      accounts: [
+        { id: 'acctMD', data: { name: "Domino's Distribution Center Maryland" } },
+        { id: 'acctPH', data: { name: 'CORT Phoenix Warehouse' } },
+        { id: 'acctDE', data: { name: 'CORT Denver Warehouse' } },
+        { id: 'acctAU', data: { name: 'CORT Austin Warehouse' } },
+      ],
+      shiftsByAccountDate: {
+        'acctMD::2026-07-17': [
+          { id: 'shiftX', data: { jobOrderId: 'joX', shiftDate: '2026-07-17' } },
+        ],
+      },
+    });
+    const result = await matchShiftRequest(reader, {
+      tenantId: 'T',
+      event: {
+        type: 'cancel_booking',
+        venueName:
+          'CORT, WBI (Hanover, MD) - Maryland Warehouse - SVC07/44/00, 7466 Candlewood Rd., Suite G, Hanover 21076, US',
+        workDate: '2026-07-17',
+        workerNames: [],
+      },
+    });
+    expect(result.matchConfidence).to.equal('none');
+    expect(result.matchedShiftId).to.equal(undefined);
+    expect(result.matchNotes ?? '').to.contain('vetoed');
   });
 });

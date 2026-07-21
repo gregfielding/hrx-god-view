@@ -50,6 +50,17 @@ export interface Reader {
     workDate: string;
   }): Promise<ReaderDoc[]>;
 
+  /** Account-level shift fallback (2026-07-20). Cancel/change venue
+   *  strings ("Domino's, Colorado, 10252 E. 51st Ave…") rarely match a
+   *  location doc by name, but DO resolve to an account via the alias +
+   *  fuzzy venue matcher. Lists shifts on `workDate` across the
+   *  account's job orders. */
+  listShiftsForAccountDate(args: {
+    tenantId: string;
+    accountId: string;
+    workDate: string;
+  }): Promise<ReaderDoc[]>;
+
   /** Worksite lookup by literal name. Indeed's emails carry the
    *  venue display name, not an HRX worksite id — matching is a
    *  case-insensitive contains query against `name`. Returns the
