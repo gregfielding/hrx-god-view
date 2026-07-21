@@ -69,6 +69,8 @@ interface Snapshot {
     autoCompletedStale: number;
     autoAppliedCancels: number;
     autoCancelledAssignments: number;
+    /** PI-2: exact new Flex bookings turned into open shifts overnight. */
+    autoCreatedShifts?: number;
     brief: string;
   };
 }
@@ -202,6 +204,14 @@ const SchedulingHealthPage: React.FC = () => {
                 color="success"
                 variant="outlined"
                 label={`${snapshot.triage.autoAppliedCancels} cancellation${snapshot.triage.autoAppliedCancels === 1 ? '' : 's'} applied`}
+              />
+            )}
+            {(snapshot.triage.autoCreatedShifts ?? 0) > 0 && (
+              <Chip
+                size="small"
+                color="success"
+                variant="outlined"
+                label={`${snapshot.triage.autoCreatedShifts} new shift${snapshot.triage.autoCreatedShifts === 1 ? '' : 's'} created`}
               />
             )}
           </Stack>

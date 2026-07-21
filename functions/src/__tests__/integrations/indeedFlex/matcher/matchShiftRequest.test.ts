@@ -563,17 +563,17 @@ describe('matchByFallback — account leg', () => {
 
   it('vetoes a fuzzy account whose name shares no token with the client segment', async () => {
     // "CORT …" venue must never land on a Domino's account just
-    // because both contain the rare token "maryland". The extra
-    // Warehouse accounts mirror the prod corpus shape: they make
-    // 'warehouse' a cheap token so the wrong account clears the
-    // exact-match threshold on 'maryland' alone — which is exactly
-    // the failure the veto exists to catch.
+    // because both contain the rare token "maryland". The extra Depot
+    // accounts mirror the prod corpus shape: they make 'depot' a cheap
+    // token so the wrong account clears the exact-match threshold on
+    // 'maryland' alone — exactly the failure the veto exists to catch.
+    // (No SVC code here on purpose — that has its own earlier guard.)
     const reader = mockReader({
       accounts: [
         { id: 'acctMD', data: { name: "Domino's Distribution Center Maryland" } },
-        { id: 'acctPH', data: { name: 'CORT Phoenix Warehouse' } },
-        { id: 'acctDE', data: { name: 'CORT Denver Warehouse' } },
-        { id: 'acctAU', data: { name: 'CORT Austin Warehouse' } },
+        { id: 'acctPH', data: { name: 'CORT Phoenix Depot' } },
+        { id: 'acctDE', data: { name: 'CORT Denver Depot' } },
+        { id: 'acctAU', data: { name: 'CORT Austin Depot' } },
       ],
       shiftsByAccountDate: {
         'acctMD::2026-07-17': [
@@ -586,7 +586,7 @@ describe('matchByFallback — account leg', () => {
       event: {
         type: 'cancel_booking',
         venueName:
-          'CORT, WBI (Hanover, MD) - Maryland Warehouse - SVC07/44/00, 7466 Candlewood Rd., Suite G, Hanover 21076, US',
+          'CORT, WBI (Hanover, MD) - Maryland Depot, 7466 Candlewood Rd., Suite G, Hanover 21076, US',
         workDate: '2026-07-17',
         workerNames: [],
       },
@@ -594,5 +594,33 @@ describe('matchByFallback — account leg', () => {
     expect(result.matchConfidence).to.equal('none');
     expect(result.matchedShiftId).to.equal(undefined);
     expect(result.matchNotes ?? '').to.contain('vetoed');
+  });
+
+  it('SVC-coded venue never exact-matches a non-CORT account', async () => {
+    // The real 2026-07-21 near-miss: a new_request for CORT's
+    // "Maryland Warehouse - SVC07/44/00" sat stamped exact against
+    // "Domino's Distribution Center Maryland" and was one triage run
+    // away from minting a CORT shift on Domino's JO.
+    const reader = mockReader({
+      accounts: [
+        { id: 'acctMD', data: { name: "Domino's Distribution Center Maryland" } },
+        { id: 'acctPH', data: { name: 'CORT Phoenix Warehouse' } },
+        { id: 'acctDE', data: { name: 'CORT Denver Warehouse' } },
+        { id: 'acctAU', data: { name: 'CORT Austin Warehouse' } },
+      ],
+    });
+    const result = await matchShiftRequest(reader, {
+      tenantId: 'T',
+      event: {
+        type: 'new_request',
+        jobId: '',
+        headcount: 1,
+        venueName: 'WBI (Hanover, MD) - Maryland Warehouse - SVC07/44/00',
+        workDate: '2026-07-25',
+      },
+    });
+    expect(result.matchConfidence).to.equal('multiple');
+    expect(result.matchedJobOrderId).to.equal(undefined);
+    expect(result.matchNotes ?? '').to.contain("isn't a CORT account");
   });
 });

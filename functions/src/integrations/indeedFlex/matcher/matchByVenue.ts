@@ -388,6 +388,22 @@ export async function matchByVenue(
     };
   }
 
+  // SVC-code sanity (2026-07-21, PI-2): "SVC07/44/00"-style service
+  // codes are CORT's venue convention. A fuzzy-exact that lands on a
+  // NON-CORT account for an SVC-coded venue is the Maryland-Warehouse
+  // failure — the venue shared a rare state token with another
+  // client's account ("Maryland Warehouse" → "Domino's Distribution
+  // Center Maryland"). Downgrade to multiple so the recruiter picks or
+  // teaches an alias. Recruiter aliases short-circuit far above this.
+  if (/SVC\d+\/\d+\/\d+/i.test(raw) && !/\bcort\b/i.test(top.name)) {
+    return {
+      venueKey,
+      candidates: scored.slice(0, 3).map((s) => ({ id: s.doc.id, name: s.name })),
+      confidence: 'multiple',
+      notes: `SVC-coded (CORT) venue but top match "${top.name}" @ ${top.score.toFixed(2)} isn't a CORT account — pick or link an alias`,
+    };
+  }
+
   return {
     accountId: top.doc.id,
     accountName: top.name,

@@ -9,12 +9,19 @@
  *   1. AUTO-COMPLETES stale live assignments — same server re-verification
  *      as the page's "Mark all finished" button (live status + effective
  *      end date in the past), stamped updatedBy 'ai_triage_nightly'.
- *   2. AUTO-APPLIES exact-match Indeed Flex cancellations — the matcher
- *      already resolved WHO on WHICH shift with 'exact' confidence; the
- *      booking is gone at the source, so applying it is truth-sync, not
- *      judgment. Runs through applyShiftRequestCore (same code path as
- *      the recruiter's button — notifications, audit stamp, row applied).
- *      Fuzzy/multiple/none confidence is NEVER auto-applied.
+ *   2. AUTO-APPLIES exact-match Indeed Flex rows — the matcher already
+ *      resolved the target with 'exact' confidence, so applying is
+ *      truth-sync, not judgment. Two types qualify:
+ *        • cancel_booking (since 2026-07-19) — the booking is gone at
+ *          the source; assignments flip + hard-delete, fully silent.
+ *        • new_request (PI-2, 2026-07-21) — additive: creates the open
+ *          shift on the account's inbox gig JO via applyNewRequest
+ *          (idempotent on Indeed job id, sendNotification:false).
+ *          Past-dated rows are left for the human (pre-date-gate
+ *          backlog shouldn't mint dead shifts).
+ *      Runs through applyShiftRequestCore (same code path as the
+ *      recruiter's button — audit stamp, row applied). Fuzzy/multiple/
+ *      none confidence is NEVER auto-applied.
  *   3. Writes a plain-English MORNING BRIEF (OpenAI gpt-5; deterministic
  *      fallback if the call fails) onto the snapshot, which Scheduling
  *      Health renders as the "Handled overnight" card.
@@ -60,6 +67,8 @@ interface TriageOutcome {
   autoCompletedStale: number;
   autoAppliedCancels: number;
   autoCancelledAssignments: number;
+  /** PI-2: exact new_request rows applied → shifts created on inbox JOs. */
+  autoCreatedShifts: number;
   remainingNeedsReview: Record<string, number>;
   brief: string;
   briefSource: 'ai' | 'fallback';
@@ -133,49 +142,75 @@ async function completeStale(
   return completed;
 }
 
-/** Auto-apply exact-confidence cancel_booking rows; returns counts. */
-async function applyExactCancels(
+/** Auto-apply exact-confidence rows (cancel_booking + new_request);
+ *  returns counts. */
+async function applyExactRows(
   tenantId: string,
-): Promise<{ rows: number; assignments: number; remaining: Record<string, number> }> {
+): Promise<{
+  cancelRows: number;
+  assignments: number;
+  newShiftRows: number;
+  remaining: Record<string, number>;
+}> {
   const snap = await db
     .collection(`tenants/${tenantId}/external_shift_requests`)
     .where('status', '==', 'needs_review')
     .limit(200)
     .get();
-  let rows = 0;
+  const today = todayUtcIso();
+  let cancelRows = 0;
   let assignments = 0;
+  let newShiftRows = 0;
   const remaining: Record<string, number> = {};
   for (const doc of snap.docs) {
     const r = doc.data() || {};
     const eventType = String(r.eventType ?? 'unknown');
-    const autoApplicable =
+    const exact = r.matchConfidence === 'exact';
+    const canCancel =
       eventType === 'cancel_booking' &&
-      r.matchConfidence === 'exact' &&
+      exact &&
       Array.isArray(r.matchedAssignmentIds) &&
       r.matchedAssignmentIds.length > 0;
-    if (!autoApplicable) {
+    // PI-2 (2026-07-21): additive new bookings with an exact venue →
+    // inbox-JO match. applyNewRequest is idempotent on the Indeed job
+    // id and the shift is created silent (sendNotification:false).
+    // Rows whose whole date range is already past stay for the human —
+    // pre-date-gate backlog shouldn't mint dead shifts.
+    const ev = (r.event ?? {}) as Record<string, unknown>;
+    const evEnd =
+      (typeof ev.endDate === 'string' && ev.endDate.slice(0, 10)) ||
+      (typeof ev.workDate === 'string' ? ev.workDate.slice(0, 10) : '');
+    const canCreate =
+      eventType === 'new_request' &&
+      exact &&
+      String(r.matchedJobOrderId ?? '').trim().length > 0 &&
+      evEnd >= today;
+    if (!canCancel && !canCreate) {
       remaining[eventType] = (remaining[eventType] || 0) + 1;
       continue;
     }
     try {
-      // Quiet hours (Greg, 2026-07-19): 4:30am cancellations must not
-      // buzz workers' phones — the notice is queued for 8am worksite-local.
       const result = await applyShiftRequestCore(tenantId, doc.id, ACTOR, {
         quietNotifications: true,
       });
-      rows += 1;
-      assignments += Number(result.cancelled ?? 0);
+      if (canCancel) {
+        cancelRows += 1;
+        assignments += Number(result.cancelled ?? 0);
+      } else {
+        newShiftRows += 1;
+      }
     } catch (err) {
       // Row stays needs_review for the human — never force it.
       remaining[eventType] = (remaining[eventType] || 0) + 1;
-      logger.warn('[triage] exact cancel auto-apply failed; left for review', {
+      logger.warn('[triage] exact auto-apply failed; left for review', {
         tenantId,
         requestId: doc.id,
+        eventType,
         err: err instanceof Error ? err.message : String(err),
       });
     }
   }
-  return { rows, assignments, remaining };
+  return { cancelRows, assignments, newShiftRows, remaining };
 }
 
 /** Plain-English morning brief. AI first, deterministic fallback always. */
@@ -183,6 +218,7 @@ async function writeBrief(facts: {
   autoCompletedStale: number;
   autoAppliedCancels: number;
   autoCancelledAssignments: number;
+  autoCreatedShifts: number;
   remainingNeedsReview: Record<string, number>;
   coverageGaps: Array<{ date?: string; accountName?: string; jobTitle?: string; gap?: number }>;
   totalGapSeats: number;
@@ -194,6 +230,9 @@ async function writeBrief(facts: {
   }
   if (facts.autoAppliedCancels > 0) {
     fallbackParts.push(`${facts.autoAppliedCancels} Indeed Flex cancellation${facts.autoAppliedCancels === 1 ? '' : 's'} (${facts.autoCancelledAssignments} worker${facts.autoCancelledAssignments === 1 ? '' : 's'}) were applied for you.`);
+  }
+  if (facts.autoCreatedShifts > 0) {
+    fallbackParts.push(`${facts.autoCreatedShifts} new Indeed Flex booking${facts.autoCreatedShifts === 1 ? ' was' : 's were'} turned into open shift${facts.autoCreatedShifts === 1 ? '' : 's'} on the right accounts.`);
   }
   if (remainingTotal > 0) {
     fallbackParts.push(`${remainingTotal} portal update${remainingTotal === 1 ? '' : 's'} still need${remainingTotal === 1 ? 's' : ''} your review.`);
@@ -261,12 +300,13 @@ export const schedulingTriageNightly = onSchedule(
           tenant.id,
           Array.isArray(data.staleLiveAssignments) ? data.staleLiveAssignments : [],
         );
-        const cancels = await applyExactCancels(tenant.id);
+        const applied = await applyExactRows(tenant.id);
         const { brief, briefSource } = await writeBrief({
           autoCompletedStale,
-          autoAppliedCancels: cancels.rows,
-          autoCancelledAssignments: cancels.assignments,
-          remainingNeedsReview: cancels.remaining,
+          autoAppliedCancels: applied.cancelRows,
+          autoCancelledAssignments: applied.assignments,
+          autoCreatedShifts: applied.newShiftRows,
+          remainingNeedsReview: applied.remaining,
           coverageGaps: (Array.isArray(data.coverageGaps) ? data.coverageGaps : []).slice(0, 5),
           totalGapSeats: Number(data.counts?.totalGapSeats ?? 0),
         });
@@ -274,9 +314,10 @@ export const schedulingTriageNightly = onSchedule(
         const triage: TriageOutcome = {
           ranAt: admin.firestore.FieldValue.serverTimestamp(),
           autoCompletedStale,
-          autoAppliedCancels: cancels.rows,
-          autoCancelledAssignments: cancels.assignments,
-          remainingNeedsReview: cancels.remaining,
+          autoAppliedCancels: applied.cancelRows,
+          autoCancelledAssignments: applied.assignments,
+          autoCreatedShifts: applied.newShiftRows,
+          remainingNeedsReview: applied.remaining,
           brief,
           briefSource,
         };
@@ -285,7 +326,8 @@ export const schedulingTriageNightly = onSchedule(
         logger.info('[triage] tenant complete', {
           tenantId: tenant.id,
           autoCompletedStale,
-          autoAppliedCancels: cancels.rows,
+          autoAppliedCancels: applied.cancelRows,
+          autoCreatedShifts: applied.newShiftRows,
           briefSource,
         });
       } catch (err) {

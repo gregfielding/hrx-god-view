@@ -4,14 +4,15 @@
  * Pure function. Maps `(eventType, matchConfidence)` →
  * `recommendedAction` per the slice 4 spec:
  *
- *   - `auto`         — additive + exact match. Slice 5 may auto-apply
- *                      once activated. Today the UI still asks the
- *                      recruiter to click approve.
- *   - `review`       — high-confidence change. Stays human-gated even
- *                      after Slice 5 ships.
- *   - `manual-only`  — destructive (cancel_booking, no_show), or low
- *                      confidence (multiple / none). Slice 5 will NEVER
- *                      auto-apply these.
+ *   - `auto`         — the nightly triage (schedulingTriageNightly)
+ *                      auto-applies these: exact new_request (creates
+ *                      the shift, PI-2 2026-07-21) and exact
+ *                      cancel_booking (truth-sync, 2026-07-19). The
+ *                      recruiter can still click sooner.
+ *   - `review`       — high-confidence change (change_time /
+ *                      change_headcount). Stays human-gated.
+ *   - `manual-only`  — no_show, or low confidence (multiple / none).
+ *                      Never auto-applied.
  */
 
 import type {
@@ -26,11 +27,17 @@ export function recommendedActionFor(
   eventType: IndeedFlexEventType,
   matchConfidence: MatchConfidence,
 ): ExternalShiftRequestRecommendedAction {
-  // Destructive event types always stay manual-only, regardless of
-  // confidence — we don't want a misclassified email cancelling a
-  // worker's shift without a human in the loop.
-  if (eventType === 'cancel_booking' || eventType === 'no_show') {
+  // 2026-07-21 cleanup (PI-2): the label now tells the truth about
+  // what the nightly triage actually does. Exact cancel_booking rows
+  // HAVE been auto-applied since 2026-07-19 (Greg's triage decision) —
+  // the matcher named WHO on WHICH shift, the booking is gone at the
+  // source, so applying is truth-sync. no_show stays manual-only, and
+  // any non-exact confidence on a destructive type does too.
+  if (eventType === 'no_show') {
     return 'manual-only';
+  }
+  if (eventType === 'cancel_booking') {
+    return matchConfidence === 'exact' ? 'auto' : 'manual-only';
   }
 
   // Low / ambiguous match — recruiter has to disambiguate.
