@@ -21,6 +21,9 @@ export const JOB_ORDER_DETAIL_TAB_KEYS = [
   // Visual order is controlled separately by JOB_ORDER_DETAIL_TAB_STRIP.
   'positions',
   'requirements',
+  // Assignment history (Greg, 2026-07-22) — audit/maintain surface;
+  // rows open the admin AssignmentDrawer.
+  'assignments',
 ] as const;
 
 export type JobOrderDetailTabKey = (typeof JOB_ORDER_DETAIL_TAB_KEYS)[number];
@@ -78,6 +81,7 @@ export const JOB_ORDER_DETAIL_TAB_STRIP: ReadonlyArray<{ key: JobOrderDetailTabK
   { key: 'shift_setup', label: 'Shifts' },
   { key: 'applications', label: 'Applications' },
   { key: 'placements', label: 'Placements' },
+  { key: 'assignments', label: 'Assignments' },
   { key: 'notes', label: 'Notes' },
   // { key: 'activity', label: 'Activity' },
 ];

@@ -136,6 +136,7 @@ import JobOrderHiringTab from '../components/recruiter/JobOrderHiringTab';
 import CRMNotesTab from '../components/CRMNotesTab';
 // Jobs Board Visibility tab removed: all controls live in Jobs Board tab
 import PlacementsTab from '../components/recruiter/PlacementsTab';
+import JobOrderAssignmentsTab from '../components/recruiter/JobOrderAssignmentsTab';
 import LaborPoolSelector from '../components/recruiter/LaborPoolSelector';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
@@ -6038,6 +6039,13 @@ const RecruiterJobOrderDetail: React.FC = () => {
           hiringEntityName={jobOrderHiringEntity?.name ?? null}
           placementHiringEntityId={effectiveJobOrderHiringEntityId}
         />
+      </TabPanel>
+
+      <TabPanel value={activeTab} index="assignments">
+        {/* Assignment history (Greg, 2026-07-22) — audit/maintain surface;
+            each row opens the admin AssignmentDrawer. Placements stays the
+            roster-building surface. */}
+        <JobOrderAssignmentsTab tenantId={tenantId || ''} jobOrderId={jobOrderId || ''} />
       </TabPanel>
 
       <TabPanel value={activeTab} index="notes">
