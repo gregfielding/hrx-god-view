@@ -172,6 +172,33 @@ export const saveImportTimesheetRows = onCall(
       });
     }
 
+    // ── Entity exception (Greg, 2026-07-22) ──────────────────────────
+    // A job order can override its account's default entity (Venue
+    // Smart Supervisors Travel Team runs W-2 under C1 Select while
+    // Venuesmart is otherwise C1 Events/1099). The paired ASSIGNMENT's
+    // hiringEntityId is authoritative for its rows: hours must post to
+    // the entity that actually employs and pays the worker, no matter
+    // which entity the import screen was on. Overridden entries stamp
+    // `import.entityOverrideFrom` for audit and land on the other
+    // entity's Timesheets grid + Everee submission automatically
+    // (every downstream query keys on hiringEntityId).
+    const assignmentEntityCache = new Map<string, string>();
+    const entityForAssignment = async (assignmentId: string): Promise<string> => {
+      if (!assignmentId) return '';
+      const cached = assignmentEntityCache.get(assignmentId);
+      if (cached !== undefined) return cached;
+      let e = '';
+      try {
+        const snap = await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).get();
+        e = String((snap.data() || {}).hiringEntityId || '').trim();
+      } catch {
+        /* fall back to the batch entity */
+      }
+      assignmentEntityCache.set(assignmentId, e);
+      return e;
+    };
+    let entityOverrides = 0;
+
     const byStatus: Record<string, number> = {};
     let writer = db.batch();
     let pending = 0;
@@ -220,11 +247,20 @@ export const saveImportTimesheetRows = onCall(
       // own that field once live).
       if (!preserveSent) importSidecar.matchStatus = row.matchStatus;
 
+      // eslint-disable-next-line no-await-in-loop
+      const assignmentEntity = await entityForAssignment(String(row.assignmentId || ''));
+      const effectiveEntityId =
+        assignmentEntity && assignmentEntity !== hiringEntityId ? assignmentEntity : hiringEntityId;
+      if (effectiveEntityId !== hiringEntityId) {
+        entityOverrides += 1;
+        importSidecar.entityOverrideFrom = hiringEntityId;
+      }
+
       const doc: Record<string, unknown> = {
         id: docId,
         tenantId,
         source: 'csv_import',
-        hiringEntityId,
+        hiringEntityId: effectiveEntityId,
         accountId: row.accountId ?? '',
         assignmentId: row.assignmentId ?? '',
         jobOrderId: row.jobOrderId ?? '',
@@ -280,7 +316,7 @@ export const saveImportTimesheetRows = onCall(
     }
     await flush();
 
-    return { ok: true, upserted: planned.length, byStatus, entryIds };
+    return { ok: true, upserted: planned.length, byStatus, entryIds, entityOverrides };
   },
 );
 
