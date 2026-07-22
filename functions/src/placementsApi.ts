@@ -767,14 +767,19 @@ export const placementsCreateAssignments = onCall(
   const isOpenShift = String(shift.shiftType || '').toLowerCase() === 'open';
   if (isOpenShift) {
     const openStartDate = effectiveStartDate || shiftDate || '';
-    // Single-date open shifts (shiftMode 'single', e.g. Fieldglass
-    // auto-created event gigs) keep their one date in `shiftDate` and have
-    // no endDate field — stamp it so the assignment is a closed range from
-    // birth instead of endDate:'' ("ongoing") that nothing ever completes.
-    // '' remains the ongoing/rolling case (multi mode with no endDate).
+    // Closed-range-at-birth applies ONLY to Fieldglass auto-created
+    // event gigs (`autoCreatedOpenShift` marker): their one date lives
+    // in `shiftDate` and nothing else ever completes them. Standing
+    // crews created in the UI ALSO carry shiftMode 'single' with no
+    // endDate, but their shiftDate is the day the crew STARTED — using
+    // it as the end made every new crew member invisible to timesheets
+    // the moment they were hired (Diana Marin, 2026-07-22: hired at
+    // 7:49am with endDate stamped six weeks in the past). Rolling stays
+    // endDate '' until "End open shift" stamps a real one.
     const openShiftMode = String(shift.shiftMode || 'single').toLowerCase();
     const openResolvedEnd =
-      toDateOnly(shift.endDate) || (openShiftMode === 'single' ? shiftDate : '');
+      toDateOnly(shift.endDate) ||
+      (shift.autoCreatedOpenShift === true && openShiftMode === 'single' ? shiftDate : '');
     const openEndDate =
       openResolvedEnd && openStartDate && openResolvedEnd < openStartDate
         ? openStartDate
