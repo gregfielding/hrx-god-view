@@ -110,6 +110,14 @@ const LinkVenueToAccountDialog: React.FC<Props> = ({
           return a.name.localeCompare(b.name);
         });
         setAccounts(list);
+        // One-click flow (PI-3): pre-select the matcher's top candidate
+        // so the common case is open → "Link account". The recruiter
+        // can still pick any other account.
+        const topSuggestedId = (suggestedAccountIds ?? [])[0];
+        if (topSuggestedId) {
+          const top = list.find((a) => a.id === topSuggestedId);
+          if (top) setSelected(top);
+        }
       } catch (e) {
         if (!cancelled) {
           console.warn('[LinkVenueToAccountDialog] failed to load accounts', e);
