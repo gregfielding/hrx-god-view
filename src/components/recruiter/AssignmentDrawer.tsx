@@ -39,7 +39,7 @@ import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import EventBusyIcon from '@mui/icons-material/EventBusy';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { useNavigate } from 'react-router-dom';
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../../firebase';
@@ -68,6 +68,8 @@ interface FamilyDoc {
   companyName: string;
   isOpenShift: boolean;
   weeklyDays: number[];
+  /** Full doc — feeds the admin edit form + audit trail. */
+  raw: Record<string, unknown>;
 }
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -99,6 +101,20 @@ const AssignmentDrawer: React.FC<{
   const [endedMsg, setEndedMsg] = useState<string | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Admin edit form (Greg, 2026-07-22): the drawer IS the admin
+  // assignment view — recruiters edit dates / rates / schedule here.
+  // All writes are silent (notificationsSuppressed) — this surface is
+  // for data cleanup, never worker communication.
+  const [editOpen, setEditOpen] = useState(false);
+  const [editStart, setEditStart] = useState('');
+  const [editEnd, setEditEnd] = useState('');
+  const [editPay, setEditPay] = useState('');
+  const [editBill, setEditBill] = useState('');
+  const [editStartTime, setEditStartTime] = useState('');
+  const [editEndTime, setEditEndTime] = useState('');
+  const [editDays, setEditDays] = useState<number[]>([]);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!target || !tenantId) return;
@@ -147,6 +163,7 @@ const AssignmentDrawer: React.FC<{
                     .filter((n) => Number.isFinite(n))
                     .sort()
                 : [],
+              raw: r,
             };
           })
           .sort((a, b) => a.startDate.localeCompare(b.startDate));
@@ -188,6 +205,70 @@ const AssignmentDrawer: React.FC<{
   );
   const primary = live[live.length - 1] ?? family[family.length - 1] ?? null;
   const isOngoing = Boolean(primary?.isOpenShift || (primary && !primary.endDate && primary.weeklyDays.length > 0));
+  useEffect(() => {
+    if (!primary) return;
+    const r = primary.raw;
+    const ws = (r.weeklySchedule ?? null) as Record<string, { enabled?: boolean; startTime?: string; endTime?: string }> | null;
+    const firstDay = ws ? Object.values(ws).find((v) => v && v.enabled === true) : null;
+    setEditStart(primary.startDate);
+    setEditEnd(primary.endDate);
+    setEditPay(primary.payRate ? String(primary.payRate) : '');
+    setEditBill(primary.billRate ? String(primary.billRate) : '');
+    setEditStartTime(String(r.startTime ?? firstDay?.startTime ?? ''));
+    setEditEndTime(String(r.endTime ?? firstDay?.endTime ?? ''));
+    setEditDays(primary.weeklyDays);
+    setSavedMsg(null);
+    setEditOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primary?.id]);
+
+  const handleSaveEdit = async () => {
+    if (!primary || !tenantId) return;
+    setSavingEdit(true);
+    setError(null);
+    try {
+      const updates: Record<string, unknown> = {
+        notificationsSuppressed: true,
+        updatedBy: 'assignment_drawer_edit',
+        updatedAt: serverTimestamp(),
+      };
+      if (editStart && editStart !== primary.startDate) updates.startDate = editStart;
+      if (editEnd !== primary.endDate) updates.endDate = editEnd; // '' = ongoing
+      const pay = parseFloat(editPay);
+      if (Number.isFinite(pay) && pay !== primary.payRate) updates.payRate = pay;
+      const bill = parseFloat(editBill);
+      if (Number.isFinite(bill) && bill !== primary.billRate) updates.billRate = bill;
+      const hadWs = primary.weeklyDays.length > 0;
+      const daysChanged =
+        editDays.length !== primary.weeklyDays.length ||
+        editDays.some((d) => !primary.weeklyDays.includes(d));
+      const r = primary.raw;
+      const ws0 = (r.weeklySchedule ?? null) as Record<string, { startTime?: string; endTime?: string }> | null;
+      const first0 = ws0 ? Object.values(ws0)[0] : null;
+      const timesChanged =
+        editStartTime !== String(r.startTime ?? first0?.startTime ?? '') ||
+        editEndTime !== String(r.endTime ?? first0?.endTime ?? '');
+      if ((hadWs || editDays.length > 0) && (daysChanged || timesChanged)) {
+        const ws: Record<string, { enabled: boolean; startTime: string; endTime: string }> = {};
+        for (const d of editDays) ws[String(d)] = { enabled: true, startTime: editStartTime, endTime: editEndTime };
+        updates.weeklySchedule = ws;
+      }
+      if (timesChanged) {
+        updates.startTime = editStartTime;
+        updates.endTime = editEndTime;
+      }
+      await updateDoc(doc(db, 'tenants', tenantId, 'assignments', primary.id), updates);
+      setSavedMsg('Saved. No notifications were sent.');
+      setEditOpen(false);
+      await load();
+      onEnded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   const upcomingDays = useMemo(() => {
     const today = todayIsoLocal();
     return live.filter((f) => f.startDate >= today && f.startDate === (f.endDate || f.startDate));
@@ -339,6 +420,83 @@ const AssignmentDrawer: React.FC<{
                 Open in Placements
               </Button>
             )}
+
+            <Divider sx={{ my: 2 }} />
+            <Stack direction="row" alignItems="center" justifyContent="space-between">
+              <Typography variant="subtitle2" fontWeight={700}>
+                Assignment details
+              </Typography>
+              <Button size="small" onClick={() => setEditOpen((v) => !v)}>
+                {editOpen ? 'Cancel' : 'Edit'}
+              </Button>
+            </Stack>
+            {savedMsg && (
+              <Alert severity="success" sx={{ mt: 1 }}>
+                {savedMsg}
+              </Alert>
+            )}
+            {editOpen && primary && (
+              <Stack spacing={1.5} sx={{ mt: 1 }}>
+                <Stack direction="row" spacing={1}>
+                  <TextField label="Start date" type="date" size="small" fullWidth value={editStart} onChange={(e) => setEditStart(e.target.value)} InputLabelProps={{ shrink: true }} />
+                  <TextField label="End date" type="date" size="small" fullWidth value={editEnd} onChange={(e) => setEditEnd(e.target.value)} InputLabelProps={{ shrink: true }} helperText="Blank = ongoing" />
+                </Stack>
+                <Stack direction="row" spacing={1}>
+                  <TextField label="Pay $/hr" size="small" fullWidth value={editPay} onChange={(e) => setEditPay(e.target.value)} />
+                  <TextField label="Bill $/hr" size="small" fullWidth value={editBill} onChange={(e) => setEditBill(e.target.value)} />
+                </Stack>
+                <Stack direction="row" spacing={1}>
+                  <TextField label="Start time" type="time" size="small" fullWidth value={editStartTime} onChange={(e) => setEditStartTime(e.target.value)} InputLabelProps={{ shrink: true }} />
+                  <TextField label="End time" type="time" size="small" fullWidth value={editEndTime} onChange={(e) => setEditEndTime(e.target.value)} InputLabelProps={{ shrink: true }} />
+                </Stack>
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                  {DOW_LABELS.map((label, d) => (
+                    <Chip
+                      key={label}
+                      size="small"
+                      label={label}
+                      color={editDays.includes(d) ? 'primary' : undefined}
+                      variant={editDays.includes(d) ? 'filled' : 'outlined'}
+                      onClick={() =>
+                        setEditDays((prev) =>
+                          prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b),
+                        )
+                      }
+                    />
+                  ))}
+                </Stack>
+                <Button variant="contained" size="small" disabled={savingEdit} onClick={() => void handleSaveEdit()}>
+                  {savingEdit ? 'Saving…' : 'Save changes (no notifications)'}
+                </Button>
+              </Stack>
+            )}
+            {!editOpen &&
+              primary &&
+              (() => {
+                const r = primary.raw;
+                const fmt = (v: unknown): string => {
+                  const d = (v as { toDate?: () => Date } | undefined)?.toDate?.();
+                  return d ? d.toLocaleString() : typeof v === 'string' ? v : '';
+                };
+                const lines: string[] = [];
+                if (r.createdAt) lines.push(`Created ${fmt(r.createdAt)}${r.createdBy ? ` by ${String(r.createdBy).slice(0, 24)}` : ''}`);
+                if (r.updatedAt) lines.push(`Updated ${fmt(r.updatedAt)}${r.updatedBy ? ` by ${String(r.updatedBy).slice(0, 32)}` : ''}`);
+                if (r.endedAsOf) {
+                  lines.push(`Ended as of ${String(r.endedAsOf)}${r.endedBy ? ` by ${String(r.endedBy).slice(0, 24)}` : ''}${r.endedReason ? ` — ${String(r.endedReason)}` : ''}`);
+                } else if (r.completedReason) {
+                  lines.push(`Auto-completed — ${String(r.completedReason)}`);
+                }
+                if (r.paySource) lines.push(`Pay rate source: ${String(r.paySource)}`);
+                return lines.length ? (
+                  <Stack sx={{ mt: 1 }} spacing={0.25}>
+                    {lines.map((l) => (
+                      <Typography key={l} variant="caption" color="text.secondary">
+                        {l}
+                      </Typography>
+                    ))}
+                  </Stack>
+                ) : null;
+              })()}
 
             <Divider sx={{ my: 2 }} />
             <Typography variant="subtitle2" fontWeight={700} gutterBottom>
