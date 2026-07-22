@@ -5312,6 +5312,42 @@ const RecruiterAccountDetails: React.FC = () => {
     );
   };
 
+  // Worksite link for CHILD accounts (Greg, 2026-07-22): manual child
+  // accounts had no UI to set companyId/companyLocationId — the fields
+  // the gig-JO factory and the header's worksite card read (auto-created
+  // children get them stamped by the location trigger). Options load
+  // lazily from the inherited company's locations when opened.
+  const [worksiteLinkOptions, setWorksiteLinkOptions] = useState<Array<{ id: string; name: string; subtitle: string }>>([]);
+  const [worksiteLinkLoading, setWorksiteLinkLoading] = useState(false);
+  const inheritedCompanyIdForWorksite =
+    ((orderDefaultsInheritanceParent?.associations?.companyIds ?? []) as string[])[0] ??
+    ((account?.associations?.companyIds ?? []) as string[])[0] ??
+    null;
+  const loadWorksiteLinkOptions = async (): Promise<void> => {
+    if (!tenantId || !inheritedCompanyIdForWorksite || worksiteLinkOptions.length > 0) return;
+    setWorksiteLinkLoading(true);
+    try {
+      const snap = await getDocs(
+        collection(db, 'tenants', tenantId, 'crm_companies', inheritedCompanyIdForWorksite, 'locations'),
+      );
+      const opts = snap.docs
+        .map((d) => {
+          const l = d.data() as Record<string, any>;
+          return {
+            id: d.id,
+            name: String(l.name ?? l.nickname ?? '').trim() || d.id,
+            subtitle: [l.address ?? l.street, l.city, l.state].filter(Boolean).join(', '),
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setWorksiteLinkOptions(opts);
+    } catch (err) {
+      console.warn('Failed to load company locations for worksite link', err);
+    } finally {
+      setWorksiteLinkLoading(false);
+    }
+  };
+
   /** Shared with Edit Account Details modal and Cascading Data → Account Details card. */
   const renderAccountDetailsCoreFields = (opts?: { autoFocusName?: boolean; hideInlinePushSync?: boolean }) => (
     <>
@@ -5416,6 +5452,40 @@ const RecruiterAccountDetails: React.FC = () => {
             })()}
           </Typography>
         </Box>
+      )}
+      {isChildAccount && (
+        <Autocomplete
+          fullWidth
+          size="small"
+          options={worksiteLinkOptions}
+          loading={worksiteLinkLoading}
+          onOpen={() => void loadWorksiteLinkOptions()}
+          getOptionLabel={(o) => (o.subtitle ? `${o.name} — ${o.subtitle}` : o.name)}
+          isOptionEqualToValue={(o, v) => o.id === v.id}
+          value={worksiteLinkOptions.find((o) => o.id === account.companyLocationId) ?? null}
+          disabled={saving || !inheritedCompanyIdForWorksite}
+          onChange={(_, next) => {
+            if (!next || next.id === account.companyLocationId) return;
+            void (async () => {
+              await updateAccountField('companyId', inheritedCompanyIdForWorksite);
+              await updateAccountField('companyLocationId', next.id);
+            })();
+          }}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Worksite location"
+              placeholder={
+                inheritedCompanyIdForWorksite
+                  ? account.companyLocationId
+                    ? ''
+                    : 'Pick this venue\u2019s location\u2026'
+                  : 'Parent has no connected CRM company'
+              }
+              helperText="Feeds the worksite card and auto-created gig job orders. Locations come from the inherited CRM company."
+            />
+          )}
+        />
       )}
       {/* E-Verify is set by the Hiring Entity (Settings > Entities) and is read-only here. */}
       {displayEntityLoading ? (
