@@ -66,6 +66,7 @@ const SCHEMA_BY_TYPE: Record<IndeedFlexEventType, string> = {
   cancel_booking: `{ "workerNames": ["string"], "reason": "string?", "workDate": "YYYY-MM-DD", "startTime": "HH:mm?", "endTime": "HH:mm?", "venueName": "string", "roleName": "string?" }`,
   no_show: `{ "workerName": "string", "jobId": "string?", "workDate": "YYYY-MM-DD", "startTime": "HH:mm?", "endTime": "HH:mm?", "venueName": "string?", "roleName": "string?" }`,
   daily_digest_expired: `{ "expiredJobs": [ { "jobId": "string?", "venueName": "string?" } ] }`,
+  info_notice: `{ "noticeKind": "worker_ended|booking_expiring|booking_expired|correction|worker_rejected|other", "summary": "string", "workerName": "string?", "jobId": "string?", "venueName": "string?" }`,
 };
 
 function buildSystemPrompt(): string {
@@ -243,4 +244,103 @@ function parseLlmJson(raw: string): {
     }
   }
   return { parsed: {}, notes: 'json parse failed; returned empty object' };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// PI-5 (2026-07-22) — full-parse rescue for unclassified emails
+// ─────────────────────────────────────────────────────────────────────
+
+export interface LlmRescueResult {
+  /** 'ignore' when the model judged the email non-actionable. */
+  outcome: 'event' | 'ignore';
+  event?: IndeedFlexEvent;
+  notes?: string;
+}
+
+/**
+ * Last-resort classification + extraction when the subject matched no
+ * known pattern (a template Indeed changed, or a family we haven't
+ * seen). Same call conventions as `llmExtract`: no temperature
+ * override (gpt-5 rejects it), json_object response format, 6000-token
+ * completion cap so reasoning doesn't starve the output.
+ */
+export async function llmRescue(input: {
+  subject: string;
+  normalizedBody: string;
+  client?: OpenAILike;
+  model?: string;
+}): Promise<LlmRescueResult> {
+  const client = input.client ?? defaultOpenAI();
+  const model = input.model ?? 'gpt-5';
+  const completion = await client.chat.completions.create({
+    model,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You classify inbound staffing-agency notification emails from Indeed Flex. ' +
+          'Reply with ONE JSON object. Field "type" must be one of: new_request, ' +
+          'change_headcount, change_time, cancel_booking, no_show, info_notice, ignore. ' +
+          'Use "ignore" for marketing, surveys, newsletters, or anything with no operational action. ' +
+          'Use "info_notice" for operational FYIs (assignment ended, booking expiring/expired, ' +
+          'timesheet corrections, worker rejected) and include "noticeKind" from: worker_ended, ' +
+          'booking_expiring, booking_expired, correction, worker_rejected, other. ' +
+          'Where present in the email, also extract: jobId (digits), venueName, workDate and ' +
+          'endDate (YYYY-MM-DD), startTime and endTime (HH:mm 24h), headcount or newHeadcount ' +
+          '(number), workerName or workerNames (array), payRateUsd (number), roleName, and a ' +
+          'one-line "summary". Omit fields you cannot find — never guess.',
+      },
+      {
+        role: 'user',
+        content: `Subject: ${input.subject}\n\nBody:\n${input.normalizedBody.slice(0, 6000)}`,
+      },
+    ],
+    response_format: { type: 'json_object' },
+    max_completion_tokens: 6000,
+  });
+  const raw = completion.choices?.[0]?.message?.content ?? '';
+  const { parsed, notes } = parseLlmJson(raw);
+  const type = String(parsed.type ?? '');
+  if (type === 'ignore' || !type) {
+    return { outcome: 'ignore', notes };
+  }
+  const KNOWN = new Set([
+    'new_request',
+    'change_headcount',
+    'change_time',
+    'cancel_booking',
+    'no_show',
+    'info_notice',
+  ]);
+  if (!KNOWN.has(type)) return { outcome: 'ignore', notes: `llm returned unknown type '${type}'` };
+  const e: Record<string, unknown> = { ...parsed, type };
+  // Required-field guards per discriminant so downstream code never
+  // sees a malformed event.
+  if (type === 'new_request') {
+    e.jobId = String(e.jobId ?? '');
+    e.headcount = Number(e.headcount ?? e.newHeadcount ?? 1) || 1;
+  }
+  if (type === 'change_headcount') e.newHeadcount = Number(e.newHeadcount ?? e.headcount ?? 0) || 0;
+  if (type === 'change_time') e.jobId = String(e.jobId ?? '');
+  if (type === 'cancel_booking') {
+    e.workerNames = Array.isArray(e.workerNames)
+      ? e.workerNames.map(String)
+      : e.workerName
+        ? [String(e.workerName)]
+        : [];
+  }
+  if (type === 'no_show') e.workerName = String(e.workerName ?? '');
+  if (type === 'info_notice') {
+    const kinds = new Set([
+      'worker_ended',
+      'booking_expiring',
+      'booking_expired',
+      'correction',
+      'worker_rejected',
+      'other',
+    ]);
+    e.noticeKind = kinds.has(String(e.noticeKind)) ? e.noticeKind : 'other';
+    e.summary = String(e.summary ?? input.subject).slice(0, 200);
+  }
+  return { outcome: 'event', event: e as unknown as IndeedFlexEvent, notes };
 }

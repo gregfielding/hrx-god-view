@@ -45,9 +45,9 @@ export function recommendedActionFor(
     return 'manual-only';
   }
 
-  // Digests are info-only; the recruiter scans them but the system
-  // shouldn't auto-act on the expired-jobs list.
-  if (eventType === 'daily_digest_expired') {
+  // Digests and info notices are info-only; the recruiter scans them
+  // but the system never auto-acts.
+  if (eventType === 'daily_digest_expired' || eventType === 'info_notice') {
     return 'review';
   }
 

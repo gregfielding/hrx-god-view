@@ -38,7 +38,7 @@ import type {
   ExternalShiftRequestParseSource,
 } from '../../../shared/indeedFlex/types';
 
-import { classifyEvent } from './classifyEvent';
+import { classifyEvent, isNoiseSubject } from './classifyEvent';
 import {
   extractCancelBooking,
   extractChangeHeadcount,
@@ -48,7 +48,7 @@ import {
   extractNoShow,
   type ExtractionResult,
 } from './extractFields';
-import { llmExtract, type OpenAILike } from './llmFallback';
+import { llmExtract, llmRescue, type OpenAILike } from './llmFallback';
 import { normalizeEmailBody } from './normalizeEmail';
 
 export interface ParseInput {
@@ -73,8 +73,49 @@ export interface ParsedEvent {
 export interface ParseResult {
   events: ParsedEvent[];
   /** Set when classification failed. Trigger uses this to mark the
-   *  source ingest event as `parse_failed`. */
-  reason?: 'unclassified' | 'no_body';
+   *  source ingest event as `parse_failed` — or, for `'noise'`,
+   *  `ignored` (PI-5). */
+  reason?: 'unclassified' | 'no_body' | 'noise';
+  /** Detail for 'noise' / rescue outcomes (marketing,
+   *  misrouted_fieldglass, llm_judged_ignorable, llm_rescue_failed…). */
+  noiseReason?: string;
+}
+
+/** PI-5 — build an info_notice straight off the subject line. */
+export function buildInfoNotice(subject: string, body: string): ParsedEvent {
+  const s = subject.trim();
+  const lower = s.toLowerCase();
+  let noticeKind: 'worker_ended' | 'booking_expiring' | 'booking_expired' | 'correction' | 'worker_rejected' | 'other' = 'other';
+  let workerName: string | undefined;
+  if (lower.includes('worker assignment ended')) {
+    noticeKind = 'worker_ended';
+    // "Worker assignment ended - Al Gaymon, Loader / Crew in ..."
+    const m = s.match(/worker assignment ended\s*[-–]\s*([^,]+),/i);
+    if (m) workerName = m[1].trim();
+  } else if (lower.includes('expiring soon')) {
+    noticeKind = 'booking_expiring';
+  } else if (lower.includes('expired') || lower.includes('booking deadline passed')) {
+    noticeKind = 'booking_expired';
+  } else if (lower.startsWith('corrections')) {
+    noticeKind = 'correction';
+  } else if (lower.includes('has not been accepted to work')) {
+    noticeKind = 'worker_rejected';
+    const m = s.match(/^(.+?)\s+has not been accepted/i);
+    if (m) workerName = m[1].trim();
+  }
+  const jobIdMatch = s.match(/#(\d{4,})/);
+  void body;
+  return {
+    event: {
+      type: 'info_notice',
+      noticeKind,
+      summary: s.slice(0, 200),
+      ...(workerName ? { workerName } : {}),
+      ...(jobIdMatch ? { jobId: jobIdMatch[1] } : {}),
+    },
+    confidence: 'high',
+    parseSource: 'regex',
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -89,7 +130,47 @@ export async function parseIndeedFlexEmail(input: ParseInput): Promise<ParseResu
 
   const eventType = classifyEvent({ subject: input.subject, bodyHint: body });
   if (!eventType) {
+    // PI-5 (2026-07-22): unknown subject. Deliberate noise dies as
+    // 'noise' (trigger marks the ingest event 'ignored'); everything
+    // else gets one full-parse LLM rescue before we give up.
+    const noise = isNoiseSubject(input.subject);
+    if (noise) {
+      return { events: [], reason: 'noise', noiseReason: noise };
+    }
+    if (!input.disableLlm) {
+      try {
+        const rescued = await llmRescue({
+          subject: input.subject,
+          normalizedBody: body,
+          client: input.llmClient,
+        });
+        if (rescued.outcome === 'ignore') {
+          return { events: [], reason: 'noise', noiseReason: 'llm_judged_ignorable' };
+        }
+        if (rescued.event) {
+          return {
+            events: [
+              {
+                event: rescued.event,
+                confidence: 'low',
+                parseSource: 'llm',
+                notes: combineNotes(['llm rescue (no subject pattern matched)', rescued.notes]),
+              },
+            ],
+          };
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { events: [], reason: 'unclassified', noiseReason: `llm_rescue_failed: ${message}` };
+      }
+    }
     return { events: [], reason: 'unclassified' };
+  }
+
+  // PI-5: info notices are built straight off the subject — no
+  // per-field extraction and no LLM needed.
+  if (eventType === 'info_notice') {
+    return { events: [buildInfoNotice(input.subject, body)] };
   }
 
   const raw = extractByType(eventType, body);

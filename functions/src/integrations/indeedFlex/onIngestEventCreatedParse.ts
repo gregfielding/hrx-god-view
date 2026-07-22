@@ -129,6 +129,17 @@ export const onIngestEventCreatedParse = onDocumentCreated(
       return;
     }
 
+    // PI-5: recognized noise (marketing, misrouted Fieldglass mail, or
+    // the LLM judged it non-actionable) is deliberately ignored — not a
+    // parse failure pretending to be a bug.
+    if (parseResult.reason === 'noise') {
+      await sourceRef.update({
+        status: 'ignored',
+        ignoredReason: parseResult.noiseReason ?? 'noise',
+      });
+      return;
+    }
+
     if (parseResult.reason === 'unclassified' || parseResult.reason === 'no_body') {
       logger.warn('[onIngestEventCreatedParse] could not parse', {
         tenantId,
@@ -138,7 +149,7 @@ export const onIngestEventCreatedParse = onDocumentCreated(
       });
       await sourceRef.update({
         status: 'parse_failed',
-        parseFailureReason: parseResult.reason,
+        parseFailureReason: parseResult.noiseReason ?? parseResult.reason,
       });
       return;
     }

@@ -193,3 +193,27 @@ Job requests expired:
     expect(e.notes ?? '').to.match(/llm fallback failed/);
   });
 });
+
+describe('PI-5 — info_notice build + noise routing', () => {
+  const { buildInfoNotice } = require('../../../../integrations/indeedFlex/parser/parseIndeedFlexEmail');
+  it('worker_ended notice extracts the worker name from the subject', () => {
+    const p = buildInfoNotice('Worker assignment ended - Al Gaymon, Loader / Crew in Loader / Crew - Distribution', '');
+    expect(p.event.type).to.equal('info_notice');
+    expect((p.event as any).noticeKind).to.equal('worker_ended');
+    expect((p.event as any).workerName).to.equal('Al Gaymon');
+  });
+  it('expiring notice captures the #jobId', () => {
+    const p = buildInfoNotice('Expiring soon: Job request in Hanover, MD – Book workers now #511654', '');
+    expect((p.event as any).noticeKind).to.equal('booking_expiring');
+    expect((p.event as any).jobId).to.equal('511654');
+  });
+  it('noise subject returns reason noise without touching the LLM', async () => {
+    const r = await parseIndeedFlexEmail({
+      subject: 'Prepare for upcoming US demand peaks',
+      text: 'marketing blast body',
+      disableLlm: true,
+    });
+    expect(r.reason).to.equal('noise');
+    expect(r.events).to.have.length(0);
+  });
+});

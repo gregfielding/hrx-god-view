@@ -89,6 +89,21 @@ export function classifyEvent(input: ClassifyInput): IndeedFlexEventType | null 
     return 'daily_digest_expired';
   }
 
+  // `info_notice` (PI-5, 2026-07-22) — the families from the
+  // parse-failure census: actionable-but-informational notices that
+  // previously died as parse_failed. The extractor derives noticeKind
+  // from the same subject.
+  if (
+    /\bworker assignment ended\b/.test(subject) ||
+    /\bexpiring soon\b/.test(subject) ||
+    /\bbooking deadline passed\b/.test(subject) ||
+    /\b(job request|unfilled shifts?) expired\b/.test(subject) ||
+    /^corrections (approved|disputed)/.test(subject) ||
+    /\bhas not been accepted to work\b/.test(subject)
+  ) {
+    return 'info_notice';
+  }
+
   // `change_headcount` vs `change_time` — both under "Booking change"
   if (/\bbooking change\b/.test(subject) || /\bjob.*change\b/.test(subject)) {
     // Disambiguate from body.
@@ -113,5 +128,27 @@ export function classifyEvent(input: ClassifyInput): IndeedFlexEventType | null 
     return 'change_time';
   }
 
+  return null;
+}
+
+/**
+ * PI-5 — deliberate-ignore detection. Marketing blasts, surveys, and
+ * misrouted Fieldglass mail should die quietly as `ignored`, not sit
+ * in parse_failed pretending to be a bug. Checked ONLY after
+ * `classifyEvent` returned null, so a real notification can never be
+ * swallowed by an over-eager noise pattern.
+ */
+export function isNoiseSubject(rawSubject: string): string | null {
+  const subject = (rawSubject ?? '').toLowerCase();
+  if (/sdxowo|work order revision/.test(subject)) return 'misrouted_fieldglass';
+  if (
+    /\bdemand peaks?\b/.test(subject) ||
+    /\bhow are you finding\b/.test(subject) ||
+    /\bagency update\b/.test(subject) ||
+    /\bnewsletter\b/.test(subject) ||
+    /\bwebinar\b/.test(subject)
+  ) {
+    return 'marketing';
+  }
   return null;
 }

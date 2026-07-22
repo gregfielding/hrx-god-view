@@ -125,6 +125,14 @@ function classify(req: ExternalShiftRequest): KindMeta {
         stripeColor: '#6B7280', // grey
         destructive: false,
       };
+    case 'info_notice':
+      return {
+        kind: 'note',
+        label: 'FYI',
+        icon: <ListAltOutlined />,
+        stripeColor: '#F59E0B', // amber
+        destructive: false,
+      };
   }
 }
 
@@ -318,6 +326,32 @@ function ActionDescription({
               … and {jobs.length - 10} more
             </Typography>
           )}
+        </Stack>
+      );
+    }
+
+    case 'info_notice': {
+      const kindLabel: Record<string, string> = {
+        worker_ended: 'Worker assignment ended',
+        booking_expiring: 'Booking deadline approaching',
+        booking_expired: 'Booking expired unfilled',
+        correction: 'Timesheet correction',
+        worker_rejected: 'Worker not accepted',
+        other: 'Notice',
+      };
+      return (
+        <Stack spacing={0.5}>
+          <Typography variant="body2" fontWeight={600}>
+            FYI — {kindLabel[event.noticeKind] ?? 'Notice'}
+            {event.workerName ? `: ${event.workerName}` : ''}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {event.summary}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            No automatic action — handle if needed, then Mark applied to
+            clear it.
+          </Typography>
         </Stack>
       );
     }

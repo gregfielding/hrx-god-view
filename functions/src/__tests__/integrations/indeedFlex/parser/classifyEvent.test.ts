@@ -90,3 +90,25 @@ describe('live format subjects (2026-07-08)', () => {
     ).to.equal('change_time');
   });
 });
+
+describe('PI-5 — info_notice + noise classification', () => {
+  const { isNoiseSubject } = require('../../../../integrations/indeedFlex/parser/classifyEvent');
+  it('classifies the parse-failure census families as info_notice', () => {
+    for (const s of [
+      'Worker assignment ended - Al Gaymon, Loader / Crew in Loader / Crew - Distr',
+      'Expiring soon: Job request in Hanover, MD – Book workers now #511654',
+      'Job request expired – Booking deadline passed #511651',
+      'Unfilled shifts expired – Booking deadline passed #528976',
+      'Corrections approved',
+      'Shamar Holloway has not been accepted to work at CHI - Woodridge Warehouse',
+    ]) {
+      expect(classifyEvent({ subject: s })).to.equal('info_notice');
+    }
+  });
+  it('flags marketing + misrouted Fieldglass as noise', () => {
+    expect(isNoiseSubject('Prepare for upcoming US demand peaks')).to.equal('marketing');
+    expect(isNoiseSubject('Your July Agency Update: Kodiak Hub, Rate Changes & Billing')).to.equal('marketing');
+    expect(isNoiseSubject('Work Order Revision submitted [Work Order ID: SDXOWO00267978]')).to.equal('misrouted_fieldglass');
+    expect(isNoiseSubject('New job request starting soon — Job 509668')).to.equal(null);
+  });
+});

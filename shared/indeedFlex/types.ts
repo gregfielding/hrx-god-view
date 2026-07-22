@@ -46,7 +46,12 @@ export type IndeedFlexEventType =
   | 'change_time'
   | 'cancel_booking'
   | 'no_show'
-  | 'daily_digest_expired';
+  | 'daily_digest_expired'
+  /** PI-5 (2026-07-22): informational notices Indeed sends that need
+   *  recruiter eyes but have no automated apply — assignment-ended,
+   *  booking-deadline warnings, expiry notices, timesheet corrections,
+   *  worker rejections. Previously these died as parse_failed. */
+  | 'info_notice';
 
 /**
  * Constant used everywhere the ingestion path stamps `source`. Single
@@ -107,7 +112,10 @@ export type ExternalIngestEventStatus =
   | 'rejected_dkim'
   | 'rejected_duplicate'
   | 'parsed'
-  | 'parse_failed';
+  | 'parse_failed'
+  /** PI-5: recognized as noise (marketing, surveys, misrouted
+   *  Fieldglass mail) — deliberately not surfaced to recruiters. */
+  | 'ignored';
 
 /**
  * Result of DKIM / SPF verification performed at the webhook edge.
@@ -282,6 +290,25 @@ export interface IndeedFlexEventDailyDigestExpired extends IndeedFlexEventBase {
   expiredJobs: Array<{ jobId?: string; venueName?: string }>;
 }
 
+/** PI-5 (2026-07-22): catch-all for actionable-but-informational
+ *  Indeed notices. No automated apply — the recruiter reads the
+ *  summary, acts (e.g. ends the assignment via the drawer), and
+ *  clicks Mark applied. */
+export interface IndeedFlexEventInfoNotice extends IndeedFlexEventBase {
+  type: 'info_notice';
+  noticeKind:
+    | 'worker_ended'
+    | 'booking_expiring'
+    | 'booking_expired'
+    | 'correction'
+    | 'worker_rejected'
+    | 'other';
+  /** Worker the notice concerns (worker_ended / worker_rejected). */
+  workerName?: string;
+  /** One-line human summary — usually the subject line. */
+  summary: string;
+}
+
 /**
  * Discriminated union of every event shape the parser can return.
  * Downstream code switches on `event.type` to apply the right handler.
@@ -292,7 +319,8 @@ export type IndeedFlexEvent =
   | IndeedFlexEventChangeTime
   | IndeedFlexEventCancelBooking
   | IndeedFlexEventNoShow
-  | IndeedFlexEventDailyDigestExpired;
+  | IndeedFlexEventDailyDigestExpired
+  | IndeedFlexEventInfoNotice;
 
 // ─────────────────────────────────────────────────────────────────────
 // external_shift_requests (Slice 2)

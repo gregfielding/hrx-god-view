@@ -210,6 +210,28 @@ async function dispatch(
       };
     }
 
+    case 'info_notice': {
+      // PI-5: informational — nothing to match against. The venue
+      // matcher still runs when a venueName is present so the log row
+      // shows account context; failures are fine.
+      if (event.venueName) {
+        const venue = await matchByVenue(reader, { tenantId, venueName: event.venueName });
+        if (venue.confidence === 'exact' && venue.accountId) {
+          return {
+            matchConfidence: 'exact',
+            matchedAccountId: venue.accountId,
+            matchedAccountName: venue.accountName,
+            venueKey: venue.venueKey,
+            matchNotes: `informational notice (${event.noticeKind}) — account context only`,
+          };
+        }
+      }
+      return {
+        matchConfidence: 'none',
+        matchNotes: `informational notice (${event.noticeKind}) — no matching needed`,
+      };
+    }
+
     case 'daily_digest_expired': {
       // Run per-job lookups. Return the FIRST resolved JO id + a
       // summary note. The full list of expired jobs stays on the
