@@ -536,6 +536,12 @@ export async function resolveTimesheetGrid(
       //   3+4. Open-shift / standing-crew flags — those CAN run for
       //      months and would slip past both date ranges when they span
       //      the whole week.
+      //   5. endDate == '' (2026-07-22 fix) — open-ended CAREER
+      //      assignments carry neither open-shift flag, so a career
+      //      worker whose startDate predates the 14-day look-back fell
+      //      through every leg and vanished from Who's Working and
+      //      Timesheets (Daniel's report: Gizelle Brown, since 4/06,
+      //      invisible while Payton Harris, since 7/17, showed).
       // The overlap filter below prunes the union to the period.
       const lookback = new Date(`${period.start}T00:00:00`);
       lookback.setDate(lookback.getDate() - 14);
@@ -558,6 +564,7 @@ export async function resolveTimesheetGrid(
         ),
         getDocs(query(assignmentsCol, where('isOpenShift', '==', true))),
         getDocs(query(assignmentsCol, where('noFixedTimes', '==', true))),
+        getDocs(query(assignmentsCol, where('endDate', '==', ''))),
       ]);
       const byId = new Map<string, Assignment & { id: string }>();
       for (const snap of snaps) {
