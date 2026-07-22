@@ -23,6 +23,7 @@
  */
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { resolveShiftDressing, type PricedPosition } from './shiftDressing';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { canManageAssignments } from '../../placementsApi';
@@ -418,7 +419,35 @@ async function applyNewRequest(ctx: ApplyCtx): Promise<Record<string, unknown>> 
       return { ok: true, alreadyApplied: true, summary: 'Shift already existed — nothing created' };
     }
   }
-  const payRate = Number(event.payRateUsd);
+  const emailPay = Number(event.payRateUsd);
+
+  // PI-4 (2026-07-21): dress the shift at birth. The national-account
+  // cascade already fills pricing onto every child account, and inbox
+  // JOs carry per-position gigPositions — resolve pay/bill/WC from
+  // email → JO position → account pricing, and denorm the worksite
+  // from the JO, so the money view and Everee chain never see a bare
+  // Flex shift again (the CORT −10%-margin class of hole).
+  const jo = joSnap.data() as Record<string, unknown>;
+  let accountPricing: { flatMarkupPercent?: unknown; positions?: PricedPosition[] } | undefined;
+  const accountId = String(jo.recruiterAccountId ?? '');
+  if (accountId) {
+    const acctSnap = await db.doc(`tenants/${tenantId}/accounts/${accountId}`).get();
+    const pricing = (acctSnap.data() as Record<string, unknown> | undefined)?.pricing;
+    if (pricing && typeof pricing === 'object') {
+      accountPricing = pricing as { flatMarkupPercent?: unknown; positions?: PricedPosition[] };
+    }
+  }
+  const dressing = resolveShiftDressing({
+    roleName,
+    emailPayRate: Number.isFinite(emailPay) && emailPay > 0 ? emailPay : undefined,
+    joGigPositions: Array.isArray(jo.gigPositions)
+      ? (jo.gigPositions as PricedPosition[])
+      : [],
+    accountPricing,
+  });
+  const worksiteName = String(jo.worksiteName ?? '').trim();
+  const worksiteAddress =
+    jo.worksiteAddress && typeof jo.worksiteAddress === 'object' ? jo.worksiteAddress : null;
 
   const dateSchedule: Record<string, Record<string, unknown>> = {};
   for (const d of eachDateInclusive(workDate, endDate)) {
@@ -444,7 +473,12 @@ async function applyNewRequest(ctx: ApplyCtx): Promise<Record<string, unknown>> 
     ...(endTime ? { endTime } : {}),
     dateSchedule,
     totalStaffRequested: need,
-    ...(Number.isFinite(payRate) && payRate > 0 ? { payRate } : {}),
+    ...(dressing.payRate !== undefined ? { payRate: dressing.payRate } : {}),
+    ...(dressing.billRate !== undefined ? { billRate: dressing.billRate } : {}),
+    ...(dressing.wcCode ? { wcCode: dressing.wcCode } : {}),
+    ...(dressing.paySource ? { paySource: dressing.paySource } : {}),
+    ...(worksiteName ? { worksiteName } : {}),
+    ...(worksiteAddress ? { worksiteAddress } : {}),
     ...(jobId ? { poNumber: jobId } : {}),
     sendNotification: false,
     showStaffNeeded: false,
