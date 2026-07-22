@@ -199,16 +199,29 @@ service cloud.firestore {
         allow update: if request.auth != null && (
           // Recruiters/Managers/Admins can update anything
           isHRX() ||
-          (request.auth.token.roles != null && 
-           tenantId in request.auth.token.roles && 
+          (request.auth.token.roles != null &&
+           tenantId in request.auth.token.roles &&
            request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin']) ||
+          // 2026-07-22 fix: securityLevel on the user doc is the app's
+          // CANONICAL permission system (custom-claim roles are legacy
+          // and unset for most staff). Read already accepted it; update
+          // did not — so recruiters could see assignments but got
+          // "Missing or insufficient permissions" on the start-date
+          // pencil (direct client updateDoc from PlacementsTab).
+          hasSecurityLevel(tenantId, 5) ||
           // Workers can only update status and notes on their own assignments when in a worker-actionable state
           (resource.data.userId == request.auth.uid &&
            resource.data.status in ['pending', 'proposed', 'confirmed', 'in_progress', 'active'] &&
            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'notes', 'updatedAt', 'updatedBy']))
         ) &&
-        // Always enforce tenantId cannot be changed
-        request.resource.data.tenantId == resource.data.tenantId;
+        // Always enforce tenantId cannot be changed. Legacy docs that
+        // never carried tenantId stay updatable as long as the write
+        // doesn't try to add a mismatched one.
+        (
+          !('tenantId' in resource.data)
+            ? (!('tenantId' in request.resource.data) || request.resource.data.tenantId == tenantId)
+            : request.resource.data.tenantId == resource.data.tenantId
+        );
         
         // DELETE Rules: Only admins can delete assignments
         allow delete: if request.auth != null && (
