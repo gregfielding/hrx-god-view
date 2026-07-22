@@ -127,6 +127,75 @@ export function normalizeVenueName(raw: string): string {
   return s;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Geo signals (2026-07-21, Greg's directive: "compare worksite
+// location address, not just name"). Indeed venue names rarely match
+// HRX account names ("Maryland Warehouse" is "CORT Baltimore
+// Warehouse" in HRX) — but the emails carry a literal street address
+// and/or a "(Hanover, MD)" parenthetical, and those ARE unambiguous.
+// ─────────────────────────────────────────────────────────────────────
+
+export interface VenueGeo {
+  streetNumber?: string;
+  streetTokens: Set<string>;
+  zip?: string;
+  city?: string;
+  state?: string;
+}
+
+/** Compressed city key so "St. Paul" ≡ "Saint Paul", "Ft." ≡ "Fort". */
+export function cityKey(s: string): string {
+  let k = s.toLowerCase().replace(/[^a-z]/g, '');
+  if (k.startsWith('st') && !k.startsWith('saint')) k = `saint${k.slice(2)}`;
+  if (k.startsWith('ft') && !k.startsWith('fort')) k = `fort${k.slice(2)}`;
+  return k;
+}
+
+function streetNumberOf(street: string): string {
+  return (street.match(/^\s*(\d+)\s/) ?? ['', ''])[1];
+}
+
+function streetTokensOf(street: string): Set<string> {
+  return tokenize(street.replace(/^\s*\d+\s*/, ''));
+}
+
+/** Pull street/zip/city/state signals out of a raw venue string. */
+export function extractVenueGeo(raw: string): VenueGeo | null {
+  const geo: VenueGeo = { streetTokens: new Set() };
+  // Parenthetical scope: "(Hanover, MD)", "(DC)", "(St. Paul, MN)".
+  const paren = raw.match(/\(([^)]+)\)/);
+  if (paren) {
+    const parts = paren[1].split(',').map((p) => p.trim()).filter(Boolean);
+    const last = parts[parts.length - 1] ?? '';
+    if (/^[A-Z]{2}$/.test(last)) {
+      geo.state = last;
+      if (parts.length > 1) geo.city = parts.slice(0, -1).join(' ');
+    } else if (parts.length === 1 && /^[A-Z]{2}$/.test(parts[0])) {
+      geo.state = parts[0];
+    }
+  }
+  // Address tail: first comma-segment starting with a street number,
+  // then a zip + city segment somewhere after it.
+  const segs = raw.split(',');
+  const streetIdx = segs.findIndex((seg, i) => i > 0 && /^\s*\d+\s+\S/.test(seg));
+  if (streetIdx > 0) {
+    const streetSeg = segs[streetIdx].trim();
+    geo.streetNumber = streetNumberOf(streetSeg);
+    geo.streetTokens = streetTokensOf(streetSeg);
+    for (const seg of segs.slice(streetIdx + 1)) {
+      const zipMatch = seg.match(/\b(\d{5})(?:-\d{4})?\b/);
+      if (zipMatch) {
+        geo.zip = zipMatch[1];
+        const cityPart = seg.replace(/\b\d{5}(?:-\d{4})?\b/, '').trim();
+        if (cityPart && !/^us$/i.test(cityPart)) geo.city = cityPart;
+        break;
+      }
+    }
+  }
+  const hasSignal = Boolean(geo.streetNumber || geo.zip || geo.city || geo.state);
+  return hasSignal ? geo : null;
+}
+
 function jaccard(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
   let intersect = 0;
@@ -344,6 +413,87 @@ export async function matchByVenue(
     acctEntries.push({ doc: a, name: rawName, tokens: tokenize(stripped) });
   }
   const idf = buildTokenIdf(acctEntries.map((e) => e.tokens));
+  const nameOf = new Map(acctEntries.map((e) => [e.doc.id, e.name]));
+
+  // ── Geo legs (2026-07-21) ──────────────────────────────────────────
+  const geo = extractVenueGeo(raw);
+  let addrCache: Awaited<ReturnType<Reader['listAccountAddresses']>> | null = null;
+  const loadAddrs = async () => {
+    if (!addrCache) addrCache = await reader.listAccountAddresses({ tenantId: args.tenantId });
+    return addrCache;
+  };
+
+  // Street-address leg — the strongest signal there is: the email
+  // names the literal worksite address. Unique account on (street
+  // number + zip), or (street number + street-name token + state),
+  // wins outright — no fuzzy scoring, no SVC guard needed.
+  if (geo?.streetNumber) {
+    const addrs = await loadAddrs();
+    const numHits = addrs.filter((e) => streetNumberOf(e.street) === geo.streetNumber);
+    let hits = geo.zip ? numHits.filter((e) => e.zip && e.zip === geo.zip) : [];
+    if (hits.length === 0) {
+      hits = numHits.filter((e) => {
+        const overlap = [...streetTokensOf(e.street)].some((t) => geo.streetTokens.has(t));
+        return overlap && (!geo.state || !e.state || e.state === geo.state);
+      });
+    }
+    const uniq = Array.from(new Set(hits.map((e) => e.accountId)));
+    if (uniq.length === 1) {
+      const accountId = uniq[0];
+      const accountName = nameOf.get(accountId) ?? accountId;
+      return {
+        accountId,
+        accountName,
+        venueKey,
+        candidates: [{ id: accountId, name: accountName }],
+        confidence: 'exact',
+        notes: `matched by worksite address (${geo.streetNumber} ${[...geo.streetTokens].join(' ')}${geo.zip ? `, ${geo.zip}` : ''}) → ${accountName}`,
+      };
+    }
+  }
+
+  // City rescue — used when name scoring can't resolve. If the venue's
+  // city points at exactly ONE account with a worksite there AND that
+  // account shares a non-geographic name token with the venue, that's
+  // the match ("Maryland Warehouse" + (Hanover, MD) → CORT Baltimore
+  // Warehouse via shared 'warehouse'). Deliberately strict — the first
+  // draft produced live false positives: state-only matched Fitzgerald
+  // Tennis Center to a DC convention center on the token 'center', and
+  // the city name itself as "shared token" matched a CORT Columbus
+  // venue to Purolator's Columbus office. Hence: city REQUIRED, city
+  // tokens excluded from evidence, and SVC-coded (CORT) venues can
+  // only rescue onto CORT accounts.
+  const geoRescue = async (): Promise<VenueMatchOutcome | null> => {
+    if (!geo?.city) return null;
+    const addrs = await loadAddrs();
+    const wantCity = cityKey(geo.city);
+    const inGeo = new Set(
+      addrs
+        .filter(
+          (e) =>
+            cityKey(e.city) === wantCity && (!geo.state || !e.state || e.state === geo.state),
+        )
+        .map((e) => e.accountId),
+    );
+    if (inGeo.size === 0) return null;
+    const cityTokens = tokenize(geo.city);
+    const sharing = acctEntries.filter(
+      (e) =>
+        inGeo.has(e.doc.id) &&
+        [...venueTokens].some((t) => !cityTokens.has(t) && e.tokens.has(t)),
+    );
+    if (sharing.length !== 1) return null;
+    const hit = sharing[0];
+    if (/SVC\d+\/\d+\/\d+/i.test(raw) && !/\bcort\b/i.test(hit.name)) return null;
+    return {
+      accountId: hit.doc.id,
+      accountName: hit.name,
+      venueKey,
+      candidates: [{ id: hit.doc.id, name: hit.name }],
+      confidence: 'exact',
+      notes: `matched by worksite city ${geo.city} + shared name token → ${hit.name}`,
+    };
+  };
 
   // Score every account with both weighted exact (Jaccard-weighted) and
   // weighted fuzzy (Levenshtein-tolerant) overlap. Take the max so a
@@ -365,6 +515,8 @@ export async function matchByVenue(
   const runnerUp = scored[1];
 
   if (!top || top.score < MATCH_THRESHOLD) {
+    const rescued = await geoRescue();
+    if (rescued) return rescued;
     return {
       venueKey,
       candidates: scored
@@ -378,6 +530,8 @@ export async function matchByVenue(
 
   const margin = runnerUp ? top.score - runnerUp.score : Infinity;
   if (margin < TIE_MARGIN) {
+    const rescued = await geoRescue();
+    if (rescued) return rescued;
     return {
       venueKey,
       candidates: scored.slice(0, 3).map((s) => ({ id: s.doc.id, name: s.name })),
@@ -396,6 +550,8 @@ export async function matchByVenue(
   // Center Maryland"). Downgrade to multiple so the recruiter picks or
   // teaches an alias. Recruiter aliases short-circuit far above this.
   if (/SVC\d+\/\d+\/\d+/i.test(raw) && !/\bcort\b/i.test(top.name)) {
+    const rescued = await geoRescue();
+    if (rescued) return rescued;
     return {
       venueKey,
       candidates: scored.slice(0, 3).map((s) => ({ id: s.doc.id, name: s.name })),

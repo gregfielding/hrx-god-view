@@ -45,7 +45,27 @@ function shiftCoversDate(data: Record<string, unknown>, workDate: string): boole
   return false;
 }
 
+/** Normalize one address-ish object into an index entry. */
+function toAddressEntry(
+  accountId: string,
+  w: Record<string, unknown>,
+): { accountId: string; street: string; city: string; state: string; zip: string } | null {
+  const street = String(w.street ?? w.line1 ?? w.address ?? '').trim().toLowerCase();
+  const city = String(w.city ?? '').trim().toLowerCase();
+  const state = String(w.state ?? '').trim().toUpperCase();
+  const zipRaw = String(w.zip ?? w.zipcode ?? w.postalCode ?? '');
+  const zip = (zipRaw.match(/\d{5}/) ?? [''])[0];
+  if (!street && !(city && state)) return null;
+  return { accountId, street, city, state, zip };
+}
+
 export function createFirestoreReader(db: Firestore): Reader {
+  // Memoized per reader instance (= per trigger invocation) — the
+  // matcher may consult the address index more than once per event.
+  let addressIndex: Promise<
+    Array<{ accountId: string; street: string; city: string; state: string; zip: string }>
+  > | null = null;
+
   return {
     async findJobOrderByPoNumber({ tenantId, jobId }) {
       const trimmed = String(jobId ?? '').trim();
@@ -194,6 +214,82 @@ export function createFirestoreReader(db: Firestore): Reader {
         .collection('accounts')
         .get();
       return snap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+    },
+
+    /**
+     * Address index (2026-07-21): JO worksiteAddress rows keyed by
+     * recruiterAccountId, plus company-location docs for accounts
+     * that have no JOs yet (account.companyId + companyLocationId →
+     * `crm_companies/{companyId}/locations/{locId}`).
+     */
+    async listAccountAddresses({ tenantId }) {
+      if (!addressIndex) {
+        addressIndex = (async () => {
+          const out: Array<{
+            accountId: string;
+            street: string;
+            city: string;
+            state: string;
+            zip: string;
+          }> = [];
+          const covered = new Set<string>();
+          const jos = await db
+            .collection('tenants')
+            .doc(tenantId)
+            .collection('job_orders')
+            .limit(1000)
+            .get();
+          for (const d of jos.docs) {
+            const j = d.data() as Record<string, unknown>;
+            const acct = String(j.recruiterAccountId ?? '');
+            const w = j.worksiteAddress;
+            if (!acct || !w || typeof w !== 'object') continue;
+            const e = toAddressEntry(acct, w as Record<string, unknown>);
+            if (e) {
+              out.push(e);
+              covered.add(acct);
+            }
+          }
+          const accounts = await db
+            .collection('tenants')
+            .doc(tenantId)
+            .collection('accounts')
+            .get();
+          const fills = accounts.docs
+            .filter((a) => !covered.has(a.id))
+            .map((a) => {
+              const data = a.data() as Record<string, unknown>;
+              return {
+                id: a.id,
+                companyId: String(data.companyId ?? ''),
+                locId: String(data.companyLocationId ?? ''),
+              };
+            })
+            .filter((f) => f.companyId && f.locId)
+            .slice(0, 250);
+          const locs = await Promise.all(
+            fills.map((f) =>
+              db
+                .doc(`tenants/${tenantId}/crm_companies/${f.companyId}/locations/${f.locId}`)
+                .get()
+                .catch(() => null),
+            ),
+          );
+          fills.forEach((f, i) => {
+            const snap = locs[i];
+            if (!snap || !snap.exists) return;
+            const loc = snap.data() as Record<string, unknown>;
+            const w =
+              loc.address && typeof loc.address === 'object'
+                ? (loc.address as Record<string, unknown>)
+                : loc;
+            const e = toAddressEntry(f.id, w);
+            if (e) out.push(e);
+          });
+          return out;
+        })();
+      }
+      return addressIndex;
     },
 
     /**

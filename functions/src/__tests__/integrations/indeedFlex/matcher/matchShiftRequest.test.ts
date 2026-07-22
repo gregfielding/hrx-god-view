@@ -8,7 +8,7 @@
 
 import { expect } from 'chai';
 
-import { normalizeVenueName } from '../../../../integrations/indeedFlex/matcher/matchByVenue';
+import { extractVenueGeo, normalizeVenueName } from '../../../../integrations/indeedFlex/matcher/matchByVenue';
 import { matchShiftRequest } from '../../../../integrations/indeedFlex/matcher/matchShiftRequest';
 import {
   matchWorkerAssignments,
@@ -32,6 +32,13 @@ interface MockData {
   worksitesByName?: Record<string, ReaderDoc>;
   assignmentsByShift?: Record<string, ReaderDoc[]>;
   accounts?: ReaderDoc[];
+  accountAddresses?: Array<{
+    accountId: string;
+    street: string;
+    city: string;
+    state: string;
+    zip: string;
+  }>;
   inboxJoByAccount?: Record<string, ReaderDoc>;
   venueAliases?: Record<string, { accountId: string; accountName: string }>; // key: raw venue string
 }
@@ -66,6 +73,9 @@ function mockReader(d: MockData): Reader {
     },
     async listAccounts() {
       return d.accounts ?? [];
+    },
+    async listAccountAddresses() {
+      return d.accountAddresses ?? [];
     },
     async findInboxGigJobOrder({ accountId }) {
       return d.inboxJoByAccount?.[accountId] ?? null;
@@ -481,6 +491,9 @@ describe('matchShiftRequest — error handling', () => {
       async listAccounts() {
         return [];
       },
+      async listAccountAddresses() {
+        return [];
+      },
       async findInboxGigJobOrder() {
         return null;
       },
@@ -622,5 +635,134 @@ describe('matchByFallback — account leg', () => {
     expect(result.matchConfidence).to.equal('multiple');
     expect(result.matchedJobOrderId).to.equal(undefined);
     expect(result.matchNotes ?? '').to.contain("isn't a CORT account");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// 2026-07-21 — geo legs (worksite address / city, Greg's directive)
+// ─────────────────────────────────────────────────────────────────────
+
+describe('extractVenueGeo', () => {
+  it('parses street number, street tokens, zip, and city from the address tail', () => {
+    const geo = extractVenueGeo(
+      'CORT, WBI (Hanover, MD) - Maryland Warehouse - SVC07/44/00, 7466 Candlewood Rd., Suite G, Hanover 21076, US',
+    );
+    expect(geo?.streetNumber).to.equal('7466');
+    expect(Array.from(geo?.streetTokens ?? [])).to.include('candlewood');
+    expect(geo?.zip).to.equal('21076');
+    expect(geo?.state).to.equal('MD');
+  });
+
+  it('parses the parenthetical city/state when there is no address tail', () => {
+    const geo = extractVenueGeo('WBI (Hanover, MD) - Maryland Warehouse - SVC07/44/00');
+    expect(geo?.city).to.equal('Hanover');
+    expect(geo?.state).to.equal('MD');
+    expect(geo?.streetNumber).to.equal(undefined);
+  });
+});
+
+describe('matchByVenue — geo legs', () => {
+  const CORT_BALTIMORE = {
+    id: 'acctBW',
+    data: { name: 'CORT Baltimore Warehouse' },
+  };
+  const ADDRS = [
+    { accountId: 'acctBW', street: '7466 candlewood road', city: 'hanover', state: 'MD', zip: '21076' },
+  ];
+
+  it('street-address leg: email address beats every name mismatch', async () => {
+    const reader = mockReader({
+      accounts: [
+        CORT_BALTIMORE,
+        { id: 'acctMD', data: { name: "Domino's Distribution Center Maryland" } },
+      ],
+      accountAddresses: ADDRS,
+      shiftsByAccountDate: {
+        'acctBW::2026-07-17': [
+          { id: 'shiftB', data: { jobOrderId: 'joB', shiftDate: '2026-07-17' } },
+        ],
+      },
+    });
+    const result = await matchShiftRequest(reader, {
+      tenantId: 'T',
+      event: {
+        type: 'cancel_booking',
+        venueName:
+          'CORT, WBI (Hanover, MD) - Maryland Warehouse - SVC07/44/00, 7466 Candlewood Rd., Suite G, Hanover 21076, US',
+        workDate: '2026-07-17',
+        workerNames: [],
+      },
+    });
+    expect(result.matchConfidence).to.equal('fuzzy');
+    expect(result.matchedShiftId).to.equal('shiftB');
+    expect(result.matchedAccountName).to.equal('CORT Baltimore Warehouse');
+  });
+
+  it('city rescue: parenthetical city + shared token resolves a renamed venue', async () => {
+    // No address tail — only "(Hanover, MD)". The one account with a
+    // Hanover MD worksite that shares 'warehouse' wins.
+    const reader = mockReader({
+      accounts: [
+        CORT_BALTIMORE,
+        { id: 'acctMD', data: { name: "Domino's Distribution Center Maryland" } },
+        { id: 'acctPH', data: { name: 'CORT Phoenix Warehouse' } },
+      ],
+      accountAddresses: ADDRS,
+      inboxJoByAccount: {},
+    });
+    const result = await matchShiftRequest(reader, {
+      tenantId: 'T',
+      event: {
+        type: 'new_request',
+        jobId: '',
+        headcount: 1,
+        venueName: 'WBI (Hanover, MD) - Maryland Warehouse - SVC07/44/00',
+        workDate: '2026-07-25',
+      },
+    });
+    expect(result.matchConfidence).to.equal('exact');
+    expect(result.matchedAccountName).to.equal('CORT Baltimore Warehouse');
+  });
+});
+
+describe('matchByVenue — geo rescue stays strict', () => {
+  it('state-only geo never rescues (live false positive: Fitzgerald → DC convention center)', async () => {
+    const reader = mockReader({
+      accounts: [{ id: 'acctCC', data: { name: 'CORT Walter E Washington Convention Center' } }],
+      accountAddresses: [
+        { accountId: 'acctCC', street: '801 mount vernon pl', city: 'washington', state: 'DC', zip: '20001' },
+      ],
+    });
+    const result = await matchShiftRequest(reader, {
+      tenantId: 'T',
+      event: {
+        type: 'new_request',
+        jobId: '',
+        headcount: 1,
+        venueName: 'WBI (DC) - Fitzgerald Tennis Center - SVC07/44/00',
+        workDate: '2026-07-25',
+      },
+    });
+    expect(result.matchConfidence).to.not.equal('exact');
+  });
+
+  it('the city name itself is not match evidence (live false positive: Columbus → Purolator)', async () => {
+    const reader = mockReader({
+      accounts: [{ id: 'acctP', data: { name: 'Purolator Columbus Office' } }],
+      accountAddresses: [
+        { accountId: 'acctP', street: '100 somewhere st', city: 'columbus', state: 'OH', zip: '43215' },
+      ],
+    });
+    const result = await matchShiftRequest(reader, {
+      tenantId: 'T',
+      event: {
+        type: 'new_request',
+        jobId: '',
+        headcount: 1,
+        venueName: 'CHI (Columbus, OH) - Greater Columbus Convention Center SVC07/43/00',
+        workDate: '2026-07-25',
+      },
+    });
+    expect(result.matchConfidence).to.not.equal('exact');
   });
 });

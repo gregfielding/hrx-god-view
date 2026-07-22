@@ -84,6 +84,26 @@ export interface Reader {
   listAccounts(args: { tenantId: string }): Promise<ReaderDoc[]>;
 
   /**
+   * **Address index (2026-07-21, Greg's directive).** Indeed's venue
+   * names rarely match HRX account names ("Maryland Warehouse" is
+   * "CORT Baltimore Warehouse" in HRX), but the emails carry the
+   * literal street address — the strongest signal there is. Returns
+   * every known (accountId, address) pair: JO worksiteAddress rows
+   * plus, for accounts without JOs, their linked company-location
+   * doc. Implementations should memoize per instance — the matcher
+   * may consult it several times per event.
+   */
+  listAccountAddresses(args: { tenantId: string }): Promise<
+    Array<{
+      accountId: string;
+      street: string;
+      city: string;
+      state: string;
+      zip: string;
+    }>
+  >;
+
+  /**
    * Find the "inbox" Gig JO for an account — i.e. an open JO of type
    * 'gig' on `account.recruiterAccountId === accountId`. When more
    * than one matches, returns the most recently created. Used by the
