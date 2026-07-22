@@ -112,7 +112,18 @@ const UserAssignmentsTab: React.FC<{ userId: string; tenantId?: string | null }>
           Loading assignments…
         </Typography>
       ) : (
-        <AssignmentReadinessPanel rows={panelRows} />
+        <AssignmentReadinessPanel
+          rows={panelRows}
+          tenantId={tenantId ?? null}
+          workerId={userId}
+          workerName={(() => {
+            const a = assignments[0] as Record<string, unknown> | undefined;
+            return (
+              String(a?.workerName ?? '') ||
+              [a?.firstName, a?.lastName].filter(Boolean).join(' ')
+            );
+          })()}
+        />
       )}
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
         <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>

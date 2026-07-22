@@ -29,20 +29,36 @@ function showAssignmentReadinessReasonLine(readinessUi: AssignmentPanelReadiness
   return readinessUi !== 'ready' && readinessUi !== 'active' && readinessUi !== 'completed' && readinessUi !== 'canceled';
 }
 import { packageSectionsSummaryFromReadiness } from '../../../utils/assignmentReadinessUi';
+import AssignmentDrawer, {
+  type AssignmentDrawerTarget,
+} from '../../../components/recruiter/AssignmentDrawer';
 import { workerFacingScreeningPrimaryLineFromRecord } from '../../../utils/backgroundChecks/formatWorkerFacingScreeningPackage';
 
 export interface AssignmentReadinessPanelProps {
   rows: AssignmentReadinessPanelRow[];
+  /** When provided (admin surfaces), clicking an assignment opens the
+   *  admin AssignmentDrawer (view/edit/end/delete) instead of
+   *  deep-linking into the worker-facing assignment page. */
+  tenantId?: string | null;
+  workerId?: string;
+  workerName?: string;
 }
 
-const AssignmentReadinessCard: React.FC<{ row: AssignmentReadinessPanelRow }> = ({ row }) => {
+const AssignmentReadinessCard: React.FC<{
+  row: AssignmentReadinessPanelRow;
+  onOpenAdmin?: (row: AssignmentReadinessPanelRow) => void;
+}> = ({ row, onOpenAdmin }) => {
   const navigate = useNavigate();
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const packageSummary = packageSectionsSummaryFromReadiness(row.readiness);
 
   const openAssignment = useCallback(() => {
+    if (onOpenAdmin) {
+      onOpenAdmin(row);
+      return;
+    }
     navigate(`/assignments/${encodeURIComponent(row.assignmentId)}`);
-  }, [navigate, row.assignmentId]);
+  }, [navigate, onOpenAdmin, row]);
 
   const hasBlocking = row.blockingLines.length > 0;
   const hasDetails = Boolean(packageSummary || row.linkedScreenings.length > 0);
@@ -174,7 +190,31 @@ const AssignmentReadinessCard: React.FC<{ row: AssignmentReadinessPanelRow }> = 
   );
 };
 
-const AssignmentReadinessPanel: React.FC<AssignmentReadinessPanelProps> = ({ rows }) => {
+const AssignmentReadinessPanel: React.FC<AssignmentReadinessPanelProps> = ({
+  rows,
+  tenantId,
+  workerId,
+  workerName,
+}) => {
+  const [drawerTarget, setDrawerTarget] = React.useState<AssignmentDrawerTarget | null>(null);
+  const adminMode = Boolean(tenantId && workerId);
+  const openAdmin = React.useCallback(
+    (row: AssignmentReadinessPanelRow) => {
+      if (!workerId) return;
+      // Assignment doc ids embed the shift id: `${shiftId}__${userId}`
+      // (optionally `__${date}`), so the drawer can load the family.
+      const shiftId = row.assignmentId.split('__')[0] || null;
+      setDrawerTarget({
+        workerId,
+        workerName: workerName || '',
+        jobOrderId: row.jobOrderId,
+        shiftId,
+        assignmentId: row.assignmentId,
+      });
+    },
+    [workerId, workerName],
+  );
+
   if (!rows.length) {
     return (
       <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
@@ -186,8 +226,21 @@ const AssignmentReadinessPanel: React.FC<AssignmentReadinessPanelProps> = ({ row
   return (
     <Stack spacing={0}>
       {rows.map((row) => (
-        <AssignmentReadinessCard key={row.assignmentId} row={row} />
+        <AssignmentReadinessCard
+          key={row.assignmentId}
+          row={row}
+          onOpenAdmin={adminMode ? openAdmin : undefined}
+        />
       ))}
+      {adminMode && tenantId && (
+        <AssignmentDrawer
+          open={!!drawerTarget}
+          tenantId={tenantId}
+          target={drawerTarget}
+          onClose={() => setDrawerTarget(null)}
+          onEnded={() => setDrawerTarget(null)}
+        />
+      )}
     </Stack>
   );
 };
