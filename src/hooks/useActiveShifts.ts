@@ -13,7 +13,7 @@
  * (jobTitle, company, location, jobType) on every row without a second join.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   collection,
   doc,
@@ -279,12 +279,19 @@ const useActiveShifts = (
   const [rows, setRows] = useState<ShiftRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Monotonic run id — latest fetch wins. Without it, navigating from a
+  // BIG scope (national CORT, 64 children) to a small one (an empty
+  // child account) let the slow national response land LAST and paint
+  // another account's shifts onto the child's Shifts tab (Greg,
+  // 2026-07-22: CORT Oshkosh WI showing Columbus/TPC/Mandarin shifts).
+  const runIdRef = useRef(0);
 
   const scopeKey =
     options?.recruiterAccountIds?.map((id) => String(id || '').trim()).filter(Boolean).join('|') ??
     '';
 
   const fetchActiveShifts = useCallback(async () => {
+    const runId = ++runIdRef.current;
     if (!tenantId) {
       setRows([]);
       setLoading(false);
@@ -875,12 +882,14 @@ const useActiveShifts = (
       });
 
       built.sort((a, b) => a.sortKey - b.sortKey);
+      if (runId !== runIdRef.current) return; // stale response — a newer scope won
       setRows(built);
     } catch (err) {
+      if (runId !== runIdRef.current) return;
       console.error('Error loading active shifts:', err);
       setError(err instanceof Error ? err.message : 'Failed to load active shifts');
     } finally {
-      setLoading(false);
+      if (runId === runIdRef.current) setLoading(false);
     }
   }, [tenantId, scopeKey]);
 
