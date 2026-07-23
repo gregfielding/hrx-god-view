@@ -54,7 +54,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { FormControl, InputLabel, MenuItem, Select } from '@mui/material';
+import { FormControl, FormControlLabel, InputLabel, MenuItem, Select, Switch } from '@mui/material';
 
 import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -561,19 +561,28 @@ const WhosWorkingPage: React.FC = () => {
   // Career-tab account filter (Greg, 2026-07-23). No entity filter here —
   // career assignments are C1 Select only by policy.
   const [ongoingAccount, setOngoingAccount] = useState<string>('');
+  // Venuesmart Travelers toggle (Greg, 2026-07-23): the Supervisors
+  // Travel Team is a deliberate C1 Select exception under the
+  // Venuesmart account — hidden from the career view by default,
+  // revealed on demand. Default false on every page load.
+  const [showVsTravelers, setShowVsTravelers] = useState(false);
+  const ongoingVisible = useMemo(() => {
+    const VS_RE = /venue\s*smart/i;
+    return (ongoing ?? []).filter((r) => showVsTravelers || !VS_RE.test(r.accountName || ''));
+  }, [ongoing, showVsTravelers]);
   const ongoingAccountOptions = useMemo(
     () =>
-      Array.from(new Set((ongoing ?? []).map((r) => r.accountName || 'Account'))).sort((a, b) =>
+      Array.from(new Set(ongoingVisible.map((r) => r.accountName || 'Account'))).sort((a, b) =>
         a.localeCompare(b),
       ),
-    [ongoing],
+    [ongoingVisible],
   );
   const ongoingFiltered = useMemo(
     () =>
       ongoingAccount
-        ? (ongoing ?? []).filter((r) => (r.accountName || 'Account') === ongoingAccount)
-        : ongoing ?? [],
-    [ongoing, ongoingAccount],
+        ? ongoingVisible.filter((r) => (r.accountName || 'Account') === ongoingAccount)
+        : ongoingVisible,
+    [ongoingVisible, ongoingAccount],
   );
 
   const loadOngoing = useCallback(async () => {
@@ -1164,6 +1173,23 @@ const WhosWorkingPage: React.FC = () => {
             ))}
           </Select>
         </FormControl>
+        <FormControlLabel
+          control={
+            <Switch
+              checked={showVsTravelers}
+              onChange={(e) => {
+                setShowVsTravelers(e.target.checked);
+                // Hidden account can't stay selected in the dropdown.
+                if (!e.target.checked && /venue\s*smart/i.test(ongoingAccount)) {
+                  setOngoingAccount('');
+                }
+              }}
+              size="small"
+            />
+          }
+          label="Show Venuesmart Travelers"
+          sx={{ ml: 0.5, '& .MuiFormControlLabel-label': { fontSize: '0.875rem' } }}
+        />
       </Stack>
       {ongoingLoading || ongoing === null ? (
         <Stack alignItems="center" sx={{ py: 6 }}>
