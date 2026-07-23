@@ -167,6 +167,10 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
     // workersCompRate when set per-shift (the canonical source for new
     // shifts created via the EditShiftForm).
     const shiftCache = new Map<string, Record<string, unknown> | null>();
+    // Assignment-backbone build (2026-07-23): the assignment doc now
+    // carries matrix-resolved WC + a full worksite address — it beats
+    // the JO/shift re-derivation below (entry-level overrides still win).
+    const assignmentCache = new Map<string, Record<string, unknown> | null>();
     // workerType cache per entity — there's typically one per batch, but be
     // robust if a future scope crosses entities.
     let entityWorkerType: string | undefined;
@@ -234,9 +238,34 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
           }
         }
       }
-      const worksiteId = String((jo?.worksiteId as string) ?? '').trim();
-      const worksiteName = String((jo?.worksiteName as string) ?? worksiteId).trim();
-      const worksiteAddress = (jo?.worksiteAddress as Record<string, unknown>) ?? {};
+      // Assignment read (cached) — assignment-first worksite + WC.
+      let assignment: Record<string, unknown> | null = null;
+      if (assignmentId) {
+        if (assignmentCache.has(assignmentId)) {
+          assignment = assignmentCache.get(assignmentId) ?? null;
+        } else {
+          try {
+            const aSnap = await db
+              .doc(`tenants/${tenantId}/assignments/${assignmentId}`)
+              .get();
+            assignment = aSnap.exists ? (aSnap.data() as Record<string, unknown>) : null;
+          } catch {
+            assignment = null;
+          }
+          assignmentCache.set(assignmentId, assignment);
+        }
+      }
+      const assignmentAddr = (assignment?.worksiteAddress as Record<string, unknown>) ?? {};
+      const assignmentAddrUsable = String(assignmentAddr.street ?? '').trim().length > 0;
+      const worksiteId = String(
+        (assignment?.locationId as string) ?? (jo?.worksiteId as string) ?? '',
+      ).trim() || String((jo?.worksiteId as string) ?? '').trim();
+      const worksiteName =
+        String((assignment?.worksiteName as string) ?? '').trim() ||
+        String((jo?.worksiteName as string) ?? worksiteId).trim();
+      const worksiteAddress = assignmentAddrUsable
+        ? assignmentAddr
+        : ((jo?.worksiteAddress as Record<string, unknown>) ?? {});
       const worksiteState = String(worksiteAddress.state ?? '').trim();
 
       // **WC code resolution (2026-06-03).** The code lives in up to four
@@ -294,6 +323,9 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
         // intent wins: even when the shift has a value, the override
         // takes priority for this entry only.
         entry.workersCompCode,
+        // Assignment-backbone (2026-07-23): matrix-resolved code on the
+        // assignment beats the shift/JO re-derivation.
+        assignment?.workersCompCode,
         shift?.workersCompCode,
         jo?.workersCompCode,
         jo?.workersCompClassCode,

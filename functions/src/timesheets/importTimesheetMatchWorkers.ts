@@ -1440,24 +1440,41 @@ export const importTimesheetMatchWorkers = onCall(
             : Number(jo?.billRate) > 0
               ? Number(jo?.billRate)
               : 0;
-      // Resolve from assignment/shift/JO, then backfill any gaps (WC code/rate,
-      // worksite address) from the child account.
+      // Resolve ASSIGNMENT-FIRST (backbone build 2026-07-23 — the
+      // assignment now carries matrix-resolved WC + a full worksite
+      // address), then shift/JO, then backfill any remaining gaps from
+      // the child account.
       const accountId = pickStr(jo?.recruiterAccountId, jo?.accountId, assignment.accountId);
+      const assignmentAddrRaw = (assignment.worksiteAddress ?? null) as {
+        street?: string; city?: string; state?: string; zip?: string;
+      } | null;
+      const assignmentAddrUsable = !!String(assignmentAddrRaw?.street ?? '').trim();
+      const assignmentAddr = assignmentAddrUsable
+        ? {
+            street: String(assignmentAddrRaw?.street ?? '').trim(),
+            city: String(assignmentAddrRaw?.city ?? '').trim(),
+            state: String(assignmentAddrRaw?.state ?? '').trim(),
+            zip: String(assignmentAddrRaw?.zip ?? '').trim(),
+          }
+        : null;
       const { fields: f, filledWorksite, filledWc } = await backfillFromAccount(accountId, {
         payRate,
         billRate,
         jobTitle: pickStr(assignment.jobTitle, shift?.defaultJobTitle, jo?.jobTitle) ?? null,
-        worksiteId: pickStr(jo?.worksiteId, jo?.locationId) ?? null,
-        worksiteName: pickStr(jo?.worksiteName, jo?.locationName) ?? null,
-        worksiteAddress: joWorksiteAddress(jo),
+        worksiteId: pickStr(assignment.locationId, jo?.worksiteId, jo?.locationId) ?? null,
+        worksiteName:
+          pickStr(assignment.worksiteName, jo?.worksiteName, jo?.locationName) ?? null,
+        worksiteAddress: assignmentAddrUsable ? assignmentAddr : joWorksiteAddress(jo),
         workersCompCode:
           pickStr(
+            assignment.workersCompCode,
             shift?.workersCompCode,
             jo?.workersCompCode,
             jo?.workersCompClassCode,
             firstGigPosition?.workersCompClassCode,
           ) ?? null,
         workersCompRate: pickNum(
+          assignment.workersCompRate,
           shift?.workersCompRate,
           jo?.workersCompRate,
           firstGigPosition?.workersCompRate,

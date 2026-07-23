@@ -100,6 +100,11 @@ export interface AssignmentSnapshot {
    *  times. The grid generates a blank row per calendar day and the
    *  recruiter enters total hours manually (actualHoursOverride). */
   isOpenShift: boolean;
+  /** Assignment-backbone build (2026-07-23): matrix-resolved WC stamped
+   *  on the assignment doc. Beats the shift/JO re-derivation in Step 4a
+   *  (entry-level overrides still win). */
+  workersCompCode: string | null;
+  workersCompRate: number | null;
 }
 
 /** A "scheduled time" extracted from `weeklySchedule[dow]` for a given
@@ -370,6 +375,14 @@ function buildAssignmentSnapshot(
         ? raw.shiftBreakDefaultMinutes
         : 0,
     isOpenShift: rawAny.isOpenShift === true || rawAny.noFixedTimes === true,
+    workersCompCode:
+      typeof rawAny.workersCompCode === 'string' && rawAny.workersCompCode.trim().length > 0
+        ? rawAny.workersCompCode.trim()
+        : null,
+    workersCompRate:
+      typeof rawAny.workersCompRate === 'number' && Number.isFinite(rawAny.workersCompRate)
+        ? rawAny.workersCompRate
+        : null,
   };
 }
 
@@ -386,6 +399,10 @@ function buildImportSnapshot(entry: TimesheetEntryV2): AssignmentSnapshot {
     (imp?.csvWorkerName && imp.csvWorkerName.trim()) ||
     (entry.workerId ? entry.workerId : null);
   return {
+    // Import rows resolve WC from the entry's own import sidecar, not
+    // an assignment doc — leave the assignment-level WC null here.
+    workersCompCode: null,
+    workersCompRate: null,
     id: entry.assignmentId || entry.id,
     jobOrderId: entry.jobOrderId || '',
     shiftId: entry.shiftId || null,
@@ -863,6 +880,9 @@ export async function resolveTimesheetGrid(
         : undefined;
     const codeStr = pickWcDisplayStr(
       codeOverride,
+      // Assignment-backbone (2026-07-23): the assignment's matrix-
+      // resolved code beats the shift/JO re-derivation.
+      r.assignment.workersCompCode ?? undefined,
       shift?.workersCompCode,
       jo?.workersCompCode,
       jo?.workersCompClassCode,
@@ -870,6 +890,7 @@ export async function resolveTimesheetGrid(
     );
     const rateNum = pickWcDisplayNum(
       rateOverride,
+      r.assignment.workersCompRate ?? undefined,
       shift?.workersCompRate,
       jo?.workersCompRate,
       firstGigPosition?.workersCompRate,
