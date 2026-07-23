@@ -711,9 +711,8 @@ async function submitW2(args: PathArgs) {
 
   // Validate + plan. W-2 worked shifts require a WC class code (comp-insurance
   // classification); a row without one is skipped and reported.
-  const plans: W2Plan[] = [];
+  const candidates: Array<{ row: SubmitRow; userId: string; workDate: string; hours: number; payRate: number }> = [];
   let skipped = 0;
-  let skippedNoWc = 0;
   for (const row of rows) {
     const userId = String(row.userId || '').trim();
     const hours = Number(row.hours);
@@ -723,7 +722,38 @@ async function submitW2(args: PathArgs) {
       skipped += 1;
       continue;
     }
-    const wc = String(row.workersCompCode || '').trim();
+    candidates.push({ row, userId, workDate, hours, payRate });
+  }
+
+  // Server-truth WC override (2026-07-23): like the address fallback in
+  // resolveLocation, the client sends rows from BROWSER state — an ops
+  // correction on the saved entry (import.wcManuallyCorrected, e.g.
+  // CA6405 replacing a state-invalid 8044) would be resent wrong forever
+  // by a stale tab. Saved corrected codes win over the client copy.
+  const wcCorrected = new Map<string, string>();
+  const WC_READ_CHUNK = 300;
+  for (let i = 0; i < candidates.length; i += WC_READ_CHUNK) {
+    const slice = candidates.slice(i, i + WC_READ_CHUNK);
+    const refs = slice.map((c) =>
+      db.doc(
+        `tenants/${tenantId}/timesheet_entries/${importEntryDocId({ customer: cust, userId: c.userId, workDate: c.workDate })}`,
+      ),
+    );
+    // eslint-disable-next-line no-await-in-loop
+    const snaps = await db.getAll(...refs);
+    snaps.forEach((snap, j) => {
+      const imp = (snap.data()?.import ?? {}) as Record<string, unknown>;
+      if (imp.wcManuallyCorrected === true && String(imp.workersCompCode || '').trim()) {
+        wcCorrected.set(`${slice[j].userId}__${slice[j].workDate}`, String(imp.workersCompCode).trim());
+      }
+    });
+  }
+
+  const plans: W2Plan[] = [];
+  let skippedNoWc = 0;
+  for (const { row, userId, workDate, hours, payRate } of candidates) {
+    const wc =
+      wcCorrected.get(`${userId}__${workDate}`) ?? String(row.workersCompCode || '').trim();
     if (!wc) {
       skippedNoWc += 1;
       continue;

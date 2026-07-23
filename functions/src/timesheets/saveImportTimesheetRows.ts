@@ -156,6 +156,11 @@ export const saveImportTimesheetRows = onCall(
       string,
       { address: { street?: string; city?: string; state?: string; zip?: string }; worksiteName: string }
     >();
+    // WC preservation (2026-07-23): an ops-corrected workers-comp code
+    // (import.wcManuallyCorrected === true, e.g. CA6405 replacing a
+    // state-invalid 8044) must survive re-saves from stale browser rows,
+    // exactly like repaired addresses.
+    const existingWcByDocId = new Map<string, { code: string; rate: number | null }>();
     const READ_CHUNK = 300;
     for (let i = 0; i < planned.length; i += READ_CHUNK) {
       const slice = planned.slice(i, i + READ_CHUNK);
@@ -183,6 +188,13 @@ export const saveImportTimesheetRows = onCall(
           existingAddrByDocId.set(slice[j].docId, {
             address: wa,
             worksiteName: String((d.import || {}).worksiteName || ''),
+          });
+        }
+        const imp = (d.import || {}) as Record<string, unknown>;
+        if (imp.wcManuallyCorrected === true && String(imp.workersCompCode || '').trim()) {
+          existingWcByDocId.set(slice[j].docId, {
+            code: String(imp.workersCompCode).trim(),
+            rate: Number.isFinite(Number(imp.workersCompRate)) ? Number(imp.workersCompRate) : null,
           });
         }
       });
@@ -265,14 +277,18 @@ export const saveImportTimesheetRows = onCall(
           }
           return incoming;
         })(),
-        workersCompCode: row.workersCompCode ?? null,
-        workersCompRate: row.workersCompRate ?? null,
+        workersCompCode: existingWcByDocId.get(docId)?.code ?? row.workersCompCode ?? null,
+        workersCompRate: existingWcByDocId.get(docId)?.rate ?? row.workersCompRate ?? null,
         payRateSource: row.payRateSource ?? 'none',
-        workersCompSource: row.workersCompSource ?? 'none',
+        workersCompSource: existingWcByDocId.has(docId)
+          ? 'manual_correction'
+          : (row.workersCompSource ?? 'none'),
         worksiteSource: row.worksiteSource ?? 'none',
         csvKey: String(row.csvKey || ''),
         rowIndex: row.rowIndex,
       };
+      // Re-assert the flag so the preservation chain never breaks.
+      if (existingWcByDocId.has(docId)) importSidecar.wcManuallyCorrected = true;
       // Only set matchStatus here when NOT preserving a sent row (submit/void
       // own that field once live).
       if (!preserveSent) importSidecar.matchStatus = row.matchStatus;
@@ -318,8 +334,8 @@ export const saveImportTimesheetRows = onCall(
         bonusAmount: 0,
         payRate: Number(row.payRate) > 0 ? Number(row.payRate) : 0,
         billRate: Number(row.billRate) > 0 ? Number(row.billRate) : 0,
-        workersCompCode: row.workersCompCode ?? null,
-        workersCompRate: row.workersCompRate ?? null,
+        workersCompCode: existingWcByDocId.get(docId)?.code ?? row.workersCompCode ?? null,
+        workersCompRate: existingWcByDocId.get(docId)?.rate ?? row.workersCompRate ?? null,
         import: importSidecar,
         updatedBy: uid,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),

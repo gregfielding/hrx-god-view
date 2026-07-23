@@ -192,12 +192,25 @@ export async function ensureEvereeWorkLocation(
     // location already exists.
     if (!/duplicat|already exist|must be unique/i.test(msg)) throw err;
     const norm = (v: unknown) => String(v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-    const listRaw = await evereeRequest<unknown>(config, 'GET', '/api/v2/work-locations');
-    const list: Array<Record<string, unknown>> = Array.isArray(listRaw)
-      ? (listRaw as Array<Record<string, unknown>>)
-      : ((listRaw as Record<string, unknown>)?.content as Array<Record<string, unknown>>) ??
-        ((listRaw as Record<string, unknown>)?.workLocations as Array<Record<string, unknown>>) ??
-        [];
+    // List response is a page envelope: {items, pageSize, pageNumber,
+    // totalPages, totalItems} (verified live 2026-07-23). Walk all pages.
+    const list: Array<Record<string, unknown>> = [];
+    for (let page = 0, totalPages = 1; page < totalPages && page < 20; page++) {
+      const listRaw = await evereeRequest<Record<string, unknown>>(
+        config,
+        'GET',
+        `/api/v2/work-locations?pageNumber=${page}&pageSize=100`,
+      );
+      const items = Array.isArray(listRaw)
+        ? (listRaw as unknown as Array<Record<string, unknown>>)
+        : ((listRaw?.items as Array<Record<string, unknown>>) ??
+          (listRaw?.content as Array<Record<string, unknown>>) ??
+          []);
+      list.push(...items);
+      const tp = Number((listRaw as Record<string, unknown>)?.totalPages);
+      totalPages = Number.isFinite(tp) && tp > 0 ? tp : 1;
+      if (!items.length) break;
+    }
     const targetName = norm(worksite.name);
     const targetStreet = norm(worksite.address?.street);
     let hit = list.find((l) => norm(l.name) === targetName);
