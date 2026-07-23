@@ -218,6 +218,12 @@ export const getOngoingAssignments = onCall(
   async (request) => {
     const tenantId = String(request.data?.tenantId ?? '');
     if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required');
+    // Optional entity narrowing (Greg, 2026-07-23): the Career
+    // Assignments tab is C1 Select only by policy — 1099 events crews
+    // on open-ended assignments (Black Caviar, Proof of the Pudding)
+    // must not appear there. Policy lives with the caller; this stays
+    // a generic filter.
+    const entityFilter = String(request.data?.hiringEntityId ?? '').trim();
     await assertRecruiter(request, tenantId);
 
     const snap = await db.collection(`tenants/${tenantId}/assignments`).get();
@@ -228,6 +234,7 @@ export const getOngoingAssignments = onCall(
       const status = String(a.status ?? '').toLowerCase();
       if (REMOVED_RE.test(status)) continue;
       if (!isOngoingDoc(a)) continue;
+      if (entityFilter && String(a.hiringEntityId ?? '') !== entityFilter) continue;
       if (a.jobOrderId) joIds.add(String(a.jobOrderId));
       rows.push({
         assignmentId: d.id,

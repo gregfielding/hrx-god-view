@@ -581,7 +581,9 @@ const WhosWorkingPage: React.FC = () => {
     setOngoingLoading(true);
     try {
       const fn = httpsCallable(functions, 'getOngoingAssignments');
-      const res = await fn({ tenantId });
+      // Career assignments are C1 Select only by policy — 1099 events
+      // crews (Black Caviar, Proof of the Pudding) stay off this tab.
+      const res = await fn({ tenantId, hiringEntityId: 'c1_select_llc' });
       setOngoing(((res.data as { rows?: OngoingRow[] })?.rows ?? []) as OngoingRow[]);
     } catch {
       setOngoing([]);
