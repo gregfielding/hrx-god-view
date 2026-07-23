@@ -558,6 +558,23 @@ const WhosWorkingPage: React.FC = () => {
   const [drawerTarget, setDrawerTarget] = useState<AssignmentDrawerTarget | null>(null);
   const [ongoing, setOngoing] = useState<OngoingRow[] | null>(null);
   const [ongoingLoading, setOngoingLoading] = useState(false);
+  // Career-tab account filter (Greg, 2026-07-23). No entity filter here —
+  // career assignments are C1 Select only by policy.
+  const [ongoingAccount, setOngoingAccount] = useState<string>('');
+  const ongoingAccountOptions = useMemo(
+    () =>
+      Array.from(new Set((ongoing ?? []).map((r) => r.accountName || 'Account'))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [ongoing],
+  );
+  const ongoingFiltered = useMemo(
+    () =>
+      ongoingAccount
+        ? (ongoing ?? []).filter((r) => (r.accountName || 'Account') === ongoingAccount)
+        : ongoing ?? [],
+    [ongoing, ongoingAccount],
+  );
 
   const loadOngoing = useCallback(async () => {
     if (!tenantId) return;
@@ -1126,7 +1143,26 @@ const WhosWorkingPage: React.FC = () => {
 
       {tab === 1 && (
       <>
-      {/* Full-time workers — ongoing, open-ended assignments */}
+      {/* Full-time workers — ongoing, open-ended assignments. All C1
+          Select by policy, so only the Account filter renders here. */}
+      <Stack direction="row" spacing={1.5} sx={{ mt: 2 }} flexWrap="wrap" useFlexGap>
+        <FormControl size="small" sx={{ minWidth: 220 }} disabled={ongoingLoading || ongoing === null}>
+          <InputLabel id="ongoing-account-label">Account</InputLabel>
+          <Select
+            labelId="ongoing-account-label"
+            label="Account"
+            value={ongoingAccount}
+            onChange={(e) => setOngoingAccount(e.target.value)}
+          >
+            <MenuItem value="">All accounts</MenuItem>
+            {ongoingAccountOptions.map((a) => (
+              <MenuItem key={a} value={a}>
+                {a}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      </Stack>
       {ongoingLoading || ongoing === null ? (
         <Stack alignItems="center" sx={{ py: 6 }}>
           <CircularProgress />
@@ -1143,7 +1179,7 @@ const WhosWorkingPage: React.FC = () => {
         </Paper>
       ) : (
         Array.from(
-          ongoing.reduce((m, r) => {
+          ongoingFiltered.reduce((m, r) => {
             const k = r.accountName || 'Account';
             if (!m.has(k)) m.set(k, [] as OngoingRow[]);
             m.get(k)!.push(r);
