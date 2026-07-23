@@ -152,6 +152,10 @@ export const saveImportTimesheetRows = onCall(
     // ── Pre-read existing docs so a Save can't downgrade an already-sent row. ──
     const sentDocIds = new Set<string>();
     const existingDocIds = new Set<string>();
+    const existingAddrByDocId = new Map<
+      string,
+      { address: { street?: string; city?: string; state?: string; zip?: string }; worksiteName: string }
+    >();
     const READ_CHUNK = 300;
     for (let i = 0; i < planned.length; i += READ_CHUNK) {
       const slice = planned.slice(i, i + READ_CHUNK);
@@ -168,6 +172,18 @@ export const saveImportTimesheetRows = onCall(
         const ms = String((d.import || {}).matchStatus || '');
         if (st === 'sent_to_everee' || st === 'paid' || ms === 'submitted') {
           sentDocIds.add(slice[j].docId);
+        }
+        // Address preservation (2026-07-23): remember an existing
+        // COMPLETE worksite address so a re-save from stale browser
+        // state can't clobber a repaired street with an empty one.
+        const wa = (d.import || {}).worksiteAddress as
+          | { street?: string; city?: string; state?: string; zip?: string }
+          | undefined;
+        if (wa && String(wa.street || '').trim()) {
+          existingAddrByDocId.set(slice[j].docId, {
+            address: wa,
+            worksiteName: String((d.import || {}).worksiteName || ''),
+          });
         }
       });
     }
@@ -234,7 +250,21 @@ export const saveImportTimesheetRows = onCall(
         forcedUserId: row.forcedUserId ?? null,
         worksiteId: row.worksiteId ?? null,
         worksiteName: row.worksiteName ?? null,
-        worksiteAddress: row.worksiteAddress ?? null,
+        worksiteAddress: (() => {
+          const incoming = row.worksiteAddress ?? null;
+          const kept = existingAddrByDocId.get(docId);
+          // Same worksite + incoming street empty + saved street present →
+          // keep the saved (complete) address. Repairs made directly on the
+          // entry survive re-saves from tabs that predate them.
+          if (
+            kept &&
+            (!incoming || !String(incoming.street || '').trim()) &&
+            (!row.worksiteName || String(row.worksiteName) === kept.worksiteName || !kept.worksiteName)
+          ) {
+            return kept.address;
+          }
+          return incoming;
+        })(),
         workersCompCode: row.workersCompCode ?? null,
         workersCompRate: row.workersCompRate ?? null,
         payRateSource: row.payRateSource ?? 'none',
