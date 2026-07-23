@@ -869,7 +869,28 @@ async function submitW2(args: PathArgs) {
     const priorError = locationErrors.get(wsId);
     if (priorError) throw new Error(priorError);
     try {
-      const a = row.worksiteAddress || {};
+      let a = row.worksiteAddress || {};
+      // Server-truth fallback (2026-07-23): the client submits the rows
+      // from BROWSER state — if a worksite was fixed on the saved entry
+      // after the tab loaded (streets patched, mapping corrected), the
+      // stale tab would resend the broken address forever. When the
+      // client's copy has no street, read the saved entry's
+      // import.worksiteAddress and prefer it when it's complete.
+      if (!String(a.street || '').trim()) {
+        try {
+          const docId = importEntryDocId({
+            customer: cust,
+            userId: String(row.userId || ''),
+            workDate: String(row.workDate || ''),
+          });
+          const entry = await db.doc(`tenants/${tenantId}/timesheet_entries/${docId}`).get();
+          const saved = (entry.data()?.import as Record<string, unknown> | undefined)
+            ?.worksiteAddress as { street?: string; city?: string; state?: string; zip?: string } | undefined;
+          if (saved && String(saved.street || '').trim()) a = saved;
+        } catch {
+          /* keep the client copy; the guard below reports honestly */
+        }
+      }
       const id = await ensureEvereeWorkLocation(tenantId, cfg, {
         worksiteId: wsId,
         name: String(row.worksiteName || wsId),
