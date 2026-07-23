@@ -584,6 +584,32 @@ const WhosWorkingPage: React.FC = () => {
         : ongoingVisible,
     [ongoingVisible, ongoingAccount],
   );
+  // Career-workers trend, derived from the VISIBLE rows (Greg,
+  // 2026-07-23): the chart follows the Account filter + Venuesmart
+  // toggle exactly — each week counts the workers listed below whose
+  // assignment had started by that week. Since the list only holds
+  // currently-ongoing assignments, this is the growth curve of the
+  // present roster (departed workers aren't charted).
+  const careerSeries = useMemo(() => {
+    const out: Array<{ label: string; value: number }> = [];
+    const now = new Date();
+    const thisSunday = new Date(now);
+    thisSunday.setDate(now.getDate() - now.getDay());
+    for (let w = 11; w >= 0; w--) {
+      const start = new Date(thisSunday);
+      start.setDate(thisSunday.getDate() - w * 7);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      const endIso = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(
+        end.getDate(),
+      ).padStart(2, '0')}`;
+      out.push({
+        label: `${start.getMonth() + 1}/${start.getDate()}`,
+        value: ongoingFiltered.filter((r) => !r.startDate || r.startDate <= endIso).length,
+      });
+    }
+    return out;
+  }, [ongoingFiltered]);
 
   const loadOngoing = useCallback(async () => {
     if (!tenantId) return;
@@ -1191,6 +1217,13 @@ const WhosWorkingPage: React.FC = () => {
           sx={{ ml: 0.5, '& .MuiFormControlLabel-label': { fontSize: '0.875rem' } }}
         />
       </Stack>
+      {ongoing !== null && !ongoingLoading && ongoing.length > 0 && (
+        <MetricChart
+          title="Career workers"
+          caption="Weekly headcount of the workers listed below — follows the Account filter and Venuesmart toggle."
+          data={careerSeries}
+        />
+      )}
       {ongoingLoading || ongoing === null ? (
         <Stack alignItems="center" sx={{ py: 6 }}>
           <CircularProgress />
@@ -1493,11 +1526,8 @@ const WhosWorkingPage: React.FC = () => {
             caption="Distinct workers with any hours that week."
             data={metricSeries.workers}
           />
-          <MetricChart
-            title="Career workers"
-            caption="Workers on a career (ongoing, open-ended) assignment active that week."
-            data={metricSeries.ftWorkers}
-          />
+          {/* "Career workers" moved to the Career Assignments tab
+              (2026-07-23) — it now derives from the visible roster there. */}
           <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>
             Trend estimates — hours are start-to-end times without break deductions; payroll-grade
             numbers live on the Timesheets grid.
