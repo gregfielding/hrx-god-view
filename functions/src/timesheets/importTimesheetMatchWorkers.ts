@@ -218,6 +218,21 @@ async function findUserById(uid: string): Promise<Record<string, any> | null> {
   return snap.exists ? (snap.data() as Record<string, any>) : null;
 }
 
+/**
+ * Shared anchor/subset name-token rule: first tokens must agree, then one
+ * name's token set must contain the other's. Catches middle names
+ * ("Alondra Lucy Hernandez" ⊇ "Alondra Hernandez") and partial last names
+ * ("Doris Santiago" ⊆ "Doris Santiago Guillén") without matching a
+ * different surname.
+ */
+function nameTokensMatch(csvTokens: string[], hTokens: string[]): boolean {
+  const csvFirst = csvTokens[0] || '';
+  if (!csvFirst || hTokens.length < 2 || hTokens[0] !== csvFirst) return false;
+  const hSet = new Set(hTokens);
+  const csvSet = new Set(csvTokens);
+  return csvTokens.every((t) => hSet.has(t)) || hTokens.every((t) => csvSet.has(t));
+}
+
 /** Accent/punctuation-insensitive name key for comparison. */
 function nameKey(s: unknown): string {
   return String(s || '')
@@ -1083,6 +1098,42 @@ export const importTimesheetMatchWorkers = onCall(
       return hit;
     };
 
+    // Active-roster-first matching (Greg, 2026-07-23): workers currently on
+    // a LIVE assignment are overwhelmingly the authors of imported hours —
+    // a same-crew-every-week CSV should match entirely from this roster
+    // before any global users query runs. One query per invocation, shared
+    // across all rows.
+    const LIVE_ASSIGNMENT_STATUSES = ['pending', 'proposed', 'confirmed', 'in_progress', 'active'];
+    let activeRosterPromise: Promise<Array<{ userId: string; tokens: string[] }>> | null = null;
+    const loadActiveRoster = (): Promise<Array<{ userId: string; tokens: string[] }>> => {
+      if (!activeRosterPromise) {
+        activeRosterPromise = (async () => {
+          try {
+            const snap = await db
+              .collection(`tenants/${tenantId}/assignments`)
+              .where('status', 'in', LIVE_ASSIGNMENT_STATUSES)
+              .get();
+            const byUser = new Map<string, string[]>();
+            snap.forEach((d) => {
+              const a = d.data() as Record<string, any>;
+              const uid = pickStr(a.userId, a.candidateId);
+              if (!uid || byUser.has(uid)) return;
+              const nm = nameKey(
+                pickStr(a.workerDisplayName) ||
+                  `${a.firstName || ''} ${a.lastName || ''}`.trim(),
+              );
+              const tokens = nm.split(' ').filter(Boolean);
+              if (tokens.length >= 2) byUser.set(uid, tokens);
+            });
+            return [...byUser.entries()].map(([userId, tokens]) => ({ userId, tokens }));
+          } catch {
+            return [];
+          }
+        })();
+      }
+      return activeRosterPromise;
+    };
+
     const nameMatchCache = new Map<string, Resolved>();
     const resolveByName = async (firstName: string, lastName: string): Promise<Resolved> => {
       const fn = firstName.trim();
@@ -1113,38 +1164,42 @@ export const importTimesheetMatchWorkers = onCall(
         nameMatchCache.set(key, resolved);
         return resolved;
       }
-      const rows = await queryUsersByLastName(ln);
-      // Anchor match: same first-token-of-first-name AND last-token-of-last-name
-      // (accent/punctuation-insensitive). This catches middle names ("Alondra
-      // Lucy Hernandez" ↔ "Alondra Hernandez"), multi-token last names
-      // ("Aaron Barrios Hernandez"), and accents ("Alvarez" ↔ "Alvares")
-      // without auto-matching unrelated people.
       const csvTokens = nameKey(`${fn} ${ln}`).split(' ').filter(Boolean);
-      const csvFirst = csvTokens[0] || '';
-      const csvSet = new Set(csvTokens);
+
+      // 1.5 ACTIVE-ROSTER FIRST: exactly one live-assignment worker with
+      // this name → match them without touching the global users index.
+      // Multiple roster hits fall through to the full flow (its Everee +
+      // account-assignment tiebreaks or a manual pick decide).
+      const roster = await loadActiveRoster();
+      const rosterHits = roster.filter((r) => nameTokensMatch(csvTokens, r.tokens));
+      if (rosterHits.length === 1) {
+        const data = await findUserById(rosterHits[0].userId);
+        if (data) {
+          resolved = await buildUserResolved(rosterHits[0].userId, data);
+          nameMatchCache.set(key, resolved);
+          return resolved;
+        }
+      }
+
+      // 2b. Global lookup — anchor match: same first-token AND last-token
+      // (accent/punctuation-insensitive), shared rule in nameTokensMatch.
+      // When the looser rule yields several people, the Everee +
+      // account-assignment tiebreak (below) or a manual pick decides —
+      // never a wrong auto-pay.
+      const rows = await queryUsersByLastName(ln);
       const candidates = rows.filter((x) => {
         const tenantMember = !!(
           x.data.tenantIds &&
           typeof x.data.tenantIds === 'object' &&
           x.data.tenantIds[tenantId]
         );
-        if (!tenantMember || !csvFirst) return false;
+        if (!tenantMember) return false;
         const hTokens = nameKey(
           `${x.data.firstName || ''} ${x.data.lastName || ''}`.trim() || x.data.displayName || '',
         )
           .split(' ')
           .filter(Boolean);
-        if (hTokens.length < 2 || hTokens[0] !== csvFirst) return false;
-        // First name anchors; then one name's token set ⊆ the other's. Catches
-        // middle names ("Alondra Lucy Hernandez" ⊇ "Alondra Hernandez") AND
-        // partial last names ("Doris Santiago" ⊆ "Doris Santiago Guillén")
-        // without matching a different surname. When the looser rule yields
-        // several people, the Everee + VenueSmart-assignment tiebreak (below)
-        // or a manual pick decides — never a wrong auto-pay.
-        const hSet = new Set(hTokens);
-        const csvSubset = csvTokens.every((t) => hSet.has(t));
-        const hSubset = hTokens.every((t) => csvSet.has(t));
-        return csvSubset || hSubset;
+        return nameTokensMatch(csvTokens, hTokens);
       });
       if (candidates.length === 0) {
         resolved = { kind: 'none' };
