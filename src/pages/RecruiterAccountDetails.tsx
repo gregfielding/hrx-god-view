@@ -1510,6 +1510,11 @@ const RecruiterAccountDetails: React.FC = () => {
   const [deals, setDeals] = useState<DealOption[]>([]);
   const [laborPoolOptions, setLaborPoolOptions] = useState<LaborPoolOption[]>([]);
   const [jobOrderApplicantCounts, setJobOrderApplicantCounts] = useState<Record<string, number>>({});
+  // Child-account worksite-link picker (see the render-section comment).
+  // MUST live above the loading early-return — hooks below it crash
+  // fresh-fetch loads with React #310.
+  const [worksiteLinkOptions, setWorksiteLinkOptions] = useState<Array<{ id: string; name: string; subtitle: string }>>([]);
+  const [worksiteLinkLoading, setWorksiteLinkLoading] = useState(false);
   const [salespeopleOptions, setSalespeopleOptions] = useState<PersonOption[]>([]);
   const [recruitersOptions, setRecruitersOptions] = useState<PersonOption[]>([]);
   const [accountOptions, setAccountOptions] = useState<AccountOption[]>([]);
@@ -5316,9 +5321,10 @@ const RecruiterAccountDetails: React.FC = () => {
   // accounts had no UI to set companyId/companyLocationId — the fields
   // the gig-JO factory and the header's worksite card read (auto-created
   // children get them stamped by the location trigger). Options load
-  // lazily from the inherited company's locations when opened.
-  const [worksiteLinkOptions, setWorksiteLinkOptions] = useState<Array<{ id: string; name: string; subtitle: string }>>([]);
-  const [worksiteLinkLoading, setWorksiteLinkLoading] = useState(false);
+  // lazily from the inherited company's locations when opened. The
+  // useState pair lives with the top state cluster — declaring it here,
+  // below the loading early-return, crashed fresh-fetch loads with
+  // React #310 (2026-07-23).
   const inheritedCompanyIdForWorksite =
     ((orderDefaultsInheritanceParent?.associations?.companyIds ?? []) as string[])[0] ??
     ((account?.associations?.companyIds ?? []) as string[])[0] ??
