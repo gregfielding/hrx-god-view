@@ -533,8 +533,10 @@ const WhosWorkingPage: React.FC = () => {
   const [weekJoNames, setWeekJoNames] = useState<Map<string, JoNames>>(new Map());
   const [entityOptions, setEntityOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [rowCount, setRowCount] = useState(0);
-  // Week-view filters (Greg, 2026-07-20): entity + account, both optional.
-  const [wwEntity, setWwEntity] = useState<string>('');
+  // Week-view filters. Entity is ALWAYS a single selection (Greg,
+  // 2026-07-23): the page is a per-entity sanity check — it loads on
+  // C1 Select and can be flipped to C1 Events, never both at once.
+  const [wwEntity, setWwEntity] = useState<string>('c1_select_llc');
   const [wwAccount, setWwAccount] = useState<string>('');
 
   const built = useMemo(() => {
@@ -885,12 +887,18 @@ const WhosWorkingPage: React.FC = () => {
               setWwAccount('');
             }}
           >
-            <MenuItem value="">All entities</MenuItem>
-            {entityOptions.map((ent) => (
-              <MenuItem key={ent.id} value={ent.id}>
-                {ent.name}
-              </MenuItem>
-            ))}
+            {/* No "all entities" option by design — one entity at a time.
+                Placeholder keeps MUI quiet before the async options land. */}
+            {entityOptions.length === 0 && (
+              <MenuItem value="c1_select_llc">C1 Select LLC</MenuItem>
+            )}
+            {entityOptions
+              .filter((ent) => !/sandbox/i.test(ent.name))
+              .map((ent) => (
+                <MenuItem key={ent.id} value={ent.id}>
+                  {ent.name}
+                </MenuItem>
+              ))}
           </Select>
         </FormControl>
         <FormControl size="small" sx={{ minWidth: 220 }}>
