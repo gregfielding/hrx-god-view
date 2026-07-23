@@ -29,6 +29,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   FormControl,
@@ -38,6 +39,7 @@ import {
   Select,
   Tab,
   Tabs,
+  TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -91,6 +93,26 @@ interface JobOrderOption {
   jobTitle: string | null;
   worksiteName: string | null;
   worksiteAddress: string | null;
+}
+
+/** Autocomplete filter for the Job Order dropdown: every whitespace
+ *  token the recruiter types must match SOMEWHERE across the JO name,
+ *  job title, worksite name/address (city, state), or account name —
+ *  so "bartender plano", "warehouse KY", and "fannie" all narrow as
+ *  expected. */
+function filterJobOrderOptions(
+  options: JobOrderOption[],
+  state: { inputValue: string },
+): JobOrderOption[] {
+  const tokens = state.inputValue.toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return options;
+  return options.filter((o) => {
+    const hay = [o.name, o.jobTitle, o.worksiteName, o.worksiteAddress, o.companyName]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return tokens.every((t) => hay.includes(t));
+  });
 }
 
 /** Lightweight shape for a shift under a JO — drives the Shift
@@ -874,61 +896,74 @@ const Timesheets: React.FC = () => {
                   </Select>
                 </FormControl>
 
-                <FormControl
+                <Autocomplete
                   size="small"
-                  sx={{ minWidth: 220, height: 36 }}
+                  sx={{
+                    minWidth: 260,
+                    '& .MuiOutlinedInput-root': {
+                      height: 36,
+                      borderRadius: '6px',
+                      backgroundColor: 'white',
+                      fontSize: '0.875rem',
+                      paddingTop: 0,
+                      paddingBottom: 0,
+                    },
+                    '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' },
+                    '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#D1D5DB' },
+                  }}
                   disabled={!entity || joLoading}
-                >
-                  <InputLabel sx={{ fontSize: '0.875rem' }}>Job Order</InputLabel>
-                  <Select
-                    value={jobOrderFilter}
-                    onChange={(e) => handleJobOrderChange(String(e.target.value))}
-                    label="Job Order"
-                    sx={filterSelectSx}
-                    // Keep the closed-state display a single line. Without
-                    // this, the Select renders the entire 3-line MenuItem
-                    // body when collapsed and the field grows to ~80px tall.
-                    renderValue={(val) => {
-                      if (val === 'all') return 'All Job Orders';
-                      const jo = jobOrderOptions.find((o) => o.id === val);
-                      return jo?.name ?? String(val);
-                    }}
-                  >
-                    <MenuItem value="all">All Job Orders</MenuItem>
-                    {jobOrderOptions.map((jo) => (
-                      <MenuItem key={jo.id} value={jo.id} sx={{ alignItems: 'flex-start', py: 1 }}>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
+                  options={jobOrderOptions}
+                  value={jobOrderOptions.find((o) => o.id === jobOrderFilter) ?? null}
+                  onChange={(_e, next) => handleJobOrderChange(next?.id ?? 'all')}
+                  getOptionLabel={(o) => o.name}
+                  isOptionEqualToValue={(o, v) => o.id === v.id}
+                  filterOptions={filterJobOrderOptions}
+                  // Null value renders the placeholder — the "All Job
+                  // Orders" state. Clearing (X) returns to it.
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Job Order"
+                      placeholder="All Job Orders"
+                      InputLabelProps={{
+                        ...params.InputLabelProps,
+                        sx: { fontSize: '0.875rem' },
+                      }}
+                    />
+                  )}
+                  renderOption={(props, jo) => (
+                    <li {...props} key={jo.id} style={{ ...props.style, alignItems: 'flex-start' }}>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0, py: 0.5 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{ fontWeight: 600, lineHeight: 1.2 }}
+                        >
+                          {jo.name}
+                        </Typography>
+                        {jo.jobTitle && (
                           <Typography
-                            variant="body2"
-                            sx={{ fontWeight: 600, lineHeight: 1.2 }}
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ lineHeight: 1.2 }}
                           >
-                            {jo.name}
+                            {jo.jobTitle}
                           </Typography>
-                          {jo.jobTitle && (
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ lineHeight: 1.2 }}
-                            >
-                              {jo.jobTitle}
-                            </Typography>
-                          )}
-                          {(jo.worksiteName || jo.worksiteAddress) && (
-                            <Typography
-                              variant="caption"
-                              color="text.disabled"
-                              sx={{ lineHeight: 1.2 }}
-                            >
-                              {[jo.worksiteName, jo.worksiteAddress]
-                                .filter(Boolean)
-                                .join(' — ')}
-                            </Typography>
-                          )}
-                        </Box>
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                        )}
+                        {(jo.worksiteName || jo.worksiteAddress) && (
+                          <Typography
+                            variant="caption"
+                            color="text.disabled"
+                            sx={{ lineHeight: 1.2 }}
+                          >
+                            {[jo.worksiteName, jo.worksiteAddress]
+                              .filter(Boolean)
+                              .join(' — ')}
+                          </Typography>
+                        )}
+                      </Box>
+                    </li>
+                  )}
+                />
 
                 <FormControl
                   size="small"
