@@ -187,7 +187,10 @@ export async function ensureEvereeWorkLocation(
     // attempt). Recover by listing the tenant's work locations and
     // reusing the match by normalized name, then street.
     const msg = err instanceof Error ? err.message : String(err);
-    if (!/duplicate/i.test(msg)) throw err;
+    // "duplicate key value" (Postgres passthrough) AND the validation-
+    // layer phrasing "Work location name must be unique" both mean the
+    // location already exists.
+    if (!/duplicat|already exist|must be unique/i.test(msg)) throw err;
     const norm = (v: unknown) => String(v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
     const listRaw = await evereeRequest<unknown>(config, 'GET', '/api/v2/work-locations');
     const list: Array<Record<string, unknown>> = Array.isArray(listRaw)
