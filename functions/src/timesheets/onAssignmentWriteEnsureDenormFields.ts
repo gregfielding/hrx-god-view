@@ -72,6 +72,7 @@ import {logger} from "firebase-functions/v2";
 import {onDocumentWritten} from "firebase-functions/v2/firestore";
 
 import {
+  hasWorksiteAddressStreet,
   makeCaches,
   pickWeeklyScheduleField,
   resolveMissingDenormUpdates,
@@ -96,22 +97,35 @@ const TRIGGER_MANAGED_STRING_FIELDS = [
   // TS.1.P4 Slice 5.5 — denormalized from `JobOrder.recruiterAccountId`
   // (or `accountId` as fallback). Powers the batch-scope=account flow.
   "accountId",
+  // Assignment-backbone build (2026-07-23) — WC resolved from the
+  // workers_comp_rates matrix (state + job title, account-scoped rows
+  // win) with the legacy shift→JO→account chain as fallback. Only the
+  // CODE gates the pre-filter — rate/source ride along in the
+  // ancillary (diff-ignored) set because a code can resolve without a
+  // rate and must not block the steady-state exit.
+  "workersCompCode",
 ] as const;
 const TRIGGER_MANAGED_NUMBER_FIELDS = ["shiftBreakDefaultMinutes"] as const;
 /**
  * Object-shaped managed fields. `weeklySchedule` is a
  * `Record<string, { enabled, startTime, endTime }>` — `_.isEqual`
  * handles the deep-equality comparison cleanly so it falls into the
- * generic ignored-for-diff bucket.
+ * generic ignored-for-diff bucket. `worksiteAddress` (2026-07-23) is
+ * the {street, city, state, zip} map.
  */
-const TRIGGER_MANAGED_OBJECT_FIELDS = ["weeklySchedule"] as const;
+const TRIGGER_MANAGED_OBJECT_FIELDS = ["weeklySchedule", "worksiteAddress"] as const;
 /**
  * Auxiliary fields the trigger writes alongside its managed fields.
  * `updatedAt` always rolls forward when we patch. `latestTimesheetStatus`
  * is owned by a sibling trigger but lives in the same doc — we want
  * neither to fight the other.
  */
-const TRIGGER_ANCILLARY_FIELDS = ["updatedAt", "latestTimesheetStatus"] as const;
+const TRIGGER_ANCILLARY_FIELDS = [
+  "updatedAt",
+  "latestTimesheetStatus",
+  "workersCompRate",
+  "workersCompSource",
+] as const;
 
 const ALL_IGNORED_FOR_DIFF = new Set<string>([
   ...TRIGGER_MANAGED_STRING_FIELDS,
@@ -201,7 +215,8 @@ export const onAssignmentWriteEnsureDenormFields = onDocumentWritten(
     const allSet =
       TRIGGER_MANAGED_STRING_FIELDS.every((k) => hasNonEmptyString(afterData, k)) &&
       TRIGGER_MANAGED_NUMBER_FIELDS.every((k) => hasFiniteNumber(afterData, k)) &&
-      pickWeeklyScheduleField(afterData, "weeklySchedule") != null;
+      pickWeeklyScheduleField(afterData, "weeklySchedule") != null &&
+      hasWorksiteAddressStreet(afterData);
     if (allSet) return;
 
     // Tier-2 guard: this write only touched fields we manage (or

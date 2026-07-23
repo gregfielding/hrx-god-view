@@ -121,6 +121,8 @@ export interface BackfillReport {
     workerDisplayName: FieldStat;
     shiftBreakDefaultMinutes: FieldStat;
     weeklySchedule: FieldStat;
+    workersComp: FieldStat;
+    worksiteAddress: FieldStat;
   };
   errors: Array<{ assignmentId: string; error: string }>;
   truncated: boolean;
@@ -320,6 +322,10 @@ export type Caches = {
   user: Map<string, Promise<Record<string, unknown> | null>>;
   location: Map<string, Promise<Record<string, unknown> | null>>;
   shift: Map<string, Promise<Record<string, unknown> | null>>;
+  account: Map<string, Promise<Record<string, unknown> | null>>;
+  /** Whole `workers_comp_rates` matrix, loaded once per invocation
+   *  (small — ~23 docs) and shared across every row on the page. */
+  wcMatrix: {current: Promise<Array<Record<string, unknown>>> | null};
 };
 
 export function makeCaches(): Caches {
@@ -328,6 +334,8 @@ export function makeCaches(): Caches {
     user: new Map(),
     location: new Map(),
     shift: new Map(),
+    account: new Map(),
+    wcMatrix: {current: null},
   };
 }
 
@@ -438,6 +446,46 @@ async function readShiftDoc(
     }
   })();
   caches.shift.set(key, pending);
+  return pending;
+}
+
+async function readAccountDoc(
+  fdb: admin.firestore.Firestore,
+  tenantId: string,
+  accountId: string,
+  caches: Caches,
+): Promise<Record<string, unknown> | null> {
+  if (!accountId) return null;
+  const cached = caches.account.get(accountId);
+  if (cached) return cached;
+  const pending = (async (): Promise<Record<string, unknown> | null> => {
+    try {
+      const snap = await fdb.doc(`tenants/${tenantId}/accounts/${accountId}`).get();
+      if (!snap.exists) return null;
+      return (snap.data() ?? {}) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  })();
+  caches.account.set(accountId, pending);
+  return pending;
+}
+
+async function readWcMatrix(
+  fdb: admin.firestore.Firestore,
+  tenantId: string,
+  caches: Caches,
+): Promise<Array<Record<string, unknown>>> {
+  if (caches.wcMatrix.current) return caches.wcMatrix.current;
+  const pending = (async (): Promise<Array<Record<string, unknown>>> => {
+    try {
+      const snap = await fdb.collection(`tenants/${tenantId}/workers_comp_rates`).get();
+      return snap.docs.map((d) => (d.data() ?? {}) as Record<string, unknown>);
+    } catch {
+      return [];
+    }
+  })();
+  caches.wcMatrix.current = pending;
   return pending;
 }
 
@@ -691,9 +739,20 @@ export interface ResolveMissingResult {
     /** TS.1.P4 Slice 5.5 — JO.recruiterAccountId / accountId mirrored
      *  onto the assignment for fast batch-scope=account queries. */
     accountId: FieldOutcome;
+    /** Assignment-backbone build 2026-07-23 — matrix-resolved WC
+     *  code/rate/source stamped as a unit. */
+    workersComp: FieldOutcome;
+    /** Assignment-backbone build 2026-07-23 — full street address. */
+    worksiteAddress: FieldOutcome;
   };
   /** Whether at least one field was missing on the doc when we entered. */
   hadMissingFields: boolean;
+}
+
+/** "Set" = has a non-empty street. Name/state-only shapes re-resolve. */
+export function hasWorksiteAddressStreet(data: Record<string, unknown>): boolean {
+  const wa = data.worksiteAddress as Record<string, unknown> | undefined;
+  return !!wa && typeof wa.street === "string" && wa.street.trim().length > 0;
 }
 
 export async function resolveMissingDenormUpdates(
@@ -710,6 +769,8 @@ export async function resolveMissingDenormUpdates(
       shiftBreakDefaultMinutes: "skipped",
       weeklySchedule: "skipped",
       accountId: "skipped",
+      workersComp: "skipped",
+      worksiteAddress: "skipped",
     },
     hadMissingFields: false,
   };
@@ -893,6 +954,56 @@ export async function resolveMissingDenormUpdates(
     result.outcomes.accountId = "already_set";
   }
 
+  // workersComp (2026-07-23) — code+rate+source stamped as a unit; the
+  // matrix is authoritative, legacy chain is the fallback (see resolver).
+  if (!pickStringField(assignmentData, ["workersCompCode"])) {
+    result.hadMissingFields = true;
+    try {
+      const v = await resolveWorkersComp(args0);
+      if (v) {
+        result.updates.workersCompCode = v.code;
+        if (v.rate != null) result.updates.workersCompRate = v.rate;
+        result.updates.workersCompSource = v.source;
+        result.outcomes.workersComp = "stamped";
+      } else {
+        result.outcomes.workersComp = "unresolvable";
+      }
+    } catch (e) {
+      result.outcomes.workersComp = "unresolvable";
+      logger.warn("[assignment-backbone] workersComp resolver threw", {
+        tenantId,
+        assignmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  } else {
+    result.outcomes.workersComp = "already_set";
+  }
+
+  // worksiteAddress (2026-07-23) — street required; name/state-only
+  // shapes re-resolve until a real street lands.
+  if (!hasWorksiteAddressStreet(assignmentData)) {
+    result.hadMissingFields = true;
+    try {
+      const v = await resolveWorksiteAddress(args0);
+      if (v) {
+        result.updates.worksiteAddress = v;
+        result.outcomes.worksiteAddress = "stamped";
+      } else {
+        result.outcomes.worksiteAddress = "unresolvable";
+      }
+    } catch (e) {
+      result.outcomes.worksiteAddress = "unresolvable";
+      logger.warn("[assignment-backbone] worksiteAddress resolver threw", {
+        tenantId,
+        assignmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  } else {
+    result.outcomes.worksiteAddress = "already_set";
+  }
+
   return result;
 }
 
@@ -914,6 +1025,211 @@ async function resolveAccountId(args: ResolverArgs): Promise<string | null> {
   if (fromRecruiter) return fromRecruiter;
   const fromLegacy = pickStringField(jo, ["accountId"]);
   if (fromLegacy) return fromLegacy;
+  return null;
+}
+
+/* -------------------------------------------------------------------------
+ * Workers-comp resolver (assignment-backbone build, 2026-07-23)
+ *
+ * WC is PROGRAMMATIC (Greg): the `workers_comp_rates` matrix — docs
+ * {state, code, rate, jobTitles[], modifierAccountId?} — is the source
+ * of truth, keyed by worksite STATE + job title, with account-scoped
+ * rows (modifierAccountId = the national parent or standalone account)
+ * beating generic rows. Mirrors the client lookup in
+ * `src/utils/workersCompRateMaps.ts` (exact match, state uppercased,
+ * title lowercased). Only when the matrix has no row do we fall back to
+ * the legacy shift → JO → gigPositions → account copy chain, and even
+ * then the matrix back-fills the rate by (state, code) when the copied
+ * source had a code but no rate.
+ * ------------------------------------------------------------------------- */
+
+export interface ResolvedWorkersComp {
+  code: string;
+  rate: number | null;
+  source: "matrix" | "shift" | "job_order" | "account";
+}
+
+async function resolveWorkersComp(args: ResolverArgs): Promise<ResolvedWorkersComp | null> {
+  const {fdb, tenantId, assignmentData, caches} = args;
+
+  const state =
+    normalizeStateCode(pickStringField(assignmentData, ["worksiteState"])) ??
+    (await resolveWorksiteState(args));
+
+  const jobOrderId = pickStringField(assignmentData, ["jobOrderId"]);
+  const shiftId = pickStringField(assignmentData, ["shiftId"]);
+  const jo = await readJoDoc(fdb, tenantId, jobOrderId, caches);
+  const shift = shiftId ? await readShiftDoc(fdb, tenantId, jobOrderId, shiftId, caches) : null;
+
+  const jobTitle =
+    pickStringField(assignmentData, ["jobTitle"]) ||
+    (shift ? pickStringField(shift, ["defaultJobTitle", "jobTitle"]) : "") ||
+    (jo ? pickStringField(jo, ["jobTitle"]) : "");
+
+  // Modifier account = the national parent of the assignment's account
+  // (or the account itself when standalone) — same resolution the
+  // client uses (resolveWorkersCompModifierAccountId).
+  const accountId =
+    pickStringField(assignmentData, ["accountId"]) ||
+    (jo ? pickStringField(jo, ["recruiterAccountId", "accountId"]) : "");
+  let modifierAccountId = "";
+  if (accountId) {
+    const account = await readAccountDoc(fdb, tenantId, accountId, caches);
+    modifierAccountId = (account ? pickStringField(account, ["parentAccountId"]) : "") || accountId;
+  }
+
+  // 1. Matrix lookup — account-scoped row wins over generic.
+  if (state && jobTitle) {
+    const matrix = await readWcMatrix(fdb, tenantId, caches);
+    const titleLc = jobTitle.trim().toLowerCase();
+    const rowMatches = (row: Record<string, unknown>): boolean => {
+      const rowState = String(row.state ?? "").trim().toUpperCase();
+      if (rowState !== state) return false;
+      const titles = Array.isArray(row.jobTitles) ? (row.jobTitles as unknown[]) : [];
+      return titles.some((t) => String(t ?? "").trim().toLowerCase() === titleLc);
+    };
+    const scoped = modifierAccountId ?
+      matrix.find((r) => rowMatches(r) && String(r.modifierAccountId ?? "").trim() === modifierAccountId) :
+      undefined;
+    const generic = matrix.find((r) => rowMatches(r) && !String(r.modifierAccountId ?? "").trim());
+    const hit = scoped ?? generic;
+    if (hit) {
+      const code = String(hit.code ?? "").trim();
+      const rate = Number(hit.rate);
+      if (code) {
+        return {code, rate: Number.isFinite(rate) ? rate : null, source: "matrix"};
+      }
+    }
+  }
+
+  // 2. Legacy copy chain — shift → JO → gigPositions → account.
+  let code = "";
+  let rate: number | null = null;
+  let source: ResolvedWorkersComp["source"] | null = null;
+  if (shift) {
+    code = pickStringField(shift, ["workersCompCode", "workersCompClassCode"]);
+    if (code) {
+      rate = pickNumberField(shift, ["workersCompRate"]);
+      source = "shift";
+    }
+  }
+  if (!code && jo) {
+    code = pickStringField(jo, ["workersCompCode", "workersCompClassCode"]);
+    if (code) {
+      rate = pickNumberField(jo, ["workersCompRate"]);
+      source = "job_order";
+    } else {
+      const gigPositions = Array.isArray(jo.gigPositions) ?
+        (jo.gigPositions as Array<Record<string, unknown>>) :
+        [];
+      const p0 = gigPositions[0];
+      if (p0) {
+        code = pickStringField(p0, ["workersCompClassCode", "workersCompCode"]);
+        if (code) {
+          rate = pickNumberField(p0, ["workersCompRate"]);
+          source = "job_order";
+        }
+      }
+    }
+  }
+  if (!code && accountId) {
+    const account = await readAccountDoc(fdb, tenantId, accountId, caches);
+    if (account) {
+      code = pickStringField(account, ["workersCompCode"]);
+      if (code) {
+        rate = pickNumberField(account, ["workersCompRate"]);
+        source = "account";
+      }
+    }
+  }
+  if (!code || !source) return null;
+
+  // Rate top-up: a copied code without a rate gets its rate from the
+  // matrix by (state, code) when a matching row exists.
+  if (rate == null && state) {
+    const matrix = await readWcMatrix(fdb, tenantId, caches);
+    const byCode = matrix.find(
+      (r) =>
+        String(r.state ?? "").trim().toUpperCase() === state &&
+        String(r.code ?? "").trim() === code,
+    );
+    const matrixRate = byCode ? Number(byCode.rate) : NaN;
+    if (Number.isFinite(matrixRate)) rate = matrixRate;
+  }
+
+  return {code, rate, source};
+}
+
+/* -------------------------------------------------------------------------
+ * Worksite address resolver (assignment-backbone build, 2026-07-23)
+ *
+ * Stamps the full street address onto the assignment so Everee
+ * work-location creation and every "where is this person working"
+ * surface stops re-joining job_orders at read time. JO first, then the
+ * canonical CRM location doc. A location's `address` field may be a
+ * plain STRING street (the b40f9278 gotcha) — read it as the street.
+ * Street is required; city/state/zip are best-effort.
+ * ------------------------------------------------------------------------- */
+
+export interface ResolvedWorksiteAddress {
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+}
+
+async function resolveWorksiteAddress(
+  args: ResolverArgs,
+): Promise<ResolvedWorksiteAddress | null> {
+  const {fdb, tenantId, assignmentData, caches} = args;
+
+  const jobOrderId = pickStringField(assignmentData, ["jobOrderId"]);
+  const jo = await readJoDoc(fdb, tenantId, jobOrderId, caches);
+  if (jo) {
+    const wa = (jo.worksiteAddress ?? null) as Record<string, unknown> | null;
+    const street = wa ? pickStringField(wa, ["street", "line1", "addressLine1"]) : "";
+    if (street) {
+      return {
+        street,
+        city: pickStringField(wa, ["city"]),
+        state: normalizeStateCode(wa?.state ?? wa?.stateCode) ?? "",
+        zip: pickStringField(wa, ["zip", "postalCode", "zipCode"]),
+      };
+    }
+  }
+
+  const companyId =
+    pickStringField(assignmentData, ["companyId"]) ||
+    (jo ? pickStringField(jo, ["companyId"]) : "");
+  const worksiteId = pickStringField(assignmentData, ["worksite", "worksiteId", "locationId"]);
+  if (companyId && worksiteId) {
+    const loc = await readLocationDoc(fdb, tenantId, companyId, worksiteId, caches);
+    if (loc) {
+      // `address` is a STRING street on CRM location docs; tolerate a
+      // nested map too for older shapes.
+      const addrRaw = loc.address;
+      const addrMap =
+        addrRaw && typeof addrRaw === "object" ? (addrRaw as Record<string, unknown>) : null;
+      const street =
+        (typeof addrRaw === "string" ? addrRaw.trim() : "") ||
+        (addrMap ? pickStringField(addrMap, ["street", "line1"]) : "") ||
+        pickStringField(loc, ["street", "streetAddress"]);
+      if (street) {
+        return {
+          street,
+          city: pickStringField(loc, ["city"]) || (addrMap ? pickStringField(addrMap, ["city"]) : ""),
+          state:
+            normalizeStateCode(loc.state) ??
+            (addrMap ? normalizeStateCode(addrMap.state) : null) ??
+            "",
+          zip:
+            pickStringField(loc, ["zip", "zipCode", "postalCode"]) ||
+            (addrMap ? pickStringField(addrMap, ["zip", "postalCode"]) : ""),
+        };
+      }
+    }
+  }
+
   return null;
 }
 
@@ -965,6 +1281,8 @@ async function processOneAssignment(args: {
         shiftBreakDefaultMinutes: dryAdapt(resolved.outcomes.shiftBreakDefaultMinutes),
         weeklySchedule: dryAdapt(resolved.outcomes.weeklySchedule),
         accountId: dryAdapt(resolved.outcomes.accountId),
+        workersComp: dryAdapt(resolved.outcomes.workersComp),
+        worksiteAddress: dryAdapt(resolved.outcomes.worksiteAddress),
       } :
       resolved.outcomes,
     hadMissingFields: resolved.hadMissingFields,
@@ -1026,6 +1344,8 @@ export async function runBackfillAssignmentDenormFieldsPage(
       workerDisplayName: emptyFieldStat(),
       shiftBreakDefaultMinutes: emptyFieldStat(),
       weeklySchedule: emptyFieldStat(),
+      workersComp: emptyFieldStat(),
+      worksiteAddress: emptyFieldStat(),
     },
     errors: [],
     truncated: snap.size === limit,
@@ -1050,7 +1370,9 @@ export async function runBackfillAssignmentDenormFieldsPage(
       pickStringField(data, ["worksiteDisplayName"]) &&
       pickStringField(data, ["workerDisplayName"]) &&
       pickNumberField(data, ["shiftBreakDefaultMinutes"]) != null &&
-      pickWeeklyScheduleField(data, "weeklySchedule") != null;
+      pickWeeklyScheduleField(data, "weeklySchedule") != null &&
+      pickStringField(data, ["workersCompCode"]) &&
+      hasWorksiteAddressStreet(data);
     if (allSet) {
       report.preFilteredFullyHealthy += 1;
       continue;
@@ -1083,6 +1405,8 @@ export async function runBackfillAssignmentDenormFieldsPage(
               shiftBreakDefaultMinutes: "unresolvable" as const,
               weeklySchedule: "unresolvable" as const,
               accountId: "unresolvable" as const,
+              workersComp: "unresolvable" as const,
+              worksiteAddress: "unresolvable" as const,
             },
             hadMissingFields: true,
             error: e instanceof Error ? e.message : String(e),
@@ -1101,6 +1425,8 @@ export async function runBackfillAssignmentDenormFieldsPage(
       report.fieldStats.workerDisplayName[row.outcomes.workerDisplayName] += 1;
       report.fieldStats.shiftBreakDefaultMinutes[row.outcomes.shiftBreakDefaultMinutes] += 1;
       report.fieldStats.weeklySchedule[row.outcomes.weeklySchedule] += 1;
+      report.fieldStats.workersComp[row.outcomes.workersComp] += 1;
+      report.fieldStats.worksiteAddress[row.outcomes.worksiteAddress] += 1;
     }
   }
 
