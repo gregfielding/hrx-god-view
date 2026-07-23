@@ -170,12 +170,51 @@ export async function ensureEvereeWorkLocation(
     body.country = 'US';
   }
 
-  const raw = await evereeRequest<Record<string, unknown>>(
-    config,
-    'POST',
-    '/api/v2/work-locations',
-    body,
-  );
+  let raw: Record<string, unknown>;
+  try {
+    raw = await evereeRequest<Record<string, unknown>>(
+      config,
+      'POST',
+      '/api/v2/work-locations',
+      body,
+    );
+  } catch (err) {
+    // Duplicate recovery (2026-07-23, live prod finding): despite the
+    // externalId-idempotency claim above, Everee 500s with a Postgres
+    // "duplicate key value" when a location with the same NAME already
+    // exists under a DIFFERENT externalId (e.g. created by an earlier
+    // week's submission keyed to another worksite id, or a partial
+    // attempt). Recover by listing the tenant's work locations and
+    // reusing the match by normalized name, then street.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/duplicate/i.test(msg)) throw err;
+    const norm = (v: unknown) => String(v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const listRaw = await evereeRequest<unknown>(config, 'GET', '/api/v2/work-locations');
+    const list: Array<Record<string, unknown>> = Array.isArray(listRaw)
+      ? (listRaw as Array<Record<string, unknown>>)
+      : ((listRaw as Record<string, unknown>)?.content as Array<Record<string, unknown>>) ??
+        ((listRaw as Record<string, unknown>)?.workLocations as Array<Record<string, unknown>>) ??
+        [];
+    const targetName = norm(worksite.name);
+    const targetStreet = norm(worksite.address?.street);
+    let hit = list.find((l) => norm(l.name) === targetName);
+    if (!hit && targetStreet) {
+      hit = list.find((l) => norm(l.line1 ?? l.addressLine1 ?? l.street) === targetStreet);
+    }
+    const foundId = Number(hit?.id ?? hit?.workLocationId);
+    if (!Number.isFinite(foundId) || foundId <= 0) {
+      throw new Error(
+        `duplicate work location for "${worksite.name}" but no match found in Everee's list (${list.length} locations) — ${msg.slice(0, 160)}`,
+      );
+    }
+    logger.info('[everee.workLocations] duplicate recovered — reusing existing Everee location', {
+      tenantId,
+      evereeTenantId,
+      worksiteId: worksite.worksiteId,
+      evereeWorkLocationId: foundId,
+    });
+    raw = { id: foundId };
+  }
   const evereeWorkLocationId =
     typeof raw?.id === 'number'
       ? raw.id
