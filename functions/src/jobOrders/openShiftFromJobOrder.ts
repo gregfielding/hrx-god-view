@@ -31,7 +31,7 @@ export function todayUtcIso(now: Date = new Date()): string {
 }
 
 /** JO statuses that are terminal — never auto-create an open shift for these. */
-const TERMINAL_STATUSES = new Set(['cancelled', 'canceled', 'completed', 'closed']);
+const TERMINAL_STATUSES = new Set(['cancelled', 'canceled', 'completed', 'closed', 'filled_by_another_agency']);
 /** JO statuses that count as "active/open" for the backfill (drafts excluded). */
 const ACTIVE_STATUSES = new Set([
   'open',

@@ -111,6 +111,7 @@ const JobOrdersList: React.FC<JobOrdersListProps> = ({
       case 'on_hold': return 'warning';
       case 'cancelled': return 'error';
       case 'filled': return 'info';
+      case 'filled_by_another_agency': return 'error';
       case 'completed': return 'success';
       default: return 'default';
     }
@@ -123,6 +124,7 @@ const JobOrdersList: React.FC<JobOrdersListProps> = ({
       case 'on_hold': return <ScheduleIcon />;
       case 'cancelled': return <AssignmentIcon />;
       case 'filled': return <PeopleIcon />;
+      case 'filled_by_another_agency': return <PeopleIcon />;
       case 'completed': return <AssignmentIcon />;
       default: return <AssignmentIcon />;
     }
@@ -222,6 +224,7 @@ const JobOrdersList: React.FC<JobOrdersListProps> = ({
                   <MenuItem value="on_hold">On Hold</MenuItem>
                   <MenuItem value="cancelled">Cancelled</MenuItem>
                   <MenuItem value="filled">Filled</MenuItem>
+                  <MenuItem value="filled_by_another_agency">Filled By Another Agency</MenuItem>
                   <MenuItem value="completed">Completed</MenuItem>
                 </Select>
               </FormControl>
@@ -300,7 +303,7 @@ const JobOrdersList: React.FC<JobOrdersListProps> = ({
                   <TableCell>
                     <Chip
                       icon={getStatusIcon(jobOrder.status)}
-                      label={jobOrder.status.replace('_', ' ').toUpperCase()}
+                      label={jobOrder.status.replace(/_/g, ' ').toUpperCase()}
                       color={getStatusColor(jobOrder.status) as any}
                       size="small"
                     />
@@ -412,7 +415,7 @@ const JobOrdersList: React.FC<JobOrdersListProps> = ({
                   </Typography>
                   <Chip
                     icon={getStatusIcon(selectedJobOrder.status)}
-                    label={selectedJobOrder.status.replace('_', ' ').toUpperCase()}
+                    label={selectedJobOrder.status.replace(/_/g, ' ').toUpperCase()}
                     color={getStatusColor(selectedJobOrder.status) as any}
                     size="small"
                   />

@@ -187,6 +187,7 @@ const JobOrderDetail: React.FC<JobOrderDetailProps> = ({
       case 'on_hold': return 'warning';
       case 'cancelled': return 'error';
       case 'filled': return 'info';
+      case 'filled_by_another_agency': return 'error';
       case 'completed': return 'success';
       default: return 'default';
     }
@@ -248,7 +249,7 @@ const JobOrderDetail: React.FC<JobOrderDetailProps> = ({
           </Typography>
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
             <Chip
-              label={jobOrder.status.replace('_', ' ').toUpperCase()}
+              label={jobOrder.status.replace(/_/g, ' ').toUpperCase()}
               color={getStatusColor(jobOrder.status) as any}
               size="small"
             />

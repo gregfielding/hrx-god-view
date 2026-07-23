@@ -4376,6 +4376,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
       case 'on_hold': return 'warning';
       case 'cancelled': return 'error';
       case 'filled': return 'info';
+      case 'filled_by_another_agency': return 'error';
       case 'completed': return 'default';
       default: return 'default';
     }

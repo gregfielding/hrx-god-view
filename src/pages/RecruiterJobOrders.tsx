@@ -138,6 +138,7 @@ const JOB_ORDER_STATUS_OPTIONS: { value: JobOrderStatus; label: string }[] = [
   { value: 'on_hold', label: 'On hold' },
   { value: 'cancelled', label: 'Cancelled' },
   { value: 'filled', label: 'Filled' },
+  { value: 'filled_by_another_agency', label: 'Filled by another agency' },
   { value: 'completed', label: 'Completed' },
 ];
 
@@ -146,7 +147,7 @@ function toCanonicalJobOrderStatus(s: string): JobOrderStatus {
   const raw = (s || '').toLowerCase().trim();
   if (raw === 'on-hold' || raw === 'on hold' || raw === 'onhold') return 'on_hold';
   const underscored = raw.replace(/-/g, '_');
-  const allowed: JobOrderStatus[] = ['draft', 'open', 'on_hold', 'cancelled', 'filled', 'completed'];
+  const allowed: JobOrderStatus[] = ['draft', 'open', 'on_hold', 'cancelled', 'filled', 'filled_by_another_agency', 'completed'];
   if (allowed.includes(underscored as JobOrderStatus)) return underscored as JobOrderStatus;
   return 'open';
 }
@@ -1094,8 +1095,9 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       case 'onhold': return 'warning';
       case 'cancelled': 
       case 'canceled': return 'error';
-      case 'filled': 
+      case 'filled':
       case 'closed': return 'info';
+      case 'filled_by_another_agency': return 'error';
       case 'completed': 
       case 'finished': return 'default';
       case 'pending': 
@@ -1157,6 +1159,10 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
             <MenuItem value="On-Hold">On-Hold</MenuItem>
             <MenuItem value="Cancelled">Cancelled</MenuItem>
             <MenuItem value="Filled">Filled</MenuItem>
+            {/* Explicit underscore value — the query transform lowercases and
+                hyphenates SPACES, so this passes through matching the stored
+                canonical status. */}
+            <MenuItem value="filled_by_another_agency">Filled By Another Agency</MenuItem>
             <MenuItem value="Completed">Completed</MenuItem>
           </Select>
         </FormControl>

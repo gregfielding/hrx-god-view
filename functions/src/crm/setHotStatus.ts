@@ -23,7 +23,7 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-const TERMINAL_JO_STATUSES = new Set(['cancelled', 'canceled', 'completed', 'filled']);
+const TERMINAL_JO_STATUSES = new Set(['cancelled', 'canceled', 'completed', 'filled', 'filled_by_another_agency']);
 
 async function assertStaff(uid: string, token: Record<string, unknown> | undefined, tenantId: string): Promise<void> {
   if (token?.hrx === true) return;

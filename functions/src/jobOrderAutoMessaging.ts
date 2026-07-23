@@ -867,7 +867,7 @@ export const jobOrderAutoMessagingOnJobOrderUpdated = onDocumentUpdated(
     // Terminal/held orders never release; a halted FG order that resumes
     // open (fieldglassHalted cleanup) re-qualifies on that later update.
     const status = String(after.status || '').toLowerCase();
-    if (['cancelled', 'canceled', 'completed', 'filled', 'on_hold', 'terminated'].includes(status)) {
+    if (['cancelled', 'canceled', 'completed', 'filled', 'filled_by_another_agency', 'on_hold', 'terminated'].includes(status)) {
       return;
     }
 

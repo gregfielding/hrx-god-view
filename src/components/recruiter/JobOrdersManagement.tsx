@@ -159,6 +159,7 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
       case 'on_hold': return 'warning';
       case 'cancelled': return 'error';
       case 'filled': return 'success';
+      case 'filled_by_another_agency': return 'error';
       case 'completed': return 'info';
       default: return 'default';
     }
@@ -172,6 +173,7 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
       case 'on_hold': return 'On Hold';
       case 'cancelled': return 'Cancelled';
       case 'filled': return 'Filled';
+      case 'filled_by_another_agency': return 'Filled By Another Agency';
       case 'completed': return 'Completed';
       default: return status;
     }
@@ -236,6 +238,7 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
                   <MenuItem value="on_hold">On Hold</MenuItem>
                   <MenuItem value="cancelled">Cancelled</MenuItem>
                   <MenuItem value="filled">Filled</MenuItem>
+                  <MenuItem value="filled_by_another_agency">Filled By Another Agency</MenuItem>
                   <MenuItem value="completed">Completed</MenuItem>
                 </Select>
               </FormControl>

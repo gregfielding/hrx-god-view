@@ -3535,6 +3535,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                     <MenuItem value="on_hold">On Hold</MenuItem>
                     <MenuItem value="cancelled">Cancelled</MenuItem>
                     <MenuItem value="filled">Filled</MenuItem>
+                    <MenuItem value="filled_by_another_agency">Filled By Another Agency</MenuItem>
                     <MenuItem value="completed">Completed</MenuItem>
                   </Select>
                 </FormControl>

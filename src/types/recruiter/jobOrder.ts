@@ -412,7 +412,14 @@ export interface Address {
   };
 }
 
-export type JobOrderStatus = 'draft' | 'open' | 'on_hold' | 'cancelled' | 'filled' | 'completed';
+export type JobOrderStatus =
+  | 'draft'
+  | 'open'
+  | 'on_hold'
+  | 'cancelled'
+  | 'filled'
+  | 'filled_by_another_agency'
+  | 'completed';
 
 export type TimesheetMethod = 'app_clock_in_out' | 'physical_sign_in' | 'supervisor_approval' | 'other';
 

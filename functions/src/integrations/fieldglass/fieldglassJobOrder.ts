@@ -1263,7 +1263,7 @@ export async function haltFieldglassOrder(
   if (!joRef) return { status: 'no_job_order', postingsPaused: 0 };
   const joSnap = await joRef.get();
   const joStatus = trim((joSnap.data() as Record<string, unknown>)?.status).toLowerCase();
-  if (['cancelled', 'canceled', 'completed', 'filled'].includes(joStatus)) {
+  if (['cancelled', 'canceled', 'completed', 'filled', 'filled_by_another_agency'].includes(joStatus)) {
     return { status: 'already_terminal', jobOrderId: joRef.id, postingsPaused: 0 };
   }
   await joRef.set(
@@ -1428,7 +1428,7 @@ export async function closeFieldglassOrder(
     return { status: 'no_job_order', postingsExpired: 0, shiftsClosed: 0 };
   }
 
-  const terminal = new Set(['cancelled', 'canceled', 'completed', 'filled']);
+  const terminal = new Set(['cancelled', 'canceled', 'completed', 'filled', 'filled_by_another_agency']);
   const alreadyTerminal = terminal.has(trim(joData.status).toLowerCase());
   if (!alreadyTerminal) {
     await joRef.set(
