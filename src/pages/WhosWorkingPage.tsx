@@ -1316,7 +1316,9 @@ const WhosWorkingPage: React.FC = () => {
         </Typography>
       )}
 
-      {/* Full-time watch — the 4-week hours trend */}
+      {/* Full-time watch — the 4-week hours trend. HIDDEN per Greg
+          2026-07-24; flip `false` back to restore the section. */}
+      {false && (
       <Paper variant="outlined" sx={{ mt: 2, overflow: 'hidden' }}>
         <Box sx={{ px: 2, py: 1.5, bgcolor: 'action.hover' }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
@@ -1467,6 +1469,7 @@ const WhosWorkingPage: React.FC = () => {
           </Box>
         )}
       </Paper>
+      )}
       </>
       )}
 
