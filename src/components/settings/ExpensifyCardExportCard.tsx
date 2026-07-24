@@ -37,6 +37,17 @@ import { useAuth } from '../../contexts/AuthContext';
 
 const previewExport = httpsCallable(functions, 'previewExpensifyCardExport');
 const confirmExport = httpsCallable(functions, 'confirmExpensifyCardExport');
+const classWriteback = httpsCallable(functions, 'runExpensifyClassWritebackNow');
+
+interface ClassSyncStats {
+  expensesSeen: number;
+  tagged: number;
+  updated: number;
+  alreadySet: number;
+  unmatchedPurchase: number;
+  unknownTags: string[];
+  errors: number;
+}
 
 interface CardBucket {
   count: number;
@@ -69,6 +80,22 @@ export default function ExpensifyCardExportCard() {
   const [downloaded, setDownloaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [classBusy, setClassBusy] = useState(false);
+  const [classStats, setClassStats] = useState<ClassSyncStats | null>(null);
+
+  const onClassSync = async () => {
+    if (!tenantId) return;
+    setClassBusy(true);
+    setError(null);
+    try {
+      const res = await classWriteback({ tenantId });
+      setClassStats(res.data as ClassSyncStats);
+    } catch (e: any) {
+      setError(e?.message || 'Could not sync classes to QuickBooks.');
+    } finally {
+      setClassBusy(false);
+    }
+  };
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -236,6 +263,41 @@ export default function ExpensifyCardExportCard() {
             </Typography>
           )}
         </>
+      )}
+
+      <Divider sx={{ my: 2 }} />
+
+      <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
+        Classes → QuickBooks
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+        Copies the class picked on each Expensify expense onto the matching QuickBooks
+        transaction. Runs automatically every morning; use the button after a classifying
+        session to sync right away. Only expenses that are on a report are visible — turn on
+        delayed submission in the Expensify workspace so card expenses land on one
+        automatically.
+      </Typography>
+      <Stack direction="row" spacing={1.5} alignItems="center">
+        <Button variant="outlined" onClick={onClassSync} disabled={classBusy}>
+          {classBusy ? 'Syncing…' : 'Sync classes to QuickBooks'}
+        </Button>
+        {classBusy && <CircularProgress size={18} />}
+      </Stack>
+      {classStats && (
+        <Alert
+          severity={classStats.errors > 0 ? 'warning' : 'success'}
+          sx={{ mt: 1.5 }}
+          onClose={() => setClassStats(null)}
+        >
+          {classStats.updated} transaction{classStats.updated === 1 ? '' : 's'} classed in
+          QuickBooks; {classStats.alreadySet} already correct.{' '}
+          {classStats.tagged - classStats.updated - classStats.alreadySet > 0 &&
+            `${classStats.tagged - classStats.updated - classStats.alreadySet} classified expense(s) couldn't be matched or resolved. `}
+          {classStats.unknownTags.length > 0 &&
+            `Unknown class name(s): ${classStats.unknownTags.join(', ')}. `}
+          ({classStats.expensesSeen} expense{classStats.expensesSeen === 1 ? '' : 's'} visible on
+          reports, {classStats.tagged} classified.)
+        </Alert>
       )}
     </Paper>
   );
