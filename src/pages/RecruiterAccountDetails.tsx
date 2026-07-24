@@ -2041,6 +2041,33 @@ const RecruiterAccountDetails: React.FC = () => {
 
   // Invoicing tab: sub-view (scaffolding for QuickBooks integration)
   const [invoicingSubView, setInvoicingSubView] = useState<'invoices' | 'ar' | 'payments' | 'mapping'>('invoices');
+  // QBO invoicing tab data (Phase 3, 2026-07-24). All reads flow through
+  // level-gated callables — the cache subcollections are default-denied
+  // to clients by design.
+  const [qboData, setQboData] = useState<Record<string, any> | null>(null);
+  const [qboLoading, setQboLoading] = useState(false);
+  const [qboBusy, setQboBusy] = useState(false);
+  const [qboNotice, setQboNotice] = useState<string | null>(null);
+  const [qboMapOpen, setQboMapOpen] = useState(false);
+  const [qboCustomers, setQboCustomers] = useState<Array<Record<string, any>> | null>(null);
+  const [qboMapSearch, setQboMapSearch] = useState('');
+  const loadQboInvoicing = useCallback(async () => {
+    if (!tenantId || !accountId) return;
+    setQboLoading(true);
+    try {
+      const fn = httpsCallable(functions, 'getQboAccountInvoicing');
+      const res = await fn({ tenantId, accountId });
+      setQboData((res.data ?? null) as Record<string, any> | null);
+    } catch (err) {
+      setQboNotice(err instanceof Error ? err.message : String(err));
+    } finally {
+      setQboLoading(false);
+    }
+  }, [tenantId, accountId]);
+  useEffect(() => {
+    if (tabValue === 13 && qboData === null && !qboLoading) void loadQboInvoicing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabValue, loadQboInvoicing]);
 
   const isMountedRef = useRef(true);
   const cascadingOrderDetailsRef = useRef<AccountOrderDetailsFormHandle | null>(null);
@@ -10377,11 +10404,72 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                 </Alert>
               ) : (
               (() => {
-                const qb = account.integrations?.quickbooks;
-                const qboStatus = qb?.status ?? 'not_connected';
-                const isMapped = qboStatus === 'mapped';
-                const isConnected = qboStatus === 'connected_unmapped' || isMapped || qboStatus === 'sync_error';
+                const integ = (qboData?.integration ?? account.integrations?.quickbooks ?? {}) as Record<string, any>;
+                const qboStatus = integ.status ?? 'not_connected';
+                const isMapped = qboStatus === 'mapped' || qboStatus === 'sync_error';
+                const isConnected = qboData?.connected === true || qboStatus !== 'not_connected';
                 const canManageQuickBooks = canAccessInvoicing;
+                const invoices = (qboData?.invoices ?? []) as Array<Record<string, any>>;
+                const payments = (qboData?.payments ?? []) as Array<Record<string, any>>;
+                const arSummary = (qboData?.arSummary ?? null) as Record<string, any> | null;
+                const usd = (n: unknown) =>
+                  Number(n ?? 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+                const invoiceDocNumberById = new Map<string, string>(
+                  invoices.map((i) => [String(i.invoiceId), String(i.docNumber || i.invoiceId)]),
+                );
+                const daysOverdue = (dueDate: string | null): number => {
+                  if (!dueDate) return 0;
+                  const diff = Math.floor((Date.now() - new Date(`${dueDate}T12:00:00`).getTime()) / 86400000);
+                  return Math.max(0, diff);
+                };
+                const statusChip = (s: string) => (
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={s}
+                    color={s === 'paid' ? 'success' : s === 'overdue' ? 'error' : 'default'}
+                  />
+                );
+                const runQboAction = async (fnName: string, payload: Record<string, unknown>) => {
+                  setQboBusy(true);
+                  setQboNotice(null);
+                  try {
+                    const fn = httpsCallable(functions, fnName);
+                    const res = await fn(payload);
+                    const warning = (res.data as Record<string, any> | null)?.warning;
+                    if (warning) setQboNotice(String(warning));
+                    await loadQboInvoicing();
+                    return true;
+                  } catch (err) {
+                    setQboNotice(err instanceof Error ? err.message : String(err));
+                    return false;
+                  } finally {
+                    setQboBusy(false);
+                  }
+                };
+                const openMapDialog = async () => {
+                  setQboMapOpen(true);
+                  setQboMapSearch('');
+                  if (qboCustomers === null) {
+                    try {
+                      const fn = httpsCallable(functions, 'listQboCustomers');
+                      const res = await fn({ tenantId });
+                      const data = res.data as Record<string, any>;
+                      setQboCustomers((data?.customers ?? []) as Array<Record<string, any>>);
+                    } catch (err) {
+                      setQboNotice(err instanceof Error ? err.message : String(err));
+                    }
+                  }
+                };
+                // Suggested match: token overlap between the account name and
+                // each customer name — same spirit as the import matcher.
+                const QBO_NAME_STOPWORDS = new Set(['llc', 'inc', 'corp', 'corporation', 'company', 'the']);
+                const nameTokens = (s: string) =>
+                  s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
+                    .filter((t) => t.length > 2 && !QBO_NAME_STOPWORDS.has(t));
+                const acctTokens = new Set(nameTokens(String(account.name ?? '')));
+                const scoreCustomer = (c: Record<string, any>) =>
+                  nameTokens(String(c.displayName ?? '')).filter((t) => acctTokens.has(t)).length;
                 return (
                   <Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
@@ -10398,18 +10486,57 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                         <ToggleButton value="mapping">Mapping / Settings</ToggleButton>
                       </ToggleButtonGroup>
                       <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                        {qb?.lastSyncAt ? `Last synced: ${typeof qb.lastSyncAt?.toDate === 'function' ? qb.lastSyncAt.toDate().toLocaleString() : '—'}` : 'Not synced yet'}
+                        {qboLoading
+                          ? 'Loading…'
+                          : integ.lastSyncAt
+                            ? `Last synced: ${new Date(Number(integ.lastSyncAt)).toLocaleString()}`
+                            : 'Not synced yet'}
                       </Typography>
-                      <Button size="small" variant="outlined" disabled sx={{ textTransform: 'none' }}>Refresh</Button>
-                      <Button size="small" variant="outlined" disabled sx={{ textTransform: 'none' }} startIcon={<OpenInNewIcon />}>Open in QuickBooks</Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={!isMapped || qboBusy}
+                        sx={{ textTransform: 'none' }}
+                        onClick={() => void runQboAction('syncQboAccountData', { tenantId, accountId })}
+                      >
+                        {qboBusy ? 'Working…' : 'Refresh'}
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={!isMapped || !integ.customerId}
+                        sx={{ textTransform: 'none' }}
+                        startIcon={<OpenInNewIcon />}
+                        onClick={() =>
+                          window.open(
+                            `https://app.qbo.intuit.com/app/customerdetail?nameId=${integ.customerId}`,
+                            '_blank',
+                            'noopener',
+                          )
+                        }
+                      >
+                        Open in QuickBooks
+                      </Button>
                     </Box>
+                    {qboNotice && (
+                      <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setQboNotice(null)}>
+                        {qboNotice}
+                      </Alert>
+                    )}
+                    {qboStatus === 'sync_error' && integ.syncError && (
+                      <Alert severity="error" sx={{ mb: 2 }}>
+                        Last sync failed: {integ.syncError}
+                      </Alert>
+                    )}
 
                     {invoicingSubView === 'invoices' && (
                       <Card variant="outlined">
                         <CardContent>
-                          {!isConnected && (
+                          {!isMapped && (
                             <Alert severity="info" sx={{ mb: 2 }}>
-                              No QuickBooks connection for this account yet.
+                              {isConnected
+                                ? 'Map this account to a QuickBooks customer (Mapping / Settings) to load invoices.'
+                                : 'No QuickBooks connection for this tenant yet — connect it on the Invoicing page.'}
                             </Alert>
                           )}
                           <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -10426,7 +10553,41 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                 </TableRow>
                               </TableHead>
                               <TableBody>
-                                {[]}
+                                {invoices.length === 0 && isMapped && !qboLoading && (
+                                  <TableRow>
+                                    <TableCell colSpan={7}>
+                                      <Typography variant="body2" color="text.secondary">
+                                        No invoices synced yet — hit Refresh.
+                                      </Typography>
+                                    </TableCell>
+                                  </TableRow>
+                                )}
+                                {invoices.map((inv) => (
+                                  <TableRow key={String(inv.invoiceId)} hover>
+                                    <TableCell>{inv.docNumber || inv.invoiceId}</TableCell>
+                                    <TableCell>{inv.txnDate || '—'}</TableCell>
+                                    <TableCell>{inv.dueDate || '—'}</TableCell>
+                                    <TableCell align="right">{usd(inv.totalAmt)}</TableCell>
+                                    <TableCell align="right">{usd(inv.balance)}</TableCell>
+                                    <TableCell>{statusChip(String(inv.status ?? 'open'))}</TableCell>
+                                    <TableCell>
+                                      <Button
+                                        size="small"
+                                        sx={{ textTransform: 'none' }}
+                                        endIcon={<OpenInNewIcon fontSize="inherit" />}
+                                        onClick={() =>
+                                          window.open(
+                                            `https://app.qbo.intuit.com/app/invoice?txnId=${inv.invoiceId}`,
+                                            '_blank',
+                                            'noopener',
+                                          )
+                                        }
+                                      >
+                                        Open
+                                      </Button>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
                               </TableBody>
                             </Table>
                           </TableContainer>
@@ -10437,49 +10598,37 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                     {invoicingSubView === 'ar' && (
                       <Card variant="outlined">
                         <CardContent>
-                          {!isConnected && (
+                          {!isMapped && (
                             <Alert severity="info" sx={{ mb: 2 }}>
                               Connect QuickBooks and map this account to view aging.
                             </Alert>
                           )}
                           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
-                            <Card variant="outlined" sx={{ minWidth: 120 }}>
-                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                                <Typography variant="caption" color="text.secondary">Total Open A/R</Typography>
-                                <Typography variant="h6">—</Typography>
-                              </CardContent>
-                            </Card>
-                            <Card variant="outlined" sx={{ minWidth: 100 }}>
-                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                                <Typography variant="caption" color="text.secondary">Current</Typography>
-                                <Typography variant="body1">—</Typography>
-                              </CardContent>
-                            </Card>
-                            <Card variant="outlined" sx={{ minWidth: 100 }}>
-                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                                <Typography variant="caption" color="text.secondary">1–30</Typography>
-                                <Typography variant="body1">—</Typography>
-                              </CardContent>
-                            </Card>
-                            <Card variant="outlined" sx={{ minWidth: 100 }}>
-                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                                <Typography variant="caption" color="text.secondary">31–60</Typography>
-                                <Typography variant="body1">—</Typography>
-                              </CardContent>
-                            </Card>
-                            <Card variant="outlined" sx={{ minWidth: 100 }}>
-                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                                <Typography variant="caption" color="text.secondary">61–90</Typography>
-                                <Typography variant="body1">—</Typography>
-                              </CardContent>
-                            </Card>
-                            <Card variant="outlined" sx={{ minWidth: 100 }}>
-                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                                <Typography variant="caption" color="text.secondary">90+</Typography>
-                                <Typography variant="body1">—</Typography>
-                              </CardContent>
-                            </Card>
+                            {(
+                              [
+                                ['Total Open A/R', arSummary?.totalOpenBalance, 'h6'],
+                                ['Current', arSummary?.current, 'body1'],
+                                ['1–30', arSummary?.days1to30, 'body1'],
+                                ['31–60', arSummary?.days31to60, 'body1'],
+                                ['61–90', arSummary?.days61to90, 'body1'],
+                                ['90+', arSummary?.over90, 'body1'],
+                              ] as Array<[string, unknown, 'h6' | 'body1']>
+                            ).map(([label, value, variant]) => (
+                              <Card key={label} variant="outlined" sx={{ minWidth: label === 'Total Open A/R' ? 140 : 100 }}>
+                                <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                                  <Typography variant="caption" color="text.secondary">{label}</Typography>
+                                  <Typography variant={variant}>
+                                    {arSummary ? usd(value) : '—'}
+                                  </Typography>
+                                </CardContent>
+                              </Card>
+                            ))}
                           </Box>
+                          {arSummary?.asOfDate && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                              As of {arSummary.asOfDate}
+                            </Typography>
+                          )}
                           <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                             <Table size="small">
                               <TableHead>
@@ -10488,11 +10637,22 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                   <TableCell sx={{ fontWeight: 600 }}>Due Date</TableCell>
                                   <TableCell sx={{ fontWeight: 600 }} align="right">Days overdue</TableCell>
                                   <TableCell sx={{ fontWeight: 600 }} align="right">Balance</TableCell>
-                                  <TableCell sx={{ fontWeight: 600 }}>Bucket</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
                                 </TableRow>
                               </TableHead>
                               <TableBody>
-                                {[]}
+                                {invoices
+                                  .filter((inv) => Number(inv.balance ?? 0) > 0)
+                                  .sort((a, b) => String(a.dueDate ?? '').localeCompare(String(b.dueDate ?? '')))
+                                  .map((inv) => (
+                                    <TableRow key={String(inv.invoiceId)} hover>
+                                      <TableCell>{inv.docNumber || inv.invoiceId}</TableCell>
+                                      <TableCell>{inv.dueDate || '—'}</TableCell>
+                                      <TableCell align="right">{daysOverdue(inv.dueDate ?? null) || '—'}</TableCell>
+                                      <TableCell align="right">{usd(inv.balance)}</TableCell>
+                                      <TableCell>{statusChip(String(inv.status ?? 'open'))}</TableCell>
+                                    </TableRow>
+                                  ))}
                               </TableBody>
                             </Table>
                           </TableContainer>
@@ -10503,9 +10663,11 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                     {invoicingSubView === 'payments' && (
                       <Card variant="outlined">
                         <CardContent>
-                          <Alert severity="info" sx={{ mb: 2 }}>
-                            Payments will appear here after sync.
-                          </Alert>
+                          {payments.length === 0 && (
+                            <Alert severity="info" sx={{ mb: 2 }}>
+                              {isMapped ? 'No payments synced yet — hit Refresh.' : 'Payments will appear here after mapping + sync.'}
+                            </Alert>
+                          )}
                           <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                             <Table size="small">
                               <TableHead>
@@ -10517,7 +10679,20 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                 </TableRow>
                               </TableHead>
                               <TableBody>
-                                {[]}
+                                {payments.map((p) => (
+                                  <TableRow key={String(p.paymentId)} hover>
+                                    <TableCell>{p.txnDate || '—'}</TableCell>
+                                    <TableCell align="right">{usd(p.totalAmt)}</TableCell>
+                                    <TableCell>{p.paymentRefNum || '—'}</TableCell>
+                                    <TableCell>
+                                      {Array.isArray(p.linkedInvoiceIds) && p.linkedInvoiceIds.length > 0
+                                        ? p.linkedInvoiceIds
+                                            .map((id: string) => `#${invoiceDocNumberById.get(String(id)) ?? id}`)
+                                            .join(', ')
+                                        : '—'}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
                               </TableBody>
                             </Table>
                           </TableContainer>
@@ -10530,41 +10705,121 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                         <CardContent>
                           <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>QuickBooks mapping</Typography>
                           {!isConnected && (
-                            <>
-                              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                                Connect QuickBooks to view invoices, balances, and payment activity for this account.
-                              </Typography>
-                              {canManageQuickBooks && (
-                                <Stack direction="row" spacing={2}>
-                                  <Button variant="contained" disabled sx={{ textTransform: 'none' }}>Connect QuickBooks</Button>
-                                  <Button variant="outlined" disabled sx={{ textTransform: 'none' }}>Map Customer</Button>
-                                </Stack>
-                              )}
-                            </>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                              QuickBooks isn't connected for this tenant yet — an admin can connect it
+                              on the Invoicing page, then map this account to a customer here.
+                            </Typography>
                           )}
                           {isConnected && !isMapped && (
                             <>
                               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                                This account is not yet linked to a QuickBooks customer. Link an existing customer or create one.
+                                This account is not yet linked to a QuickBooks customer. Link the
+                                existing customer it bills as — for national accounts, map at the
+                                parent.
                               </Typography>
                               {canManageQuickBooks && (
-                                <Button variant="contained" disabled sx={{ textTransform: 'none' }}>Map Customer</Button>
+                                <Button variant="contained" sx={{ textTransform: 'none' }} disabled={qboBusy} onClick={() => void openMapDialog()}>
+                                  Map Customer
+                                </Button>
                               )}
                             </>
                           )}
                           {isMapped && (
                             <>
                               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                                Linked to: {qb?.customerDisplayName ?? qb?.customerId ?? '—'}
+                                Linked to: <strong>{integ.customerDisplayName ?? integ.customerId ?? '—'}</strong>
                               </Typography>
                               {canManageQuickBooks && (
-                                <Button variant="outlined" color="error" size="small" disabled sx={{ textTransform: 'none' }}>Disconnect</Button>
+                                <Stack direction="row" spacing={2}>
+                                  <Button variant="outlined" size="small" sx={{ textTransform: 'none' }} disabled={qboBusy} onClick={() => void openMapDialog()}>
+                                    Change mapping
+                                  </Button>
+                                  <Button
+                                    variant="outlined"
+                                    color="error"
+                                    size="small"
+                                    sx={{ textTransform: 'none' }}
+                                    disabled={qboBusy}
+                                    onClick={() => void runQboAction('unmapAccountQboCustomer', { tenantId, accountId })}
+                                  >
+                                    Unmap
+                                  </Button>
+                                </Stack>
                               )}
                             </>
                           )}
                         </CardContent>
                       </Card>
                     )}
+
+                    <Dialog open={qboMapOpen} onClose={() => setQboMapOpen(false)} maxWidth="sm" fullWidth>
+                      <DialogTitle>Map to a QuickBooks customer</DialogTitle>
+                      <DialogContent>
+                        <TextField
+                          autoFocus
+                          fullWidth
+                          size="small"
+                          placeholder="Search customers…"
+                          value={qboMapSearch}
+                          onChange={(e) => setQboMapSearch(e.target.value)}
+                          sx={{ my: 1 }}
+                        />
+                        {qboCustomers === null ? (
+                          <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                            <CircularProgress size={24} />
+                          </Box>
+                        ) : (
+                          (() => {
+                            const q = qboMapSearch.trim().toLowerCase();
+                            const filtered = qboCustomers
+                              .filter((c) => !q || String(c.displayName ?? '').toLowerCase().includes(q))
+                              .map((c): Record<string, any> => ({ ...c, score: scoreCustomer(c) }))
+                              .sort((a, b) => b.score - a.score || String(a.displayName).localeCompare(String(b.displayName)))
+                              .slice(0, 30);
+                            return filtered.length === 0 ? (
+                              <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
+                                No customers match. Run the customer sync from the Invoicing page if the directory looks stale.
+                              </Typography>
+                            ) : (
+                              <Stack spacing={0.5}>
+                                {filtered.map((c) => (
+                                  <Paper
+                                    key={String(c.customerId)}
+                                    variant="outlined"
+                                    onClick={async () => {
+                                      const ok = await runQboAction('mapAccountToQboCustomer', { tenantId, accountId, customerId: c.customerId });
+                                      if (ok) {
+                                        setQboMapOpen(false);
+                                        await runQboAction('syncQboAccountData', { tenantId, accountId });
+                                      }
+                                    }}
+                                    sx={{ p: 1.25, cursor: 'pointer', '&:hover': { backgroundColor: 'action.hover' } }}
+                                  >
+                                    <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1}>
+                                      <Box sx={{ minWidth: 0 }}>
+                                        <Typography variant="body2" fontWeight={600} noWrap>
+                                          {c.displayName}
+                                          {!c.active && ' (inactive)'}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                          Open balance {usd(c.balance)}
+                                        </Typography>
+                                      </Box>
+                                      {c.score > 0 && (
+                                        <Chip size="small" color="info" variant="outlined" label="Suggested" />
+                                      )}
+                                    </Stack>
+                                  </Paper>
+                                ))}
+                              </Stack>
+                            );
+                          })()
+                        )}
+                      </DialogContent>
+                      <DialogActions>
+                        <Button onClick={() => setQboMapOpen(false)} sx={{ textTransform: 'none' }}>Close</Button>
+                      </DialogActions>
+                    </Dialog>
                   </Box>
                 );
               })()

@@ -23,6 +23,7 @@
 
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 
 import { getQboAccessToken, qboQuery } from './qboAuth';
@@ -345,9 +346,12 @@ export async function runSyncQboAccountData(
     throw new HttpsError('failed-precondition', 'Account is not mapped to a QuickBooks customer.');
   }
   const { realmId } = await getQboAccessToken(tenantId);
+  // Path shape: `quickbooks` is a subcollection of the account doc, so list
+  // data must nest one level deeper (doc → `items` subcollection) to keep an
+  // odd component count on collection paths.
   const base = `tenants/${tenantId}/accounts/${accountId}/quickbooks`;
   const today = todayIso();
-  const logRef = db.collection(`${base}/syncLogs`).doc();
+  const logRef = db.collection(`${base}/syncLogs/items`).doc();
 
   try {
     const [invoices, payments] = await Promise.all([
@@ -385,7 +389,7 @@ export async function runSyncQboAccountData(
         buckets[agingBucket(trim(inv.DueDate), today)] += balance;
       }
       writer.set(
-        db.doc(`${base}/invoices/${id}`),
+        db.doc(`${base}/invoices/items/${id}`),
         {
           realmId,
           invoiceId: id,
@@ -419,7 +423,7 @@ export async function runSyncQboAccountData(
             .filter(Boolean)
         : [];
       writer.set(
-        db.doc(`${base}/payments/${id}`),
+        db.doc(`${base}/payments/items/${id}`),
         {
           realmId,
           paymentId: id,
@@ -438,7 +442,7 @@ export async function runSyncQboAccountData(
     }
     await flush();
 
-    await db.doc(`${base}/arSummary/current`).set(
+    await db.doc(`${base}/arSummary`).set(
       {
         realmId,
         customerId,
@@ -586,3 +590,158 @@ export const syncQboCompanyRollup = onCall({ cors: true, timeoutSeconds: 300 }, 
   await ensureInvoicingAccess(request.auth?.uid, request.auth?.token as any, tenantId, 7);
   return runSyncQboCompanyRollup(tenantId);
 });
+
+/* ────────────────────────────────────────────────────────────────────
+ * Read callables — ALL client reads of the financial caches flow
+ * through these (the subcollections match no firestore.rules block, so
+ * they are default-denied to clients; the level gate lives here).
+ * ──────────────────────────────────────────────────────────────────── */
+
+const tsToMillis = (v: unknown): number | null =>
+  v && typeof (v as any).toMillis === 'function' ? (v as any).toMillis() : null;
+
+/** Everything the per-account Invoicing tab renders, in one call (L5+). */
+export const getQboAccountInvoicing = onCall({ cors: true }, async (request) => {
+  const tenantId = trim(request.data?.tenantId);
+  const accountId = trim(request.data?.accountId);
+  if (!tenantId || !accountId) {
+    throw new HttpsError('invalid-argument', 'tenantId and accountId are required');
+  }
+  await ensureInvoicingAccess(request.auth?.uid, request.auth?.token as any, tenantId, 5);
+
+  const base = `tenants/${tenantId}/accounts/${accountId}/quickbooks`;
+  const [accountSnap, customerSnap, invoicesSnap, paymentsSnap, arSnap, logsSnap, tenantCfgSnap] =
+    await Promise.all([
+      db.doc(`tenants/${tenantId}/accounts/${accountId}`).get(),
+      db.doc(`${base}/customer`).get(),
+      db.collection(`${base}/invoices/items`).orderBy('txnDate', 'desc').limit(300).get(),
+      db.collection(`${base}/payments/items`).orderBy('txnDate', 'desc').limit(300).get(),
+      db.doc(`${base}/arSummary`).get(),
+      db.collection(`${base}/syncLogs/items`).orderBy('createdAt', 'desc').limit(10).get(),
+      db.doc(`tenants/${tenantId}/integrations/quickbooks`).get(),
+    ]);
+
+  const integration = (accountSnap.data()?.integrations?.quickbooks ?? {}) as Record<string, any>;
+  return {
+    connected: tenantCfgSnap.data()?.connected === true,
+    integration: {
+      status: integration.status ?? (tenantCfgSnap.data()?.connected === true ? 'connected_unmapped' : 'not_connected'),
+      customerId: integration.customerId ?? null,
+      customerDisplayName: integration.customerDisplayName ?? null,
+      lastSyncAt: tsToMillis(integration.lastSyncAt),
+      syncError: integration.syncError ?? null,
+    },
+    customer: customerSnap.exists ? { ...customerSnap.data(), syncedAt: undefined } : null,
+    invoices: invoicesSnap.docs.map((d) => ({ ...d.data(), syncedAt: undefined })),
+    payments: paymentsSnap.docs.map((d) => ({ ...d.data(), syncedAt: undefined })),
+    arSummary: arSnap.exists ? { ...arSnap.data(), syncedAt: tsToMillis(arSnap.data()?.syncedAt) } : null,
+    syncLogs: logsSnap.docs.map((d) => ({
+      ...d.data(),
+      createdAt: tsToMillis(d.data()?.createdAt),
+    })),
+  };
+});
+
+/** Global Invoicing dashboard payload (L7): aged report + recent
+ *  activity + mapping health. */
+export const getQboDashboard = onCall({ cors: true }, async (request) => {
+  const tenantId = trim(request.data?.tenantId);
+  if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required');
+  await ensureInvoicingAccess(request.auth?.uid, request.auth?.token as any, tenantId, 7);
+
+  const [agedSnap, recentSnap, mappedSnap, customersSnap, tenantCfgSnap] = await Promise.all([
+    db.doc(`tenants/${tenantId}/qbo_reports/agedReceivables`).get(),
+    db.doc(`tenants/${tenantId}/qbo_reports/recentActivity`).get(),
+    db
+      .collection(`tenants/${tenantId}/accounts`)
+      .where('integrations.quickbooks.status', '==', 'mapped')
+      .limit(500)
+      .get(),
+    db.collection(`tenants/${tenantId}/qbo_customers`).limit(2000).get(),
+    db.doc(`tenants/${tenantId}/integrations/quickbooks`).get(),
+  ]);
+
+  const mappedAccounts = mappedSnap.docs.map((d) => ({
+    accountId: d.id,
+    name: d.data().name ?? d.id,
+    customerId: d.data().integrations?.quickbooks?.customerId ?? null,
+    customerDisplayName: d.data().integrations?.quickbooks?.customerDisplayName ?? null,
+  }));
+  const mappedCustomerIds = new Set(mappedAccounts.map((a) => a.customerId).filter(Boolean));
+  const unmappedCustomersWithBalance = customersSnap.docs
+    .map((d) => d.data())
+    .filter((c) => Number(c.balance ?? 0) > 0 && !mappedCustomerIds.has(c.customerId))
+    .map((c) => ({
+      customerId: c.customerId,
+      displayName: c.displayName,
+      balance: Number(c.balance ?? 0),
+      active: c.active !== false,
+    }))
+    .sort((a, b) => b.balance - a.balance);
+
+  return {
+    connected: tenantCfgSnap.data()?.connected === true,
+    agedReceivables: agedSnap.exists
+      ? { report: agedSnap.data()?.report ?? null, fetchedAt: tsToMillis(agedSnap.data()?.fetchedAt) }
+      : null,
+    recentActivity: recentSnap.exists
+      ? {
+          invoices: recentSnap.data()?.invoices ?? [],
+          payments: recentSnap.data()?.payments ?? [],
+          fetchedAt: tsToMillis(recentSnap.data()?.fetchedAt),
+        }
+      : null,
+    mappingHealth: {
+      mappedAccounts,
+      customerCount: customersSnap.size,
+      unmappedCustomersWithBalance,
+    },
+  };
+});
+
+/* ────────────────────────────────────────────────────────────────────
+ * Phase 2 — freshness cron. Every 30 minutes: for each tenant with a
+ * connected realm, refresh the company rollup and re-sync every mapped
+ * account. At C1 scale (≤ a few dozen customers) a full re-sync is
+ * simpler and just as cheap as CDC; swap in the /cdc endpoint if the
+ * customer count ever makes this slow.
+ * ──────────────────────────────────────────────────────────────────── */
+
+export const qboRefreshCron = onSchedule(
+  { schedule: 'every 30 minutes', timeoutSeconds: 540, memory: '512MiB', retryCount: 0 },
+  async () => {
+    const tenants = await db.collection('tenants').limit(100).get();
+    for (const t of tenants.docs) {
+      const tenantId = t.id;
+      try {
+        const cfg = (await db.doc(`tenants/${tenantId}/integrations/quickbooks`).get()).data();
+        if (cfg?.connected !== true) continue;
+        await runSyncQboCompanyRollup(tenantId);
+        await runSyncQboCustomers(tenantId);
+        const mapped = await db
+          .collection(`tenants/${tenantId}/accounts`)
+          .where('integrations.quickbooks.status', '==', 'mapped')
+          .limit(200)
+          .get();
+        for (const acct of mapped.docs) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            await runSyncQboAccountData(tenantId, acct.id, 'qboRefreshCron');
+          } catch (err) {
+            logger.warn('[qboRefreshCron] account sync failed', {
+              tenantId,
+              accountId: acct.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        logger.info('[qboRefreshCron] tenant refreshed', { tenantId, mappedAccounts: mapped.size });
+      } catch (err) {
+        logger.warn('[qboRefreshCron] tenant refresh failed', {
+          tenantId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  },
+);

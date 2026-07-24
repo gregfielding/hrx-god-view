@@ -232,6 +232,9 @@ export {
   unmapAccountQboCustomer,
   syncQboAccountData,
   syncQboCompanyRollup,
+  getQboAccountInvoicing,
+  getQboDashboard,
+  qboRefreshCron,
 } from './integrations/quickbooks/qboInvoicing';
 export { expensifyCardPushCron } from './integrations/expensify/expensifyPush';
 export { syncWorkersCompToEveree } from './integrations/everee/syncWorkersCompRates';
@@ -239,6 +242,10 @@ export {
   previewExpensifyCardExport,
   confirmExpensifyCardExport,
 } from './integrations/expensify/expensifyCardExport';
+export {
+  runExpensifyClassWritebackNow,
+  expensifyClassWritebackCron,
+} from './integrations/expensify/expensifyClassWriteback';
 export {
   onAssignmentWriteRecomputeShiftFill,
   onAssignmentUpdateRecomputeShiftFill,
