@@ -225,6 +225,14 @@ export {
   complianceMailboxIntakeCron,
 } from './compliance/complianceMailbox';
 export { getQboAuthUrl, qboOAuthCallback, getQboStatus } from './integrations/quickbooks/qboAuth';
+export {
+  syncQboCustomers,
+  listQboCustomers,
+  mapAccountToQboCustomer,
+  unmapAccountQboCustomer,
+  syncQboAccountData,
+  syncQboCompanyRollup,
+} from './integrations/quickbooks/qboInvoicing';
 export { expensifyCardPushCron } from './integrations/expensify/expensifyPush';
 export { syncWorkersCompToEveree } from './integrations/everee/syncWorkersCompRates';
 export {
