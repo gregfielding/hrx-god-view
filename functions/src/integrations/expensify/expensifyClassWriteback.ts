@@ -225,10 +225,11 @@ export async function runExpensifyClassWriteback(
     byLeaf.set(leaf, [...(byLeaf.get(leaf) ?? []), entry]);
   }
   // Tags export as "Parent:Child"; an empty parent level yields a leading
-  // colon (":Red Roof Inn"). Try the normalized FQN, then the last segment
-  // as a leaf name when it's unambiguous.
+  // colon (":Red Roof Inn"), and a literal colon INSIDE a tag name is
+  // backslash-escaped ("Venue Smart\:FIFA KC"). Unescape, then try the
+  // normalized FQN, then the last segment as a leaf when unambiguous.
   const resolveClass = (rawTag: string): { id: string; name: string } | null => {
-    const tag = rawTag.replace(/^:+|:+$/g, '').trim();
+    const tag = rawTag.replace(/\\:/g, ':').replace(/^:+|:+$/g, '').trim();
     if (!tag) return null;
     const exact = byFqn.get(tag.toLowerCase());
     if (exact) return exact;
