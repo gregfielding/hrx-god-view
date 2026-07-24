@@ -1280,10 +1280,18 @@ const WhosWorkingPage: React.FC = () => {
                 <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
                   <Box>
                     <Typography variant="body2" fontWeight={600}>{r.workerName}</Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {[r.jobOrderName || r.jobTitle, r.worksiteName, r.worksiteAddress]
+                    {/* Line 2 (Greg, 2026-07-24): pay rate + job title. */}
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      {[
+                        r.payRate != null && r.payRate > 0 ? `$${r.payRate.toFixed(2)}` : null,
+                        r.jobOrderName || r.jobTitle,
+                      ]
                         .filter(Boolean)
                         .join(' · ')}
+                    </Typography>
+                    {/* Line 3: worksite + address. */}
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      {[r.worksiteName, r.worksiteAddress].filter(Boolean).join(' · ')}
                     </Typography>
                   </Box>
                   <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap>
