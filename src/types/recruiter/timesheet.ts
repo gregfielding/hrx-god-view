@@ -297,10 +297,28 @@ export interface TimesheetEntryV2 {
    */
   totalNonFlsaOTHours?: number;
   totalDoubleTimeHours: number;
-  /** CA-only today; DEFAULT rule-set returns 0. */
+  /** CA-only today; DEFAULT rule-set returns 0. EFFECTIVE penalty used in
+   *  all totals — 0 when the recruiter has waived it (see *Waived below). */
   mealBreakPenaltyHours: number;
-  /** CA-only today; DEFAULT rule-set returns 0. */
+  /** CA-only today; DEFAULT rule-set returns 0. Effective (post-waiver). */
   restBreakPenaltyHours: number;
+  /**
+   * Break-penalty waiver (recruiter override): when true, the effective
+   * penalty in every total is 0 — for documented cases where the break
+   * was provided/waived per policy (e.g. a CA meal waiver on a ≤6h shift,
+   * or a break offered and declined). The engine still records what it
+   * COMPUTED in `computed*BreakPenaltyHours` for the grid's penalty cue and
+   * audit. Effective = waived ? 0 : computed.
+   */
+  mealBreakPenaltyWaived?: boolean;
+  restBreakPenaltyWaived?: boolean;
+  /** What the CA engine computed before any waiver (drives the grid's
+   *  yellow break-cell cue + audit). */
+  computedMealBreakPenaltyHours?: number;
+  computedRestBreakPenaltyHours?: number;
+  breakPenaltyWaiveReason?: string;
+  breakPenaltyWaivedBy?: string;
+  breakPenaltyWaivedAt?: Date | FieldValue;
 
   /* ---------- Adjustments (recruiter-edited) ---------------------------- */
   tips: number;

@@ -1206,6 +1206,27 @@ const EntryRow: React.FC<EntryRowProps> = ({
   const shiftStart = entry.actualStartTime ?? row.scheduled.startTime;
   const shiftEnd = entry.actualEndTime ?? row.scheduled.endTime;
 
+  // CA break-penalty transparency: the Total silently includes 1 hr of
+  // meal and/or rest penalty pay when a compliant break isn't recorded.
+  // Highlight the break cell yellow so recruiters SEE why a total is high —
+  // enter the break that was taken to clear it, or waive it when it's a
+  // documented case. Effective = 0 when waived, so a waived row won't glow.
+  const mealPenaltyActive =
+    (typeof entry.mealBreakPenaltyHours === 'number' ? entry.mealBreakPenaltyHours : 0) > 0 &&
+    entry.mealBreakPenaltyWaived !== true;
+  const restPenaltyActive =
+    (typeof entry.restBreakPenaltyHours === 'number' ? entry.restBreakPenaltyHours : 0) > 0 &&
+    entry.restBreakPenaltyWaived !== true;
+  const breakPenaltyActive = mealPenaltyActive || restPenaltyActive;
+  const breakPenaltyTooltip = breakPenaltyActive
+    ? `Added to this total as California break-penalty pay: ${[
+        mealPenaltyActive ? '+1 hr meal (no 30-min meal recorded)' : '',
+        restPenaltyActive ? '+1 hr rest (rest break missing/short)' : '',
+      ]
+        .filter(Boolean)
+        .join(' · ')}. Enter the break the worker actually took to clear it, or waive it.`
+    : '';
+
   return (
     <TableRow hover>
       <WorkerSiteCell
@@ -1258,15 +1279,23 @@ const EntryRow: React.FC<EntryRowProps> = ({
         </Stack>
       </TableCell>
 
-      <TableCell>
-        <BreaksCell
-          value={Array.isArray(entry.breaks) ? entry.breaks : []}
-          onSave={fieldHandlers.breaks}
-          shiftStart={shiftStart}
-          shiftEnd={shiftEnd}
-          disabled={readOnly}
-        />
-      </TableCell>
+      <Tooltip title={breakPenaltyTooltip} arrow disableHoverListener={!breakPenaltyActive}>
+        <TableCell
+          sx={
+            breakPenaltyActive
+              ? { bgcolor: 'warning.light', borderRadius: 1, transition: 'background-color 120ms' }
+              : undefined
+          }
+        >
+          <BreaksCell
+            value={Array.isArray(entry.breaks) ? entry.breaks : []}
+            onSave={fieldHandlers.breaks}
+            shiftStart={shiftStart}
+            shiftEnd={shiftEnd}
+            disabled={readOnly}
+          />
+        </TableCell>
+      </Tooltip>
 
       {/* Actual hours column.
           The override field is ALWAYS editable. The trigger honors
