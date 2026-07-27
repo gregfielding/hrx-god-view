@@ -19,9 +19,14 @@
  *      per booked date. Suppression satisfies the logAssignmentCreated /
  *      onAssignmentUpdatedPush gates so no offer SMS/push fires — the
  *      worker is already booked via Flex; HRX is mirroring, not offering.
- *   4. Reconcile drops: portal-sourced assignments on this shift that are
- *      no longer in the booked roster get cancelled (the cancel/no-show
- *      signal PI-9 will score).
+ *   4. Reconcile drops: a worker who left this job's booked roster is
+ *      RECORDED as an observation (flexRosterDropObservedAt), NOT
+ *      auto-cancelled. A Flex "career" engagement is fragmented into a
+ *      chain of job IDs (one ends, a new one opens for the same continuous
+ *      work), so a drop off an old job is usually a rollover — cancelling
+ *      would falsely end continuous work. The recurrence-aware continuity
+ *      engine (next slice) decides rollover-vs-ended; genuine ends stay a
+ *      deliberate human act.
  *
  * Auth mirrors fieldglassEnrichmentIngest: shared bearer key in
  * INDEED_FLEX_EXTENSION_KEY, fail-closed (503 unconfigured / 401 bad key).
@@ -255,7 +260,7 @@ export interface PortalReconcileResult {
   created: number;
   reconfirmed: number;
   alreadyBooked: number;
-  cancelledDrops: number;
+  observedDrops: number;
   unmatchedWorkers: Array<{ name: string; email: string | null; phone: string | null }>;
   warnings: string[];
 }
@@ -276,7 +281,7 @@ export async function reconcileFlexPortalCapture(
     created: 0,
     reconfirmed: 0,
     alreadyBooked: 0,
-    cancelledDrops: 0,
+    observedDrops: 0,
     unmatchedWorkers: [],
     warnings: [...norm.warnings],
   };
@@ -431,18 +436,24 @@ export async function reconcileFlexPortalCapture(
     }
   }
 
-  // Drops: portal assignments no longer booked → cancel (the no-show/cancel signal).
+  // Drops: a worker who left this job's booked roster. This is NOT
+  // auto-cancelled — a Flex "career" engagement is fragmented into a chain
+  // of separate job IDs (one ends, a new one opens for the same continuous
+  // work), so a drop off an old job is usually a ROLLOVER, not a no-show.
+  // Auto-cancelling here would falsely end continuous work (Greg 2026-07-27).
+  // We only RECORD the drop as an observation; the recurrence-aware
+  // continuity engine (next slice) decides rollover-vs-ended, and genuine
+  // ends stay a deliberate human act. Re-enable a real cancel only for
+  // engagements that engine proves are non-continuous.
   for (const [key, e] of existingPortal) {
     if (bookedKeys.has(key)) continue;
     if (e.status === 'cancelled') continue;
-    base.cancelledDrops += 1;
+    base.observedDrops += 1; // reported as "observed drops", not cancellations
     writes.push(async () => {
       await e.ref.set(
         {
-          status: 'cancelled',
-          latestStatus: 'cancelled',
-          notificationsSuppressed: true,
-          cancelReason: 'unbooked_in_flex',
+          flexRosterDropObservedAt: now,
+          flexRosterDropSourceJobId: flexJobId,
           updatedBy: actor,
           updatedAt: now,
         },
@@ -463,7 +474,7 @@ export async function reconcileFlexPortalCapture(
         rosterSize: norm.roster.length,
         created: base.created,
         reconfirmed: base.reconfirmed,
-        cancelledDrops: base.cancelledDrops,
+        observedDrops: base.observedDrops,
         unmatchedCount: base.unmatchedWorkers.length,
         capturedAt: env.capturedAt ?? null,
         lastSeenAt: now,

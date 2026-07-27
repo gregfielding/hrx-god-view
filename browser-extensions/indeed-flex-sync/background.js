@@ -70,7 +70,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sessionSynced += 1;
         setBadge();
         const summary = result.matched
-          ? `job ${result.flexJobId}: ${result.created} added, ${result.reconfirmed} re-booked, ${result.cancelledDrops} dropped, ${(result.unmatchedWorkers || []).length} unmatched`
+          ? `job ${result.flexJobId}: ${result.created} added, ${result.reconfirmed} re-booked, ${result.observedDrops} left roster, ${(result.unmatchedWorkers || []).length} unmatched`
           : `job ${result.flexJobId}: ${result.reason || 'not matched to an HRX shift'}`;
         await setStatus({ ok: true, message: summary, jobId });
       } catch (err) {
