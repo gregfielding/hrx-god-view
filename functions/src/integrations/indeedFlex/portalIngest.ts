@@ -44,6 +44,7 @@ import * as crypto from 'crypto';
 
 import { normalizeFlexPortalCapture, FlexPortalCaptureEnvelope, NormalizedFlexCapture } from './portalTypes';
 import { normalizeEmail } from '../../timesheets/timesheetWorkerAliases';
+import { upsertEngagementForPlacement } from './engagements';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -261,6 +262,10 @@ export interface PortalReconcileResult {
   reconfirmed: number;
   alreadyBooked: number;
   observedDrops: number;
+  /** Booked workers recognized as part of a CONTINUOUS engagement here. */
+  continuousEngagements: number;
+  /** First-ever placements of a worker at this account (new engagement). */
+  newEngagements: number;
   unmatchedWorkers: Array<{ name: string; email: string | null; phone: string | null }>;
   warnings: string[];
 }
@@ -282,6 +287,8 @@ export async function reconcileFlexPortalCapture(
     reconfirmed: 0,
     alreadyBooked: 0,
     observedDrops: 0,
+    continuousEngagements: 0,
+    newEngagements: 0,
     unmatchedWorkers: [],
     warnings: [...norm.warnings],
   };
@@ -460,6 +467,38 @@ export async function reconcileFlexPortalCapture(
         { merge: true },
       );
     });
+  }
+
+  // Engagement layer: record each booked worker's placement against their
+  // (account, worker) engagement + detect continuity by recurrence. This is
+  // the continuity truth reporting reads and the never-auto-end guard
+  // respects — the per-shift assignments above stay untouched. Reads always
+  // (so dry-run reports continuity); writes only when !dryRun.
+  if (accountId) {
+    const perWorker = new Map<string, { date: string; name: string }>();
+    for (const t of targets) {
+      const prev = perWorker.get(t.userId);
+      const name = `${t.firstName} ${t.lastName}`.trim();
+      if (!prev || t.date > prev.date) perWorker.set(t.userId, { date: t.date, name });
+    }
+    const accountName = trim(jo.accountName) || trim(jo.companyName) || undefined;
+    for (const [userId, info] of perWorker) {
+      try {
+        const eng = await upsertEngagementForPlacement(
+          tenantId,
+          { userId, accountId, flexJobId, date: info.date, workerName: info.name, accountName, jobTitle: jobTitle || undefined },
+          { dryRun },
+        );
+        if (eng.continuous) base.continuousEngagements += 1;
+        if (eng.isNew) base.newEngagements += 1;
+      } catch (err) {
+        logger.warn('[portalIngest] engagement upsert failed', {
+          tenantId,
+          userId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   if (!dryRun) {
