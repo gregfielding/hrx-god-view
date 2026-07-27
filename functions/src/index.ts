@@ -12600,6 +12600,12 @@ export { onIngestEventCreatedParse } from './integrations/indeedFlex/onIngestEve
 // (gated on `matchConfidence` being unset).
 export { onShiftRequestCreatedMatch } from './integrations/indeedFlex/onShiftRequestCreatedMatch';
 export { indeedFlexApplyShiftRequest } from './integrations/indeedFlex/applyShiftRequest';
+// **PI-7 Slice 1** — the browser extension captures the Indeed Flex agency
+// portal's own JSON (job + shifts + BOOKED ROSTER) and POSTs it here.
+// Reconciles the booked roster into confirmed, notification-suppressed HRX
+// assignments (the positive "who is booked" signal emails never gave) and
+// cancels roster drops. Authed by INDEED_FLEX_EXTENSION_KEY (Bearer).
+export { indeedFlexPortalIngest } from './integrations/indeedFlex/portalIngest';
 
 // **Fieldglass (Sodexo) inbound-email ingestion — FG Slices 1+2.**
 // Structural sibling of the Indeed Flex pipeline above, sharing the
