@@ -35,6 +35,7 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import OpenAI from 'openai';
 import { applyShiftRequestCore } from '../integrations/indeedFlex/applyShiftRequest';
+import { pruneStaleShiftRequests } from '../integrations/indeedFlex/pruneStaleShiftRequests';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -300,6 +301,9 @@ export const schedulingTriageNightly = onSchedule(
           tenant.id,
           Array.isArray(data.staleLiveAssignments) ? data.staleLiveAssignments : [],
         );
+        // PI-6: keep the review queue a clean to-do list — sweep past-dated
+        // + noise rows to superseded before applying/reporting the rest.
+        const pruned = await pruneStaleShiftRequests(tenant.id);
         const applied = await applyExactRows(tenant.id);
         const { brief, briefSource } = await writeBrief({
           autoCompletedStale,
@@ -328,6 +332,7 @@ export const schedulingTriageNightly = onSchedule(
           autoCompletedStale,
           autoAppliedCancels: applied.cancelRows,
           autoCreatedShifts: applied.newShiftRows,
+          prunedBacklog: pruned.totalPruned,
           briefSource,
         });
       } catch (err) {
