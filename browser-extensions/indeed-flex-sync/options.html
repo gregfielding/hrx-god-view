@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>HRX Indeed Flex Sync — Options</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 20px; max-width: 460px; }
+      h1 { font-size: 16px; }
+      label { display: block; margin: 14px 0 4px; font-weight: bold; font-size: 13px; }
+      input { width: 100%; padding: 8px; box-sizing: border-box; font-size: 13px; }
+      p.hint { color: #666; font-size: 12px; margin: 4px 0 0; }
+      button { margin-top: 18px; padding: 9px 16px; background: #8B5CF6; color: #fff; border: 0; border-radius: 6px; font-size: 13px; cursor: pointer; }
+      #saved { color: #16a34a; font-size: 13px; margin-left: 10px; }
+    </style>
+  </head>
+  <body>
+    <h1>HRX Indeed Flex Sync</h1>
+    <label for="extensionKey">HRX extension key</label>
+    <input id="extensionKey" type="password" placeholder="paste the INDEED_FLEX_EXTENSION_KEY from your HRX admin" />
+    <p class="hint">Get this from your HRX admin. It authorizes syncs to HRX.</p>
+
+    <label for="tenantId">Tenant ID</label>
+    <input id="tenantId" type="text" />
+    <p class="hint">Pre-filled for production — leave as is unless told otherwise.</p>
+
+    <label for="baseUrl">HRX functions base URL</label>
+    <input id="baseUrl" type="text" />
+
+    <div>
+      <button id="save">Save</button>
+      <span id="saved"></span>
+    </div>
+
+    <script src="options.js"></script>
+  </body>
+</html>

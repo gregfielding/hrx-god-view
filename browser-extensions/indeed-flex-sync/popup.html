@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { font-family: Arial, sans-serif; width: 300px; padding: 14px; }
+      h1 { font-size: 14px; margin: 0 0 8px; }
+      .status { font-size: 13px; padding: 8px 10px; border-radius: 6px; background: #f3f4f6; }
+      .status.ok { background: #dcfce7; color: #166534; }
+      .status.err { background: #fee2e2; color: #991b1b; }
+      p.hint { font-size: 12px; color: #666; margin: 10px 0 0; }
+      a { color: #8B5CF6; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <h1>HRX Indeed Flex Sync</h1>
+    <div id="status" class="status">Open a job in the Indeed Flex agency portal — it syncs automatically.</div>
+    <p class="hint">
+      Viewing a job's <b>Booked workers</b> syncs its roster into HRX.
+      <a id="opts">Settings</a>
+    </p>
+    <script src="popup.js"></script>
+  </body>
+</html>
