@@ -59,6 +59,27 @@ function venueMappingDocId(label: string): string {
   return normalizeVenueKey(label).replace(/\//g, '_').slice(0, 400) || '_';
 }
 
+/**
+ * Notes-text lookup: a mapped venue name appearing anywhere in free-text
+ * notes links the payment ("Minnesota Yacht Club" in a note → its JO).
+ * Keys shorter than 5 chars are skipped — too collision-prone as
+ * substrings. Longest key wins when several match.
+ */
+function findMappingInText(
+  mappings: Map<string, VenueMapping>,
+  text: string,
+): VenueMapping | undefined {
+  const t = normalizeVenueKey(text);
+  if (t.length < 5) return undefined;
+  let best: { key: string; m: VenueMapping } | undefined;
+  for (const [key, m] of mappings) {
+    if (key.length >= 5 && t.includes(key) && (!best || key.length > best.key.length)) {
+      best = { key, m };
+    }
+  }
+  return best?.m;
+}
+
 interface VenueMapping {
   venueLabel: string;
   jobOrderId: string;
@@ -312,12 +333,17 @@ export const getPayrollCostReport = onCall(
 
       // Admin-curated venue mapping: rows that can't resolve a JO adopt
       // the mapped JO's identity (name/number/PO/account) at read time.
+      // Two lookups, same memory (per Greg 2026-07-28): exact venue-label
+      // match first, then mapped venue names appearing in free-text notes
+      // ("all payments with that in the notes should connect").
       let joName = trim(jo?.jobOrderName) || null;
       let joNumber = trim(jo?.jobOrderNumber) || null;
       let joPo = trim(jo?.poNumber) || null;
       let acctName = trim(acct?.name) || null;
-      if (!joId && worksiteName) {
-        const m = venueMappings.get(normalizeVenueKey(worksiteName));
+      if (!joId) {
+        const m =
+          (worksiteName ? venueMappings.get(normalizeVenueKey(worksiteName)) : undefined) ??
+          findMappingInText(venueMappings, trim(e.notes));
         if (m) {
           joId = trim(m.jobOrderId) || null;
           joName = trim(m.jobOrderName) || null;
@@ -367,6 +393,29 @@ export const getPayrollCostReport = onCall(
       if (hiringEntityId && trim(oc.hiringEntityId) !== hiringEntityId) return;
       const sentAt = oc.sentToEvereeAt as admin.firestore.Timestamp | undefined;
       const sentDate = sentAt?.toDate ? sentAt.toDate().toISOString().slice(0, 10) : null;
+      // Same mapping memory as timesheet entries: an off-cycle payment
+      // saved without a job order links via its worksite label or a
+      // mapped venue name in its notes/label text.
+      let ocJoId = trim(oc.jobOrderId) || null;
+      let ocJoName = trim(oc.jobOrderName) || null;
+      let ocJoNumber = trim(oc.jobOrderNumber) || null;
+      let ocPo = trim(oc.poNumber) || null;
+      let ocAcctId = trim(oc.accountId) || null;
+      let ocAcctName = trim(oc.accountName) || null;
+      if (!ocJoId) {
+        const wk = trim(oc.worksiteName);
+        const m =
+          (wk ? venueMappings.get(normalizeVenueKey(wk)) : undefined) ??
+          findMappingInText(venueMappings, `${trim(oc.notes)} ${trim(oc.label)}`);
+        if (m) {
+          ocJoId = trim(m.jobOrderId) || null;
+          ocJoName = trim(m.jobOrderName) || null;
+          ocJoNumber = trim(m.jobOrderNumber) || null;
+          ocPo = trim(m.poNumber) || null;
+          if (!ocAcctId) ocAcctId = trim(m.accountId) || null;
+          if (!ocAcctName) ocAcctName = trim(m.accountName) || null;
+        }
+      }
       rows.push({
         entryId: `offcycle:${d.id}`,
         workDate: trim(oc.workDate),
@@ -374,12 +423,12 @@ export const getPayrollCostReport = onCall(
         batchId: sentDate ? `${trim(oc.hiringEntityId) || 'entity'} · sent ${sentDate}` : null,
         workerId: trim(oc.workerId),
         workerName: trim(oc.workerName) || null,
-        accountId: trim(oc.accountId) || null,
-        accountName: trim(oc.accountName) || null,
-        jobOrderId: trim(oc.jobOrderId) || null,
-        jobOrderName: trim(oc.jobOrderName) || null,
-        jobOrderNumber: trim(oc.jobOrderNumber) || null,
-        poNumber: trim(oc.poNumber) || null,
+        accountId: ocAcctId,
+        accountName: ocAcctName,
+        jobOrderId: ocJoId,
+        jobOrderName: ocJoName,
+        jobOrderNumber: ocJoNumber,
+        poNumber: ocPo,
         worksiteName: trim(oc.worksiteName) || null,
         hours: num(oc.hours),
         gross: num(oc.grossAmount),
