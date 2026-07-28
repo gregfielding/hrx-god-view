@@ -1646,10 +1646,10 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   // uploaded file (before Match), so a re-upload + Match picks up where the
   // recruiter left off. Blocked/submitted state reproduces from the match +
   // the payables ledger, so we only restore the recruiter's manual edits here.
-  const loadImportEntries = async (rows: ParsedTimesheetRow[]) => {
-    if (!tenantId || !entityId || !customer) return;
+  const loadImportEntries = async (rows: ParsedTimesheetRow[]): Promise<Map<number, string> | null> => {
+    if (!tenantId || !entityId || !customer) return null;
     const importable = rows.filter((r) => r.status === 'importable');
-    if (importable.length === 0) return;
+    if (importable.length === 0) return null;
     const dates = importable.map((r) => r.workDate).filter(Boolean).sort();
     const minDate = dates[0];
     const maxDate = dates[dates.length - 1];
@@ -1693,7 +1693,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           worksiteAddress: imp.worksiteAddress ?? null,
         });
       });
-      if (byKey.size === 0) return;
+      if (byKey.size === 0) return null;
       const nextOverrides = new Map(overrides);
       const nextForced = new Map(forcedUserIdByRow);
       const nextWorksites = new Map(worksiteOverrideByRow);
@@ -1742,22 +1742,32 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         setWorksiteOverrideByRow(nextWorksites);
         setSaveResult(null);
         setMatchError(
-          `Restored ${restored} saved edit${restored === 1 ? '' : 's'} from a previous session — click Match to re-apply.`,
+          `Restored ${restored} saved edit${restored === 1 ? '' : 's'} from a previous session.`,
         );
+        return nextForced;
       }
     } catch (err) {
       console.error('loadImportEntries (resume) failed:', err);
     }
+    return null;
   };
 
-  // Once a file is parsed AND an entity + customer are chosen, restore any
-  // saved edits from a prior session — once per (file, entity, customer).
+  // Once a file is parsed AND an entity + customer are chosen: restore any
+  // saved edits from a prior session, then AUTO-RUN worker matching — once
+  // per (file, entity, customer). Matching is what pairs each row's worker
+  // with an active assignment and resolves worksite / pay rate / WC from
+  // it, so it must not wait on a button press (Greg 2026-07-28: the
+  // button-then-pencil order wasn't discoverable). The Match button
+  // remains as a manual re-run.
   useEffect(() => {
     if (!parsed || !entityId || !customer) return;
     const rk = `${fileName}|${entityId}|${customer}`;
     if (resumeKeyRef.current === rk) return;
     resumeKeyRef.current = rk;
-    void loadImportEntries(parsed.rows);
+    void (async () => {
+      const restoredForced = await loadImportEntries(parsed.rows);
+      await runMatch(restoredForced ?? undefined);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsed, entityId, customer, fileName]);
 
