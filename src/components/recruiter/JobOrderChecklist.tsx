@@ -86,11 +86,9 @@ export function getJobOrderChecklistProgress(input: {
   indeedUrl?: string;
   craigslistUrl?: string;
   /**
-   * Tenant's curated Job Titles list (from `useTenantJobTitleOptions`).
-   * If omitted, the "Job title selected" row falls back to a simple
-   * non-empty check so the summary still renders before the hook
-   * resolves; callers that want the strict "must be in the tenant's
-   * list" check should pass titles through.
+   * Accepted for API stability but no longer used: "Job title selected"
+   * completes on any non-empty title (2026-07-28) — curated-list
+   * membership only shades the full panel's description text.
    */
   jobTitles?: readonly string[];
 }): {
@@ -107,18 +105,16 @@ export function getJobOrderChecklistProgress(input: {
     shiftsCount = 0,
     indeedUrl,
     craigslistUrl,
-    jobTitles,
   } = input;
 
-  const hasJobTitlesList = Array.isArray(jobTitles) && jobTitles.length > 0;
-  const titleQualifies = (title: string | null | undefined): boolean => {
-    if (!title || typeof title !== 'string') return false;
-    const trimmed = title.trim();
-    if (!trimmed) return false;
-    // Without a curated list, treat any non-empty title as "selected"
-    // so we don't regress the summary while the hook is hydrating.
-    return hasJobTitlesList ? isStandardJobTitleValue(trimmed, jobTitles!) : true;
-  };
+  // "Selected" means a non-empty title. Recruiters read this row as "did
+  // someone pick a title?" — a real custom/client-worded title showing as
+  // Missing reads as a bug (Greg 2026-07-28, JO #364 "Warehouse Support
+  // Representative" vs the curated list's "Warehouse Associate").
+  // Standard-list membership is a soft nudge in the full panel's
+  // description, not a completion gate.
+  const titleQualifies = (title: string | null | undefined): boolean =>
+    typeof title === 'string' && title.trim().length > 0;
 
   const hasStandardJobTitle = (() => {
     if (!jobOrder) return false;
@@ -372,7 +368,17 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
       setSavingExternal(false);
     }
   };
-  // Auto-computed status: has a standardized job title been selected from the list?
+  // Auto-computed status: is any job title selected? (Completion gate —
+  // a real custom title must not read as Missing.) Standard-list
+  // membership below only softens/hardens the description text.
+  const hasAnyJobTitle = (() => {
+    if (!jobOrder) return false;
+    const nonEmpty = (t: unknown) => typeof t === 'string' && t.trim().length > 0;
+    if ((jobOrder as any).jobType !== 'gig' && nonEmpty((jobOrder as any).jobTitle)) return true;
+    const gigPositions = (jobOrder as any).gigPositions as Array<{ jobTitle?: string }> | undefined;
+    return Array.isArray(gigPositions) && gigPositions.some((pos) => nonEmpty(pos.jobTitle));
+  })();
+
   const hasStandardJobTitle = (() => {
     if (!jobOrder) return false;
 
@@ -484,10 +490,12 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
     {
       id: 'jobTitleSelected',
       label: 'Job title selected',
-      description: hasStandardJobTitle
-        ? 'Job title is selected from the standard job titles list.'
-        : 'Choose a job title from the standard list so analytics and matching work best.',
-      status: hasStandardJobTitle ? 'complete' : 'missing',
+      description: hasAnyJobTitle
+        ? hasStandardJobTitle
+          ? 'Job title is selected from the standard job titles list.'
+          : 'Job title is set, but not from the standard list — analytics and matching work best with a standard title.'
+        : 'Choose a job title so analytics and matching work best.',
+      status: hasAnyJobTitle ? 'complete' : 'missing',
       auto: true,
       icon: <BriefcaseIcon sx={{ fontSize: 18 }} />,
     },
