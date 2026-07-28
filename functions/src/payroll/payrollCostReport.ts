@@ -42,6 +42,84 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * Venue-label → job-order mappings (learn-once, per Greg 2026-07-28):
+ * unattributed rows carry a venue label ("FIFA WC Dallas") from the CSV
+ * import; an admin maps that label to the right JO once and every entry
+ * with that label — past and future — reports under the JO. Applied at
+ * READ time (no entry mutation), stored at
+ * tenants/{t}/payroll_venue_mappings/{venueKey}.
+ */
+function normalizeVenueKey(label: string): string {
+  return label.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/** Firestore doc ids cannot contain '/'; keep the key readable otherwise. */
+function venueMappingDocId(label: string): string {
+  return normalizeVenueKey(label).replace(/\//g, '_').slice(0, 400) || '_';
+}
+
+interface VenueMapping {
+  venueLabel: string;
+  jobOrderId: string;
+  jobOrderName: string | null;
+  jobOrderNumber: string | null;
+  poNumber: string | null;
+  accountId: string | null;
+  accountName: string | null;
+}
+
+export const savePayrollVenueMapping = onCall(
+  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 60 },
+  async (request) => {
+    const tenantId = trim(request.data?.tenantId);
+    const venueLabel = trim(request.data?.venueLabel);
+    const jobOrderId = trim(request.data?.jobOrderId);
+    if (!tenantId || !venueLabel) {
+      throw new HttpsError('invalid-argument', 'tenantId and venueLabel are required.');
+    }
+    await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+
+    const ref = db.doc(`tenants/${tenantId}/payroll_venue_mappings/${venueMappingDocId(venueLabel)}`);
+    if (!jobOrderId) {
+      await ref.delete();
+      return { deleted: true, venueLabel };
+    }
+
+    let jo: Record<string, unknown> | null = null;
+    for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+      const s = await db.doc(`tenants/${tenantId}/${coll}/${jobOrderId}`).get();
+      if (s.exists) {
+        jo = s.data() as Record<string, unknown>;
+        break;
+      }
+    }
+    if (!jo) throw new HttpsError('not-found', `Job order ${jobOrderId} not found.`);
+    const accountId = trim(jo.recruiterAccountId) || null;
+    let accountName: string | null = null;
+    if (accountId) {
+      const acct = await db.doc(`tenants/${tenantId}/accounts/${accountId}`).get();
+      accountName = acct.exists ? trim(acct.data()?.name) || null : null;
+    }
+    const mapping: VenueMapping = {
+      venueLabel,
+      jobOrderId,
+      jobOrderName: trim(jo.jobOrderName) || null,
+      jobOrderNumber: trim(jo.jobOrderNumber) || null,
+      poNumber: trim(jo.poNumber) || null,
+      accountId,
+      accountName,
+    };
+    await ref.set({
+      ...mapping,
+      venueKey: normalizeVenueKey(venueLabel),
+      updatedByUid: request.auth?.uid ?? null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { deleted: false, ...mapping };
+  },
+);
+
 /** Books access: hrx staff, admin role, or securityLevel >= 6. */
 async function ensureBooksAccess(uid: string | undefined, token: Record<string, unknown> | undefined, tenantId: string): Promise<void> {
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
@@ -177,6 +255,16 @@ export const getPayrollCostReport = onCall(
       });
     }
 
+    // Venue-label mappings (admin-curated) — applied to rows that can't
+    // resolve a JO through the assignment chain.
+    const venueMappings = new Map<string, VenueMapping>();
+    const mappingsSnap = await db.collection(`tenants/${tenantId}/payroll_venue_mappings`).get();
+    mappingsSnap.forEach((d) => {
+      const m = d.data() as VenueMapping & { venueKey?: string };
+      const key = trim(m.venueKey) || normalizeVenueKey(trim(m.venueLabel));
+      if (key && trim(m.jobOrderId)) venueMappings.set(key, m);
+    });
+
     // Per-entry dollars — mirrors the server-side batch total math
     // (createTimesheetBatch) and the grid's dollarAmountForRow.
     const rows: ReportRow[] = [];
@@ -199,9 +287,9 @@ export const getPayrollCostReport = onCall(
       const total = round2(gross + premiums + tips + bonus);
       const hours = round2(reg + ot + dt);
 
-      const joId = trim(e.jobOrderId) || trim(a?.jobOrderId) || null;
+      let joId = trim(e.jobOrderId) || trim(a?.jobOrderId) || null;
       const jo = joId ? joDocs.get(joId) : undefined;
-      const acctId = trim(e.accountId) || trim(a?.accountId) || trim(jo?.recruiterAccountId) || null;
+      let acctId = trim(e.accountId) || trim(a?.accountId) || trim(jo?.recruiterAccountId) || null;
       const acct = acctId ? accountDocs.get(acctId) : undefined;
       const importSidecar = (e.import ?? {}) as Record<string, unknown>;
       const workerName =
@@ -214,6 +302,32 @@ export const getPayrollCostReport = onCall(
       const sentAt = e.sentToEvereeAt as admin.firestore.Timestamp | undefined;
       const sentDate = sentAt?.toDate ? sentAt.toDate().toISOString().slice(0, 10) : null;
 
+      const worksiteName =
+        trim(a?.worksiteName) ||
+        trim(jo?.worksiteName) ||
+        trim(importSidecar.worksiteName) ||
+        trim(importSidecar.csvSite) ||
+        trim(e.worksiteName) ||
+        null;
+
+      // Admin-curated venue mapping: rows that can't resolve a JO adopt
+      // the mapped JO's identity (name/number/PO/account) at read time.
+      let joName = trim(jo?.jobOrderName) || null;
+      let joNumber = trim(jo?.jobOrderNumber) || null;
+      let joPo = trim(jo?.poNumber) || null;
+      let acctName = trim(acct?.name) || null;
+      if (!joId && worksiteName) {
+        const m = venueMappings.get(normalizeVenueKey(worksiteName));
+        if (m) {
+          joId = trim(m.jobOrderId) || null;
+          joName = trim(m.jobOrderName) || null;
+          joNumber = trim(m.jobOrderNumber) || null;
+          joPo = trim(m.poNumber) || null;
+          if (!acctId) acctId = trim(m.accountId) || null;
+          if (!acctName) acctName = trim(m.accountName) || null;
+        }
+      }
+
       rows.push({
         entryId: p.id,
         workDate: trim(e.workDate),
@@ -222,18 +336,12 @@ export const getPayrollCostReport = onCall(
         workerId: trim(e.workerId),
         workerName,
         accountId: acctId,
-        accountName: trim(acct?.name) || null,
+        accountName: acctName,
         jobOrderId: joId,
-        jobOrderName: trim(jo?.jobOrderName) || null,
-        jobOrderNumber: trim(jo?.jobOrderNumber) || null,
-        poNumber: trim(jo?.poNumber) || null,
-        worksiteName:
-          trim(a?.worksiteName) ||
-          trim(jo?.worksiteName) ||
-          trim(importSidecar.worksiteName) ||
-          trim(importSidecar.csvSite) ||
-          trim(e.worksiteName) ||
-          null,
+        jobOrderName: joName,
+        jobOrderNumber: joNumber,
+        poNumber: joPo,
+        worksiteName,
         hours,
         gross,
         tips,
@@ -385,6 +493,13 @@ export const getPayrollCostReport = onCall(
       byAccount,
       byBatch,
       rows,
+      venueMappings: Array.from(venueMappings.values()).map((m) => ({
+        venueLabel: m.venueLabel,
+        jobOrderId: m.jobOrderId,
+        jobOrderName: m.jobOrderName,
+        jobOrderNumber: m.jobOrderNumber,
+        accountName: m.accountName,
+      })),
     };
   },
 );

@@ -12,12 +12,18 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Card,
   CardContent,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
+  IconButton,
   InputLabel,
   MenuItem,
   Paper,
@@ -34,6 +40,7 @@ import {
 } from '@mui/material';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { httpsCallable } from 'firebase/functions';
 import { collection, getDocs } from 'firebase/firestore';
 
@@ -54,6 +61,7 @@ interface GroupTotals {
   pct: number;
   /** Name-keyed (class) groups only — absent on byAccount. */
   accountName?: string | null;
+  attributed?: boolean;
   jobOrderRefs?: string[];
   poNumbers?: string[];
 }
@@ -72,6 +80,18 @@ interface ReportData {
     byJobOrder: Array<{ label: string; total: number; pct: number }>;
   }>;
   rows: Array<Record<string, unknown>>;
+  venueMappings?: Array<{
+    venueLabel: string;
+    jobOrderId: string;
+    jobOrderName: string | null;
+    jobOrderNumber: string | null;
+    accountName: string | null;
+  }>;
+}
+
+interface JoOption {
+  id: string;
+  label: string;
 }
 
 function monthStartIso(): string {
@@ -117,6 +137,11 @@ const PayrollCostsPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ReportData | null>(null);
+  // Venue → job order mapping dialog state.
+  const [mapVenue, setMapVenue] = useState<string | null>(null);
+  const [joOptions, setJoOptions] = useState<JoOption[] | null>(null);
+  const [mapJo, setMapJo] = useState<JoOption | null>(null);
+  const [mapSaving, setMapSaving] = useState(false);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -156,6 +181,51 @@ const PayrollCostsPage: React.FC = () => {
     // Initial load only — subsequent loads via the button.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
+
+  const openMapDialog = async (unattributedLabel: string) => {
+    setMapVenue(unattributedLabel.replace(/^Unattributed — /, ''));
+    setMapJo(null);
+    if (joOptions || !tenantId) return;
+    const opts: JoOption[] = [];
+    const seen = new Set<string>();
+    for (const coll of ['job_orders', 'recruiter_jobOrders']) {
+      try {
+        const snap = await getDocs(collection(db, 'tenants', tenantId, coll));
+        snap.docs.forEach((d) => {
+          if (seen.has(d.id)) return;
+          seen.add(d.id);
+          const v = d.data();
+          const name = String(v.jobOrderName ?? '').trim();
+          if (!name) return;
+          const numPart = String(v.jobOrderNumber ?? '').trim();
+          const sitePart = String(v.worksiteName ?? '').trim();
+          opts.push({
+            id: d.id,
+            label: `${numPart ? `#${numPart} ` : ''}${name}${sitePart && sitePart !== name ? ` — ${sitePart}` : ''}`,
+          });
+        });
+      } catch {
+        // Collection may not exist for this tenant — keep going.
+      }
+    }
+    opts.sort((a, b) => a.label.localeCompare(b.label));
+    setJoOptions(opts);
+  };
+
+  const saveMapping = async (venueLabel: string, jobOrderId: string | null) => {
+    if (!tenantId) return;
+    setMapSaving(true);
+    try {
+      const fn = httpsCallable(functions, 'savePayrollVenueMapping');
+      await fn({ tenantId, venueLabel, ...(jobOrderId ? { jobOrderId } : {}) });
+      setMapVenue(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMapSaving(false);
+    }
+  };
 
   const exportCsv = () => {
     if (!data) return;
@@ -297,10 +367,16 @@ const PayrollCostsPage: React.FC = () => {
                         <TableCell>{g.label}</TableCell>
                         <TableCell>{g.accountName ?? '—'}</TableCell>
                         <TableCell>
-                          {[
-                            ...(g.poNumbers ?? []).map((p) => `PO ${p}`),
-                            ...(g.jobOrderRefs ?? []),
-                          ].join(', ') || '—'}
+                          {g.attributed === false ? (
+                            <Button size="small" variant="outlined" onClick={() => void openMapDialog(g.label)}>
+                              Map to job order
+                            </Button>
+                          ) : (
+                            [
+                              ...(g.poNumbers ?? []).map((p) => `PO ${p}`),
+                              ...(g.jobOrderRefs ?? []),
+                            ].join(', ') || '—'
+                          )}
                         </TableCell>
                         <TableCell align="right">{g.workers}</TableCell>
                         <TableCell align="right">{g.hours.toFixed(1)}</TableCell>
@@ -378,8 +454,82 @@ const PayrollCostsPage: React.FC = () => {
               ))}
             </CardContent>
           </Card>
+
+          {(data.venueMappings?.length ?? 0) > 0 && (
+            <Card sx={{ mb: 2 }}>
+              <CardContent>
+                <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+                  Venue → job order mappings
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                  Entries whose venue can&apos;t be tied to a job order automatically are attributed
+                  using these mappings — past and future.
+                </Typography>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Venue label</TableCell>
+                      <TableCell>Job order</TableCell>
+                      <TableCell>Account</TableCell>
+                      <TableCell align="right">Remove</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {data.venueMappings?.map((m) => (
+                      <TableRow key={m.venueLabel} hover>
+                        <TableCell>{m.venueLabel}</TableCell>
+                        <TableCell>
+                          {m.jobOrderNumber ? `#${m.jobOrderNumber} ` : ''}
+                          {m.jobOrderName ?? m.jobOrderId}
+                        </TableCell>
+                        <TableCell>{m.accountName ?? '—'}</TableCell>
+                        <TableCell align="right">
+                          <IconButton
+                            size="small"
+                            disabled={mapSaving}
+                            onClick={() => void saveMapping(m.venueLabel, null)}
+                          >
+                            <DeleteOutlineIcon fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
+
+      <Dialog open={mapVenue !== null} onClose={() => setMapVenue(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Map “{mapVenue}” to a job order</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Every payroll entry with this venue label — in this report and going forward — will be
+            attributed to the job order you pick.
+          </Typography>
+          <Autocomplete
+            options={joOptions ?? []}
+            loading={joOptions === null}
+            value={mapJo}
+            onChange={(_e, v) => setMapJo(v)}
+            renderInput={(params) => <TextField {...params} label="Job order" autoFocus />}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setMapVenue(null)} disabled={mapSaving}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={!mapJo || mapSaving}
+            onClick={() => mapVenue && mapJo && void saveMapping(mapVenue, mapJo.id)}
+          >
+            {mapSaving ? 'Saving…' : 'Save mapping'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

@@ -526,7 +526,7 @@ export { onTimesheetEntryWriteRecomputePayBreakdown } from './timesheets/onTimes
 export { submitTimesheetBatch } from './payroll/submitTimesheetBatch';
 // Payroll cost attribution report (2026-07-28): dollars sent to Everee
 // grouped by account → job order → worksite + per-batch wire splits.
-export { getPayrollCostReport } from './payroll/payrollCostReport';
+export { getPayrollCostReport, savePayrollVenueMapping } from './payroll/payrollCostReport';
 export { submitTimesheetEntryWorker } from './payroll/submitTimesheetEntryWorker';
 export {
   submitTimesheetAdjustment,
