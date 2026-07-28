@@ -146,7 +146,13 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
         shiftStartEpochSeconds: payload.shiftStartEpochSeconds,
         shiftEndEpochSeconds: payload.shiftEndEpochSeconds,
         breaks: payload.breaks,
-        note: typeof entry.notes === 'string' ? entry.notes : undefined,
+        // Attribution tag first ("JO#182 FIFA Dallas — Adidas KC"), then any
+        // recruiter note — every worked-shift in Everee self-describes its job.
+        note:
+          [payload.attributionTag, typeof entry.notes === 'string' ? entry.notes.trim() : '']
+            .filter(Boolean)
+            .join(' | ') || undefined,
+        labelPrefix: payload.attributionTag,
       };
 
       const composed = composeBatchEntryPayloads(composeInput);

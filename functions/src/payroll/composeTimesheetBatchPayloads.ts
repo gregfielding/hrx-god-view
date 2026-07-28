@@ -124,6 +124,11 @@ export interface ComposeBatchInput {
   displayHourlyPayRate?: number;
   /** Free-form note that surfaces on the worked-shift in Everee. */
   note?: string;
+  /** Job-cost attribution tag ("JO#182 FIFA Dallas — Adidas KC").
+   *  Prepended to every payable `label` so the money self-describes its
+   *  job order + worksite inside Everee (pay stubs, payment lists,
+   *  report exports). Optional — labels stay bare without it. */
+  labelPrefix?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -349,7 +354,7 @@ export function composeContractorPayable(input: ComposeBatchInput): CreatePayabl
       kind: 'CONTRACTOR',
     }),
     externalWorkerId: input.externalWorkerId,
-    label: 'Contractor pay',
+    label: withLabelPrefix(input.labelPrefix, 'Contractor pay'),
     type: 'contractor',
     payCode: 'CONTRACTOR',
     timestamp: input.shiftStartEpochSeconds,
@@ -401,6 +406,15 @@ function nonNegative(n: number | undefined): number {
   return Math.max(0, n as number);
 }
 
+/** "JO#182 FIFA Dallas — Adidas KC · Tips". Pure passthrough without a
+ *  prefix so legacy callers/tests keep bare labels. Capped defensively —
+ *  Everee's label length limit is undocumented. */
+export function withLabelPrefix(prefix: string | undefined, label: string): string {
+  const p = (prefix ?? '').trim();
+  if (!p) return label;
+  return `${p} · ${label}`.slice(0, 120);
+}
+
 interface MakePayableArgs {
   kind: 'TIPS' | 'BONUS' | 'MEAL_PREMIUM' | 'REST_PREMIUM';
   earningType: EvereeStandardEarningType;
@@ -420,7 +434,7 @@ function makePayableForEntry(
       kind: args.kind,
     }),
     externalWorkerId: input.externalWorkerId,
-    label: args.label,
+    label: withLabelPrefix(input.labelPrefix, args.label),
     type: args.kind.toLowerCase(),
     payCode: args.earningType,
     timestamp: input.shiftStartEpochSeconds,

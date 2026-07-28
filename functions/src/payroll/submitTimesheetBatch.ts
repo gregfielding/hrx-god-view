@@ -87,6 +87,12 @@ export interface SubmitEntryTaskPayload {
   shiftEndEpochSeconds: number;
   breaks: ComposeBreak[];
   worksiteTz: string;
+
+  /** Job-cost attribution stamped onto the Everee payload ("JO#182 FIFA
+   *  Dallas — Adidas KC"): prepended to the worked-shift `note` and payable
+   *  `label`s so every dollar in Everee self-describes its job order +
+   *  worksite (Greg 2026-07-28 — payroll cost accounting). */
+  attributionTag?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -263,6 +269,19 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
       const worksiteName =
         String((assignment?.worksiteName as string) ?? '').trim() ||
         String((jo?.worksiteName as string) ?? worksiteId).trim();
+      // Job-cost attribution tag → Everee note/labels. Format per Greg
+      // (2026-07-28): ID + JO name + worksite. Kept short — it rides on
+      // pay stubs and Everee list views.
+      const joNumber = String((jo?.jobOrderNumber as string | number) ?? '').trim();
+      const joName = String((jo?.jobOrderName as string) ?? '').trim();
+      const attributionTag = [
+        joNumber ? `JO#${joNumber}` : jobOrderId ? `JO ${jobOrderId.slice(0, 6)}` : '',
+        joName.slice(0, 48),
+        worksiteName && worksiteName !== joName ? `— ${worksiteName.slice(0, 32)}` : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
       const worksiteAddress = assignmentAddrUsable
         ? assignmentAddr
         : ((jo?.worksiteAddress as Record<string, unknown>) ?? {});
@@ -553,6 +572,7 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
         shiftEndEpochSeconds,
         breaks,
         worksiteTz,
+        ...(attributionTag ? { attributionTag } : {}),
       });
     }
 

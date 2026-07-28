@@ -524,6 +524,9 @@ export { onTimesheetEntryWriteRecomputePayBreakdown } from './timesheets/onTimes
 // the Everee Payables endpoint exclusively — worked-shifts get locked
 // after pay run, so post-pay corrections always go through Payables.
 export { submitTimesheetBatch } from './payroll/submitTimesheetBatch';
+// Payroll cost attribution report (2026-07-28): dollars sent to Everee
+// grouped by account → job order → worksite + per-batch wire splits.
+export { getPayrollCostReport } from './payroll/payrollCostReport';
 export { submitTimesheetEntryWorker } from './payroll/submitTimesheetEntryWorker';
 export {
   submitTimesheetAdjustment,

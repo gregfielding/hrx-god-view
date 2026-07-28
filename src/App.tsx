@@ -179,6 +179,7 @@ import UsersLayout from './pages/UsersLayout';
 import RecruiterAccountDetails from './pages/RecruiterAccountDetails';
 import AccountLocationDetail from './pages/AccountLocationDetail';
 import GlobalInvoicingPage from './pages/GlobalInvoicingPage';
+import PayrollCostsPage from './pages/PayrollCostsPage';
 import FinancesBudgetingPage from './pages/FinancesBudgetingPage';
 import SchedulingHealthPage from './pages/SchedulingHealthPage';
 import WhosWorkingPage from './pages/WhosWorkingPage';
@@ -794,6 +795,16 @@ function App() {
             <ProtectedRoute requiredSecurityLevel="5">
               <RecruiterAccessGuard>
                 <WhosWorkingPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="payroll-costs"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <PayrollCostsPage />
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }

@@ -311,6 +311,14 @@ export async function generateMenuItems(
         icon: 'attach_money',
         accessRoles: ['tenant_7'],
       }]),
+      // Payroll Costs: dollars sent to Everee by job order / account /
+      // submission day (wire splits for the bookkeeper). Levels 6-7.
+      ...([{
+        text: 'Payroll Costs',
+        to: '/payroll-costs',
+        icon: 'receipt_long',
+        accessRoles: ['tenant_6', 'tenant_7'],
+      }]),
       // Workers Comp (hidden from main sidebar — still under Settings → Operations → Workers Comp)
       // ...([{
       //   text: 'Workers Comp',
