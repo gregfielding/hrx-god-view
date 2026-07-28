@@ -180,14 +180,21 @@ function makeShiftDateTime(day: Date, hhmm: string): Date | null {
   out.setHours(h, m, 0, 0);
   return out;
 }
-function nextShiftStartForJobOrder(shifts: Array<Record<string, any>>, now: Date): Date | null {
-  let best: Date | null = null;
+function nextShiftStartForJobOrder(
+  shifts: Array<Record<string, any>>,
+  now: Date,
+): { at: Date; hasTime: boolean } | null {
+  let best: { at: Date; hasTime: boolean } | null = null;
   const today = new Date(now);
   today.setHours(0, 0, 0, 0);
   for (const shift of shifts) {
     const shiftDate = typeof shift.shiftDate === 'string' ? shift.shiftDate : '';
     const endDate = typeof shift.endDate === 'string' ? shift.endDate : '';
-    const defStart = typeof shift.defaultStartTime === 'string' ? shift.defaultStartTime : '00:00';
+    const rawDefStart = typeof shift.defaultStartTime === 'string' ? shift.defaultStartTime.trim() : '';
+    // Open shifts are date-range/no-times — midnight here is a fallback for
+    // the comparison, not a real start time, and renders date-only.
+    const hasDefaultTime = /^\d{1,2}:\d{2}$/.test(rawDefStart);
+    const defStart = hasDefaultTime ? rawDefStart : '00:00';
     const dateSched =
       shift.dateSchedule && typeof shift.dateSchedule === 'object'
         ? (shift.dateSchedule as Record<string, { enabled?: boolean; startTime?: string }>)
@@ -203,7 +210,10 @@ function nextShiftStartForJobOrder(shifts: Array<Record<string, any>>, now: Date
     const status = typeof shift.status === 'string' ? shift.status.toLowerCase() : '';
     if (status === 'cancelled' || status === 'canceled' || status === 'closed') continue;
 
-    const isMulti = shift.shiftMode === 'multi' && !!endDate && endDate !== shiftDate;
+    // Open shifts are date ranges without `shiftMode: 'multi'` — treat any
+    // shift with a distinct end date as a range.
+    const isMulti =
+      (shift.shiftMode === 'multi' || shift.shiftType === 'open') && !!endDate && endDate !== shiftDate;
     let endD = isMulti ? parseYyyyMmDdLocal(endDate) : startD;
     // Ongoing shapes (open shifts, recurring career schedules with no end
     // date): scan a rolling two-week window from today for the next
@@ -233,7 +243,9 @@ function nextShiftStartForJobOrder(shifts: Array<Record<string, any>>, now: Date
       if (enabled) {
         const dt = makeShiftDateTime(cursor, startTime);
         if (dt && dt.getTime() >= now.getTime()) {
-          if (!best || dt.getTime() < best.getTime()) best = dt;
+          if (!best || dt.getTime() < best.at.getTime()) {
+            best = { at: dt, hasTime: hasDefaultTime || startTime !== defStart };
+          }
         }
       }
       cursor.setDate(cursor.getDate() + 1);
@@ -241,10 +253,12 @@ function nextShiftStartForJobOrder(shifts: Array<Record<string, any>>, now: Date
   }
   return best;
 }
-/** "Apr 30 · 7:00 AM" — compact label used in the row caption. */
-function formatNextShiftLabel(d: Date): string {
-  const dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  const timeLabel = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+/** "Apr 30 · 7:00 AM" — compact label used in the row caption. Date-only
+ *  when the shift has no real start time (open shifts). */
+function formatNextShiftLabel(next: { at: Date; hasTime: boolean }): string {
+  const dateLabel = next.at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (!next.hasTime) return dateLabel;
+  const timeLabel = next.at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   return `${dateLabel} · ${timeLabel}`;
 }
 
@@ -768,7 +782,9 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
    * gig AND career (per Greg 2026-07-28: same next-shift logic as the
    * Shifts page, shown under the title). Absent entries render no caption.
    */
-  const [nextShiftByJobOrderId, setNextShiftByJobOrderId] = useState<Record<string, Date>>({});
+  const [nextShiftByJobOrderId, setNextShiftByJobOrderId] = useState<
+    Record<string, { at: Date; hasTime: boolean }>
+  >({});
 
   /**
    * Fan-out fetch of shifts for each JO currently on the visible page.
@@ -789,7 +805,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     }
     let cancelled = false;
     (async () => {
-      const result: Record<string, Date> = {};
+      const result: Record<string, { at: Date; hasTime: boolean }> = {};
       const now = new Date();
       const CHUNK = 10;
       for (let i = 0; i < gigJobOrderIds.length; i += CHUNK) {
@@ -823,7 +839,11 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           const nextKeys = Object.keys(result);
           const unchanged =
             prevKeys.length === nextKeys.length &&
-            nextKeys.every((k) => prev[k]?.getTime() === result[k].getTime());
+            nextKeys.every(
+              (k) =>
+                prev[k]?.at.getTime() === result[k].at.getTime() &&
+                prev[k]?.hasTime === result[k].hasTime,
+            );
           return unchanged ? prev : result;
         });
       }
@@ -1439,7 +1459,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                         </Box>
                         {/* Next shift (same logic as the Shifts page date
                             column) — below the title, above the contact. */}
-                        {nextShiftByJobOrderId[jobOrder.id] instanceof Date ? (
+                        {nextShiftByJobOrderId[jobOrder.id]?.at instanceof Date ? (
                           <Typography
                             variant="caption"
                             color="text.secondary"
