@@ -98,6 +98,7 @@ import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
 import UserAssignmentsTab from './components/UserAssignmentsTab';
 import WorkerPaymentsTab from './components/WorkerPaymentsTab';
+import WorkerNearbyJobsTab from './components/WorkerNearbyJobsTab';
 import ProfileReadinessTabContent from './components/ProfileReadinessTabContent';
 import SystemAccessTab from './components/SystemAccessTab';
 import EmailSignatureTab from './components/EmailSignatureTab';
@@ -1503,6 +1504,8 @@ const UserProfilePage = () => {
       { label: 'Employment', displayLabel: 'Employment & Payroll', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       // Off-cycle payments (Mark's feature) — send form + history.
       { label: 'Payments', available: canViewAdminContent && !isWorkforceInternalTeamView && viewerSecurityLevel >= 6, count: undefined },
+      // Distance-ranked open postings + CRM companies near the worker's home.
+      { label: 'Nearby Jobs', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Certifications', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount },
@@ -3564,6 +3567,14 @@ const UserProfilePage = () => {
                     tenantId={tenantId || authTenantId || activeTenant?.id || null}
                     workerDisplayName={`${firstName} ${lastName}`.trim() || preferredName?.trim() || null}
                     viewerSecurityLevel={viewerSecurityLevel}
+                  />
+                );
+              case 'Nearby Jobs':
+                return (
+                  <WorkerNearbyJobsTab
+                    uid={uid}
+                    tenantId={tenantId || authTenantId || activeTenant?.id || null}
+                    workerDisplayName={`${firstName} ${lastName}`.trim() || preferredName?.trim() || null}
                   />
                 );
               case 'Certifications':

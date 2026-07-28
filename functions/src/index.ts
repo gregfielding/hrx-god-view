@@ -528,6 +528,7 @@ export { submitTimesheetBatch } from './payroll/submitTimesheetBatch';
 // grouped by account → job order → worksite + per-batch wire splits.
 export { getPayrollCostReport, savePayrollVenueMapping } from './payroll/payrollCostReport';
 export { createOffCyclePayment, searchOffCycleWorkers, listOffCyclePayments } from './payroll/offCyclePayments';
+export { getWorkerNearbyOpportunities } from './users/getWorkerNearbyOpportunities';
 export { submitTimesheetEntryWorker } from './payroll/submitTimesheetEntryWorker';
 export {
   submitTimesheetAdjustment,
