@@ -69,6 +69,8 @@ interface ReportRow {
   jobOrderId: string | null;
   jobOrderName: string | null;
   jobOrderNumber: string | null;
+  /** Customer PO on the JO (VenueSmart's real "job order id"). */
+  poNumber: string | null;
   worksiteName: string | null;
   hours: number;
   gross: number;
@@ -224,6 +226,7 @@ export const getPayrollCostReport = onCall(
         jobOrderId: joId,
         jobOrderName: trim(jo?.jobOrderName) || null,
         jobOrderNumber: trim(jo?.jobOrderNumber) || null,
+        poNumber: trim(jo?.poNumber) || null,
         worksiteName:
           trim(a?.worksiteName) ||
           trim(jo?.worksiteName) ||
@@ -263,13 +266,61 @@ export const getPayrollCostReport = onCall(
         .sort((x, y) => y.total - x.total);
     };
 
-    const byJobOrder = group(
-      (r) => r.jobOrderId ?? `unattributed:${r.worksiteName ?? 'unknown'}`,
-      (r) =>
-        r.jobOrderName
-          ? `${r.jobOrderNumber ? `#${r.jobOrderNumber} ` : ''}${r.jobOrderName}${r.worksiteName && r.worksiteName !== r.jobOrderName ? ` — ${r.worksiteName}` : ''}`
-          : `Unattributed${r.worksiteName ? ` — ${r.worksiteName}` : ''}`,
-    );
+    // Name-first grouping (2026-07-28, per Greg): internal JO ids mean
+    // different things per client (VenueSmart keys on customer PO, Flex
+    // mints a job id per shift), so the stable attribution key — and the
+    // future QBO class — is the NAME, scoped by account to avoid
+    // cross-client collisions. Multiple JOs sharing a name merge into
+    // one row; their #numbers and POs are listed as refs.
+    interface ClassGroup extends GroupTotals {
+      accountName: string | null;
+      attributed: boolean;
+      /** Internal JO #numbers merged into this row (context, not the key). */
+      jobOrderRefs: string[];
+      /** Customer PO numbers seen on the merged JOs. */
+      poNumbers: string[];
+      worksites: string[];
+    }
+    const classMap = new Map<string, ClassGroup & { workerSet: Set<string> }>();
+    for (const r of rows) {
+      const name = r.jobOrderName ?? r.worksiteName ?? 'Unknown';
+      const key = `${r.accountId ?? ''}|${r.jobOrderName ? 'jo' : 'venue'}|${name}`;
+      let g = classMap.get(key);
+      if (!g) {
+        g = {
+          key,
+          label: r.jobOrderName ? name : `Unattributed — ${name}`,
+          accountName: r.accountName,
+          attributed: Boolean(r.jobOrderName),
+          jobOrderRefs: [],
+          poNumbers: [],
+          worksites: [],
+          entries: 0,
+          workers: 0,
+          hours: 0,
+          total: 0,
+          pct: 0,
+          workerSet: new Set<string>(),
+        };
+        classMap.set(key, g);
+      }
+      if (!g.accountName && r.accountName) g.accountName = r.accountName;
+      const ref = r.jobOrderNumber ? `#${r.jobOrderNumber}` : null;
+      if (ref && !g.jobOrderRefs.includes(ref)) g.jobOrderRefs.push(ref);
+      if (r.poNumber && !g.poNumbers.includes(r.poNumber)) g.poNumbers.push(r.poNumber);
+      if (r.worksiteName && !g.worksites.includes(r.worksiteName)) g.worksites.push(r.worksiteName);
+      g.entries += 1;
+      g.hours = round2(g.hours + r.hours);
+      g.total = round2(g.total + r.total);
+      g.workerSet.add(r.workerId);
+    }
+    const byJobOrder: ClassGroup[] = Array.from(classMap.values())
+      .map(({ workerSet, ...g }) => ({
+        ...g,
+        workers: workerSet.size,
+        pct: grand > 0 ? round2((g.total / grand) * 100) : 0,
+      }))
+      .sort((x, y) => y.total - x.total);
     const byAccount = group(
       (r) => r.accountId ?? 'unattributed',
       (r) => r.accountName ?? 'Unattributed',
@@ -294,9 +345,13 @@ export const getPayrollCostReport = onCall(
         const total = round2(batchRows.reduce((s, r) => s + r.total, 0));
         const joTotals = new Map<string, { label: string; total: number }>();
         for (const r of batchRows) {
-          const label = r.jobOrderName
-            ? `${r.jobOrderNumber ? `#${r.jobOrderNumber} ` : ''}${r.jobOrderName}`
-            : `Unattributed${r.worksiteName ? ` — ${r.worksiteName}` : ''}`;
+          // Class-path shaped label (Account:Name) so the split lines map
+          // 1:1 onto QBO classes ("Venue Smart:FIFA KC"); name-keyed —
+          // same-name JOs merge, unattributed rows fall back to venue.
+          const name = r.jobOrderName ?? r.worksiteName;
+          const label = name
+            ? `${r.accountName ? `${r.accountName}:` : ''}${name}`
+            : 'Unattributed';
           const cur = joTotals.get(label) ?? { label, total: 0 };
           cur.total = round2(cur.total + r.total);
           joTotals.set(label, cur);

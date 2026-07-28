@@ -52,6 +52,10 @@ interface GroupTotals {
   hours: number;
   total: number;
   pct: number;
+  /** Name-keyed (class) groups only — absent on byAccount. */
+  accountName?: string | null;
+  jobOrderRefs?: string[];
+  poNumbers?: string[];
 }
 
 interface ReportData {
@@ -85,6 +89,7 @@ const CSV_COLUMNS: Array<{ header: string; key: string }> = [
   { header: 'Hiring entity', key: 'hiringEntityId' },
   { header: 'Account', key: 'accountName' },
   { header: 'Job order #', key: 'jobOrderNumber' },
+  { header: 'Customer PO', key: 'poNumber' },
   { header: 'Job order', key: 'jobOrderName' },
   { header: 'Worksite', key: 'worksiteName' },
   { header: 'Hours', key: 'hours' },
@@ -267,13 +272,19 @@ const PayrollCostsPage: React.FC = () => {
           <Card sx={{ mb: 2 }}>
             <CardContent>
               <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
-                By job order
+                By job order (name)
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                Grouped by job order name — same-name orders merge into one row (the name is the
+                QBO class). Internal #ids and customer POs are shown as references.
               </Typography>
               <TableContainer sx={{ maxHeight: 440 }}>
                 <Table size="small" stickyHeader>
                   <TableHead>
                     <TableRow>
                       <TableCell>Job order</TableCell>
+                      <TableCell>Account</TableCell>
+                      <TableCell>Refs</TableCell>
                       <TableCell align="right">Workers</TableCell>
                       <TableCell align="right">Hours</TableCell>
                       <TableCell align="right">Total</TableCell>
@@ -284,6 +295,13 @@ const PayrollCostsPage: React.FC = () => {
                     {data.byJobOrder.map((g) => (
                       <TableRow key={g.key} hover>
                         <TableCell>{g.label}</TableCell>
+                        <TableCell>{g.accountName ?? '—'}</TableCell>
+                        <TableCell>
+                          {[
+                            ...(g.poNumbers ?? []).map((p) => `PO ${p}`),
+                            ...(g.jobOrderRefs ?? []),
+                          ].join(', ') || '—'}
+                        </TableCell>
                         <TableCell align="right">{g.workers}</TableCell>
                         <TableCell align="right">{g.hours.toFixed(1)}</TableCell>
                         <TableCell align="right">{usd(g.total)}</TableCell>

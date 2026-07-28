@@ -177,6 +177,9 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
     // carries matrix-resolved WC + a full worksite address — it beats
     // the JO/shift re-derivation below (entry-level overrides still win).
     const assignmentCache = new Map<string, Record<string, unknown> | null>();
+    // Account display names for the attribution tag (id → name, '' when
+    // the account doc is missing so we only fetch once per account).
+    const accountNameCache = new Map<string, string>();
     // workerType cache per entity — there's typically one per batch, but be
     // robust if a future scope crosses entities.
     let entityWorkerType: string | undefined;
@@ -270,17 +273,42 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
         String((assignment?.worksiteName as string) ?? '').trim() ||
         String((jo?.worksiteName as string) ?? worksiteId).trim();
       // Job-cost attribution tag → Everee note/labels. Format per Greg
-      // (2026-07-28): ID + JO name + worksite. Kept short — it rides on
-      // pay stubs and Everee list views.
-      const joNumber = String((jo?.jobOrderNumber as string | number) ?? '').trim();
+      // (2026-07-28 v2): NAMES, not internal ids — internal JO numbers
+      // mean different things per client (VenueSmart keys on customer
+      // PO, Flex mints a job id per shift), so the stable attribution
+      // key (and the QBO class) is the NAME. Shape:
+      //   <account> · <JO name> — <worksite> · PO <customer po>
+      // with segments dropped when empty or redundant.
       const joName = String((jo?.jobOrderName as string) ?? '').trim();
+      const joPo = String((jo?.poNumber as string | number) ?? '').trim();
+      const tagAccountId = String(
+        (entry.accountId as string) ??
+          (assignment?.accountId as string) ??
+          (jo?.recruiterAccountId as string) ??
+          '',
+      ).trim();
+      let tagAccountName = tagAccountId ? (accountNameCache.get(tagAccountId) ?? '') : '';
+      if (tagAccountId && !accountNameCache.has(tagAccountId)) {
+        try {
+          const acctSnap = await db.doc(`tenants/${tenantId}/accounts/${tagAccountId}`).get();
+          tagAccountName = acctSnap.exists ? String((acctSnap.data()?.name as string) ?? '').trim() : '';
+        } catch {
+          tagAccountName = '';
+        }
+        accountNameCache.set(tagAccountId, tagAccountName);
+      }
+      const tagNamePart = joName
+        ? worksiteName && worksiteName !== joName && worksiteName !== tagAccountName
+          ? `${joName.slice(0, 48)} — ${worksiteName.slice(0, 32)}`
+          : joName.slice(0, 48)
+        : worksiteName.slice(0, 48);
       const attributionTag = [
-        joNumber ? `JO#${joNumber}` : jobOrderId ? `JO ${jobOrderId.slice(0, 6)}` : '',
-        joName.slice(0, 48),
-        worksiteName && worksiteName !== joName ? `— ${worksiteName.slice(0, 32)}` : '',
+        tagAccountName && tagAccountName !== joName ? tagAccountName.slice(0, 40) : '',
+        tagNamePart,
+        joPo ? `PO ${joPo.slice(0, 20)}` : '',
       ]
         .filter(Boolean)
-        .join(' ')
+        .join(' · ')
         .trim();
       const worksiteAddress = assignmentAddrUsable
         ? assignmentAddr
