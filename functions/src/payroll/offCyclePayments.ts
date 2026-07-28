@@ -118,6 +118,47 @@ export const searchOffCycleWorkers = onCall(
   },
 );
 
+/** Payment history for one worker — feeds the profile Payments tab. */
+export const listOffCyclePayments = onCall(
+  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 30 },
+  async (request) => {
+    const tenantId = trim(request.data?.tenantId);
+    const workerId = trim(request.data?.workerId);
+    if (!tenantId || !workerId) {
+      throw new HttpsError('invalid-argument', 'tenantId and workerId are required.');
+    }
+    await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+    const snap = await db
+      .collection(`tenants/${tenantId}/offcycle_payments`)
+      .where('workerId', '==', workerId)
+      .limit(100)
+      .get();
+    const payments = snap.docs
+      .map((d) => {
+        const p = d.data();
+        const createdAt = p.createdAt as admin.firestore.Timestamp | undefined;
+        return {
+          id: d.id,
+          workDate: trim(p.workDate),
+          createdAtIso: createdAt?.toDate ? createdAt.toDate().toISOString() : null,
+          reasonLabel: trim(p.reasonLabel) || trim(p.reason),
+          hiringEntityId: trim(p.hiringEntityId),
+          hours: p.hours ?? null,
+          grossAmount: Number(p.grossAmount) || 0,
+          perDiemAmount: p.perDiemAmount != null ? Number(p.perDiemAmount) : null,
+          total: Number(p.total) || 0,
+          jobOrderName: trim(p.jobOrderName) || null,
+          accountName: trim(p.accountName) || null,
+          notes: trim(p.notes) || null,
+          status: trim(p.status),
+          errorMessage: trim(p.errorMessage) || null,
+        };
+      })
+      .sort((a, b) => (a.createdAtIso ?? '') < (b.createdAtIso ?? '') ? 1 : -1);
+    return { payments };
+  },
+);
+
 export const createOffCyclePayment = onCall(
   { region: 'us-central1', memory: '512MiB', timeoutSeconds: 120 },
   async (request) => {

@@ -97,6 +97,7 @@ import InterviewTab from './components/InterviewTab';
 import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
 import UserAssignmentsTab from './components/UserAssignmentsTab';
+import WorkerPaymentsTab from './components/WorkerPaymentsTab';
 import ProfileReadinessTabContent from './components/ProfileReadinessTabContent';
 import SystemAccessTab from './components/SystemAccessTab';
 import EmailSignatureTab from './components/EmailSignatureTab';
@@ -1500,6 +1501,8 @@ const UserProfilePage = () => {
       // below. Keep it stable. `displayLabel` is what the chip / tab strip
       // actually shows so we can rename without breaking links.
       { label: 'Employment', displayLabel: 'Employment & Payroll', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      // Off-cycle payments (Mark's feature) — send form + history.
+      { label: 'Payments', available: canViewAdminContent && !isWorkforceInternalTeamView && viewerSecurityLevel >= 6, count: undefined },
       { label: 'Certifications', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount },
@@ -3552,6 +3555,15 @@ const UserProfilePage = () => {
                     employmentI9SectionFlash={employmentI9SectionFlash}
                     onOpenWorkerNotificationComposer={handleOpenWorkerNotificationComposer}
                     onSendWorkerNotificationDirect={handleSendWorkerNotificationDirect}
+                  />
+                );
+              case 'Payments':
+                return (
+                  <WorkerPaymentsTab
+                    uid={uid}
+                    tenantId={tenantId || authTenantId || activeTenant?.id || null}
+                    workerDisplayName={`${firstName} ${lastName}`.trim() || preferredName?.trim() || null}
+                    viewerSecurityLevel={viewerSecurityLevel}
                   />
                 );
               case 'Certifications':
