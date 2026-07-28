@@ -333,6 +333,21 @@ describe('timesheets/payRules/rules/ca — California', () => {
       expect(r.mealBreakPenaltyHours).to.equal(0);
     });
 
+    it('duration-only 30-min break (no start time) → no penalty (Danny fix 2026-07-27)', () => {
+      // The break UI is duration-only (#47) — a ≥30-min meal with no clock
+      // start time must clear the meal penalty, or recruiters can never fix
+      // an over-charged total by entering the break that was taken.
+      const days = [day('a', '2026-05-03', 8, { breaks: [meal('', 30)] })];
+      const r = caRules.computeWeekBreakdown(days, '2026-05-03').get('a')!;
+      expect(r.mealBreakPenaltyHours).to.equal(0);
+    });
+
+    it('duration-only 20-min break (no start time) → penalty (not a meal)', () => {
+      const days = [day('a', '2026-05-03', 8, { breaks: [meal('', 20)] })];
+      const r = caRules.computeWeekBreakdown(days, '2026-05-03').get('a')!;
+      expect(r.mealBreakPenaltyHours).to.equal(1);
+    });
+
     it('30-min break AFTER hour 5 → penalty applies (late meal)', () => {
       const days = [
         day('a', '2026-05-03', 8, {

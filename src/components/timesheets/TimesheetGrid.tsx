@@ -1279,23 +1279,25 @@ const EntryRow: React.FC<EntryRowProps> = ({
         </Stack>
       </TableCell>
 
-      <Tooltip title={breakPenaltyTooltip} arrow disableHoverListener={!breakPenaltyActive}>
-        <TableCell
-          sx={
-            breakPenaltyActive
-              ? { bgcolor: 'warning.light', borderRadius: 1, transition: 'background-color 120ms' }
-              : undefined
-          }
-        >
-          <BreaksCell
-            value={Array.isArray(entry.breaks) ? entry.breaks : []}
-            onSave={fieldHandlers.breaks}
-            shiftStart={shiftStart}
-            shiftEnd={shiftEnd}
-            disabled={readOnly}
-          />
-        </TableCell>
-      </Tooltip>
+      {/* Yellow cue only (no hover tooltip — it overlapped the break editor
+          popover, Danny 2026-07-27). The break cell glows when a CA meal/rest
+          penalty is inflating the total; the totals header explains why. */}
+      <TableCell
+        title={breakPenaltyTooltip || undefined}
+        sx={
+          breakPenaltyActive
+            ? { bgcolor: 'warning.light', borderRadius: 1, transition: 'background-color 120ms' }
+            : undefined
+        }
+      >
+        <BreaksCell
+          value={Array.isArray(entry.breaks) ? entry.breaks : []}
+          onSave={fieldHandlers.breaks}
+          shiftStart={shiftStart}
+          shiftEnd={shiftEnd}
+          disabled={readOnly}
+        />
+      </TableCell>
 
       {/* Actual hours column.
           The override field is ALWAYS editable. The trigger honors

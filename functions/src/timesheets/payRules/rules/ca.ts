@@ -80,35 +80,36 @@ function computeEarnedRestBreaks(workedMinutes: number): number {
 }
 
 /**
- * 1h penalty if shift > 5h AND no meal break (≥30 min) started by
- * the 5th hour of the shift. Conservative on missing data: if
- * `actualStartTime` is missing but breaks exist, treat as compliant
- * (we can't prove non-compliance) — that matches the "no liability
- * without evidence" stance and aligns with how Phase 3's manual
- * override toggle is expected to work.
+ * 1h penalty if shift > 5h AND no compliant meal break was taken.
+ *
+ * The break UI is DURATION-ONLY (a break is `{durationMins}` with no
+ * clock start time — task #47). So a recorded meal break of ≥30 min is
+ * treated as compliant: we can't prove it started after the 5th hour, and
+ * "no liability without evidence" is the stance (also how the recruiter is
+ * meant to clear a penalty — enter the meal that was taken). When a break
+ * DOES carry a start time (legacy/future), we keep the precise 5th-hour
+ * check. No ≥30-min break at all on a >5h shift ⇒ penalty.
  */
 function computeMealBreakPenalty(day: DayInput): number {
   if (day.workedMinutes <= 5 * 60) return 0;
 
   const startMin = hhmmToMinutes(day.actualStartTime);
-  // If we don't know shift start, fall through pessimistically only
-  // when there are NO breaks at all — at least we know nothing was
-  // taken. With breaks but no start time, treat as compliant.
-  if (startMin === null) {
-    return day.breaks.length === 0 ? 1 : 0;
-  }
-  const fifthHourBoundary = startMin + 5 * 60;
+  const fifthHourBoundary = startMin === null ? null : startMin + 5 * 60;
 
   for (const br of day.breaks) {
     if (br.durationMins < 30) continue;
     const breakStartMin = hhmmToMinutes(br.startTime);
-    if (breakStartMin === null) continue;
-    // Overnight handling: if the break appears to start "before" the
-    // shift in clock-time, it's the next day — add 24h.
+    // Duration-only break (no start time) — a ≥30-min meal was recorded;
+    // treat as compliant. This is what makes "enter a 30-min break to clear
+    // the meal penalty" actually work (Danny 2026-07-27).
+    if (breakStartMin === null || fifthHourBoundary === null) return 0;
+    // Overnight handling: a break that appears to start "before" the shift
+    // in clock-time is the next day — add 24h.
     const adjustedBreakStart =
-      breakStartMin < startMin ? breakStartMin + 24 * 60 : breakStartMin;
+      breakStartMin < startMin! ? breakStartMin + 24 * 60 : breakStartMin;
     if (adjustedBreakStart <= fifthHourBoundary) return 0;
   }
+  // No compliant ≥30-min meal recorded on a >5h shift → penalty.
   return 1;
 }
 
