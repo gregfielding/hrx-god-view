@@ -120,8 +120,8 @@ export const savePayrollVenueMapping = onCall(
   },
 );
 
-/** Books access: hrx staff, admin role, or securityLevel >= 6. */
-async function ensureBooksAccess(uid: string | undefined, token: Record<string, unknown> | undefined, tenantId: string): Promise<void> {
+/** Books access: hrx staff, admin role, or securityLevel >= 6. Shared with offCyclePayments. */
+export async function ensureBooksAccess(uid: string | undefined, token: Record<string, unknown> | undefined, tenantId: string): Promise<void> {
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   if (token?.hrx === true) return;
   const data = ((await db.collection('users').doc(uid).get()).data() ?? {}) as Record<string, unknown>;
@@ -352,6 +352,45 @@ export const getPayrollCostReport = onCall(
         source: isImport ? 'csv_import' : 'scheduled',
       });
     }
+
+    // Off-cycle payments (Mark's manual adjustments) — first-class rows,
+    // attributed at creation time so no mapping/fallback chain needed.
+    const ocSnap = await db
+      .collection(`tenants/${tenantId}/offcycle_payments`)
+      .where('workDate', '>=', startDate)
+      .where('workDate', '<=', endDate)
+      .get();
+    ocSnap.forEach((d) => {
+      const oc = d.data();
+      const status = trim(oc.status);
+      if (status !== 'sent_to_everee' && status !== 'paid') return;
+      if (hiringEntityId && trim(oc.hiringEntityId) !== hiringEntityId) return;
+      const sentAt = oc.sentToEvereeAt as admin.firestore.Timestamp | undefined;
+      const sentDate = sentAt?.toDate ? sentAt.toDate().toISOString().slice(0, 10) : null;
+      rows.push({
+        entryId: `offcycle:${d.id}`,
+        workDate: trim(oc.workDate),
+        hiringEntityId: trim(oc.hiringEntityId),
+        batchId: sentDate ? `${trim(oc.hiringEntityId) || 'entity'} · sent ${sentDate}` : null,
+        workerId: trim(oc.workerId),
+        workerName: trim(oc.workerName) || null,
+        accountId: trim(oc.accountId) || null,
+        accountName: trim(oc.accountName) || null,
+        jobOrderId: trim(oc.jobOrderId) || null,
+        jobOrderName: trim(oc.jobOrderName) || null,
+        jobOrderNumber: trim(oc.jobOrderNumber) || null,
+        poNumber: trim(oc.poNumber) || null,
+        worksiteName: trim(oc.worksiteName) || null,
+        hours: num(oc.hours),
+        gross: num(oc.grossAmount),
+        tips: 0,
+        bonus: 0,
+        premiums: 0,
+        total: num(oc.total),
+        status,
+        source: `off_cycle (${trim(oc.reasonLabel) || trim(oc.reason)})`,
+      });
+    });
 
     const grand = round2(rows.reduce((s, r) => s + r.total, 0));
 

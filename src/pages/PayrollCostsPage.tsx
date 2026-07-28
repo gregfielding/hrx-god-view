@@ -142,6 +142,47 @@ const PayrollCostsPage: React.FC = () => {
   const [joOptions, setJoOptions] = useState<JoOption[] | null>(null);
   const [mapJo, setMapJo] = useState<JoOption | null>(null);
   const [mapSaving, setMapSaving] = useState(false);
+  // Off-cycle payment dialog state (Mark's manual adjustment form).
+  const [ocOpen, setOcOpen] = useState(false);
+  const [ocWorkerQuery, setOcWorkerQuery] = useState('');
+  const [ocWorkerOpts, setOcWorkerOpts] = useState<Array<{ id: string; name: string; email: string | null }>>([]);
+  const [ocWorker, setOcWorker] = useState<{ id: string; name: string; email: string | null } | null>(null);
+  const [ocEntity, setOcEntity] = useState('');
+  const [ocReason, setOcReason] = useState('missed_hours');
+  const [ocDate, setOcDate] = useState(todayIso());
+  const [ocHours, setOcHours] = useState('');
+  const [ocRate, setOcRate] = useState('');
+  const [ocGross, setOcGross] = useState('');
+  const [ocGrossTouched, setOcGrossTouched] = useState(false);
+  const [ocPerDiem, setOcPerDiem] = useState('');
+  const [ocJo, setOcJo] = useState<JoOption | null>(null);
+  const [ocNotes, setOcNotes] = useState('');
+  const [ocSaving, setOcSaving] = useState(false);
+  const [ocError, setOcError] = useState<string | null>(null);
+  const [ocSuccess, setOcSuccess] = useState<string | null>(null);
+
+  // Debounced worker search for the off-cycle dialog.
+  useEffect(() => {
+    if (!ocOpen || ocWorkerQuery.trim().length < 2 || !tenantId) return;
+    const t = setTimeout(() => {
+      const fn = httpsCallable(functions, 'searchOffCycleWorkers');
+      fn({ tenantId, query: ocWorkerQuery.trim() })
+        .then((res) => {
+          const d = res.data as { workers?: Array<{ id: string; name: string; email: string | null }> };
+          setOcWorkerOpts(d.workers ?? []);
+        })
+        .catch(() => setOcWorkerOpts([]));
+    }, 350);
+    return () => clearTimeout(t);
+  }, [ocOpen, ocWorkerQuery, tenantId]);
+
+  // Gross auto-computes from hours × rate until the user edits it directly.
+  useEffect(() => {
+    if (ocGrossTouched) return;
+    const h = Number(ocHours);
+    const r = Number(ocRate);
+    if (h > 0 && r > 0) setOcGross((Math.round(h * r * 100) / 100).toFixed(2));
+  }, [ocHours, ocRate, ocGrossTouched]);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -182,9 +223,7 @@ const PayrollCostsPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
-  const openMapDialog = async (unattributedLabel: string) => {
-    setMapVenue(unattributedLabel.replace(/^Unattributed — /, ''));
-    setMapJo(null);
+  const ensureJoOptions = useCallback(async () => {
     if (joOptions || !tenantId) return;
     const opts: JoOption[] = [];
     const seen = new Set<string>();
@@ -210,6 +249,12 @@ const PayrollCostsPage: React.FC = () => {
     }
     opts.sort((a, b) => a.label.localeCompare(b.label));
     setJoOptions(opts);
+  }, [joOptions, tenantId]);
+
+  const openMapDialog = async (unattributedLabel: string) => {
+    setMapVenue(unattributedLabel.replace(/^Unattributed — /, ''));
+    setMapJo(null);
+    void ensureJoOptions();
   };
 
   const saveMapping = async (venueLabel: string, jobOrderId: string | null) => {
@@ -224,6 +269,56 @@ const PayrollCostsPage: React.FC = () => {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setMapSaving(false);
+    }
+  };
+
+  const openOffCycle = () => {
+    setOcOpen(true);
+    setOcError(null);
+    setOcSuccess(null);
+    setOcWorker(null);
+    setOcWorkerQuery('');
+    setOcWorkerOpts([]);
+    setOcEntity(entityId || entities[0]?.id || '');
+    setOcReason('missed_hours');
+    setOcDate(todayIso());
+    setOcHours('');
+    setOcRate('');
+    setOcGross('');
+    setOcGrossTouched(false);
+    setOcPerDiem('');
+    setOcJo(null);
+    setOcNotes('');
+    void ensureJoOptions();
+  };
+
+  const submitOffCycle = async () => {
+    if (!tenantId || !ocWorker || !ocEntity) return;
+    setOcSaving(true);
+    setOcError(null);
+    try {
+      const fn = httpsCallable(functions, 'createOffCyclePayment');
+      const res = await fn({
+        tenantId,
+        hiringEntityId: ocEntity,
+        workerId: ocWorker.id,
+        reason: ocReason,
+        workDate: ocDate,
+        hours: Number(ocHours) || 0,
+        hourlyRate: Number(ocRate) || 0,
+        grossAmount: Number(ocGross) || 0,
+        perDiemAmount: Number(ocPerDiem) || 0,
+        ...(ocJo ? { jobOrderId: ocJo.id } : {}),
+        notes: ocNotes,
+      });
+      const d = res.data as { total?: number };
+      setOcOpen(false);
+      setOcSuccess(`Payment of ${usd(d.total)} for ${ocWorker.name} sent to Everee.`);
+      await load();
+    } catch (err) {
+      setOcError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOcSaving(false);
     }
   };
 
@@ -294,6 +389,9 @@ const PayrollCostsPage: React.FC = () => {
             >
               Export CSV
             </Button>
+            <Button variant="outlined" color="secondary" onClick={openOffCycle}>
+              New off-cycle payment
+            </Button>
           </Stack>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
             Dollars sent to Everee (sent + paid entries) for work dates in the range. Rows that
@@ -305,6 +403,11 @@ const PayrollCostsPage: React.FC = () => {
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
+        </Alert>
+      )}
+      {ocSuccess && (
+        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setOcSuccess(null)}>
+          {ocSuccess}
         </Alert>
       )}
       {loading && !data && (
@@ -501,6 +604,133 @@ const PayrollCostsPage: React.FC = () => {
           )}
         </>
       )}
+
+      <Dialog open={ocOpen} onClose={() => !ocSaving && setOcOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>New off-cycle payment</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Sends the payment to Everee right away and records it against the job order so it shows
+            in payroll costs.
+          </Typography>
+          {ocError && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setOcError(null)}>
+              {ocError}
+            </Alert>
+          )}
+          <Stack spacing={2}>
+            <Autocomplete
+              options={ocWorkerOpts}
+              getOptionLabel={(o) => (o.email ? `${o.name} (${o.email})` : o.name)}
+              isOptionEqualToValue={(a, b) => a.id === b.id}
+              filterOptions={(x) => x}
+              value={ocWorker}
+              onChange={(_e, v) => setOcWorker(v)}
+              onInputChange={(_e, v) => setOcWorkerQuery(v)}
+              noOptionsText={ocWorkerQuery.trim().length < 2 ? 'Type a name or email…' : 'No workers found'}
+              renderInput={(params) => <TextField {...params} label="Worker" autoFocus />}
+            />
+            <FormControl size="small" fullWidth>
+              <InputLabel>Hiring entity</InputLabel>
+              <Select value={ocEntity} label="Hiring entity" onChange={(e) => setOcEntity(e.target.value)}>
+                {entities.map((e) => (
+                  <MenuItem key={e.id} value={e.id}>
+                    {e.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" fullWidth>
+              <InputLabel>Payment reason</InputLabel>
+              <Select value={ocReason} label="Payment reason" onChange={(e) => setOcReason(e.target.value)}>
+                <MenuItem value="missed_hours">Missed hours</MenuItem>
+                <MenuItem value="late_timesheet">Late timesheet</MenuItem>
+                <MenuItem value="forgot_bank_account">Forgot bank account</MenuItem>
+                <MenuItem value="bonus">Bonus</MenuItem>
+                <MenuItem value="expense_reimbursement">Expense reimbursement</MenuItem>
+                <MenuItem value="payroll_correction">Payroll correction</MenuItem>
+                <MenuItem value="other">Other</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              size="small"
+              label="Work date"
+              type="date"
+              value={ocDate}
+              onChange={(e) => setOcDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+            />
+            <Stack direction="row" spacing={2}>
+              <TextField
+                size="small"
+                label="Hours"
+                type="number"
+                value={ocHours}
+                onChange={(e) => setOcHours(e.target.value)}
+              />
+              <TextField
+                size="small"
+                label="Hourly rate"
+                type="number"
+                value={ocRate}
+                onChange={(e) => setOcRate(e.target.value)}
+              />
+              <TextField
+                size="small"
+                label="Gross amount"
+                type="number"
+                value={ocGross}
+                onChange={(e) => {
+                  setOcGross(e.target.value);
+                  setOcGrossTouched(true);
+                }}
+                helperText="Auto-fills from hours × rate"
+              />
+            </Stack>
+            <TextField
+              size="small"
+              label="Per diem (optional)"
+              type="number"
+              value={ocPerDiem}
+              onChange={(e) => setOcPerDiem(e.target.value)}
+              sx={{ maxWidth: 220 }}
+            />
+            <Autocomplete
+              options={joOptions ?? []}
+              loading={joOptions === null}
+              value={ocJo}
+              onChange={(_e, v) => setOcJo(v)}
+              renderInput={(params) => <TextField {...params} label="Job order (for cost attribution)" />}
+            />
+            <TextField
+              size="small"
+              label="Notes"
+              multiline
+              minRows={2}
+              value={ocNotes}
+              onChange={(e) => setOcNotes(e.target.value)}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOcOpen(false)} disabled={ocSaving}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={
+              ocSaving ||
+              !ocWorker ||
+              !ocEntity ||
+              (Number(ocGross) || 0) + (Number(ocPerDiem) || 0) <= 0
+            }
+            onClick={() => void submitOffCycle()}
+          >
+            {ocSaving
+              ? 'Sending…'
+              : `Send ${usd((Number(ocGross) || 0) + (Number(ocPerDiem) || 0))} to Everee`}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={mapVenue !== null} onClose={() => setMapVenue(null)} maxWidth="sm" fullWidth>
         <DialogTitle>Map “{mapVenue}” to a job order</DialogTitle>
