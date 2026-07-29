@@ -56,7 +56,6 @@ import {
 } from "../types";
 import {
   applyWeeklyOTCascade,
-  hhmmToMinutes,
   minutesToHours,
   PerDayMinutes,
   splitDailyHoursWithThresholds,
@@ -80,36 +79,33 @@ function computeEarnedRestBreaks(workedMinutes: number): number {
 }
 
 /**
- * 1h penalty if shift > 5h AND no compliant meal break was taken.
+ * 1h penalty if shift > 5h AND no compliant meal break was recorded.
  *
- * The break UI is DURATION-ONLY (a break is `{durationMins}` with no
- * clock start time — task #47). So a recorded meal break of ≥30 min is
- * treated as compliant: we can't prove it started after the 5th hour, and
- * "no liability without evidence" is the stance (also how the recruiter is
- * meant to clear a penalty — enter the meal that was taken). When a break
- * DOES carry a start time (legacy/future), we keep the precise 5th-hour
- * check. No ≥30-min break at all on a >5h shift ⇒ penalty.
+ * The break UI is DURATION-ONLY (a break is `{durationMins}` with no real
+ * clock start time — task #47). The grid's BreaksCell *synthesizes* a stub
+ * start time (anchored at noon) purely to satisfy the type shape; that stub
+ * is NOT evidence of when the meal was actually taken. So the meal penalty
+ * must key ONLY off duration: any recorded break of ≥30 min on a >5h shift
+ * is treated as a compliant meal and clears the penalty. This matches the
+ * documented stance — "we can't prove it started after the 5th hour; no
+ * liability without evidence" — and is how the recruiter clears a penalty
+ * (enter the meal that was taken).
+ *
+ * History: an earlier version gated on `br.startTime` vs a 5th-hour
+ * boundary. Because BreaksCell stamps every grid break at noon, that gate
+ * fired on FAKE times — an override entry (Danny 2026-07-29) and any
+ * early-start shift kept the meal penalty despite a real 30-min break. We
+ * removed the clock gate; if genuinely trustworthy start times ever exist
+ * (real punches), a precise 5th-hour check can be reintroduced keyed off a
+ * flag that distinguishes real times from stubs. No ≥30-min break at all on
+ * a >5h shift ⇒ penalty.
  */
 function computeMealBreakPenalty(day: DayInput): number {
   if (day.workedMinutes <= 5 * 60) return 0;
-
-  const startMin = hhmmToMinutes(day.actualStartTime);
-  const fifthHourBoundary = startMin === null ? null : startMin + 5 * 60;
-
   for (const br of day.breaks) {
-    if (br.durationMins < 30) continue;
-    const breakStartMin = hhmmToMinutes(br.startTime);
-    // Duration-only break (no start time) — a ≥30-min meal was recorded;
-    // treat as compliant. This is what makes "enter a 30-min break to clear
-    // the meal penalty" actually work (Danny 2026-07-27).
-    if (breakStartMin === null || fifthHourBoundary === null) return 0;
-    // Overnight handling: a break that appears to start "before" the shift
-    // in clock-time is the next day — add 24h.
-    const adjustedBreakStart =
-      breakStartMin < startMin! ? breakStartMin + 24 * 60 : breakStartMin;
-    if (adjustedBreakStart <= fifthHourBoundary) return 0;
+    if (br.durationMins >= 30) return 0;
   }
-  // No compliant ≥30-min meal recorded on a >5h shift → penalty.
+  // No ≥30-min meal recorded on a >5h shift → penalty.
   return 1;
 }
 
