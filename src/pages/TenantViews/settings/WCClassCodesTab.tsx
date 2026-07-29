@@ -43,6 +43,18 @@ export interface WorkersCompClassCode {
   code: string;
   title: string;
   description?: string;
+  /** Governing rating bureau (NCCI / CA_WCIRB / PA_PCRB …) — the same
+   *  code number means different things across bureaus. */
+  bureau?: string;
+  /** How the description was obtained: web_ncci / web_ca_wcirb (sourced)
+   *  or draft_needs_review (low-confidence, prioritize for sign-off). */
+  descriptionSource?: string;
+  /** A securityLevel-5+ reviewer has confirmed the description is correct.
+   *  WC misclassification is an audit risk — descriptions are trusted by
+   *  the classifier only once verified. */
+  descriptionVerified?: boolean;
+  /** States where C1 actually uses this code (from the rate matrix). */
+  statesInUse?: string[];
   active: boolean;
   createdAt?: any;
   updatedAt?: any;
@@ -117,6 +129,11 @@ const WCClassCodesTab: React.FC<WCClassCodesTabProps> = ({ tenantId }) => {
         code,
         title,
         description: (form.description || '').trim() || undefined,
+        bureau: (form.bureau || '').trim() || undefined,
+        descriptionVerified: form.descriptionVerified ?? false,
+        // Editing the description implies a human touched it — keep the
+        // source honest so the review queue reflects reality.
+        descriptionSource: editingItem ? 'manual' : (form.descriptionSource || 'manual'),
         active: form.active ?? true,
         updatedAt: serverTimestamp(),
       };
@@ -142,9 +159,17 @@ const WCClassCodesTab: React.FC<WCClassCodesTabProps> = ({ tenantId }) => {
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-        <Typography variant="body2" color="text.secondary">
-          Central WC class codes for job order dropdown selection. Rate sets by entity+state coming in Phase 2.
-        </Typography>
+        <Box>
+          <Typography variant="body2" color="text.secondary">
+            Central WC class codes — definitions that let HRX suggest a code + rate for any job title.
+          </Typography>
+          {items.some((i) => i.descriptionVerified === false) && (
+            <Typography variant="caption" color="warning.main">
+              {items.filter((i) => i.descriptionVerified === false).length} code(s) need review — open
+              each, confirm the description, and toggle “Description verified”.
+            </Typography>
+          )}
+        </Box>
         <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreate}>
           Add Class Code
         </Button>
@@ -160,6 +185,7 @@ const WCClassCodesTab: React.FC<WCClassCodesTabProps> = ({ tenantId }) => {
                 <TableCell>Code</TableCell>
                 <TableCell>Title</TableCell>
                 <TableCell>Description</TableCell>
+                <TableCell>Review</TableCell>
                 <TableCell>Active</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
@@ -167,7 +193,7 @@ const WCClassCodesTab: React.FC<WCClassCodesTabProps> = ({ tenantId }) => {
             <TableBody>
               {items.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
+                  <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
                     No class codes. Add codes (e.g. 9015) for job order selection.
                   </TableCell>
                 </TableRow>
@@ -178,12 +204,25 @@ const WCClassCodesTab: React.FC<WCClassCodesTabProps> = ({ tenantId }) => {
                       <Typography variant="body2" fontFamily="monospace" fontWeight={500}>
                         {item.code}
                       </Typography>
+                      {(item.bureau || (item.statesInUse && item.statesInUse.length > 0)) && (
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                          {[item.bureau, (item.statesInUse || []).join(' ')].filter(Boolean).join(' · ')}
+                        </Typography>
+                      )}
                     </TableCell>
                     <TableCell>{item.title}</TableCell>
-                    <TableCell>
+                    <TableCell sx={{ maxWidth: 380 }}>
                       <Typography variant="body2" color="text.secondary">
                         {item.description || '—'}
                       </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        label={item.descriptionVerified ? 'Verified' : 'Needs review'}
+                        size="small"
+                        color={item.descriptionVerified ? 'success' : 'warning'}
+                        variant={item.descriptionVerified ? 'filled' : 'outlined'}
+                      />
                     </TableCell>
                     <TableCell>
                       <Chip
@@ -233,6 +272,22 @@ const WCClassCodesTab: React.FC<WCClassCodesTabProps> = ({ tenantId }) => {
               fullWidth
               multiline
               rows={2}
+            />
+            {form.bureau && (
+              <Typography variant="caption" color="text.secondary">
+                Bureau: {form.bureau}
+                {form.descriptionSource ? ` · source: ${form.descriptionSource}` : ''}
+                {form.statesInUse && form.statesInUse.length > 0 ? ` · used in: ${form.statesInUse.join(', ')}` : ''}
+              </Typography>
+            )}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={form.descriptionVerified ?? false}
+                  onChange={(e) => setForm((f) => ({ ...f, descriptionVerified: e.target.checked }))}
+                />
+              }
+              label="Description verified (confirmed correct against the carrier policy)"
             />
             <FormControlLabel
               control={
