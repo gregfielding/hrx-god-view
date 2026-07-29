@@ -219,7 +219,13 @@ export async function getTemplateWithLegacyFallback(
       return {
         template: {
           ...newTemplate,
-          body: (newTemplate.body || '').replace(/\{([a-zA-Z0-9_]+)\}/g, '{{$1}}'),
+          // Upgrade GENUINE single-brace `{var}` (legacy authoring) to `{{var}}`,
+        // but leave existing `{{var}}` untouched. The old regex also matched the
+        // inner `{var}` of `{{var}}`, turning it into `{{{var}}}`; the renderer
+        // then reduced that to `{value}`, leaking literal braces to workers
+        // (Danny 2026-07-29: "...in {Oakland Arena}...on {} at {}..."). The
+        // lookbehind/lookahead scope the match to true single braces only.
+        body: (newTemplate.body || '').replace(/(?<!\{)\{([a-zA-Z0-9_]+)\}(?!\})/g, '{{$1}}'),
         },
         source: 'new',
       };
