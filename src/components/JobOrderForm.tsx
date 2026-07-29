@@ -547,6 +547,52 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   const wcMaps = useWorkersCompRatesByJobTitle(tenantId);
   const jobTitlesList = useTenantJobTitleOptions(tenantId);
 
+  // WC class-code catalog (code → title/description) so the position's
+  // WC field can show what the code MEANS, not just the number. Loaded
+  // once per tenant from Settings > Onboarding Library > WC Class Codes.
+  const [wcCatalog, setWcCatalog] = useState<
+    Record<string, { title?: string; description?: string; verified?: boolean }>
+  >({});
+  useEffect(() => {
+    if (!tenantId) return;
+    let cancelled = false;
+    getDocs(collection(db, 'tenants', tenantId, 'workers_comp_class_codes'))
+      .then((snap) => {
+        if (cancelled) return;
+        const map: Record<string, { title?: string; description?: string; verified?: boolean }> = {};
+        snap.docs.forEach((d) => {
+          const v = d.data() as Record<string, unknown>;
+          const code = String(v.code ?? '').trim();
+          if (code) {
+            map[code] = {
+              title: (v.title as string) || undefined,
+              description: (v.description as string) || undefined,
+              verified: v.descriptionVerified === true,
+            };
+          }
+        });
+        setWcCatalog(map);
+      })
+      .catch(() => setWcCatalog({}));
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
+  /** Helper-text node for a WC class-code field: the catalog meaning when
+   *  the code is known, else the pointer to Settings. */
+  const wcCodeHelper = (code: string | undefined | null): React.ReactNode => {
+    const hit = wcCatalog[String(code ?? '').trim()];
+    if (!hit) return 'From Settings > Onboarding Library > WC Class Codes';
+    return (
+      <span>
+        {hit.title ? <strong>{hit.title}</strong> : null}
+        {hit.description ? ` — ${hit.description}` : ''}
+        {hit.verified === false ? ' (unverified)' : ''}
+      </span>
+    );
+  };
+
   /** Account Pricing tab positions (child → national fallback); empty ⇒ use O*NET unless propJobTitles overrides */
   const [resolvedAccountPositions, setResolvedAccountPositions] = useState<AccountPositionPricing[]>([]);
   const pricingByJobTitle = useMemo(
@@ -4401,7 +4447,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                   setGigPositions(updated);
                                 }}
                                 placeholder="e.g. 9015"
-                                helperText="From Settings > Onboarding Library > WC Class Codes"
+                                helperText={wcCodeHelper(position.workersCompClassCode)}
                               />
                             </Box>
                             <Box sx={{ flex: 1 }}>
@@ -4677,7 +4723,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       value={formData.workersCompClassCode || ''}
                       onChange={(e) => handleInputChange('workersCompClassCode', e.target.value)}
                       placeholder="e.g. 9015"
-                      helperText="From Settings > Onboarding Library > WC Class Codes"
+                      helperText={wcCodeHelper(formData.workersCompClassCode)}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
