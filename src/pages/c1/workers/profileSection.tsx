@@ -17,10 +17,10 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { sendPasswordResetEmail } from 'firebase/auth';
+import { sendPasswordReset } from '../../../services/sendPasswordResetCallable';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
-import { db, auth } from '../../../firebase';
+import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { setLanguage, useT } from '../../../i18n';
 import WorkerBasicIdentityCard from '../../../components/worker/profile/WorkerBasicIdentityCard';
@@ -363,7 +363,7 @@ const WorkerProfileSection: React.FC = () => {
     setSaveError(null);
     setSaveMessage(null);
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordReset(email);
       setSaveMessage(t('profile.passwordResetEmailSent', { email }));
     } catch {
       setSaveError(t('profile.unableToSendPasswordReset'));

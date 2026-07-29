@@ -30,12 +30,12 @@ import {
   Language as LanguageIcon,
 } from '@mui/icons-material';
 import { 
-  createUserWithEmailAndPassword, 
+  createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  sendPasswordResetEmail,
   updateProfile
 } from 'firebase/auth';
 import { auth, db } from '../firebase';
+import { sendPasswordReset } from '../services/sendPasswordResetCallable';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { logSMSConsent, getUserAgent } from '../utils/consentLogging';
 import { useAuth } from '../contexts/AuthContext';
@@ -594,7 +594,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
     setError(null);
 
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordReset(email);
       setSuccess(t.successResetSent);
     } catch (error: any) {
       console.error('Password reset error:', error);

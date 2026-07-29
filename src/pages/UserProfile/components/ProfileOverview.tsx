@@ -101,9 +101,9 @@ import {
   orderBy,
   limit,
 } from 'firebase/firestore';
-import { sendPasswordResetEmail } from 'firebase/auth';
+import { sendPasswordReset } from '../../../services/sendPasswordResetCallable';
 
-import { db , auth } from '../../../firebase';
+import { db } from '../../../firebase';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
 import { normalizeLast4SsnDigits } from '../../../utils/last4Ssn';
 import { logProfileUpdateActivity, logSecurityChangeActivity } from '../../../utils/activityLogger';
@@ -1252,7 +1252,7 @@ const transportOptions: Array<{
 
     setResetPasswordLoading(true);
     try {
-      await sendPasswordResetEmail(auth, form.email);
+      await sendPasswordReset(form.email);
       
       // Log the password reset activity
       await logSecurityChangeActivity(

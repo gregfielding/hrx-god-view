@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   confirmPasswordReset,
-  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   verifyPasswordResetCode,
 } from 'firebase/auth';
+import { sendPasswordReset } from '../services/sendPasswordResetCallable';
 import {
   Box,
   Button,
@@ -212,10 +212,9 @@ const SetupPassword = () => {
       // invite that hit the dead-link → recovery loop doesn't get force-routed
       // into the worker payroll surface. The component-level `continueUrl`
       // value is already validated (same-origin, length-capped) at line ~77.
-      await sendPasswordResetEmail(auth, trimmed, {
-        url: `https://app.hrxone.com/setup-password?continueUrl=${encodeURIComponent(continueUrl)}`,
-        handleCodeInApp: true,
-      });
+      // Routes through our authenticated SendGrid sender (deliverable),
+      // preserving the user's original continueUrl.
+      await sendPasswordReset(trimmed, continueUrl);
       // Firebase intentionally does not signal whether the email is registered
       // (to prevent enumeration attacks). We always show success — if the
       // address is unknown, no email is sent and the user will eventually
