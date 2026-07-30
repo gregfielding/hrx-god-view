@@ -110,19 +110,19 @@ function computeMealBreakPenalty(day: DayInput): number {
 }
 
 /**
- * 1h penalty if any earned rest break is missing. Counts breaks of
- * 10–29 min as rest breaks (≥30 min counts as the meal break and
- * doesn't double-count toward rest). Flat 1h per day per §226.7,
- * not per missed break.
+ * Rest-break premiums are NOT auto-applied (Greg 2026-07-30).
+ *
+ * CA §226.7 owes a paid 10-min rest per 4h "or major fraction thereof",
+ * but rest breaks are PAID / on-the-clock and HRX does not track them.
+ * Inferring a *denied* rest break from the mere absence of a logged short
+ * break fired on essentially every shift (e.g. a compliant 4.25h shift was
+ * charged a full extra hour) and systematically inflated pay. Meal
+ * penalties still apply — those we CAN evidence, via the 30-min break
+ * field. `computeEarnedRestBreaks` is retained (exported for tests / future
+ * re-enable) but no longer gates pay.
  */
-function computeRestBreakPenalty(day: DayInput): number {
-  const earned = computeEarnedRestBreaks(day.workedMinutes);
-  if (earned === 0) return 0;
-  let restBreaksTaken = 0;
-  for (const br of day.breaks) {
-    if (br.durationMins >= 10 && br.durationMins < 30) restBreaksTaken += 1;
-  }
-  return restBreaksTaken >= earned ? 0 : 1;
+function computeRestBreakPenalty(_day: DayInput): number {
+  return 0;
 }
 
 /**
