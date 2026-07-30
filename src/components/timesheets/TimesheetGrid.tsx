@@ -1549,9 +1549,12 @@ const EntryRow: React.FC<EntryRowProps> = ({
           onClose={() => setWcDialogOpen(false)}
           onSuccess={() => {
             setWcDialogOpen(false);
-            // Re-resolve so the row picks up the new override (and the
-            // shift back-fill propagates to siblings on next render).
-            void refreshEntry(entry.id);
+            // FULL reload — the row's WC cell renders `resolvedWorkersCompCode`
+            // from the resolver, and refreshEntry does NOT re-run the resolver
+            // (Greg 2026-07-31: "choosing the code doesn't save it to the row"
+            // — it saved, but the cell stayed stale). reloadAll re-resolves so
+            // the new code + matrix-resolved rate + shift back-fill all show.
+            reloadAll();
           }}
           tenantId={tenantId}
           entryId={entry.id}
