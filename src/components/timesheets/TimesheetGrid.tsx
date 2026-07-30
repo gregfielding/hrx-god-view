@@ -64,6 +64,7 @@ import * as XLSX from 'xlsx';
 import {
   DeleteOutline as DeleteIcon,
   Edit as EditIcon,
+  LinkOutlined as LinkIcon,
   OpenInNew as OpenInNewIcon,
   Refresh as RefreshIcon,
   TableChart as TableChartIcon,
@@ -863,6 +864,37 @@ const ImportRow: React.FC<{
       setRechecking(false);
     }
   }, [tenantId, hiringEntityId, row.entry.id, refreshEntry]);
+
+  // Re-resolve: reconnect this import row to the worker's assignment (created
+  // after the row was imported), pulling its pay rate + WC + worksite. One
+  // click instead of re-uploading the CSV (Greg 2026-07-30).
+  const [reresolving, setReresolving] = React.useState(false);
+  const reresolveRow = React.useCallback(async () => {
+    if (!tenantId) return;
+    setReresolving(true);
+    try {
+      const fn = httpsCallable<
+        { tenantId: string; entryId: string },
+        { ok: true; connected: boolean; message?: string }
+      >(functions, 'reresolveImportEntry', { timeout: 60000 });
+      const res = await fn({ tenantId, entryId: row.entry.id });
+      if (res.data?.connected) {
+        // Full reload — worksite/rate/WC all changed; the resolver's WC chain
+        // must re-run so the row shows the connected values, not stale ones.
+        reloadAll();
+      } else {
+        // eslint-disable-next-line no-alert
+        window.alert(res.data?.message || 'No assignment covers this work date yet.');
+      }
+    } catch (e) {
+      console.error('reresolveImportEntry failed:', e);
+      // eslint-disable-next-line no-alert
+      window.alert(e instanceof Error ? e.message : 'Re-resolve failed.');
+    } finally {
+      setReresolving(false);
+    }
+  }, [tenantId, row.entry.id, reloadAll]);
+
   const wcCellSx = {
     fontVariantNumeric: 'tabular-nums' as const,
     cursor: wcEditable ? 'pointer' : 'default',
@@ -895,6 +927,24 @@ const ImportRow: React.FC<{
                       <CircularProgress size={14} />
                     ) : (
                       <RefreshIcon sx={{ fontSize: 15 }} />
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
+            ) : null}
+            {!live ? (
+              <Tooltip title="Re-resolve from assignment — pull pay rate, WC, and worksite from the worker's assignment (use after creating it)">
+                <span>
+                  <IconButton
+                    size="small"
+                    onClick={reresolveRow}
+                    disabled={reresolving}
+                    sx={{ p: 0.25 }}
+                  >
+                    {reresolving ? (
+                      <CircularProgress size={14} />
+                    ) : (
+                      <LinkIcon sx={{ fontSize: 15 }} />
                     )}
                   </IconButton>
                 </span>

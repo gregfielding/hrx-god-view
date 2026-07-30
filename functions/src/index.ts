@@ -448,6 +448,7 @@ export { onApplicationWriteUpdateCounters } from './applications/applicationCoun
 // flipping it anywhere flips the whole trio.
 export { setHotStatus } from './crm/setHotStatus';
 export { setImportEntryWorksite } from './timesheets/setImportEntryWorksite';
+export { reresolveImportEntry } from './timesheets/reresolveImportEntry';
 export { deleteImportEntry } from './timesheets/deleteImportEntry';
 export { recheckImportTimesheetBlocks } from './timesheets/recheckImportTimesheetBlocks';
 export { approveTimesheetEntriesCallable } from './timesheets/approveTimesheetEntriesCallable';

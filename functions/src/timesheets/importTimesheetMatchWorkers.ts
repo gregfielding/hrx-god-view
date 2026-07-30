@@ -138,7 +138,7 @@ interface MatchWorkersResponse {
   results: MatchRowResult[];
 }
 
-type Assignment = Record<string, any> & { id: string };
+export type Assignment = Record<string, any> & { id: string };
 
 /** sec 5–7 on the active tenant (or HRX). */
 async function assertTimesheetEditor(
@@ -282,7 +282,7 @@ async function queryUsersByLastName(
 
 /** All of a worker's assignments (by userId + candidateId), deduped, with
  *  terminal-cancelled ones dropped. */
-async function loadWorkerAssignments(tenantId: string, userId: string): Promise<Assignment[]> {
+export async function loadWorkerAssignments(tenantId: string, userId: string): Promise<Assignment[]> {
   const col = db.collection(`tenants/${tenantId}/assignments`);
   const [byUser, byCand] = await Promise.all([
     col.where('userId', '==', userId).get(),
@@ -301,7 +301,7 @@ async function loadWorkerAssignments(tenantId: string, userId: string): Promise<
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}/;
-const dateOnly = (v: unknown): string => {
+export const dateOnly = (v: unknown): string => {
   if (typeof v === 'string' && ISO.test(v)) return v.slice(0, 10);
   return '';
 };
@@ -309,7 +309,7 @@ const dateOnly = (v: unknown): string => {
 /** Pick the assignment whose [startDate, endDate] window contains
  *  `workDate` (empty endDate = ongoing). Prefer a paying rate + the most
  *  recent start. */
-function pairAssignment(assignments: Assignment[], workDate: string): Assignment | null {
+export function pairAssignment(assignments: Assignment[], workDate: string): Assignment | null {
   if (!workDate) return null;
   const inWindow = assignments.filter((a) => {
     const start = dateOnly(a.startDate);
