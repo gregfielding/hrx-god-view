@@ -1884,11 +1884,22 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
         narrowJobOrderIds !== undefined &&
         narrowJobOrderIds.size === 1) ||
       !!narrowShiftId;
-    if (!narrowedToOne || !tenantId || loading) return;
 
-    const fresh = rows.filter(
-      (r) => r.kind === 'empty' && !autoCreatedRef.current.has(r.key),
-    );
+    // Auto-materialize empty rows so the recruiter can start typing
+    // immediately instead of clicking "+ Add entry" on each one (Greg
+    // 2026-07-29 — "let me always just start entering data"). Fire when
+    // narrowed to a single JO/shift OR whenever the current view is small
+    // enough that bulk-creating drafts is safe — a normal account + week
+    // view (the common case) is exactly this. The cap keeps a wide,
+    // unscoped entity-wide view (hundreds of rows across unrelated JOs)
+    // from materializing a pile of empties; those still fall back to the
+    // per-row "+ Add entry" affordance.
+    const emptyRows = rows.filter((r) => r.kind === 'empty');
+    const AUTO_MATERIALIZE_CAP = 200;
+    const shouldAuto = narrowedToOne || emptyRows.length <= AUTO_MATERIALIZE_CAP;
+    if (!shouldAuto || !tenantId || loading) return;
+
+    const fresh = emptyRows.filter((r) => !autoCreatedRef.current.has(r.key));
     if (fresh.length === 0) return;
 
     // Reserve keys synchronously so a re-render mid-flight doesn't
