@@ -1412,7 +1412,26 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                   <TableRow
                     key={jobOrder.id}
                     hover
-                    onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
+                    onClick={(e) => {
+                      // Don't open the JO when the click came from an inline
+                      // control that manages its own interaction — the recruiter
+                      // multi-select cell (marked data-no-row-nav) or any MUI
+                      // popup (Autocomplete/Select/Menu). Deleting a chip or
+                      // picking an option removes the clicked node mid-click, so
+                      // the synthesized `click` retargets to the row; a plain
+                      // child stopPropagation misses it. Guarding here on the
+                      // event target is robust to that retarget + to portalled
+                      // poppers that never bubble through the cell at all.
+                      const target = e.target as HTMLElement | null;
+                      if (
+                        target?.closest?.(
+                          '[data-no-row-nav],.MuiAutocomplete-popper,.MuiPopover-root,.MuiMenu-root',
+                        )
+                      ) {
+                        return;
+                      }
+                      navigate(`/jobs/job-orders/${jobOrder.id}`);
+                    }}
                     sx={{
                       cursor: 'pointer',
                       backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
@@ -1745,7 +1764,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                         );
                       })()}
                     </TableCell>
-                    <TableCell sx={{ verticalAlign: 'middle' }}>
+                    <TableCell sx={{ verticalAlign: 'middle' }} data-no-row-nav>
                       <RecruiterAssignmentCell
                         tenantId={tenantId}
                         jobOrderId={jobOrder.id}
