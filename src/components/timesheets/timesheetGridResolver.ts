@@ -55,6 +55,7 @@ import {
 
 import type { Assignment } from '../../types/phase2';
 import { normalizeAssignmentStatus } from '../../utils/assignmentStatusNormalize';
+import { normalizeStateCode } from '../../utils/unemploymentRates';
 import type {
   TimesheetEntryStatus,
   TimesheetEntryV2,
@@ -856,6 +857,43 @@ export async function resolveTimesheetGrid(
       }
     }),
   ]);
+
+  // WC rate matrix (state+title → code, state+code → rate) — the fallback
+  // when the assignment/shift/JO chain has no WC code, so a manually-added
+  // row (worker not on a CSV, but with an assignment) still resolves WC the
+  // same way the CSV importer does (Greg 2026-07-31). Mirrors the import
+  // resolver: ambiguous title→code (one title on two codes in a state) is
+  // dropped so we never auto-pick the wrong class.
+  const wcMtxByStateTitle = new Map<string, { code: string; rate: number | null }>();
+  const wcMtxRateByStateCode = new Map<string, number>();
+  try {
+    const wcSnap = await getDocs(collection(fdb, 'tenants', tenantId, 'workers_comp_rates'));
+    const conflicts = new Set<string>();
+    wcSnap.forEach((d) => {
+      const v = d.data() as Record<string, unknown>;
+      const st = normalizeStateCode(String(v.state ?? '')).trim().toUpperCase();
+      const code = String(v.code ?? '').trim();
+      if (!st || !code) return;
+      const rate = Number(v.rate);
+      if (Number.isFinite(rate)) {
+        const rk = `${st}\t${code}`;
+        wcMtxRateByStateCode.set(rk, Math.max(wcMtxRateByStateCode.get(rk) ?? -Infinity, rate));
+      }
+      const titles = Array.isArray(v.jobTitles) ? (v.jobTitles as unknown[]) : [];
+      for (const t of titles) {
+        const lc = String(t ?? '').trim().toLowerCase();
+        if (!lc) continue;
+        const tk = `${st}\t${lc}`;
+        const existing = wcMtxByStateTitle.get(tk);
+        if (existing && existing.code !== code) conflicts.add(tk);
+        else if (!existing) wcMtxByStateTitle.set(tk, { code, rate: Number.isFinite(rate) ? rate : null });
+      }
+    });
+    for (const k of conflicts) wcMtxByStateTitle.delete(k);
+  } catch {
+    // Non-fatal — rows fall back to the assignment/JO chain only.
+  }
+
   for (const r of rows) {
     if (r.kind !== 'entry' && r.kind !== 'empty') continue;
     const joId = r.assignment.jobOrderId;
@@ -895,8 +933,44 @@ export async function resolveTimesheetGrid(
       jo?.workersCompRate,
       firstGigPosition?.workersCompRate,
     );
-    (r as unknown as Record<string, unknown>).resolvedWorkersCompCode = codeStr;
-    (r as unknown as Record<string, unknown>).resolvedWorkersCompRate = rateNum;
+    // Matrix fallback: no code from the chain → resolve by worksite state +
+    // job title; code but no rate → fill the rate by state + code.
+    let finalCode = codeStr;
+    let finalRate = rateNum;
+    const wcState = normalizeStateCode(
+      String(
+        (r.assignment as unknown as Record<string, unknown>).worksiteState ??
+          (r.kind === 'entry'
+            ? (r.entry as unknown as Record<string, unknown>).workState
+            : '') ??
+          '',
+      ),
+    )
+      .trim()
+      .toUpperCase();
+    if (wcState) {
+      if (!finalCode) {
+        const title = String(
+          (r.assignment as unknown as Record<string, unknown>).jobTitle ??
+            jo?.jobTitle ??
+            (firstGigPosition as Record<string, unknown> | undefined)?.jobTitle ??
+            '',
+        )
+          .trim()
+          .toLowerCase();
+        const hit = title ? wcMtxByStateTitle.get(`${wcState}\t${title}`) : undefined;
+        if (hit) {
+          finalCode = hit.code;
+          if (finalRate == null && hit.rate != null) finalRate = hit.rate;
+        }
+      }
+      if (finalCode && finalRate == null) {
+        const mr = wcMtxRateByStateCode.get(`${wcState}\t${finalCode}`);
+        if (mr != null) finalRate = mr;
+      }
+    }
+    (r as unknown as Record<string, unknown>).resolvedWorkersCompCode = finalCode;
+    (r as unknown as Record<string, unknown>).resolvedWorkersCompRate = finalRate;
     (r as unknown as Record<string, unknown>).hasEntryWorkersCompOverride =
       codeOverride != null || rateOverride != null;
   }
