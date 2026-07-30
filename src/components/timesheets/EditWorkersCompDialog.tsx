@@ -58,36 +58,30 @@ const EditWorkersCompDialog: React.FC<Props> = ({
   rowLabel,
 }) => {
   const [code, setCode] = useState<string>('');
-  const [rate, setRate] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setCode(initialCode ?? '');
-    setRate(initialRate != null ? String(initialRate) : '');
     setError(null);
-  }, [open, initialCode, initialRate]);
+  }, [open, initialCode]);
 
   const handleSubmit = async (): Promise<void> => {
     const trimmedCode = code.trim();
-    const rateNum = rate.trim() ? Number.parseFloat(rate.trim()) : null;
-    if (rate.trim() && (!Number.isFinite(rateNum) || (rateNum != null && rateNum < 0))) {
-      setError('Rate must be a positive decimal number.');
-      return;
-    }
     setSubmitting(true);
     setError(null);
     try {
-      await callSetEntryWorkersComp(functions, {
-        tenantId,
-        entryId,
-        // Pass null to clear, omit (undefined) to leave untouched. We
-        // always send both fields here — the recruiter sees both inputs
-        // and any blank one is interpreted as "clear that field."
-        workersCompCode: trimmedCode || null,
-        workersCompRate: rate.trim() ? rateNum : null,
-      });
+      await callSetEntryWorkersComp(
+        functions,
+        trimmedCode
+          ? // Code only — the server resolves the (internal) rate from the WC
+            // matrix by the row's worksite state + code. Omitting the rate
+            // (undefined) triggers that lookup.
+            { tenantId, entryId, workersCompCode: trimmedCode }
+          : // Blank code = clear the WC override (code + rate).
+            { tenantId, entryId, workersCompCode: null, workersCompRate: null },
+      );
       onSuccess();
       onClose();
     } catch (e: unknown) {
@@ -108,10 +102,10 @@ const EditWorkersCompDialog: React.FC<Props> = ({
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            Saves an override on this row AND back-fills the shift when
-            its WC fields are empty — so other entries on the same shift
-            inherit automatically. Future shifts on this JO are
-            unaffected; set the JO-level defaults there if needed.
+            Enter the class code — the (internal) rate resolves automatically
+            from your WC matrix by the worksite state + code. Saves an
+            override on this row AND back-fills the shift when its WC fields
+            are empty, so other entries on the same shift inherit too.
           </Typography>
 
           <TextField
@@ -121,16 +115,13 @@ const EditWorkersCompDialog: React.FC<Props> = ({
             onChange={(e) => setCode(e.target.value)}
             autoFocus
             inputProps={{ inputMode: 'numeric', maxLength: 8 }}
-            helperText="4-digit code from your insurer's worker-class schedule."
+            helperText="4-digit code from your insurer's worker-class schedule. Rate resolves from the matrix; leave blank to clear WC."
           />
-          <TextField
-            label="WC rate"
-            placeholder="e.g. 2.25"
-            value={rate}
-            onChange={(e) => setRate(e.target.value)}
-            inputProps={{ inputMode: 'decimal' }}
-            helperText="Per-$100 payroll rate (decimal). Optional — leave blank to clear."
-          />
+          {initialRate != null ? (
+            <Typography variant="caption" color="text.secondary">
+              Current rate: ${initialRate.toFixed(2)} (resolved from the matrix)
+            </Typography>
+          ) : null}
 
           {error && <Alert severity="error">{error}</Alert>}
         </Box>

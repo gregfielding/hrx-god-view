@@ -22,9 +22,31 @@
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
+import { normalizeUsStateCode } from '../recruiter/usStateNormalize';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
+
+/** Resolve the internal WC rate for a state + code from the rate matrix
+ *  (highest rate wins on a dup). Returns null when the pair isn't rated. */
+async function resolveMatrixRate(
+  tenantId: string,
+  state: string | null,
+  code: string,
+): Promise<number | null> {
+  if (!state || !code) return null;
+  const snap = await db
+    .collection(`tenants/${tenantId}/workers_comp_rates`)
+    .where('state', '==', state)
+    .where('code', '==', code)
+    .get();
+  let rate: number | null = null;
+  snap.forEach((d) => {
+    const r = Number((d.data() || {}).rate);
+    if (Number.isFinite(r)) rate = rate == null ? r : Math.max(rate, r);
+  });
+  return rate;
+}
 
 interface Input {
   tenantId: string;
@@ -95,6 +117,18 @@ export const setEntryWorkersComp = onCall<Input, Promise<Output>>(
     // string / number sets; `undefined` (omitted) leaves the field
     // alone — letting the caller patch one field without touching the
     // other.
+    // When a code is set but NO explicit rate is passed, resolve the rate
+    // from the WC matrix by the entry's worksite state + code. The grid's
+    // WC dialog now asks for the code only — the (internal, not-sent-to-
+    // Everee) rate is looked up here (Greg 2026-07-30).
+    let matrixRate: number | null = null;
+    if (typeof workersCompCode === 'string' && workersCompCode.trim() && workersCompRate === undefined) {
+      const state = normalizeUsStateCode(
+        String(entry.workState || (entry.worksiteAddress as Record<string, unknown> | undefined)?.state || ''),
+      );
+      matrixRate = await resolveMatrixRate(tenantId, state, workersCompCode.trim());
+    }
+
     const entryUpdates: Record<string, unknown> = {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
@@ -107,6 +141,8 @@ export const setEntryWorkersComp = onCall<Input, Promise<Output>>(
       entryUpdates.workersCompRate = admin.firestore.FieldValue.delete();
     } else if (typeof workersCompRate === 'number' && Number.isFinite(workersCompRate)) {
       entryUpdates.workersCompRate = workersCompRate;
+    } else if (matrixRate != null) {
+      entryUpdates.workersCompRate = matrixRate;
     }
     await entryRef.update(entryUpdates);
 
@@ -123,7 +159,9 @@ export const setEntryWorkersComp = onCall<Input, Promise<Output>>(
             : null;
       const finalRate =
         workersCompRate === undefined
-          ? (typeof entry.workersCompRate === 'number' ? (entry.workersCompRate as number) : null)
+          ? matrixRate != null
+            ? matrixRate
+            : (typeof entry.workersCompRate === 'number' ? (entry.workersCompRate as number) : null)
           : typeof workersCompRate === 'number' && Number.isFinite(workersCompRate)
             ? workersCompRate
             : null;
