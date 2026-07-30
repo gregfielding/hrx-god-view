@@ -123,8 +123,20 @@ export const setEntryWorkersComp = onCall<Input, Promise<Output>>(
     // Everee) rate is looked up here (Greg 2026-07-30).
     let matrixRate: number | null = null;
     if (typeof workersCompCode === 'string' && workersCompCode.trim() && workersCompRate === undefined) {
+      // Import rows keep the worksite state in the `import` sidecar; top-level
+      // `workState` / `worksiteAddress` can be empty (esp. after a re-resolve
+      // that had no assignment address), so fall back to it — otherwise the
+      // rate can't be looked up and the row is stuck at "Needs WC".
+      const impAddr = (entry.import as Record<string, unknown> | undefined)?.worksiteAddress as
+        | Record<string, unknown>
+        | undefined;
       const state = normalizeUsStateCode(
-        String(entry.workState || (entry.worksiteAddress as Record<string, unknown> | undefined)?.state || ''),
+        String(
+          entry.workState ||
+            (entry.worksiteAddress as Record<string, unknown> | undefined)?.state ||
+            impAddr?.state ||
+            '',
+        ),
       );
       matrixRate = await resolveMatrixRate(tenantId, state, workersCompCode.trim());
     }

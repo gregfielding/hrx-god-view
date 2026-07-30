@@ -147,6 +147,20 @@ export const reresolveImportEntry = onCall<Input, Promise<Output>>(
       updates['import.worksiteAddress'] = worksiteAddress;
       updates['import.worksiteSource'] = 'assignment';
     }
+    // Stamp top-level `workState` when it's empty — downstream WC-matrix rate
+    // lookups (setEntryWorkersComp, grid resolver, Everee submit) key off it,
+    // and re-resolving an entry whose assignment lacks a worksite address used
+    // to leave it blank, stranding the row at "Needs WC".
+    if (!strOrNull(entry.workState)) {
+      const resolvedState =
+        (worksiteAddress as { state?: string } | null)?.state ||
+        (assignment as unknown as { worksiteState?: string }).worksiteState ||
+        ((entry.import as Record<string, unknown> | undefined)?.worksiteAddress as
+          | { state?: string }
+          | undefined)?.state ||
+        null;
+      if (resolvedState) updates.workState = String(resolvedState).trim().toUpperCase();
+    }
     if (worksiteName) updates['import.worksiteName'] = worksiteName;
     if (jobOrderId) updates.jobOrderId = jobOrderId;
 

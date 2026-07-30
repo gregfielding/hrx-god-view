@@ -411,7 +411,10 @@ function buildImportSnapshot(entry: TimesheetEntryV2): AssignmentSnapshot {
     workerId: entry.workerId || '',
     hiringEntityId: entry.hiringEntityId || null,
     workerDisplayName: displayName,
-    worksiteState: entry.workState || null,
+    // Import rows keep the worksite state in the `import` sidecar; top-level
+    // `workState` can be empty (esp. after a re-resolve with no assignment
+    // address). Fall back so the matrix WC lookup below still finds a state.
+    worksiteState: entry.workState || imp?.worksiteAddress?.state || null,
     worksiteDisplayName: imp?.worksiteName ?? imp?.csvSite ?? null,
     payRate: typeof entry.payRate === 'number' ? entry.payRate : 0,
     billRate: typeof entry.billRate === 'number' ? entry.billRate : 0,
