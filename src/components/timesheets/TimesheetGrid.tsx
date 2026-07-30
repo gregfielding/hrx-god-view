@@ -1100,7 +1100,13 @@ const ImportRow: React.FC<{
           onClose={() => setWcDialogOpen(false)}
           onSuccess={() => {
             setWcDialogOpen(false);
-            refreshEntry(row.entry.id);
+            // FULL reload, not refreshEntry: the WC *Code* cell renders
+            // `resolvedWorkersCompCode` from the grid resolver, and refreshEntry
+            // does NOT re-run the resolver — so picking a new code updated the
+            // rate (falls through to the refetched sidecar) but the code cell
+            // kept showing the stale resolved code (Greg 2026-07-31). reloadAll
+            // re-resolves so the new code + matrix rate both show.
+            reloadAll();
           }}
           tenantId={tenantId}
           entryId={row.entry.id}
