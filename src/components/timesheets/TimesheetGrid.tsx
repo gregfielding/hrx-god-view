@@ -1104,7 +1104,15 @@ const ImportRow: React.FC<{
           }}
           tenantId={tenantId}
           entryId={row.entry.id}
-          state={row.assignment.worksiteState ?? undefined}
+          state={
+            // Import rows have no assignment.worksiteState — derive the state
+            // from the import entry's worksite so the code dropdown is scoped.
+            row.assignment.worksiteState ||
+            (imp?.worksiteAddress as { state?: string } | undefined)?.state ||
+            ((row.entry as unknown as Record<string, unknown>).worksiteAddress as { state?: string } | undefined)?.state ||
+            (row.entry as unknown as { workState?: string }).workState ||
+            undefined
+          }
           initialCode={wcCode}
           initialRate={wcRate}
           rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
