@@ -1104,6 +1104,7 @@ const ImportRow: React.FC<{
           }}
           tenantId={tenantId}
           entryId={row.entry.id}
+          state={row.assignment.worksiteState ?? undefined}
           initialCode={wcCode}
           initialRate={wcRate}
           rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
@@ -1554,6 +1555,7 @@ const EntryRow: React.FC<EntryRowProps> = ({
           }}
           tenantId={tenantId}
           entryId={entry.id}
+          state={row.assignment.worksiteState ?? undefined}
           initialCode={row.resolvedWorkersCompCode}
           initialRate={row.resolvedWorkersCompRate}
           rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
