@@ -157,6 +157,9 @@ export function composeImportWindow(input: {
   worksiteState?: string | null;
   breakMinutes?: number;
   breakPaid?: boolean;
+  /** Workweek start for the pay-week boundary clamp — Mon–Sun exception
+   *  accounts clamp at Sunday 23:59 instead of Saturday. */
+  payWeekStart?: PayWeekStart;
 }): ComposedImportWindow {
   // Net seconds minute-aligned — same rule as the original minuteAlignedDay.
   const netSeconds = Math.max(60, Math.round(Number(input.netHours) * 60) * 60);
@@ -186,7 +189,9 @@ export function composeImportWindow(input: {
   // We keep the work date's week: end at Saturday 23:59 worksite-local and
   // pull the start earlier so the duration (and pay) is unchanged.
   let clampedToPayWeek = false;
-  const weekStart = weekKeyFor(input.workDate);
+  // Boundary = last day of the workweek (Saturday for Sun-start weeks,
+  // Sunday for Mon–Sun exception accounts).
+  const weekStart = weekKeyFor(input.workDate, input.payWeekStart ?? 'sunday');
   if (weekStart) {
     const sat = new Date(`${weekStart}T00:00:00Z`);
     sat.setUTCDate(sat.getUTCDate() + 6);
@@ -227,13 +232,24 @@ export function composeImportWindow(input: {
 // Weekly-40 overtime cascade
 // ─────────────────────────────────────────────────────────────────────
 
-/** Sunday (YYYY-MM-DD, UTC date math) of the workweek containing the date —
- *  matches C1's Sun–Sat weekly periods. */
-export function weekKeyFor(workDate: string): string {
+/** FLSA workweek start day. C1's default is Sunday (matches Everee's Sun–Sat
+ *  pay periods); accounts flagged `payWeekStart: 'monday'` (VenueSmart,
+ *  2026-07-31 — the customer runs Mon–Sun weeks) classify OT on a Mon–Sun
+ *  workweek instead. FLSA permits a different fixed workweek per worker
+ *  group, and the workweek need not match the pay period — Everee's payment
+ *  calendar stays Sunday-start either way (a Sunday shift simply rides the
+ *  next run). */
+export type PayWeekStart = 'sunday' | 'monday';
+
+/** First day (YYYY-MM-DD, UTC date math) of the workweek containing the
+ *  date — Sunday for C1's default Sun–Sat weeks, Monday for Mon–Sun
+ *  exception accounts. */
+export function weekKeyFor(workDate: string, weekStart: PayWeekStart = 'sunday'): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(workDate ?? ''));
   if (!m) return '';
   const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-  dt.setUTCDate(dt.getUTCDate() - dt.getUTCDay());
+  const back = weekStart === 'monday' ? (dt.getUTCDay() + 6) % 7 : dt.getUTCDay();
+  dt.setUTCDate(dt.getUTCDate() - back);
   return dt.toISOString().slice(0, 10);
 }
 
@@ -246,6 +262,9 @@ export interface WeeklyOtDayInput {
   /** Worksite state (e.g. 'CA') — selects the daily OT/DT thresholds.
    *  Absent/unknown states get federal weekly-40 only (prior behavior). */
   stateCode?: string | null;
+  /** Workweek start for the weekly-40 grouping — 'monday' for Mon–Sun
+   *  exception accounts (VenueSmart). Defaults to C1's Sun–Sat weeks. */
+  payWeekStart?: PayWeekStart | null;
 }
 
 export interface WeeklyOtDaySplit {
@@ -292,7 +311,10 @@ export function classifyWeeklyOt(
   const out = new Map<string, WeeklyOtDaySplit>();
   const groups = new Map<string, WeeklyOtDayInput[]>();
   for (const d of days) {
-    const gk = `${d.userId}__${weekKeyFor(d.workDate)}`;
+    // Group by the day's OWN workweek (Sun–Sat default, Mon–Sun for
+    // exception accounts) — the prior-seconds map keys use the same
+    // weekStart-aware week key, so lookups stay aligned.
+    const gk = `${d.userId}__${weekKeyFor(d.workDate, d.payWeekStart ?? 'sunday')}`;
     (groups.get(gk) ?? groups.set(gk, []).get(gk)!).push(d);
   }
   for (const [gk, group] of groups) {
