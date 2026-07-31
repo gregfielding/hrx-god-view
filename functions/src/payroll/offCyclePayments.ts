@@ -333,7 +333,16 @@ export const createOffCyclePayment = onCall(
         try {
           const pr = await requestPayablePayout(config, {
             externalIds: createdExternalIds,
-            includeWorkersOnRegularPayCycle: false,
+            // MUST be true: an off-cycle "missed hours" payment is meant to
+            // pay NOW. With false, Everee excludes W-2 workers on a regular
+            // pay cycle from the payout — so their payable is left to ride the
+            // next regular run, and if that period is already closed (a retro
+            // like a lost Friday) it's orphaned and never pays (Greg 2026-07-31:
+            // Ryane/James $171/$109.68 stuck). Scoped to createdExternalIds, so
+            // this groups ONLY this off-cycle payable, not the worker's other
+            // shifts. 1099 workers aren't on a regular cycle, so the flag is a
+            // no-op for them (Deion/Kyle already paid fine).
+            includeWorkersOnRegularPayCycle: true,
           });
           payRunId = pr.id || undefined;
         } catch (e) {
