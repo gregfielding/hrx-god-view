@@ -47,6 +47,16 @@ interface JoOption {
   group: 'Recent assignments' | 'All job orders';
 }
 
+/** Server's duplicate-pay guard payload — the worker already has a
+ *  submitted timesheet for this work date; sending needs explicit confirm. */
+interface DuplicateWarning {
+  workDate: string;
+  entryCount: number;
+  totalHours: number;
+  totalAmount: number;
+  message: string;
+}
+
 interface HistoryRow {
   id: string;
   workDate: string;
@@ -103,6 +113,7 @@ const WorkerPaymentsTab: React.FC<Props> = ({ uid, tenantId, workerDisplayName, 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [dupWarning, setDupWarning] = useState<DuplicateWarning | null>(null);
 
   const canSend = viewerSecurityLevel >= 6;
 
@@ -223,13 +234,13 @@ const WorkerPaymentsTab: React.FC<Props> = ({ uid, tenantId, workerDisplayName, 
   const entityLinked = Boolean(selectedEntity?.evereeTenantId && evereeWorkerIds[selectedEntity.evereeTenantId]);
   const total = (Number(gross) || 0) + (Number(perDiem) || 0);
 
-  const submit = async () => {
+  const submit = async (overrideDuplicateWarning = false) => {
     if (!tenantId) return;
     setSaving(true);
     setError(null);
     try {
       const fn = httpsCallable(functions, 'createOffCyclePayment');
-      await fn({
+      const res = await fn({
         tenantId,
         hiringEntityId: entityId,
         workerId: uid,
@@ -241,7 +252,16 @@ const WorkerPaymentsTab: React.FC<Props> = ({ uid, tenantId, workerDisplayName, 
         perDiemAmount: Number(perDiem) || 0,
         ...(jo ? { jobOrderId: jo.id } : {}),
         notes,
+        ...(overrideDuplicateWarning ? { overrideDuplicateWarning: true } : {}),
       });
+      // Duplicate-pay guard: the worker already has a submitted timesheet
+      // for this date — nothing was sent; ask before paying twice.
+      const data = res.data as { status?: string; duplicateWarning?: DuplicateWarning };
+      if (data.status === 'duplicate_warning' && data.duplicateWarning) {
+        setDupWarning(data.duplicateWarning);
+        return;
+      }
+      setDupWarning(null);
       setSuccess(`Payment of ${usd(total)} sent to Everee for ${workerDisplayName ?? 'this worker'}.`);
       setHours('');
       setRate('');
@@ -327,7 +347,10 @@ const WorkerPaymentsTab: React.FC<Props> = ({ uid, tenantId, workerDisplayName, 
                 label="Work date"
                 type="date"
                 value={workDate}
-                onChange={(e) => setWorkDate(e.target.value)}
+                onChange={(e) => {
+                  setWorkDate(e.target.value);
+                  setDupWarning(null);
+                }}
                 InputLabelProps={{ shrink: true }}
                 sx={{ minWidth: 160 }}
               />
@@ -372,14 +395,36 @@ const WorkerPaymentsTab: React.FC<Props> = ({ uid, tenantId, workerDisplayName, 
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />
+            {dupWarning && (
+              <Alert severity="warning">
+                This worker already has a submitted timesheet for {dupWarning.workDate} (
+                {dupWarning.totalHours}h, {usd(dupWarning.totalAmount)}). Send anyway?
+              </Alert>
+            )}
             <Box>
-              <Button
-                variant="contained"
-                disabled={!canSend || saving || !entityId || total <= 0}
-                onClick={() => void submit()}
-              >
-                {saving ? 'Sending…' : `Send ${usd(total)} to Everee`}
-              </Button>
+              {dupWarning ? (
+                <Stack direction="row" spacing={1}>
+                  <Button
+                    variant="contained"
+                    color="warning"
+                    disabled={!canSend || saving || !entityId || total <= 0}
+                    onClick={() => void submit(true)}
+                  >
+                    {saving ? 'Sending…' : `Send ${usd(total)} anyway`}
+                  </Button>
+                  <Button variant="outlined" disabled={saving} onClick={() => setDupWarning(null)}>
+                    Cancel
+                  </Button>
+                </Stack>
+              ) : (
+                <Button
+                  variant="contained"
+                  disabled={!canSend || saving || !entityId || total <= 0}
+                  onClick={() => void submit()}
+                >
+                  {saving ? 'Sending…' : `Send ${usd(total)} to Everee`}
+                </Button>
+              )}
             </Box>
           </Stack>
         </CardContent>

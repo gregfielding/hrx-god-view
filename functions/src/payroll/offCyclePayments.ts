@@ -173,6 +173,7 @@ export const createOffCyclePayment = onCall(
     const hourlyRate = Number(request.data?.hourlyRate) || 0;
     const grossAmount = round2(Number(request.data?.grossAmount) || 0);
     const perDiemAmount = round2(Number(request.data?.perDiemAmount) || 0);
+    const overrideDuplicateWarning = request.data?.overrideDuplicateWarning === true;
 
     if (!tenantId || !hiringEntityId || !workerId) {
       throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, and workerId are required.');
@@ -199,6 +200,70 @@ export const createOffCyclePayment = onCall(
     if (!workerSnap.exists) throw new HttpsError('not-found', 'Worker not found.');
     const worker = workerSnap.data() as Record<string, unknown>;
     const workerName = `${trim(worker.firstName)} ${trim(worker.lastName)}`.trim() || trim(worker.displayName) || workerId;
+
+    // Duplicate-pay guard (Greg 2026-07-31: a $485.44 "Missed hours"
+    // off-cycle for Eustralia Martinez duplicated her already-submitted
+    // csv_import entries and had to be recalled via the Everee API). If the
+    // worker already has a timesheet entry for this work date whose money
+    // left HRX (sent_to_everee | paid, any source), answer with a warning
+    // instead of paying; the caller must resend with
+    // overrideDuplicateWarning: true to proceed. Equality-only query is
+    // auto-indexed; status filtered in memory like the cost report.
+    const num = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
+    const dupSnap = await db
+      .collection(`tenants/${tenantId}/timesheet_entries`)
+      .where('workerId', '==', workerId)
+      .where('workDate', '==', workDate)
+      .limit(25)
+      .get();
+    const duplicateEntries = dupSnap.docs
+      .filter((d) => {
+        const status = trim(d.data().status);
+        return status === 'sent_to_everee' || status === 'paid';
+      })
+      .map((d) => {
+        // Per-entry dollars mirror the Payroll Costs report's math.
+        const e = d.data() as Record<string, unknown>;
+        const rate = num(e.payRate);
+        const reg = num(e.totalRegularHours);
+        const ot = num(e.totalOTHours);
+        const dt = num(e.totalDoubleTimeHours);
+        const isImport = trim(e.source) === 'csv_import';
+        const entryGross = isImport
+          ? round2(reg * rate + ot * rate * 1.5)
+          : round2(reg * rate + ot * rate * 1.5 + dt * rate * 2);
+        const premiums = isImport
+          ? 0
+          : round2((num(e.mealBreakPenaltyHours) + num(e.restBreakPenaltyHours)) * rate);
+        return {
+          entryId: d.id,
+          source: trim(e.source) || null,
+          status: trim(e.status),
+          hours: round2(reg + ot + dt),
+          total: round2(entryGross + premiums + num(e.tips) + num(e.bonusAmount)),
+        };
+      });
+    if (duplicateEntries.length > 0 && !overrideDuplicateWarning) {
+      const dupHours = round2(duplicateEntries.reduce((s, x) => s + x.hours, 0));
+      const dupTotal = round2(duplicateEntries.reduce((s, x) => s + x.total, 0));
+      return {
+        status: 'duplicate_warning',
+        requiresOverride: true,
+        duplicateWarning: {
+          workDate,
+          entryCount: duplicateEntries.length,
+          totalHours: dupHours,
+          totalAmount: dupTotal,
+          entries: duplicateEntries,
+          message:
+            `${workerName} already has ${
+              duplicateEntries.length === 1
+                ? 'a submitted timesheet entry'
+                : `${duplicateEntries.length} submitted timesheet entries`
+            } for ${workDate} (${dupHours}h, $${dupTotal.toFixed(2)}). Sending this payment may pay them twice.`,
+        },
+      };
+    }
 
     // Entity → Everee config + worker classification.
     const config = await getEvereeConfigForEntity(tenantId, hiringEntityId);
@@ -277,6 +342,16 @@ export const createOffCyclePayment = onCall(
       attributionTag: attributionTag || null,
       label,
       notes: notes || null,
+      // Audit trail when the admin confirmed past the duplicate-pay warning.
+      duplicateOverride:
+        duplicateEntries.length > 0
+          ? {
+              acknowledgedByUid: request.auth?.uid ?? null,
+              entryIds: duplicateEntries.map((x) => x.entryId),
+              entryHours: round2(duplicateEntries.reduce((s, x) => s + x.hours, 0)),
+              entryTotal: round2(duplicateEntries.reduce((s, x) => s + x.total, 0)),
+            }
+          : null,
       createdByUid: request.auth?.uid ?? null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       status: 'pending' as const,
