@@ -22,7 +22,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
-import { createPayable, EvereeEarningType } from '../integrations/everee/evereePayables';
+import { createPayable, requestPayablePayout, EvereeEarningType } from '../integrations/everee/evereePayables';
 import { resolveEvereeWorkerTypeForOnCall } from '../integrations/everee/evereeEntityWorkerType';
 import { ensureBooksAccess } from './payrollCostReport';
 
@@ -317,12 +317,35 @@ export const createOffCyclePayment = onCall(
         });
         results.push({ externalId: r.externalId, paymentStatus: r.paymentStatus });
       }
+      // Creating payables alone leaves them as raw line items in Everee — they
+      // only surface as a payable PAYMENT (and actually pay out) after a payout
+      // request groups them. The batch (submitImportTimesheetBatch) and
+      // adjustment paths do this; the off-cycle path did NOT, so the payment
+      // never appeared in Everee (Greg 2026-07-31: Deion Wilson $152 stuck as
+      // an invisible line item). Scoped to the externalIds we just created;
+      // idempotent (Everee dedupes already-paid). Non-fatal: the payables exist
+      // regardless, so a payout failure is surfaced — not thrown, since a retry
+      // would mint a new offcycle doc → new externalId → double-pay.
+      const createdExternalIds = results.map((r) => r.externalId);
+      let payRunId: number | undefined;
+      let payoutError: string | undefined;
+      if (createdExternalIds.length > 0) {
+        try {
+          const pr = await requestPayablePayout(config, {
+            externalIds: createdExternalIds,
+            includeWorkersOnRegularPayCycle: false,
+          });
+          payRunId = pr.id || undefined;
+        } catch (e) {
+          payoutError = e instanceof Error ? e.message : String(e);
+        }
+      }
       await docRef.update({
         status: 'sent_to_everee',
         sentToEvereeAt: admin.firestore.FieldValue.serverTimestamp(),
-        everee: { payables: results },
+        everee: { payables: results, payRunId: payRunId ?? null, payoutError: payoutError ?? null },
       });
-      return { id: docRef.id, status: 'sent_to_everee', total: base.total, label };
+      return { id: docRef.id, status: 'sent_to_everee', total: base.total, label, payRunId, payoutError };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await docRef.update({ status: 'error', errorMessage: message.slice(0, 500) });
