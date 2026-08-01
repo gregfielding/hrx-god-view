@@ -8798,8 +8798,13 @@ export const sendPasswordResetV2 = onCall(async (request) => {
   }
 
   const actionCodeSettings = {
+    // MUST be the real production domain (hrxone.com). Firebase Auth only
+    // mints action links for authorized domains — app.hrxone.com is not one,
+    // and generatePasswordResetLink throws "INTERNAL ASSERT FAILED: Unable to
+    // create the email action link" for it, which broke EVERY reset attempt
+    // (worker report 2026-07-31).
     url:
-      'https://app.hrxone.com/setup-password' +
+      'https://hrxone.com/setup-password' +
       (continueUrl ? `?continueUrl=${encodeURIComponent(continueUrl)}` : ''),
     handleCodeInApp: true,
   };
@@ -8810,12 +8815,25 @@ export const sendPasswordResetV2 = onCall(async (request) => {
   } catch (err: any) {
     // No Auth account for this email. Stay enumeration-safe for the public
     // flow; give staff callers the truth so they know to (re)provision auth.
-    if (err?.code === 'auth/user-not-found') {
+    // NOTE the error shape varies: 'auth/user-not-found', 'auth/email-not-
+    // found', AND — with email-enumeration protection enabled (this project)
+    // — a generic "INTERNAL ASSERT FAILED: Unable to create the email action
+    // link" for a nonexistent user (firebase-admin quirk; verified live
+    // 2026-07-31: unknown email → INTERNAL ASSERT, known email → link OK).
+    // Without catching all three, unknown emails 500 and the login page
+    // shows "Couldn't send reset link" instead of the quiet success.
+    const code = String(err?.code || '');
+    const msg = String(err?.message || '');
+    const looksLikeNoUser =
+      code === 'auth/user-not-found' ||
+      code === 'auth/email-not-found' ||
+      /unable to create the email action link/i.test(msg);
+    if (looksLikeNoUser) {
       return isStaffCaller
         ? { success: true, userExists: false }
         : { success: true };
     }
-    throw new HttpsError('internal', err?.message || 'Could not generate reset link.');
+    throw new HttpsError('internal', msg || 'Could not generate reset link.');
   }
 
   // Try to greet by first name (best-effort; never blocks the send).
@@ -8850,7 +8868,7 @@ export const sendPasswordResetV2 = onCall(async (request) => {
           </div>
           <p style="font-size:13px; color:#555; line-height:1.6;">
             This link works for a limited time and only once. If it has expired by the time you click it, just go to
-            <a href="https://app.hrxone.com/setup-password" style="color:#0057B8;">app.hrxone.com</a> and request a new one.
+            <a href="https://hrxone.com/setup-password" style="color:#0057B8;">hrxone.com</a> and request a new one.
           </p>
           <p style="font-size:13px; color:#555; line-height:1.6;">
             If you didn't request this, you can safely ignore this email — your password won't change.
@@ -8868,7 +8886,7 @@ We received a request to reset the password for your HRX account. Open this link
 
 ${link}
 
-This link works for a limited time and only once. If it has expired, go to https://app.hrxone.com/setup-password and request a new one.
+This link works for a limited time and only once. If it has expired, go to https://hrxone.com/setup-password and request a new one.
 
 If you didn't request this, you can safely ignore this email — your password won't change.`,
   };
