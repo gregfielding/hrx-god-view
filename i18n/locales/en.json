@@ -1190,7 +1190,12 @@
     "linkCopied": "Link copied to clipboard!",
     "addToFavorites": "Add to favorites",
     "removeFromFavorites": "Remove from favorites",
-    "openJobDetails": "Open job details"
+    "openJobDetails": "Open job details",
+    "multiDayPromptTitle": "This crew works multiple days",
+    "multiDayPromptBody": "You're applying for {date}. Want to apply for the other days too?",
+    "multiDayJustThisDay": "Just this day",
+    "multiDayApplyToOne": "Apply to 1 day",
+    "multiDayApplyToMany": "Apply to {count} days"
   },
   "assignment": {
     "title": "Assignment",

@@ -4167,16 +4167,17 @@ const JobPostingDetail: React.FC = () => {
       {/* P1b: also-apply-for-other-days prompt (mirror of the admin drop
           prompt) — tapped day always included, others opt-in. */}
       <Dialog open={!!applyDaysPrompt} onClose={() => setApplyDaysPrompt(null)} maxWidth="xs" fullWidth>
-        <DialogTitle>This crew works multiple days</DialogTitle>
+        <DialogTitle>{t('jobs.multiDayPromptTitle')}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-            {`You're applying for ${
-              applyDaysPrompt
-                ? new Date(`${applyDaysPrompt.tappedDate}T12:00:00Z`).toLocaleDateString('en-US', {
-                    weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC',
-                  })
-                : ''
-            }. Want to apply for the other days too?`}
+            {t('jobs.multiDayPromptBody', {
+              date: applyDaysPrompt
+                ? new Date(`${applyDaysPrompt.tappedDate}T12:00:00Z`).toLocaleDateString(
+                    displayLanguage === 'es' ? 'es-US' : 'en-US',
+                    { weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC' },
+                  )
+                : '',
+            })}
           </Typography>
           <Stack spacing={0.5}>
             {applyDaysPrompt?.others.map((d, idx) => (
@@ -4200,9 +4201,10 @@ const JobPostingDetail: React.FC = () => {
                     }
                   />
                 }
-                label={new Date(`${d.date}T12:00:00Z`).toLocaleDateString('en-US', {
-                  weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC',
-                })}
+                label={new Date(`${d.date}T12:00:00Z`).toLocaleDateString(
+                  displayLanguage === 'es' ? 'es-US' : 'en-US',
+                  { weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC' },
+                )}
               />
             ))}
           </Stack>
@@ -4216,7 +4218,7 @@ const JobPostingDetail: React.FC = () => {
               void proceedApplyWithDates(shiftId, [tappedDate]);
             }}
           >
-            Just this day
+            {t('jobs.multiDayJustThisDay')}
           </Button>
           <Button
             variant="contained"
@@ -4228,9 +4230,12 @@ const JobPostingDetail: React.FC = () => {
               void proceedApplyWithDates(shiftId, dates);
             }}
           >
-            {`Apply to ${1 + (applyDaysPrompt?.others.filter((d) => d.checked).length ?? 0)} day${
-              (applyDaysPrompt?.others.filter((d) => d.checked).length ?? 0) === 0 ? '' : 's'
-            }`}
+            {(() => {
+              const count = 1 + (applyDaysPrompt?.others.filter((d) => d.checked).length ?? 0);
+              return count === 1
+                ? t('jobs.multiDayApplyToOne')
+                : t('jobs.multiDayApplyToMany', { count });
+            })()}
           </Button>
         </DialogActions>
       </Dialog>
