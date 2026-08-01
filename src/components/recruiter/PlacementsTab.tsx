@@ -302,6 +302,15 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     lockedShiftId ? 'shift_applicants' : persistedFilters.workforce,
   );
   const [selectedDay, setSelectedDay] = useState<string>(persistedFilters.day ?? '');
+  /**
+   * P1c (multi-day, 2026-08-01): when the expanded Assignments card is a
+   * PER-DAY card of a multi-day gig shift, this holds that card's day
+   * (YYYY-MM-DD); null for whole-shift cards. It day-scopes the expanded
+   * card's assignment maps / roster / per-tile actions the same way the
+   * JO-wide `selectedDay` filter does. Declared up here (away from the
+   * accordion state it belongs to) because the assignment-map memos read it.
+   */
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
   // Data state
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -1850,9 +1859,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       (selectedShift as any).dateSchedule &&
       (selectedShift as any).endDate &&
       (selectedShift as any).endDate !== (selectedShift as any).shiftDate;
+    // P1c: an expanded per-day card pins its own day; else the JO-wide
+    // Day filter applies. Day-scoping here means worker.assignmentId (and
+    // every per-tile action reading it) targets THAT day's assignment doc.
+    const dayScope = expandedDay || selectedDay;
     const filtered =
-      isMultiDay && selectedDay
-        ? assignmentRows.filter((r) => assignmentMatchesSelectedDay(r, selectedDay, true))
+      isMultiDay && dayScope
+        ? assignmentRows.filter((r) => assignmentMatchesSelectedDay(r, dayScope, true))
         : assignmentRows;
     const statusByUser = new Map<string, string>();
     const idByUser = new Map<string, string>();
@@ -1914,7 +1927,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       assignmentConfirmedAtByUserId: confirmedAtByUser,
       assignmentNoShowRiskByUserId: noShowByUser,
     };
-  }, [assignmentRows, selectedDay, shifts, selectedShiftId, pendingHireWorkerIds]);
+  }, [assignmentRows, selectedDay, expandedDay, shifts, selectedShiftId, pendingHireWorkerIds]);
 
   // Clear pending-hire entries once the snapshot listener picks up
   // the real Assignment doc. We watch the RAW `assignmentRows` (not
@@ -2018,6 +2031,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     /** Denormalized display name off the assignment doc — powers the
      *  Phase 2b live-board roster on collapsed cards without extra reads. */
     name?: string;
+    /** Assignment's startDate (YYYY-MM-DD). P1c: multi-day gig shifts render
+     *  one card per day — this keys the per-day counts/rosters. */
+    day?: string;
   };
   const allShiftsRowsRef = useRef<Map<string, AllShiftRow[]>>(new Map());
   useEffect(() => {
@@ -2037,6 +2053,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       'cancelled', 'canceled', 'declined', 'worker-cancelled', 'worker_cancelled', 'deleted',
     ]);
 
+    // P1c: multi-day gig shifts render one Assignments card per day, keyed
+    // `${shiftId}__${day}`. Assignment rows carry their own day (startDate);
+    // placement rows are shift-level staging with no day, so they mirror
+    // onto EVERY day card of their shift (matching the expanded body, which
+    // shows placement-only tiles regardless of the day scope).
+    const daysByMultiDayShiftId = new Map<string, string[]>();
+    shifts.forEach((s) => {
+      const sh = s as any;
+      if (sh?.dateSchedule && sh?.shiftDate && sh?.endDate && sh.endDate !== sh.shiftDate) {
+        const days = getDateScheduleEntriesWithHours(sh.dateSchedule, sh.shiftDate, sh.endDate).map(
+          (e) => e.date,
+        );
+        if (days.length > 0) daysByMultiDayShiftId.set(s.id, days);
+      }
+    });
+
     const mergeAndSet = () => {
       const combined = new Set<string>();
       const placedByShift = new Map<string, Set<string>>();
@@ -2051,16 +2083,30 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           if (!r.userId) return;
           combined.add(r.userId);
           if (!r.shiftId) return;
+          // P1c: day-scoped keys this row also counts under (see
+          // daysByMultiDayShiftId note above).
+          const dayKeys =
+            r.kind === 'assignment'
+              ? r.day
+                ? [`${r.shiftId}__${r.day}`]
+                : []
+              : (daysByMultiDayShiftId.get(r.shiftId) ?? []).map((d) => `${r.shiftId}__${d}`);
           if (r.kind === 'placement') {
             addTo(placedByShift, r.shiftId, r.userId);
+            dayKeys.forEach((k) => addTo(placedByShift, k, r.userId));
           } else {
             const st = r.status.toLowerCase();
-            if (!CANCELLED.has(st)) addTo(placedByShift, r.shiftId, r.userId);
+            if (!CANCELLED.has(st)) {
+              addTo(placedByShift, r.shiftId, r.userId);
+              dayKeys.forEach((k) => addTo(placedByShift, k, r.userId));
+            }
             // Count confirmed-or-working as "confirmed" — open-shift crew are
             // created as 'active' (no offer step), and standard workers go
             // 'active'/'in_progress' once their shift starts.
-            if (st === 'confirmed' || st === 'active' || st === 'in_progress')
+            if (st === 'confirmed' || st === 'active' || st === 'in_progress') {
               addTo(confirmedByShift, r.shiftId, r.userId);
+              dayKeys.forEach((k) => addTo(confirmedByShift, k, r.userId));
+            }
           }
         });
       });
@@ -2105,8 +2151,23 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                 ? 'confirmed'
                 : 'accepted';
             upsertRoster(r.shiftId, r.userId, { userId: r.userId, name: r.name || '', level });
+            // P1c: day cards read the day-scoped roster key.
+            if (r.day) {
+              upsertRoster(`${r.shiftId}__${r.day}`, r.userId, {
+                userId: r.userId,
+                name: r.name || '',
+                level,
+              });
+            }
           } else {
             upsertRoster(r.shiftId, r.userId, { userId: r.userId, name: r.name || '', level: 'placed' });
+            (daysByMultiDayShiftId.get(r.shiftId) ?? []).forEach((d) => {
+              upsertRoster(`${r.shiftId}__${d}`, r.userId, {
+                userId: r.userId,
+                name: r.name || '',
+                level: 'placed',
+              });
+            });
           }
         });
       });
@@ -2162,7 +2223,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                   workerDisplayName?: string;
                   firstName?: string;
                   lastName?: string;
+                  startDate?: unknown;
                 };
+                // P1c: the assignment's day (multi-day gigs have one doc per
+                // day) keys the per-day card counts/rosters.
+                let day = '';
+                const sd = x?.startDate;
+                if (typeof sd === 'string' && sd) day = sd.split('T')[0];
+                else if ((sd as any)?.toDate) day = (sd as any).toDate().toISOString().split('T')[0];
                 return {
                   kind: 'assignment' as const,
                   shiftId: String(x?.shiftId || ''),
@@ -2171,6 +2239,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                   name:
                     String(x?.workerDisplayName || '').trim() ||
                     [x?.firstName, x?.lastName].filter(Boolean).join(' ').trim(),
+                  day,
                 };
               }),
             );
@@ -2766,7 +2835,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const handleAssignToShift = async (worker: Worker, shift: Shift | undefined) => {
     if (!shift || !worker.id) return;
     try {
-      await assignWorkersToShift([worker.id], selectedDay || undefined);
+      // P1c: an expanded per-day card scopes pool-side offers to its day.
+      await assignWorkersToShift([worker.id], expandedDay || selectedDay || undefined);
     } catch (err) {
       console.error('handleAssignToShift failed:', err);
     }
@@ -2927,9 +2997,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       // shift's default. The server's `placementsCreateAssignments` reads
       // this as `applyDate` and uses it as `effectiveStartDate`.
       const placementStartDate = placementStartDateByUserId.get(worker.id);
-      const dayOverride = placementStartDate || (selectedDay || undefined);
+      // P1c: hiring from inside an expanded per-day card targets that day
+      // (the card context beats the pencil-set start date — the recruiter
+      // is looking at a specific day when they click).
+      const dayOverride = expandedDay || placementStartDate || (selectedDay || undefined);
       await assignWorkersToShift([worker.id], dayOverride);
-      if (selectedDay === '') {
+      // Keep the staged placement when the hire was day-scoped — it still
+      // shows as "Click to Hire" on the shift's OTHER day cards.
+      if (selectedDay === '' && !expandedDay) {
         await deletePlacement(worker);
       }
     } catch (err: any) {
@@ -2973,8 +3048,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
    */
   const handleCancelAssignment = async (worker: Worker) => {
     if (worker.isPlacementOnly || !selectedShiftId || !jobOrderId) return;
+    // P1c: inside a per-day card, cancel targets THAT day's assignment doc
+    // only (worker.assignmentId is already day-scoped) — never the whole-
+    // shift sweep.
     const assignmentIds =
-      selectedDay === ''
+      selectedDay === '' && !expandedDay
         ? assignmentRows.filter((r) => r.userId === worker.id).map((r) => r.assignmentId)
         : worker.assignmentId
           ? [worker.assignmentId]
@@ -3105,7 +3183,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         ? s === 'declined'
         : s === 'cancelled' || s === 'canceled';
     const targetAssignmentIds =
-      selectedDay === ''
+      selectedDay === '' && !expandedDay
         ? assignmentRows
             .filter((r) => r.userId === worker.id && matchStatus(r.status))
             .map((r) => r.assignmentId)
@@ -3206,11 +3284,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
-  /** Manually confirm assignment(s) on behalf of the worker. When "All days", confirm all their assignments for this shift. */
+  /** Manually confirm assignment(s) on behalf of the worker. When "All days"
+   *  (and not inside a per-day card), confirm all their assignments for this shift. */
   const handleConfirmForWorker = async (worker: Worker) => {
     if (!tenantId) return;
     const assignmentIds =
-      selectedDay === ''
+      selectedDay === '' && !expandedDay
         ? assignmentRows.filter((r) => r.userId === worker.id).map((r) => r.assignmentId)
         : worker.assignmentId
           ? [worker.assignmentId]
@@ -3273,6 +3352,58 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   }, [shifts, selectedDay, lockedShiftId]);
 
   /**
+   * P1c (multi-day, 2026-08-01): the card list the Assignments column
+   * actually renders. Each day of a multi-day gig shift becomes its OWN
+   * card ("each day is its own shift" — Greg), keyed `${shiftId}__${day}`,
+   * carrying that day's times + headcount. Single-day / non-gig shifts
+   * (and drawer mode, which stays per-shift) keep one whole-shift card
+   * with `day: null`. The JO-wide Day filter narrows a multi-day shift to
+   * just that day's card.
+   */
+  type ShiftDayCardEntry = {
+    shift: Shift;
+    /** YYYY-MM-DD when this card is one day of a multi-day gig; null = whole shift. */
+    day: string | null;
+    dayEntry: {
+      date: string;
+      dayLabel: string;
+      startTime: string;
+      endTime: string;
+      workersNeeded?: number;
+      overstaff?: number;
+    } | null;
+    cardKey: string;
+  };
+  const visibleShiftCards = useMemo<ShiftDayCardEntry[]>(() => {
+    const jobTypeForCards = String((jobOrder as any)?.jobType || '').toLowerCase();
+    const cards: ShiftDayCardEntry[] = [];
+    visibleShifts.forEach((shift) => {
+      const s = shift as any;
+      const isMulti =
+        !lockedShiftId &&
+        jobTypeForCards === 'gig' &&
+        s.dateSchedule &&
+        s.endDate &&
+        s.endDate !== s.shiftDate;
+      if (isMulti) {
+        const entries = getDateScheduleEntriesWithHours(
+          s.dateSchedule,
+          s.shiftDate,
+          s.endDate,
+        ).filter((e) => !selectedDay || e.date === selectedDay);
+        if (entries.length > 0) {
+          entries.forEach((e) =>
+            cards.push({ shift, day: e.date, dayEntry: e, cardKey: `${shift.id}__${e.date}` }),
+          );
+          return;
+        }
+      }
+      cards.push({ shift, day: null, dayEntry: null, cardKey: shift.id });
+    });
+    return cards;
+  }, [visibleShifts, jobOrder, selectedDay, lockedShiftId]);
+
+  /**
    * Phase 2 accordion: only one card is expanded at a time. The
    * expanded card is the data anchor — its shiftId is also pushed
    * into `selectedShiftId` so the existing listeners + Worker Pool
@@ -3288,30 +3419,42 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
    */
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
   const userExplicitlyCollapsedRef = useRef(false);
-  // Auto-bump cases:
-  //   1) No visible shifts → null
-  //   2) Initial load with visibleShifts populated and user hasn't
+  // Auto-bump cases (P1c: a "card" is now a (shiftId, day) pair — day
+  // null for whole-shift cards; `expandedDay` state lives up near
+  // `selectedDay` because the assignment-map memos read it):
+  //   1) No visible cards → null
+  //   2) Initial load with cards populated and user hasn't
   //      interacted yet → expand the first one
-  //   3) Currently expanded shift dropped out of visibleShifts (e.g.
-  //      day filter changed) → fall back to the first visible shift
+  //   3) Currently expanded card dropped out of visibleShiftCards (e.g.
+  //      day filter changed) → prefer another day card of the same
+  //      shift, else fall back to the first visible card
   // Explicit user-collapse (null AND userExplicitlyCollapsedRef true)
   // is respected and left alone.
   useEffect(() => {
-    if (visibleShifts.length === 0) {
+    if (visibleShiftCards.length === 0) {
       if (expandedShiftId !== null) setExpandedShiftId(null);
+      if (expandedDay !== null) setExpandedDay(null);
       return;
     }
     if (expandedShiftId !== null) {
-      const stillVisible = visibleShifts.some((s) => s.id === expandedShiftId);
-      if (!stillVisible) setExpandedShiftId(visibleShifts[0].id);
+      const stillVisible = visibleShiftCards.some(
+        (c) => c.shift.id === expandedShiftId && c.day === expandedDay,
+      );
+      if (!stillVisible) {
+        const target =
+          visibleShiftCards.find((c) => c.shift.id === expandedShiftId) ?? visibleShiftCards[0];
+        setExpandedShiftId(target.shift.id);
+        setExpandedDay(target.day);
+      }
       return;
     }
     // expandedShiftId === null. Only auto-expand on initial load;
     // after the user has explicitly collapsed, leave it null.
     if (!userExplicitlyCollapsedRef.current) {
-      setExpandedShiftId(visibleShifts[0].id);
+      setExpandedShiftId(visibleShiftCards[0].shift.id);
+      setExpandedDay(visibleShiftCards[0].day);
     }
-  }, [visibleShifts, expandedShiftId]);
+  }, [visibleShiftCards, expandedShiftId, expandedDay]);
   // Keep `selectedShiftId` in sync with the expanded card so the
   // legacy single-shift data layer (listeners, displayedAssignedWorkers,
   // Worker Pool's "Shift Applicants" filter) follows the expanded card.
@@ -3323,20 +3466,24 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   }, [expandedShiftId, selectedShiftId]);
 
-  const handleToggleShiftExpand = useCallback((shiftId: string) => {
-    setExpandedShiftId((prev) => {
-      if (prev === shiftId) {
+  const handleToggleShiftExpand = useCallback(
+    (shiftId: string, day: string | null) => {
+      if (expandedShiftId === shiftId && expandedDay === day) {
         // User collapsed the open card — mark so the auto-bump effect
         // doesn't immediately re-expand it.
         userExplicitlyCollapsedRef.current = true;
-        return null;
+        setExpandedShiftId(null);
+        setExpandedDay(null);
+        return;
       }
       // Expanding a different card clears the collapsed-flag — auto-
-      // bump is welcome again if this new shift later drops out.
+      // bump is welcome again if this new card later drops out.
       userExplicitlyCollapsedRef.current = false;
-      return shiftId;
-    });
-  }, []);
+      setExpandedShiftId(shiftId);
+      setExpandedDay(day);
+    },
+    [expandedShiftId, expandedDay],
+  );
 
   /**
    * **Phase 5** — top-of-page shift picker becomes a "jump to + expand"
@@ -3356,6 +3503,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     if (!shiftId) {
       userExplicitlyCollapsedRef.current = true;
       setExpandedShiftId(null);
+      setExpandedDay(null);
       return;
     }
     // If the picked shift isn't in the current visibleShifts (day
@@ -3366,7 +3514,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
     userExplicitlyCollapsedRef.current = false;
     setExpandedShiftId(shiftId);
-  }, [visibleShifts, selectedDay]);
+    // P1c: a multi-day shift expands to its first visible day card. When
+    // the shift isn't in the current card list yet (day filter just
+    // cleared above), the auto-bump effect snaps to its first card once
+    // `visibleShiftCards` recomputes.
+    const firstCard = visibleShiftCards.find((c) => c.shift.id === shiftId);
+    setExpandedDay(firstCard ? firstCard.day : null);
+  }, [visibleShifts, visibleShiftCards, selectedDay]);
 
   const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
   const isGigMultiDay =
@@ -3460,16 +3614,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     const notCancelled = assignedWorkers.filter(
       (w) => w.assignmentStatus !== 'cancelled' && w.assignmentStatus !== 'canceled',
     );
-    if (isGigMultiDay && selectedDay) {
+    // P1c: an expanded per-day card pins its own day scope; else the
+    // JO-wide Day filter applies.
+    const dayScope = expandedDay || selectedDay;
+    if (isGigMultiDay && dayScope) {
       return notCancelled.filter(
-        (w) => w.isPlacementOnly || w.assignmentStartDate === selectedDay,
+        (w) => w.isPlacementOnly || w.assignmentStartDate === dayScope,
       );
     }
-    if (isGigMultiDay && !selectedDay) {
-      return notCancelled;
-    }
     return notCancelled;
-  }, [assignedWorkers, isGigMultiDay, selectedDay]);
+  }, [assignedWorkers, isGigMultiDay, selectedDay, expandedDay]);
   const placedOnlyWorkers = useMemo(
     () => assignedWorkers.filter((w) => w.isPlacementOnly),
     [assignedWorkers],
@@ -3523,8 +3677,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     setBulkAcceptBusy(true);
     try {
       setError(null);
-      await assignWorkersToShift(placedOnly.map((w) => w.id), selectedDay || undefined);
-      if (selectedDay === '') {
+      // P1c: bulk accept inside a per-day card offers that day only.
+      await assignWorkersToShift(placedOnly.map((w) => w.id), expandedDay || selectedDay || undefined);
+      if (selectedDay === '' && !expandedDay) {
         for (const worker of placedOnly) {
           await deletePlacement(worker);
         }
@@ -3903,11 +4058,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
    * stop propagation to prevent the global pool drop-zone from
    * stealing the event.
    */
-  const handleAssignmentsDragOver = (shiftId: string, event: React.DragEvent) => {
+  // P1c: keyed by CARD key (`shiftId` or `shiftId__day`) so each day card
+  // lights up independently while dragging over it.
+  const handleAssignmentsDragOver = (cardKey: string, event: React.DragEvent) => {
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'move';
-    if (dragOverShiftId !== shiftId) setDragOverShiftId(shiftId);
+    if (dragOverShiftId !== cardKey) setDragOverShiftId(cardKey);
   };
 
   const [doubleBookConfirmWorker, setDoubleBookConfirmWorker] = useState<Worker | null>(null);
@@ -3924,7 +4081,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
    * placement land — even if they dropped on a previously-collapsed
    * card.
    */
-  const handleAssignmentsDrop = (shiftId: string, event: React.DragEvent) => {
+  const handleAssignmentsDrop = (shiftId: string, day: string | null, event: React.DragEvent) => {
     event.preventDefault();
     event.stopPropagation();
     setDragOverShiftId(null);
@@ -3935,11 +4092,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     // Auto-expand the dropped-on card so the recruiter sees the
     // new placement land. Mirrors the "click to expand" UX but
     // triggered by the drop instead of a header click.
-    if (expandedShiftId !== shiftId) {
+    if (expandedShiftId !== shiftId || expandedDay !== day) {
       userExplicitlyCollapsedRef.current = false;
       setExpandedShiftId(shiftId);
+      setExpandedDay(day);
     }
-    tryPlaceWorker(worker, shiftId);
+    tryPlaceWorker(worker, shiftId, day);
   };
 
   /** P1a (multi-day, 2026-08-01): applied-days lookup shared by the hire
@@ -3972,15 +4130,18 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     worker: Worker;
     shiftId: string;
     shiftLabel: string;
-    days: Array<{ date: string; applied: boolean; checked: boolean }>;
+    days: Array<{ date: string; applied: boolean; checked: boolean; locked?: boolean }>;
   } | null>(null);
 
-  const tryPlaceWorker = (worker: Worker, targetShiftId: string) => {
+  const tryPlaceWorker = (worker: Worker, targetShiftId: string, targetDay?: string | null) => {
     // P1a: dropping on a multi-day gig card with no specific day selected
     // opens the day picker (worker's applied days pre-checked) instead of
     // silently committing every day. Confirm re-enters with the choice
     // stashed and proceeds through the normal double-book gate + 60s-undo
-    // hire. A specific Day filter still hires that day only, no prompt.
+    // hire.
+    // P1c: dropping on a PER-DAY card always opens the picker with that
+    // day checked AND locked ("also add to the remaining days?") — other
+    // days pre-check per the worker's applied days only.
     const targetShift = shifts.find((s) => s.id === targetShiftId);
     const jobTypeForPrompt = String((jobOrder as any)?.jobType || '').toLowerCase();
     const isMultiDayTarget =
@@ -3989,7 +4150,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       (targetShift as any).dateSchedule &&
       (targetShift as any).endDate &&
       (targetShift as any).endDate !== (targetShift as any).shiftDate;
-    if (isMultiDayTarget && !selectedDay && !chosenHireDatesByWorkerRef.current.has(worker.id)) {
+    if (
+      isMultiDayTarget &&
+      (targetDay || !selectedDay) &&
+      !chosenHireDatesByWorkerRef.current.has(worker.id)
+    ) {
       const allDays = getDateScheduleEntriesWithHours(
         (targetShift as any).dateSchedule,
         (targetShift as any).shiftDate,
@@ -4007,9 +4172,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             days: allDays.map((date) => ({
               date,
               applied: appliedSet.has(date),
-              // Applied days pre-checked; a worker with NO application (added
-              // from a non-applicant pool) defaults to all days checked.
-              checked: appliedSet.has(date) || applied.length === 0,
+              // Day-card drop: the dropped day is checked + locked, other
+              // days pre-check per applied days. Whole-shift drop: applied
+              // days pre-checked; a worker with NO application (added from
+              // a non-applicant pool) defaults to all days checked.
+              checked: targetDay
+                ? date === targetDay || appliedSet.has(date)
+                : appliedSet.has(date) || applied.length === 0,
+              locked: targetDay ? date === targetDay : false,
             })),
           });
         });
@@ -4070,7 +4240,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     try {
       setError(null);
       const placementStartDate = placementStartDateByUserId.get(worker.id);
-      const dayOverride = placementStartDate || (selectedDay || undefined);
+      // P1c: an explicit day choice from the drop prompt must reach the
+      // multi-day bulk path (which consumes chosenHireDatesByWorkerRef)
+      // even when a Day filter is active — pass '' so assignWorkersToShift
+      // skips the single-day shortcut and computes bulkDates.
+      const dayOverride = chosenHireDatesByWorkerRef.current.has(worker.id)
+        ? ''
+        : placementStartDate || (selectedDay || undefined);
       await assignWorkersToShift([worker.id], dayOverride, { shiftOverride: shift });
     } catch (err: any) {
       console.error('Error hiring worker on drop:', err);
@@ -4590,15 +4766,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                 "Shift Applicants" filter follow the expanded card. */}
             <Grid item xs={12} lg={6}>
               <Stack spacing={lockedShiftId ? 1 : 1.5}>
-                {visibleShifts.length === 0 ? (
+                {visibleShiftCards.length === 0 ? (
                   <Alert severity="info">
                     {selectedDay
                       ? 'No shifts on this date.'
                       : 'No shifts on this job order yet.'}
                   </Alert>
                 ) : (
-                  visibleShifts.map((shift) => {
-                    const isExpanded = shift.id === expandedShiftId;
+                  visibleShiftCards.map(({ shift, day, dayEntry, cardKey }) => {
+                    // P1c: a card is a (shift, day) pair — day null for
+                    // whole-shift cards. Expansion matches on both.
+                    const isExpanded = shift.id === expandedShiftId && day === expandedDay;
                     // Only the expanded card gets real data — collapsed
                     // cards just need their `shift` for the header. This
                     // sidesteps a multi-shift data-layer refactor for
@@ -4608,17 +4786,19 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     const cardDisplayedWorkers = isExpanded ? displayedAssignedWorkers : [];
                     return (
                       <ShiftAssignmentCard
-                        key={shift.id}
+                        key={cardKey}
                         lockedShiftId={lockedShiftId}
                         selectedShiftId={isExpanded ? selectedShiftId : shift.id}
                         selectedShift={shift}
-                        fillCounts={shiftFillCounts.get(shift.id)}
-                        roster={shiftRosters.get(shift.id)}
+                        cardDay={day ?? undefined}
+                        cardDayEntry={dayEntry ?? undefined}
+                        fillCounts={shiftFillCounts.get(day ? `${shift.id}__${day}` : shift.id)}
+                        roster={shiftRosters.get(day ? `${shift.id}__${day}` : shift.id)}
                         selectedDay={selectedDay}
                         dayOptions={isExpanded ? dayOptions : []}
                         jobOrder={jobOrder}
                         displayedAssignedWorkers={cardDisplayedWorkers}
-                        shiftStartDateStr={isExpanded ? shiftStartDateStr : ''}
+                        shiftStartDateStr={isExpanded ? day || shiftStartDateStr : ''}
                         selectedAssignmentWorkerIds={isExpanded ? selectedAssignmentWorkerIds : new Set()}
                         isAllAssignmentsSelected={isExpanded ? isAllAssignmentsSelected : false}
                         isSomeAssignmentsSelected={isExpanded ? isSomeAssignmentsSelected : false}
@@ -4639,12 +4819,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         }}
                         onExportAssignmentsCsv={handleExportAssignmentsCsv}
                         onPreviewEmail={handlePreviewEmail}
-                        isAssignmentDragOver={dragOverShiftId === shift.id}
-                        onAssignmentsDragOver={(e) => handleAssignmentsDragOver(shift.id, e)}
+                        isAssignmentDragOver={dragOverShiftId === cardKey}
+                        onAssignmentsDragOver={(e) => handleAssignmentsDragOver(cardKey, e)}
                         onAssignmentsDragLeave={() => {
-                          if (dragOverShiftId === shift.id) setDragOverShiftId(null);
+                          if (dragOverShiftId === cardKey) setDragOverShiftId(null);
                         }}
-                        onAssignmentsDrop={(e) => handleAssignmentsDrop(shift.id, e)}
+                        onAssignmentsDrop={(e) => handleAssignmentsDrop(shift.id, day, e)}
                         onWorkerDragStart={handleWorkerDragStart}
                         confirmingPlacementUserId={confirmingPlacementUserId}
                         confirmLoadingAssignmentId={confirmLoadingAssignmentId}
@@ -4694,7 +4874,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         // by passing `undefined` instead.
                         isExpanded={lockedShiftId ? undefined : isExpanded}
                         onToggleExpand={
-                          lockedShiftId ? undefined : () => handleToggleShiftExpand(shift.id)
+                          lockedShiftId ? undefined : () => handleToggleShiftExpand(shift.id, day)
                         }
                       />
                     );
@@ -5532,8 +5712,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           </DialogTitle>
           <DialogContent>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-              {multiDayHirePrompt?.shiftLabel} runs multiple days. Days they applied for are
-              pre-checked — adjust before confirming.
+              {multiDayHirePrompt?.days.some((d) => d.locked)
+                ? `They're being hired for the day you dropped them on. ${multiDayHirePrompt?.shiftLabel} runs multiple days — check any other days to add them too.`
+                : `${multiDayHirePrompt?.shiftLabel} runs multiple days. Days they applied for are pre-checked — adjust before confirming.`}
             </Typography>
             <Stack spacing={0.5}>
               {multiDayHirePrompt?.days.map((d, idx) => (
@@ -5541,6 +5722,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                   <Checkbox
                     size="small"
                     checked={d.checked}
+                    // P1c: the day-card drop target is locked in — it can't
+                    // be unchecked here (cancel the dialog to not hire).
+                    disabled={!!d.locked}
                     onChange={(e) =>
                       setMultiDayHirePrompt((prev) =>
                         prev
@@ -5562,6 +5746,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       timeZone: 'UTC',
                     })}
                   </Typography>
+                  {d.locked && (
+                    <Chip label="dropped here" size="small" color="primary" variant="outlined" sx={{ height: 18, fontSize: '0.65rem' }} />
+                  )}
                   {d.applied && (
                     <Chip label="applied" size="small" color="success" variant="outlined" sx={{ height: 18, fontSize: '0.65rem' }} />
                   )}
