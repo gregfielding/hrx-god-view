@@ -85,12 +85,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const r = await ingestTimesheets(config, msg.envelope);
         sessionSynced += 1;
         setBadge();
-        const gaps = r.noHrxShift + r.workerUnmatched + r.noAssignment;
+        const gaps = r.workerUnmatched + r.noAssignment;
+        const softNote = r.okUnlinkedJob > 0 ? ` (${r.okUnlinkedJob} covered but Flex job unlinked)` : '';
         await setStatus({
           ok: true,
           message: gaps > 0
-            ? `timesheets: ${r.entries} rows — ${gaps} need attention (${r.noHrxShift} job unlinked, ${r.workerUnmatched} worker unknown, ${r.noAssignment} not assigned)`
-            : `timesheets: ${r.entries} rows, all matched in HRX`,
+            ? `timesheets: ${r.entries} rows — ${gaps} need attention (${r.workerUnmatched} worker unknown, ${r.noAssignment} not assigned)${softNote}`
+            : `timesheets: ${r.entries} rows, all covered in HRX${softNote}`,
         });
       } catch (err) {
         recent.delete(key); // allow retry

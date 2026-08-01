@@ -21,13 +21,21 @@
  * assignments by PI-7), then name.
  *
  * Per entry we upsert a snapshot (indeed_flex_timesheets/{flexEntryId})
- * and stamp a reconcile verdict:
- *   ok                — HRX shift found, worker resolved, assignment exists
- *   no_hrx_shift      — Flex job has no linked HRX shift (email pipeline gap)
+ * and stamp a reconcile verdict — WORKER-FIRST (Greg 2026-08-01: Zaon Cox
+ * was fully assigned on manually-created Carrier JO #310, but the email-
+ * request linkage couldn't see it; "is the worker assigned that day?" is
+ * the real question, the Flex-job link is secondary):
+ *   ok                — worker resolved AND an active assignment covers the
+ *                       day (via the linked shift when the Flex job resolves,
+ *                       else via a scan of the worker's own assignments —
+ *                       day-scoped docs and spanning/career ranges, empty
+ *                       endDate = ongoing)
  *   worker_unmatched  — nobody in HRX matches this Flex worker
- *   no_assignment     — worker + shift exist but no assignment for that day
- * plus a rolling summary in integration_health/indeed_flex_timesheets for
- * the Scheduling Health tile (PI-11).
+ *   no_assignment     — worker known but NO assignment covers that day
+ * plus `flexJobLinked` (soft signal: false = the Flex job id has no HRX
+ * shift via external_shift_requests → poNumber — link it, but it's not a
+ * coverage gap) and a rolling summary in
+ * integration_health/indeed_flex_timesheets for the PI-11 tile.
  *
  * READ-ONLY against scheduling truth: unlike the roster ingest this writes
  * NO assignments — hours are an after-the-fact audit signal; fixing a gap
@@ -142,11 +150,15 @@ function normalizeEntry(raw: Record<string, unknown>): NormalizedFlexTimesheetEn
   };
 }
 
-type MatchStatus = 'ok' | 'no_hrx_shift' | 'worker_unmatched' | 'no_assignment';
+type MatchStatus = 'ok' | 'worker_unmatched' | 'no_assignment';
 
 interface EntryVerdict {
   entry: NormalizedFlexTimesheetEntry;
   matchStatus: MatchStatus;
+  /** Whether the Flex job id resolved to an HRX shift via the email-request
+   *  linkage. false is a soft signal (link the job), NOT a coverage gap —
+   *  JOs created manually (e.g. Carrier #310) are legitimate without it. */
+  flexJobLinked: boolean;
   jobOrderId: string | null;
   shiftId: string | null;
   userId: string | null;
@@ -162,9 +174,9 @@ interface EntryVerdict {
 async function resolveWorker(
   tenantId: string,
   entry: NormalizedFlexTimesheetEntry,
-  assignmentsByFlexWorkerId: Map<string, { userId: string; assignmentIds: Map<string, string> }>,
+  assignmentsByFlexWorkerId: Map<string, { userId: string; assignmentIds: Map<string, string> }> | null,
 ): Promise<{ userId: string; matchedBy: string } | null> {
-  if (entry.flexWorkerId) {
+  if (entry.flexWorkerId && assignmentsByFlexWorkerId) {
     const hit = assignmentsByFlexWorkerId.get(entry.flexWorkerId);
     if (hit) return { userId: hit.userId, matchedBy: 'flex_worker_id' };
   }
@@ -181,6 +193,53 @@ async function resolveWorker(
   return resolved ? { userId: resolved.userId, matchedBy: resolved.matchedBy } : null;
 }
 
+const DEAD_ASSIGNMENT_STATUSES = new Set([
+  'cancelled', 'canceled', 'declined', 'worker-cancelled', 'worker_cancelled',
+]);
+
+function assignmentCoversDay(a: Record<string, unknown>, workDate: string): boolean {
+  const start = String(a.startDate ?? '').trim();
+  const end = String(a.endDate ?? '').trim();
+  if (start && workDate < start) return false;
+  // Empty endDate = ongoing (career) — covers any date from startDate on.
+  if (end && workDate > end) return false;
+  return Boolean(start || end);
+}
+
+/**
+ * Worker-first fallback: is this worker assigned ANYWHERE in HRX for that
+ * calendar day? This is the question Greg is actually asking — a JO created
+ * manually (no email-request linkage, e.g. Carrier #310 "Forklift Driver
+ * Fulltime" with a Career assignment) is full coverage even though the Flex
+ * job id can't be tied to a specific HRX shift.
+ */
+async function findCoveringAssignmentForWorkerDay(
+  tenantId: string,
+  userId: string,
+  workDate: string,
+): Promise<{ assignmentId: string; jobOrderId: string | null; shiftId: string | null } | null> {
+  const snap = await db
+    .collection(`tenants/${tenantId}/assignments`)
+    .where('userId', '==', userId)
+    .limit(500)
+    .get();
+  let rangeHit: { assignmentId: string; jobOrderId: string | null; shiftId: string | null } | null = null;
+  for (const d of snap.docs) {
+    const a = d.data() as Record<string, unknown>;
+    if (DEAD_ASSIGNMENT_STATUSES.has(String(a.status ?? '').trim().toLowerCase())) continue;
+    if (!assignmentCoversDay(a, workDate)) continue;
+    const hit = {
+      assignmentId: d.id,
+      jobOrderId: String(a.jobOrderId ?? '').trim() || null,
+      shiftId: String(a.shiftId ?? '').trim() || null,
+    };
+    // Day-scoped exact doc beats a spanning range doc.
+    if (String(a.startDate ?? '').trim() === workDate) return hit;
+    rangeHit = rangeHit ?? hit;
+  }
+  return rangeHit;
+}
+
 export async function reconcileFlexTimesheets(
   tenantId: string,
   rawEntries: unknown,
@@ -188,7 +247,8 @@ export async function reconcileFlexTimesheets(
 ): Promise<{
   entries: number;
   ok: number;
-  noHrxShift: number;
+  /** ok rows whose Flex job id has no HRX shift linkage (soft: link the job). */
+  okUnlinkedJob: number;
   workerUnmatched: number;
   noAssignment: number;
   problems: Array<{ status: MatchStatus; worker: string; client: string | null; flexJobId: string; workDate: string }>;
@@ -275,25 +335,49 @@ export async function reconcileFlexTimesheets(
     return null;
   }
 
+  // Per-worker day-coverage cache: `${userId}` → scan result promise reuse
+  // is overkill; cache per (userId, workDate) since pages repeat both.
+  const coverCache = new Map<string, { assignmentId: string; jobOrderId: string | null; shiftId: string | null } | null>();
+
   const verdicts: EntryVerdict[] = [];
   for (const entry of normalized) {
     const ref = await shiftFor(entry.flexJobId);
-    if (!ref) {
-      verdicts.push({ entry, matchStatus: 'no_hrx_shift', jobOrderId: null, shiftId: null, userId: null, assignmentId: null, matchedBy: null });
-      continue;
-    }
-    const roster = await rosterFor(ref.shiftId);
-    const worker = await resolveWorker(tenantId, entry, roster.byFlexWorkerId);
+    const roster = ref ? await rosterFor(ref.shiftId) : null;
+    const worker = await resolveWorker(tenantId, entry, roster?.byFlexWorkerId ?? null);
     if (!worker) {
-      verdicts.push({ entry, matchStatus: 'worker_unmatched', jobOrderId: ref.joId, shiftId: ref.shiftId, userId: null, assignmentId: null, matchedBy: null });
+      verdicts.push({
+        entry, matchStatus: 'worker_unmatched', flexJobLinked: Boolean(ref),
+        jobOrderId: ref?.joId ?? null, shiftId: ref?.shiftId ?? null,
+        userId: null, assignmentId: null, matchedBy: null,
+      });
       continue;
     }
-    const assignmentId = assignmentForDay(roster.byUserId.get(worker.userId), entry.workDate);
+
+    // Precise path: assignment on the LINKED shift for that day.
+    let assignmentId = ref && roster ? assignmentForDay(roster.byUserId.get(worker.userId), entry.workDate) : null;
+    let jobOrderId = ref?.joId ?? null;
+    let shiftId = ref?.shiftId ?? null;
+
+    // Worker-first fallback: any active assignment covering that day.
+    if (!assignmentId) {
+      const key = `${worker.userId}__${entry.workDate}`;
+      if (!coverCache.has(key)) {
+        coverCache.set(key, await findCoveringAssignmentForWorkerDay(tenantId, worker.userId, entry.workDate));
+      }
+      const cover = coverCache.get(key) ?? null;
+      if (cover) {
+        assignmentId = cover.assignmentId;
+        jobOrderId = cover.jobOrderId ?? jobOrderId;
+        shiftId = cover.shiftId ?? shiftId;
+      }
+    }
+
     verdicts.push({
       entry,
       matchStatus: assignmentId ? 'ok' : 'no_assignment',
-      jobOrderId: ref.joId,
-      shiftId: ref.shiftId,
+      flexJobLinked: Boolean(ref),
+      jobOrderId,
+      shiftId,
       userId: worker.userId,
       assignmentId,
       matchedBy: worker.matchedBy,
@@ -318,6 +402,7 @@ export async function reconcileFlexTimesheets(
         hrxAssignmentId: v.assignmentId,
         hrxMatchedBy: v.matchedBy,
         matchStatus: v.matchStatus,
+        flexJobLinked: v.flexJobLinked,
         capturedAt,
         reconciledAt: now,
         lastSeenAt: now,
@@ -347,7 +432,7 @@ export async function reconcileFlexTimesheets(
   const summary = {
     entries: normalized.length,
     ok: count('ok'),
-    noHrxShift: count('no_hrx_shift'),
+    okUnlinkedJob: verdicts.filter((v) => v.matchStatus === 'ok' && !v.flexJobLinked).length,
     workerUnmatched: count('worker_unmatched'),
     noAssignment: count('no_assignment'),
     problems,
