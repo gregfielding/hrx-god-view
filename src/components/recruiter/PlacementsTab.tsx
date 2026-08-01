@@ -2587,21 +2587,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         const groups = new Map<string, string[]>();
         for (const uid of workerIds) {
           let days: string[] = [];
-          try {
-            const appsSnap = await getDocs(
-              query(collection(db, 'tenants', tenantId, 'applications'), where('userId', '==', uid)),
-            );
-            const appDoc = appsSnap.docs
-              .map((d) => d.data() as any)
-              .find(
-                (a) =>
-                  String(a.jobOrderId || '') === jobOrderId ||
-                  String(a.shiftId || '') === shiftForAssign.id ||
-                  (Array.isArray(a.shiftIds) && a.shiftIds.includes(shiftForAssign.id)),
-              );
-            if (appDoc) days = getAppliedDays(appDoc).filter((d) => bulkDates.includes(d));
-          } catch {
-            /* lookup failure → fall back to the full fan-out for this worker */
+          // P1a: an explicit day choice from the drop prompt wins outright
+          // (consumed once so it can't leak into a later hire).
+          const chosen = chosenHireDatesByWorkerRef.current.get(uid);
+          if (chosen && chosen.length > 0) {
+            chosenHireDatesByWorkerRef.current.delete(uid);
+            days = chosen.filter((d) => bulkDates.includes(d));
+          } else {
+            try {
+              // eslint-disable-next-line no-await-in-loop
+              const applied = await fetchAppliedDaysForWorker(uid, shiftForAssign as Shift);
+              days = applied.filter((d) => bulkDates.includes(d));
+            } catch {
+              /* lookup failure → fall back to the full fan-out for this worker */
+            }
           }
           const key = JSON.stringify(days.length > 0 ? [...days].sort() : bulkDates);
           (groups.get(key) ?? groups.set(key, []).get(key)!).push(uid);
@@ -3943,7 +3942,80 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     tryPlaceWorker(worker, shiftId);
   };
 
+  /** P1a (multi-day, 2026-08-01): applied-days lookup shared by the hire
+   *  pipeline default and the drag-drop day-picker prompt. */
+  const fetchAppliedDaysForWorker = async (uid: string, shift: Shift): Promise<string[]> => {
+    if (!tenantId || !jobOrderId) return [];
+    try {
+      const appsSnap = await getDocs(
+        query(collection(db, 'tenants', tenantId, 'applications'), where('userId', '==', uid)),
+      );
+      const appDoc = appsSnap.docs
+        .map((d) => d.data() as any)
+        .find(
+          (a) =>
+            String(a.jobOrderId || '') === jobOrderId ||
+            String(a.shiftId || '') === shift.id ||
+            (Array.isArray(a.shiftIds) && a.shiftIds.includes(shift.id)),
+        );
+      return appDoc ? getAppliedDays(appDoc) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  /** Recruiter's explicit day choice from the drop prompt — consumed once by
+   *  assignWorkersToShift (beats the applied-days default). Cleared on Undo
+   *  so a cancelled hire can't leak stale dates into the next drop. */
+  const chosenHireDatesByWorkerRef = useRef<Map<string, string[]>>(new Map());
+  const [multiDayHirePrompt, setMultiDayHirePrompt] = useState<{
+    worker: Worker;
+    shiftId: string;
+    shiftLabel: string;
+    days: Array<{ date: string; applied: boolean; checked: boolean }>;
+  } | null>(null);
+
   const tryPlaceWorker = (worker: Worker, targetShiftId: string) => {
+    // P1a: dropping on a multi-day gig card with no specific day selected
+    // opens the day picker (worker's applied days pre-checked) instead of
+    // silently committing every day. Confirm re-enters with the choice
+    // stashed and proceeds through the normal double-book gate + 60s-undo
+    // hire. A specific Day filter still hires that day only, no prompt.
+    const targetShift = shifts.find((s) => s.id === targetShiftId);
+    const jobTypeForPrompt = String((jobOrder as any)?.jobType || '').toLowerCase();
+    const isMultiDayTarget =
+      jobTypeForPrompt === 'gig' &&
+      targetShift &&
+      (targetShift as any).dateSchedule &&
+      (targetShift as any).endDate &&
+      (targetShift as any).endDate !== (targetShift as any).shiftDate;
+    if (isMultiDayTarget && !selectedDay && !chosenHireDatesByWorkerRef.current.has(worker.id)) {
+      const allDays = getDateScheduleEntriesWithHours(
+        (targetShift as any).dateSchedule,
+        (targetShift as any).shiftDate,
+        (targetShift as any).endDate,
+      ).map((d) => d.date);
+      if (allDays.length > 1) {
+        void fetchAppliedDaysForWorker(worker.id, targetShift as Shift).then((applied) => {
+          const appliedSet = new Set(applied);
+          setMultiDayHirePrompt({
+            worker,
+            shiftId: targetShiftId,
+            shiftLabel: String(
+              (targetShift as any).title || (targetShift as any).jobTitle || 'this shift',
+            ),
+            days: allDays.map((date) => ({
+              date,
+              applied: appliedSet.has(date),
+              // Applied days pre-checked; a worker with NO application (added
+              // from a non-applicant pool) defaults to all days checked.
+              checked: appliedSet.has(date) || applied.length === 0,
+            })),
+          });
+        });
+        return;
+      }
+    }
     const conflicts = sameDayConflictByUserId.get(worker.id);
     if (conflicts && conflicts.length > 0) {
       // Stash the target shift so the confirm button hires onto the
@@ -3953,6 +4025,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       return;
     }
     void hireWorkerOnShift(worker, targetShiftId);
+  };
+
+  const confirmMultiDayHirePrompt = () => {
+    if (!multiDayHirePrompt) return;
+    const dates = multiDayHirePrompt.days.filter((d) => d.checked).map((d) => d.date);
+    const { worker, shiftId } = multiDayHirePrompt;
+    setMultiDayHirePrompt(null);
+    if (dates.length === 0) return;
+    chosenHireDatesByWorkerRef.current.set(worker.id, dates);
+    tryPlaceWorker(worker, shiftId);
   };
 
   /**
@@ -4033,6 +4115,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     pendingUndoHiresRef.current.forEach(({ timer }, uid) => {
       clearTimeout(timer);
       pendingHireShiftByWorkerRef.current.delete(uid);
+      // Undone hire must not leak its day choice into the next drop.
+      chosenHireDatesByWorkerRef.current.delete(uid);
     });
     pendingUndoHiresRef.current.clear();
     setUndoHireCount(0);
@@ -5438,6 +5522,65 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             </Button>
           }
         />
+
+        {/* P1a: multi-day hire day picker — which days is this worker being
+            added to? Applied days pre-checked; nothing is committed until
+            Confirm, and the normal double-book gate + 60s Undo still apply. */}
+        <Dialog open={!!multiDayHirePrompt} onClose={() => setMultiDayHirePrompt(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>
+            Add {multiDayHirePrompt?.worker.displayName || 'worker'} to which days?
+          </DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              {multiDayHirePrompt?.shiftLabel} runs multiple days. Days they applied for are
+              pre-checked — adjust before confirming.
+            </Typography>
+            <Stack spacing={0.5}>
+              {multiDayHirePrompt?.days.map((d, idx) => (
+                <Stack key={d.date} direction="row" alignItems="center" spacing={1}>
+                  <Checkbox
+                    size="small"
+                    checked={d.checked}
+                    onChange={(e) =>
+                      setMultiDayHirePrompt((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              days: prev.days.map((x, i) =>
+                                i === idx ? { ...x, checked: e.target.checked } : x,
+                              ),
+                            }
+                          : prev,
+                      )
+                    }
+                  />
+                  <Typography variant="body2">
+                    {new Date(`${d.date}T12:00:00Z`).toLocaleDateString('en-US', {
+                      weekday: 'short',
+                      month: 'numeric',
+                      day: 'numeric',
+                      timeZone: 'UTC',
+                    })}
+                  </Typography>
+                  {d.applied && (
+                    <Chip label="applied" size="small" color="success" variant="outlined" sx={{ height: 18, fontSize: '0.65rem' }} />
+                  )}
+                </Stack>
+              ))}
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setMultiDayHirePrompt(null)}>Cancel</Button>
+            <Button
+              variant="contained"
+              disabled={!multiDayHirePrompt?.days.some((d) => d.checked)}
+              onClick={confirmMultiDayHirePrompt}
+            >
+              Add to {multiDayHirePrompt?.days.filter((d) => d.checked).length ?? 0} day
+              {(multiDayHirePrompt?.days.filter((d) => d.checked).length ?? 0) === 1 ? '' : 's'}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         {/* Double-book warning: worker already placed/assigned/confirmed on same day */}
         <Dialog open={!!doubleBookConfirmWorker} onClose={() => setDoubleBookConfirmWorker(null)} maxWidth="sm" fullWidth>
