@@ -117,7 +117,17 @@ export const swapScheduledAssignmentWorker = onCall<Input, Promise<Output>>(
       }
     }
 
-    const newAssignmentId = `${shiftId}__${newUserId.trim()}`;
+    // Preserve the day segment on day-scoped multi-day assignments
+    // (`${shiftId}__${uid}__${yyyy-mm-dd}`) — the old hardcoded legacy shape
+    // silently dropped it, orphaning the per-day doc family (multi-day P2,
+    // 2026-08-01). The day key is everything after the OLD uid's segment.
+    const oldIdParts = String(assignmentId).split('__');
+    const lastPart = oldIdParts[oldIdParts.length - 1] ?? '';
+    const dayKey =
+      oldIdParts.length >= 3 && /^\d{4}-\d{2}-\d{2}$/.test(lastPart) ? lastPart : '';
+    const newAssignmentId = dayKey
+      ? `${shiftId}__${newUserId.trim()}__${dayKey}`
+      : `${shiftId}__${newUserId.trim()}`;
     const newRef = db.doc(`tenants/${tenantId}/assignments/${newAssignmentId}`);
     const newSnap = await newRef.get();
 

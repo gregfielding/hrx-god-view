@@ -727,9 +727,37 @@ export const placementsCreateAssignments = onCall(
   });
   const shiftDate = toDateOnly(shift.shiftDate);
   const shiftEndDate = toDateOnly(shift.endDate) || shiftDate;
-  const bulkDates = Array.isArray(applyDates) && applyDates.length > 0
+  let bulkDates = Array.isArray(applyDates) && applyDates.length > 0
     ? [...new Set(applyDates.filter((d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)))]
     : null;
+  // Multi-day P2 (2026-08-01): a GIG multi-day shift ALWAYS fans out one
+  // assignment per day. Callers that send no applyDate/applyDates (e.g. the
+  // JO Shifts-tab hire) used to fall into the single/spanning branch and mint
+  // ONE Jul30→Aug2 doc — a second data shape the timesheet grid bills for
+  // every calendar day and per-day confirm/cancel can't address. Derive the
+  // day list from dateSchedule (days with real hours) so only the per-day
+  // shape exists. Explicit applyDate/applyDates behavior is unchanged; open
+  // shifts and career weeklySchedule spans keep their existing branches.
+  if (
+    (!bulkDates || bulkDates.length === 0) &&
+    !(applyDate && /^\d{4}-\d{2}-\d{2}$/.test(applyDate)) &&
+    isGigJob &&
+    String(shift.shiftType || '').toLowerCase() !== 'open' &&
+    shift.dateSchedule &&
+    typeof shift.dateSchedule === 'object' &&
+    shiftEndDate !== shiftDate
+  ) {
+    const derived = Object.entries(shift.dateSchedule as Record<string, { startTime?: string; endTime?: string }>)
+      .filter(([date, cfg]) =>
+        /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+        date >= shiftDate &&
+        date <= shiftEndDate &&
+        Boolean(cfg && cfg.startTime && cfg.endTime),
+      )
+      .map(([date]) => date)
+      .sort();
+    if (derived.length > 0) bulkDates = derived;
+  }
   const useBulkDates = bulkDates && bulkDates.length > 0;
   const effectiveStartDate = useBulkDates ? shiftDate : (applyDate && /^\d{4}-\d{2}-\d{2}$/.test(applyDate) ? applyDate : shiftDate);
   const effectiveEndDate = useBulkDates ? shiftEndDate : (applyDate && /^\d{4}-\d{2}-\d{2}$/.test(applyDate) ? applyDate : shiftEndDate);
