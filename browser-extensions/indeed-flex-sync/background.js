@@ -50,7 +50,55 @@ async function ingest(config, envelope) {
   return data;
 }
 
+async function ingestTimesheets(config, envelope) {
+  const resp = await fetch(`${config.baseUrl}/indeedFlexTimesheetIngest`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.extensionKey}`,
+    },
+    body: JSON.stringify({ tenantId: config.tenantId, ...envelope }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || !data.success) {
+    const message = (data.error && data.error.message) || `HTTP ${resp.status}`;
+    const err = new Error(message);
+    err.status = resp.status;
+    throw err;
+  }
+  return data;
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'flex_timesheet_capture' && msg.envelope) {
+    (async () => {
+      const key = `ts:${msg.envelope.url || ''}`;
+      const last = recent.get(key) || 0;
+      if (Date.now() - last < 60 * 1000) return;
+      recent.set(key, Date.now());
+      const config = await getConfig();
+      if (!config.extensionKey) {
+        await setStatus({ ok: false, message: 'Extension key not set (open options).' });
+        return;
+      }
+      try {
+        const r = await ingestTimesheets(config, msg.envelope);
+        sessionSynced += 1;
+        setBadge();
+        const gaps = r.noHrxShift + r.workerUnmatched + r.noAssignment;
+        await setStatus({
+          ok: true,
+          message: gaps > 0
+            ? `timesheets: ${r.entries} rows — ${gaps} need attention (${r.noHrxShift} job unlinked, ${r.workerUnmatched} worker unknown, ${r.noAssignment} not assigned)`
+            : `timesheets: ${r.entries} rows, all matched in HRX`,
+        });
+      } catch (err) {
+        recent.delete(key); // allow retry
+        await setStatus({ ok: false, message: `timesheet sync failed: ${err.message || err}` });
+      }
+    })();
+    return false;
+  }
   if (msg && msg.type === 'flex_portal_capture' && msg.envelope) {
     (async () => {
       const jobId = msg.envelope.context && msg.envelope.context.jobId;

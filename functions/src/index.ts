@@ -12774,6 +12774,7 @@ export { indeedFlexApplyShiftRequest } from './integrations/indeedFlex/applyShif
 // assignments (the positive "who is booked" signal emails never gave) and
 // cancels roster drops. Authed by INDEED_FLEX_EXTENSION_KEY (Bearer).
 export { indeedFlexPortalIngest } from './integrations/indeedFlex/portalIngest';
+export { indeedFlexTimesheetIngest } from './integrations/indeedFlex/timesheetIngest';
 
 // **Fieldglass (Sodexo) inbound-email ingestion — FG Slices 1+2.**
 // Structural sibling of the Indeed Flex pipeline above, sharing the

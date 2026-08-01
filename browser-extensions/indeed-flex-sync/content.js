@@ -18,6 +18,8 @@
   const buf = { job: null, jobUrl: null, shifts: null, shiftsUrl: null };
   let lastSentKey = '';
   let lastSentAt = 0;
+  /** Timesheets view: url → last-forward timestamp (page/filter dedupe). */
+  const tsRecent = new Map();
 
   function agencyIdFromUrl(url) {
     const m = /\/agencies\/(\d+)\//.exec(url || '');
@@ -88,6 +90,18 @@
       buf.shiftsUrl = msg.url;
     } else if (msg.kind === 'workers') {
       assembleAndSend(msg.body, msg.url);
+    } else if (msg.kind === 'timesheets') {
+      // Timesheets rows are self-contained — no job/shifts bundle to wait
+      // for. Forward each entries page once per 30s per exact URL (the URL
+      // carries page + date range + filters, so distinct views still sync).
+      const now = Date.now();
+      const last = tsRecent.get(msg.url) || 0;
+      if (now - last < 30000) return;
+      tsRecent.set(msg.url, now);
+      chrome.runtime.sendMessage(
+        { type: 'flex_timesheet_capture', envelope: { url: msg.url, entries: msg.body, capturedAt: now } },
+        () => void chrome.runtime.lastError,
+      );
     }
   });
 })();

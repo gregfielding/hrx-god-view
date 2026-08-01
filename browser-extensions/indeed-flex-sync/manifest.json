@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "HRX Indeed Flex Sync",
-  "version": "1.0.0",
-  "description": "Syncs Indeed Flex agency-portal jobs — job, shifts, and the BOOKED WORKER ROSTER — into HRX automatically as you browse.",
+  "version": "1.1.0",
+  "description": "Syncs Indeed Flex agency-portal jobs (job, shifts, booked roster) and the Timesheets view into HRX automatically as you browse.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://agency.indeedflex.com/*",

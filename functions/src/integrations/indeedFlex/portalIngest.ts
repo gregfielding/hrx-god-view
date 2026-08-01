@@ -74,7 +74,7 @@ function dowFromIso(date: string): number | null {
  * Auth (mirrors fieldglass/enrichmentApi.ts verifyExtensionKey)
  * ──────────────────────────────────────────────────────────────────── */
 
-function verifyExtensionKey(req: Request, res: Response): boolean {
+export function verifyExtensionKey(req: Request, res: Response): boolean {
   const configured = String(process.env.INDEED_FLEX_EXTENSION_KEY ?? '').trim();
   if (!configured) {
     res.status(503).json({ success: false, error: { code: 'NOT_CONFIGURED', message: 'Extension key not configured.' } });
@@ -177,7 +177,7 @@ async function resolveByName(tenantId: string, first: string, last: string): Pro
   return matches.length === 1 ? { userId: matches[0][0], matchedBy: 'name' } : null;
 }
 
-async function resolvePortalWorker(
+export async function resolvePortalWorker(
   tenantId: string,
   w: { email: string | null; phone: string | null; firstName: string; lastName: string; displayName: string },
 ): Promise<ResolvedWorker | null> {
@@ -205,14 +205,14 @@ async function resolvePortalWorker(
  * Shift lookup — anchor through the request linkage
  * ──────────────────────────────────────────────────────────────────── */
 
-interface HrxShiftRef {
+export interface HrxShiftRef {
   joId: string;
   shiftId: string;
   shift: Record<string, unknown>;
   jo: Record<string, unknown>;
 }
 
-async function findHrxShiftForFlexJob(tenantId: string, flexJobId: string): Promise<HrxShiftRef | null> {
+export async function findHrxShiftForFlexJob(tenantId: string, flexJobId: string): Promise<HrxShiftRef | null> {
   if (!flexJobId) return null;
   // Applied request(s) for this Flex job carry matchedJobOrderId.
   const reqSnap = await db

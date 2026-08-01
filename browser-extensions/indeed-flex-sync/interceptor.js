@@ -16,6 +16,10 @@
     if (/\/jobs\/\d+\?/.test(url) || /\/jobs\/\d+$/.test(url)) return 'job';
     if (/\/agency_shifts\b/.test(url)) return 'shifts';
     if (/\/workers\b/.test(url)) return 'workers';
+    // Timesheets view rows (one per worker-per-shift-day). The (\?|$)
+    // anchor keeps the sibling /entries/count and /entries/worker_names
+    // calls out — they carry no row data.
+    if (/\/timesheets\/entries(\?|$)/.test(url)) return 'timesheets';
     return null;
   }
 

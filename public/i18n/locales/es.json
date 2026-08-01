@@ -1190,7 +1190,12 @@
     "linkCopied": "¡Enlace copiado al portapapeles!",
     "addToFavorites": "Agregar a favoritos",
     "removeFromFavorites": "Quitar de favoritos",
-    "openJobDetails": "Abrir detalles del trabajo"
+    "openJobDetails": "Abrir detalles del trabajo",
+    "multiDayPromptTitle": "Este equipo trabaja varios días",
+    "multiDayPromptBody": "Estás postulando para el {date}. ¿Quieres postularte también para los otros días?",
+    "multiDayJustThisDay": "Solo este día",
+    "multiDayApplyToOne": "Postularme a 1 día",
+    "multiDayApplyToMany": "Postularme a {count} días"
   },
   "assignment": {
     "title": "Asignación",
