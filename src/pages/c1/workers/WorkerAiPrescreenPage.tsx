@@ -37,6 +37,7 @@ import {
 import {
   getWorkerAiPrescreenInterviewPlan,
   submitWorkerAiPrescreenInterview,
+  type WorkerAiPrescreenPlanBankCoverage,
 } from '../../../services/workerAiPrescreenCallable';
 import { db } from '../../../firebase';
 import { formatFirebaseHttpsError } from '../../../utils/firebaseHttpsErrors';
@@ -240,6 +241,34 @@ function buildAnswersForSubmit(
   };
 }
 
+/** Bank answers (server-validated fresh + carriable) → wizard state patch. */
+function answersPatchFromBankCore(
+  bankCore: Record<string, string | string[]>,
+): Partial<WorkerAiPrescreenAnswers> {
+  const patch: Record<string, unknown> = {};
+  for (const [id, v] of Object.entries(bankCore)) {
+    patch[id] = Array.isArray(v) ? v.map((x) => String(x)) : String(v);
+  }
+  return patch as Partial<WorkerAiPrescreenAnswers>;
+}
+
+/** Canonical question ids the worker actually saw (follow-ups fold into their merge target). */
+function askedStepIdsFromNavEntries(navEntries: PrescreenNavEntry[]): string[] {
+  const out = new Set<string>();
+  for (const e of navEntries) {
+    if (e.kind === 'core' || e.kind === 'dynamic') {
+      out.add(e.step.id);
+    } else if (e.followup === 'experience') {
+      out.add('experience_details');
+    } else if (e.followup === 'pressure') {
+      out.add('pressure_situation');
+    } else {
+      out.add('supervisor_feedback');
+    }
+  }
+  return Array.from(out);
+}
+
 function stepValid(step: WorkerAiPrescreenStep, a: WorkerAiPrescreenAnswers): boolean {
   switch (step.type) {
     case 'text': {
@@ -437,6 +466,8 @@ const WorkerAiPrescreenPage: React.FC = () => {
   const [dynamicAnswers, setDynamicAnswers] = useState<Record<string, string>>({});
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
+  /** Cumulative interview: steps the answer bank satisfies for this application (null = full interview). */
+  const [bankCoverage, setBankCoverage] = useState<WorkerAiPrescreenPlanBankCoverage | null>(null);
   const [workerAiPrescreenRequired, setWorkerAiPrescreenRequired] = useState(true);
   const [jobHeaderInfo, setJobHeaderInfo] = useState<JobHeaderInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -485,10 +516,21 @@ const WorkerAiPrescreenPage: React.FC = () => {
     });
   }, [t, i18nWorkerPrescreenReady]);
 
+  const coveredCoreStepIdSet = useMemo(
+    () => new Set(bankCoverage?.coveredCoreStepIds ?? []),
+    [bankCoverage],
+  );
+  const coveredDynamicStepIdSet = useMemo(
+    () => new Set(bankCoverage?.coveredDynamicStepIds ?? []),
+    [bankCoverage],
+  );
+
   const visibleCoreSteps = useMemo(
     () =>
-      localizedCoreSteps.filter((step) =>
-        isCoreStepIncluded(step, answers, dynamicSteps, needsLegalNameConfirm),
+      localizedCoreSteps.filter(
+        (step) =>
+          !coveredCoreStepIdSet.has(step.id) &&
+          isCoreStepIncluded(step, answers, dynamicSteps, needsLegalNameConfirm),
       ),
     [
       localizedCoreSteps,
@@ -498,6 +540,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
       answers.opening_schedule_preferences,
       dynamicSteps,
       needsLegalNameConfirm,
+      coveredCoreStepIdSet,
     ],
   );
 
@@ -507,7 +550,9 @@ const WorkerAiPrescreenPage: React.FC = () => {
 
   const visibleDynamicSteps = useMemo(() => {
     if (dynamicSteps.length === 0) return [];
-    return applyPrescreenDynamicDedupe(dynamicSteps, answers, dynamicAnswers).visibleSteps;
+    return applyPrescreenDynamicDedupe(dynamicSteps, answers, dynamicAnswers).visibleSteps.filter(
+      (s) => !coveredDynamicStepIdSet.has(s.id),
+    );
   }, [
     dynamicSteps,
     answers,
@@ -516,6 +561,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
     answers.backup_transportation,
     answers.physical_comfort,
     dynamicAnswers,
+    coveredDynamicStepIdSet,
   ]);
 
   const navEntries = useMemo(
@@ -798,6 +844,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
     if (!user?.uid) {
       setDynamicSteps([]);
       setDynamicAnswers({});
+      setBankCoverage(null);
       setPlanError(null);
       setPlanLoading(false);
       setWorkerAiPrescreenRequired(true);
@@ -807,6 +854,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
     if (!canFetchPlan) {
       setDynamicSteps([]);
       setDynamicAnswers({});
+      setBankCoverage(null);
       setPlanError(null);
       setPlanLoading(false);
       setWorkerAiPrescreenRequired(true);
@@ -825,15 +873,22 @@ const WorkerAiPrescreenPage: React.FC = () => {
         setWorkerAiPrescreenRequired(plan.workerAiPrescreenRequired !== false);
         const steps = plan.dynamicSteps;
         setDynamicSteps(Array.isArray(steps) ? steps : []);
+        const coverage = plan.bankCoverage ?? null;
+        setBankCoverage(coverage);
         const init: Record<string, string> = {};
         for (const s of steps || []) {
-          init[s.id] = '';
+          init[s.id] = coverage?.bankDynamicAnswers?.[s.id] ?? '';
         }
         setDynamicAnswers(init);
+        if (coverage && Object.keys(coverage.bankCoreAnswers || {}).length > 0) {
+          const patch = answersPatchFromBankCore(coverage.bankCoreAnswers);
+          setAnswers((prev) => ({ ...prev, ...patch }));
+        }
       } catch (e) {
         if (!cancelled) {
           setDynamicSteps([]);
           setDynamicAnswers({});
+          setBankCoverage(null);
           setWorkerAiPrescreenRequired(true);
           setPlanError(friendlyPrescreenCallableError(e, 'plan', t));
         }
@@ -980,7 +1035,8 @@ const WorkerAiPrescreenPage: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!user?.uid) return;
-    if (!canNext) return;
+    // Zero-delta: the bank covers every step (no nav entries) — submit carries bank answers.
+    if (!canNext && totalSteps > 0) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -1021,6 +1077,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
           return Object.keys(payloadDyn).length > 0 ? payloadDyn : undefined;
         })(),
         sessionProfileEnhancements: buildPrescreenSessionProfileEnhancements(userDoc ?? undefined),
+        askedStepIds: bankCoverage ? askedStepIdsFromNavEntries(navEntries) : null,
       });
       const started = interviewStartedAtMs.current ?? Date.now();
       logPrescreenCompleted({ totalSteps, durationMs: Math.max(0, Date.now() - started) });
@@ -1202,9 +1259,64 @@ const WorkerAiPrescreenPage: React.FC = () => {
 
   const isLast = stepIndex === totalSteps - 1;
 
+  /** Zero delta: the answer bank covers every question — one-tap confirm instead of an interview. */
+  if (totalSteps === 0 && bankCoverage?.zeroDelta && !planLoading && (applicationId || tenantId)) {
+    return (
+      <Box sx={{ p: { xs: 1.5, sm: 2 }, maxWidth: 560, mx: 'auto' }}>
+        {renderFramingHeader()}
+        {error ? (
+          <Alert severity="error" sx={{ mb: 1.5, py: 0.75 }}>
+            {error}
+          </Alert>
+        ) : null}
+        <Paper elevation={0} variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
+          <Stack spacing={1.5} alignItems="center" textAlign="center">
+            <CheckCircleOutlineIcon sx={{ fontSize: 44, color: 'success.main' }} aria-hidden />
+            <Typography variant="h6" fontWeight={700} component="h2">
+              {t('workerAiPrescreen.bank.allSetTitle')}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420, lineHeight: 1.45 }}>
+              {t('workerAiPrescreen.bank.allSetBody')}
+            </Typography>
+            <Button
+              fullWidth
+              variant="contained"
+              disabled={submitting}
+              sx={{ mt: 0.5, py: 1.25, fontWeight: 600 }}
+              onClick={() => void handleSubmit()}
+            >
+              {submitting ? <CircularProgress size={22} color="inherit" /> : t('workerAiPrescreen.bank.allSetConfirmCta')}
+            </Button>
+          </Stack>
+        </Paper>
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ p: { xs: 1.5, sm: 2 }, pb: { xs: 3, sm: 4 }, maxWidth: 560, mx: 'auto' }}>
       {renderFramingHeader()}
+
+      {bankCoverage &&
+      totalSteps > 0 &&
+      bankCoverage.coveredCoreStepIds.length + bankCoverage.coveredDynamicStepIds.length > 0 ? (
+        <Alert
+          severity="success"
+          variant="outlined"
+          icon={<CheckCircleOutlineIcon fontSize="small" />}
+          sx={{
+            mb: 1.25,
+            py: 0.75,
+            borderColor: 'success.light',
+            bgcolor: (mui) => alpha(mui.palette.success.main, 0.06),
+            '& .MuiAlert-message': { width: '100%' },
+          }}
+        >
+          <Typography variant="body2" sx={{ lineHeight: 1.45 }}>
+            {t('workerAiPrescreen.bank.deltaBanner', { count: totalSteps })}
+          </Typography>
+        </Alert>
+      ) : null}
 
       {entryContextBanner ? (
         <Alert
