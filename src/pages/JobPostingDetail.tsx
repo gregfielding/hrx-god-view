@@ -1229,7 +1229,16 @@ const JobPostingDetail: React.FC = () => {
         ) {
           return;
         }
-        if (shiftId) openOfferConfirmationSheet(shiftId);
+        if (shiftId) {
+          // Day-scoped multi-day assignments: confirm THAT day's assignment,
+          // not an arbitrary sibling. The day comes from the doc's startDate,
+          // falling back to the id's `${shiftId}__${uid}__${yyyy-mm-dd}` tail.
+          const idTail = aid.split('__').pop() ?? '';
+          const day =
+            String((data?.startDate as string) || '') ||
+            (/^\d{4}-\d{2}-\d{2}$/.test(idTail) ? idTail : '');
+          openOfferConfirmationSheet(shiftId, day || undefined);
+        }
       } catch (err) {
         console.warn('[JobPostingDetail] accept-intent open-sheet failed', err);
       }
