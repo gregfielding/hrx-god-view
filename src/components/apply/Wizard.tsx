@@ -413,11 +413,18 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     return searchParams.get('preferredShift') || null;
   }, [searchParams]);
 
-  // Apply date (YYYY-MM-DD) when worker applied for a specific day of a multi-day gig (from jobs board Apply button)
-  const applyDateFromUrl = useMemo(() => {
-    const d = searchParams.get('applyDate');
-    return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
+  // Apply date(s) (YYYY-MM-DD) when worker applied for specific day(s) of a
+  // multi-day gig — `applyDate` from a single day-row Apply, `applyDates`
+  // (comma list) from the "also apply for other days?" prompt (P1b).
+  const applyDatesFromUrl = useMemo(() => {
+    const multi = searchParams.get('applyDates');
+    const single = searchParams.get('applyDate');
+    const list = [...(multi ? multi.split(',') : []), ...(single ? [single] : [])]
+      .map((s) => s.trim())
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    return [...new Set(list)].sort();
   }, [searchParams]);
+  const applyDateFromUrl = applyDatesFromUrl.length > 0 ? applyDatesFromUrl[0] : null;
 
   const baseSessionKey = `${tenantId || 'na'}-${jobId || 'na'}`;
   const sessionIdStorageKey = `app-wizard-session-id:${baseSessionKey}`;
@@ -2831,7 +2838,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                   ? [String(existing.applyDate)]
                   : []
               : [];
-            const merged = [...new Set([...existingDates, applyDateFromUrl])].sort();
+            const merged = [...new Set([...existingDates, ...applyDatesFromUrl])].sort();
             applyDatePayload = applyDateFromUrl;
             applyDatesPayload = merged;
           }

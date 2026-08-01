@@ -29,6 +29,10 @@ import {
   FormControlLabel,
   Radio,
   RadioGroup,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckCircle from '@mui/icons-material/CheckCircle';
@@ -1363,8 +1367,16 @@ const JobPostingDetail: React.FC = () => {
     });
   };
 
-  const quickApplyToShift = async (shiftId: string, applyDate?: string): Promise<boolean> => {
+  const quickApplyToShift = async (
+    shiftId: string,
+    applyDateArg?: string | string[],
+  ): Promise<boolean> => {
     if (!user?.uid || !resolvedTenantId || !postId || !posting) return false;
+    // P1b: the "also apply for other days?" prompt sends several dates in one
+    // shot — one merged write instead of a write per day.
+    const applyDatesList = (Array.isArray(applyDateArg) ? applyDateArg : [applyDateArg])
+      .filter((d): d is string => typeof d === 'string' && d.length > 0);
+    const applyDate = applyDatesList[0];
     const appDocId = `${user.uid}_${postId}`;
     const appRef = doc(db, 'tenants', resolvedTenantId, 'applications', appDocId);
     let optimisticKeys: string[] = [];
@@ -1377,13 +1389,20 @@ const JobPostingDetail: React.FC = () => {
       // re-acknowledgement.
       if (status === 'withdrawn' || status === 'cancelled' || status === 'deleted') return false;
       // Committed to writing — flip the UI NOW (before the slow setDoc).
-      optimisticKeys = markShiftAppliedOptimistic(shiftId, applyDate);
+      if (applyDatesList.length > 0) {
+        for (const d of applyDatesList) {
+          optimisticKeys = optimisticKeys.concat(markShiftAppliedOptimistic(shiftId, d));
+        }
+      } else {
+        optimisticKeys = markShiftAppliedOptimistic(shiftId, applyDate);
+      }
       const existingShiftIds = getApplicationShiftIds(data);
       const existingApplyDates = getApplicationAppliedDays(data);
       const nextShiftIds = Array.from(new Set([...existingShiftIds, shiftId]));
-      const nextApplyDates = applyDate
-        ? Array.from(new Set([...existingApplyDates, applyDate]))
-        : existingApplyDates;
+      const nextApplyDates =
+        applyDatesList.length > 0
+          ? Array.from(new Set([...existingApplyDates, ...applyDatesList]))
+          : existingApplyDates;
       await setDoc(
         appRef,
         {
@@ -1414,25 +1433,74 @@ const JobPostingDetail: React.FC = () => {
     }
   };
 
-  const handleApplyToShift = async (shiftId: string, applyDate?: string) => {
+  /** P1b: "also apply for other days?" prompt state — the day the worker
+   *  tapped is always included; the other unapplied days of the same
+   *  multi-day shift are offered as opt-in checkboxes. */
+  const [applyDaysPrompt, setApplyDaysPrompt] = useState<{
+    shiftId: string;
+    tappedDate: string;
+    others: Array<{ date: string; checked: boolean }>;
+  } | null>(null);
+
+  const proceedApplyWithDates = async (shiftId: string, dates: string[]) => {
     const returnTo = `/c1/jobs-board/${postId}`;
 
     // Authenticated users who already have a completed application on
     // this posting skip the wizard entirely — we just append the shift
     // to their existing application doc.
     if (user?.uid && appliedShifts.length > 0) {
-      const ok = await quickApplyToShift(shiftId, applyDate);
+      const ok = await quickApplyToShift(shiftId, dates.length > 0 ? dates : undefined);
       if (ok) return;
       // Fall through to wizard if quick-apply couldn't reuse the doc.
     }
 
     const params = new URLSearchParams({ shiftId });
-    if (applyDate) params.set('applyDate', applyDate);
+    if (dates.length === 1) params.set('applyDate', dates[0]);
+    else if (dates.length > 1) params.set('applyDates', dates.join(','));
     // Always pass returnTo so the wizard's success screen sends them
     // back here instead of /c1/workers/payroll. They came here to
     // browse shifts; they should come back here to browse more.
     params.set('returnTo', returnTo);
     navigate(`/apply/${posting.tenantId}/${postId}?${params.toString()}`);
+  };
+
+  const handleApplyToShift = async (shiftId: string, applyDate?: string) => {
+    // P1b: applying to one day of a multi-day gig offers the shift's OTHER
+    // unapplied days as an opt-in prompt (mirror of the admin drop prompt)
+    // — one apply flow then covers every day they pick. Nothing is applied
+    // silently; unchecked days are untouched.
+    if (applyDate) {
+      const shift = (dynamicShifts || []).find((s: any) => String(s.shiftId) === shiftId);
+      if (
+        shift &&
+        (shift as any).dateSchedule &&
+        (shift as any).endDate &&
+        (shift as any).endDate !== (shift as any).shiftDate
+      ) {
+        const allDays = getDateScheduleEntriesWithHours(
+          (shift as any).dateSchedule,
+          (shift as any).shiftDate,
+          (shift as any).endDate,
+        ).map((d) => d.date);
+        const others = allDays.filter((d) => {
+          if (d === applyDate) return false;
+          const dayKey = `${shiftId}__${d}`;
+          // Skip days already applied / offered / confirmed.
+          if (appliedShifts.includes(dayKey)) return false;
+          if (shiftStatuses[dayKey]) return false;
+          return true;
+        });
+        if (others.length > 0) {
+          setApplyDaysPrompt({
+            shiftId,
+            tappedDate: applyDate,
+            others: others.map((date) => ({ date, checked: false })),
+          });
+          return;
+        }
+      }
+    }
+    await proceedApplyWithDates(shiftId, applyDate ? [applyDate] : []);
   };
 
   /**
@@ -4087,6 +4155,77 @@ const JobPostingDetail: React.FC = () => {
       </WorkerBottomSheet>
 
       {/* Share Snackbar */}
+      {/* P1b: also-apply-for-other-days prompt (mirror of the admin drop
+          prompt) — tapped day always included, others opt-in. */}
+      <Dialog open={!!applyDaysPrompt} onClose={() => setApplyDaysPrompt(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>This crew works multiple days</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            {`You're applying for ${
+              applyDaysPrompt
+                ? new Date(`${applyDaysPrompt.tappedDate}T12:00:00Z`).toLocaleDateString('en-US', {
+                    weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC',
+                  })
+                : ''
+            }. Want to apply for the other days too?`}
+          </Typography>
+          <Stack spacing={0.5}>
+            {applyDaysPrompt?.others.map((d, idx) => (
+              <FormControlLabel
+                key={d.date}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={d.checked}
+                    onChange={(e) =>
+                      setApplyDaysPrompt((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              others: prev.others.map((x, i) =>
+                                i === idx ? { ...x, checked: e.target.checked } : x,
+                              ),
+                            }
+                          : prev,
+                      )
+                    }
+                  />
+                }
+                label={new Date(`${d.date}T12:00:00Z`).toLocaleDateString('en-US', {
+                  weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC',
+                })}
+              />
+            ))}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              if (!applyDaysPrompt) return;
+              const { shiftId, tappedDate } = applyDaysPrompt;
+              setApplyDaysPrompt(null);
+              void proceedApplyWithDates(shiftId, [tappedDate]);
+            }}
+          >
+            Just this day
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              if (!applyDaysPrompt) return;
+              const { shiftId, tappedDate, others } = applyDaysPrompt;
+              const dates = [tappedDate, ...others.filter((d) => d.checked).map((d) => d.date)];
+              setApplyDaysPrompt(null);
+              void proceedApplyWithDates(shiftId, dates);
+            }}
+          >
+            {`Apply to ${1 + (applyDaysPrompt?.others.filter((d) => d.checked).length ?? 0)} day${
+              (applyDaysPrompt?.others.filter((d) => d.checked).length ?? 0) === 0 ? '' : 's'
+            }`}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Snackbar
         open={shareSnackbarOpen}
         autoHideDuration={3000}
