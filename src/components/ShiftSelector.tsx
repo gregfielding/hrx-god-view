@@ -33,8 +33,13 @@ interface ShiftSelectorProps {
   onApplyToShift?: (shiftId: string, date?: string) => void; // Callback for apply; for GIG with dateSchedule, date is YYYY-MM-DD for day-by-day apply
   appliedShifts?: string[]; // Array of shift IDs the user has already applied to
   shiftStatuses?: Record<string, string>; // Map of shiftId -> application status
-  onConfirmShift?: (shiftId: string) => void; // Callback for accepting a shift assignment
-  onDeclineShift?: (shiftId: string) => void; // Callback for declining a shift assignment
+  /** Accept / decline a shift assignment. `date` is the specific day row
+   *  (YYYY-MM-DD) on a multi-day gig — REQUIRED for correctness there: a
+   *  worker holds one assignment PER DAY, and without the date the handler
+   *  used to resolve an arbitrary day's doc (confirming Fri could confirm
+   *  Thu's assignment — Lolla 2026-07-31). */
+  onConfirmShift?: (shiftId: string, date?: string) => void;
+  onDeclineShift?: (shiftId: string, date?: string) => void;
   /** Cancel/withdraw application for this shift (or for this day when date is provided) */
   onCancelApplication?: (shiftId: string, date?: string) => void;
   /**
@@ -496,7 +501,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                 <>
                   <Button
                     variant="contained"
-                    onClick={() => onConfirmShift?.(shift.shiftId)}
+                    onClick={() => onConfirmShift?.(shift.shiftId, item.type === 'day' ? item.date : undefined)}
                     sx={{
                       minWidth: 160,
                       backgroundColor: '#4CAF50',
@@ -510,7 +515,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                   <Button
                     variant="contained"
                     color="error"
-                    onClick={() => onDeclineShift?.(shift.shiftId)}
+                    onClick={() => onDeclineShift?.(shift.shiftId, item.type === 'day' ? item.date : undefined)}
                     sx={{ minWidth: 160, fontWeight: 600 }}
                   >
                     {t('jobs.declineShift')}

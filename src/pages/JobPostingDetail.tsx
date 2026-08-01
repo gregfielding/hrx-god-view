@@ -167,6 +167,10 @@ const JobPostingDetail: React.FC = () => {
   const [assignmentDecisionLoading, setAssignmentDecisionLoading] = useState(false); // prevent double-clicks on I Accept / Decline
   const [offerConfirmationOpen, setOfferConfirmationOpen] = useState(false);
   const [offerConfirmationShiftId, setOfferConfirmationShiftId] = useState<string | undefined>(undefined);
+  /** The specific day (YYYY-MM-DD) being confirmed on a multi-day gig —
+   *  threads through the ack sheet so the accept targets that day's
+   *  assignment doc, not an arbitrary one. */
+  const [offerConfirmationDate, setOfferConfirmationDate] = useState<string | undefined>(undefined);
   const [offerConfirmSubmitting, setOfferConfirmSubmitting] = useState(false);
   const [offerConfirmError, setOfferConfirmError] = useState<string | null>(null);
   const [ackOnTimeArrival, setAckOnTimeArrival] = useState(false);
@@ -2139,8 +2143,9 @@ const JobPostingDetail: React.FC = () => {
     );
   };
 
-  const openOfferConfirmationSheet = (shiftId?: string) => {
+  const openOfferConfirmationSheet = (shiftId?: string, date?: string) => {
     setOfferConfirmationShiftId(shiftId);
+    setOfferConfirmationDate(date);
     setAckOnTimeArrival(false);
     setAckUniformAndRequirements(false);
     setAckNoShowConsequence(false);
@@ -2157,7 +2162,7 @@ const JobPostingDetail: React.FC = () => {
     setOfferConfirmError(null);
   };
 
-  const findAssignmentIdForShift = async (shiftId: string): Promise<string | null> => {
+  const findAssignmentIdForShift = async (shiftId: string, date?: string): Promise<string | null> => {
     if (!resolvedTenantId || !user?.uid) return null;
     const assignmentsRef = collection(db, 'tenants', resolvedTenantId, 'assignments');
     const assignmentQuery = query(
@@ -2168,11 +2173,24 @@ const JobPostingDetail: React.FC = () => {
     const snapshot = await getDocs(assignmentQuery);
     if (snapshot.empty) return null;
 
-    const preferred = snapshot.docs.find((docSnap) => {
+    // Multi-day gigs hold ONE assignment doc per day (startDate === endDate
+    // === that day). When the caller names a day, scope to it — without this,
+    // a 4-day offer resolved docs[0] (arbitrary Firestore order) and
+    // confirming Fri could confirm Thu's assignment (Lolla 2026-07-31).
+    const pool = date
+      ? snapshot.docs.filter(
+          (docSnap) => String((docSnap.data() || {}).startDate || '') === date,
+        )
+      : snapshot.docs;
+    if (pool.length === 0) return null;
+
+    const preferred = pool.find((docSnap) => {
       const status = String((docSnap.data() || {}).status || '').toLowerCase();
-      return status === 'proposed' || status === 'confirmed';
+      // Offer-stage day docs are 'pending' — include it so a day-scoped
+      // lookup lands on the live offer, not a stale cancelled doc.
+      return status === 'pending' || status === 'proposed' || status === 'confirmed';
     });
-    return (preferred || snapshot.docs[0]).id;
+    return (preferred || pool[0]).id;
   };
 
   const findAssignmentIdByApplicationId = async (appId: string): Promise<string | null> => {
@@ -2196,6 +2214,9 @@ const JobPostingDetail: React.FC = () => {
     skipConfirmPrompt?: boolean;
     suppressAlerts?: boolean;
     redirectOnAccept?: boolean;
+    /** Specific day (YYYY-MM-DD) on a multi-day gig — scopes the decision to
+     *  that day's assignment doc instead of an arbitrary one. */
+    date?: string;
   entryPoint?:
     | 'accept_button'
     | 'decline_button'
@@ -2216,6 +2237,7 @@ const JobPostingDetail: React.FC = () => {
       suppressAlerts = false,
       redirectOnAccept = true,
       entryPoint = 'unknown',
+      date,
     } = options;
 
     const isWorkerCancel = decision === 'worker_cancel';
@@ -2235,7 +2257,7 @@ const JobPostingDetail: React.FC = () => {
       const params = new URLSearchParams(location.search);
       let assignmentId = params.get('assignmentId');
       if (!assignmentId && shiftId) {
-        assignmentId = await findAssignmentIdForShift(shiftId);
+        assignmentId = await findAssignmentIdForShift(shiftId, date);
       }
       if (!assignmentId && applicationData?.assignmentId) {
         assignmentId = String(applicationData.assignmentId);
@@ -2275,7 +2297,12 @@ const JobPostingDetail: React.FC = () => {
       });
 
       if (decision === 'accept') {
-        if (shiftId) setShiftStatuses((prev) => ({ ...prev, [shiftId]: 'confirmed' }));
+        // Day-scoped optimistic update on multi-day gigs — stamping the
+        // shift-level key would light every day's card "Confirmed".
+        if (shiftId) {
+          const statusKey = date ? `${shiftId}__${date}` : shiftId;
+          setShiftStatuses((prev) => ({ ...prev, [statusKey]: 'confirmed' }));
+        }
         setApplicationStatus('confirmed');
         setAcceptedAssignmentId(assignmentId);
         if (user?.uid && assignmentId) {
@@ -2294,7 +2321,8 @@ const JobPostingDetail: React.FC = () => {
         // worker_cancel → 'reapply' (worker-cancelled, can re-apply right
         // here); legacy decline → 'withdrawn'.
         if (shiftId) {
-          setShiftStatuses((prev) => ({ ...prev, [shiftId]: isWorkerCancel ? 'reapply' : 'withdrawn' }));
+          const statusKey = date ? `${shiftId}__${date}` : shiftId;
+          setShiftStatuses((prev) => ({ ...prev, [statusKey]: isWorkerCancel ? 'reapply' : 'withdrawn' }));
         }
         setApplicationStatus('withdrawn');
         if (user?.uid && assignmentId) {
@@ -2391,7 +2419,7 @@ const JobPostingDetail: React.FC = () => {
     }
   };
 
-  const handleConfirmAssignmentForShift = async (shiftId: string) => {
+  const handleConfirmAssignmentForShift = async (shiftId: string, date?: string) => {
     const joId = posting?.jobOrderId;
     // Quick-confirm path: this worker already ack'd the operational
     // commitments on a prior shift this session. Skip the modal and
@@ -2404,18 +2432,19 @@ const JobPostingDetail: React.FC = () => {
           suppressAlerts: true,
           redirectOnAccept: false,
           entryPoint: 'quick_confirm_cached_acks',
+          date,
         });
       } catch (err) {
         console.error('Quick-confirm failed; falling back to modal:', err);
         // If the callable fails (e.g. headshot gate, server hiccup), drop
         // back to the modal so the user sees the full error context.
-        openOfferConfirmationSheet(shiftId);
+        openOfferConfirmationSheet(shiftId, date);
       }
       return;
     }
     // First confirm on this JO this session — modal handles the 3 acks,
     // and `handleSubmitOfferConfirmation` caches them on submit.
-    openOfferConfirmationSheet(shiftId);
+    openOfferConfirmationSheet(shiftId, date);
   };
 
   const handleDeclineAssignment = async () => {
@@ -2423,8 +2452,8 @@ const JobPostingDetail: React.FC = () => {
     await handleAssignmentDecision('worker_cancel', undefined, { entryPoint: 'decline_button' });
   };
 
-  const handleDeclineAssignmentForShift = async (shiftId: string) => {
-    await handleAssignmentDecision('worker_cancel', shiftId, { entryPoint: 'decline_button' });
+  const handleDeclineAssignmentForShift = async (shiftId: string, date?: string) => {
+    await handleAssignmentDecision('worker_cancel', shiftId, { entryPoint: 'decline_button', date });
   };
 
   const handleSubmitOfferConfirmation = async () => {
@@ -2473,6 +2502,7 @@ const JobPostingDetail: React.FC = () => {
       await handleAssignmentDecision('accept', offerConfirmationShiftId, {
         skipConfirmPrompt: true,
         suppressAlerts: true,
+        date: offerConfirmationDate,
         // Stay on the jobs board so the worker can keep tapping Confirm
         // on the rest of their offered shifts. The previous `true` here
         // bounced them to the assignment-details page after the very
