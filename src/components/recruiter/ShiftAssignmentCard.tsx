@@ -47,7 +47,7 @@ import {
 } from '@mui/icons-material';
 
 import type { JobOrder } from '../../types/recruiter/jobOrder';
-import { buildShiftPickerSecondLine } from '../../utils/shiftPickerLabel';
+import { buildShiftPickerSecondLine, formatHhMmTo12h } from '../../utils/shiftPickerLabel';
 import {
   placementRequiredCertMatchList,
 } from '../../utils/placementTileWorkforceSignals';
@@ -94,6 +94,8 @@ export interface ShiftForCard {
 export interface DayOptionForCard {
   date: string;
   dayLabel?: string;
+  startTime?: string;
+  endTime?: string;
   workersNeeded?: number;
   overstaff?: number;
 }
@@ -115,6 +117,17 @@ export interface ShiftAssignmentCardProps {
   selectedDay: string;
   dayOptions: DayOptionForCard[];
   jobOrder: JobOrder | null;
+
+  // ── P1c: per-day cards for multi-day gig shifts ─────────────────────
+  /**
+   * When set (YYYY-MM-DD), this card is ONE DAY of a multi-day gig shift
+   * — the header shows the day's date + times and the staffing number
+   * comes from `cardDayEntry` (that day's headcount), not the shift's
+   * person-days total.
+   */
+  cardDay?: string;
+  /** That day's schedule entry (label, times, headcount, overstaff). */
+  cardDayEntry?: DayOptionForCard;
 
   /** Workers in the Assignments column for `selectedShiftId`. */
   displayedAssignedWorkers: Worker[];
@@ -235,6 +248,8 @@ export function ShiftAssignmentCard({
   selectedDay,
   dayOptions,
   jobOrder,
+  cardDay,
+  cardDayEntry,
   displayedAssignedWorkers,
   shiftStartDateStr,
   selectedAssignmentWorkerIds,
@@ -390,15 +405,17 @@ export function ShiftAssignmentCard({
                 this consolidates it into the Assignments header. */}
             <Box sx={{ minWidth: 0 }}>
               {(() => {
-                // Resolve staff-requested + overstaff for THIS shift (per-day
-                // override when a multi-day day is selected, else shift-level).
-                // Shown next to the shift name (replacing the old "(updated)"
-                // label, 2026-06-04 request) so the count is always visible
-                // even when the subtitle truncates.
+                // Resolve staff-requested + overstaff for THIS shift. P1c
+                // per-day cards read their own day's entry; else a selected
+                // multi-day day overrides; else shift-level. Shown next to
+                // the shift name (replacing the old "(updated)" label,
+                // 2026-06-04 request) so the count is always visible even
+                // when the subtitle truncates.
                 const dayEntry =
-                  selectedDay && dayOptions.length > 0
+                  cardDayEntry ??
+                  (selectedDay && dayOptions.length > 0
                     ? dayOptions.find((d) => d.date === selectedDay)
-                    : null;
+                    : null);
                 const staffReq =
                   dayEntry?.workersNeeded !== undefined
                     ? dayEntry.workersNeeded
@@ -423,13 +440,32 @@ export function ShiftAssignmentCard({
                 const fillLabel = fillCounts
                   ? `${fillCounts.placed} placed · ${fillCounts.confirmed} confirmed`
                   : '';
-                const secondLine = selectedShift
-                  ? buildShiftPickerSecondLine(selectedShift as any, (jobOrder as any)?.jobTitle)
-                  : '';
+                // P1c day card: line 2 shows THIS day's hours (the full
+                // date-range summary would repeat identically on every
+                // sibling day card and hide what differs).
+                const dayTimesLabel =
+                  cardDay && cardDayEntry?.startTime && cardDayEntry?.endTime
+                    ? `${formatHhMmTo12h(cardDayEntry.startTime)} – ${formatHhMmTo12h(cardDayEntry.endTime)}`
+                    : '';
+                const secondLine = cardDay
+                  ? [dayTimesLabel, String((jobOrder as any)?.jobTitle || '')]
+                      .filter(Boolean)
+                      .join(' • ')
+                  : selectedShift
+                    ? buildShiftPickerSecondLine(selectedShift as any, (jobOrder as any)?.jobTitle)
+                    : '';
                 return (
                   <>
                     <Typography variant="h6" sx={{ fontWeight: 600, lineHeight: 1.2 }} noWrap>
                       {selectedShift?.shiftTitle || 'Assignments'}
+                      {cardDay && (
+                        <Typography
+                          component="span"
+                          sx={{ ml: 0.75, fontWeight: 600, color: 'primary.main' }}
+                        >
+                          — {cardDayEntry?.dayLabel || cardDay}
+                        </Typography>
+                      )}
                       {staffLabel && (
                         <Typography
                           component="span"
