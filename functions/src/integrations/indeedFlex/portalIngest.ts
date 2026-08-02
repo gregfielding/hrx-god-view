@@ -301,6 +301,7 @@ export async function reconcileFlexPortalCapture(
   if (!ref) {
     // Record for the "create shift from portal" follow-up slice.
     if (!dryRun) {
+      const unmatchedVenueId = trim(norm.job.venueId) || trim(env.context?.venueId);
       await db.doc(`tenants/${tenantId}/indeed_flex_portal_captures/${flexJobId}`).set(
         {
           flexJobId,
@@ -309,6 +310,13 @@ export async function reconcileFlexPortalCapture(
           venueId: norm.job.venueId,
           address: norm.job.address,
           rosterSize: norm.roster.length,
+          clockInUrl: unmatchedVenueId
+            ? `https://time.indeed.com/time-capture/qr?ar=us&source_flow=worker_link&venueId=${unmatchedVenueId}`
+            : null,
+          // Raw payloads (size-capped) — field-name pinning + the future
+          // create-JO-from-capture slice read from here.
+          rawJob: JSON.stringify(env.job ?? null).slice(0, 40000),
+          rawShifts: JSON.stringify(env.shifts ?? null).slice(0, 40000),
           capturedAt: env.capturedAt ?? null,
           lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
         },
@@ -503,6 +511,26 @@ export async function reconcileFlexPortalCapture(
 
   if (!dryRun) {
     for (const w of writes) await w();
+
+    // Enrichment stamp — mirror the recruiters' MANUAL convention (Greg
+    // 2026-08-01: "we have been adding that info to shifts"): the venue
+    // clock-in QR link is deterministic per venue, so derive and stamp it
+    // (plus heal a missing poNumber). Fill-if-empty only — a hand-entered
+    // value always wins over a derived one.
+    const venueIdForLink = trim(norm.job.venueId) || trim(env.context?.venueId);
+    const derivedClockInUrl = venueIdForLink
+      ? `https://time.indeed.com/time-capture/qr?ar=us&source_flow=worker_link&venueId=${venueIdForLink}`
+      : null;
+    const shiftPatch: Record<string, unknown> = {};
+    if (derivedClockInUrl && !trim(shift.clockInUrl)) shiftPatch.clockInUrl = derivedClockInUrl;
+    if (!trim(shift.poNumber)) shiftPatch.poNumber = flexJobId;
+    if (Object.keys(shiftPatch).length > 0) {
+      await db.doc(`tenants/${tenantId}/job_orders/${joId}/shifts/${shiftId}`).set(
+        { ...shiftPatch, updatedAt: now, updatedBy: actor },
+        { merge: true },
+      );
+    }
+
     await db.doc(`tenants/${tenantId}/indeed_flex_portal_captures/${flexJobId}`).set(
       {
         flexJobId,
@@ -515,6 +543,12 @@ export async function reconcileFlexPortalCapture(
         reconfirmed: base.reconfirmed,
         observedDrops: base.observedDrops,
         unmatchedCount: base.unmatchedWorkers.length,
+        clockInUrl: derivedClockInUrl,
+        // Raw payloads (size-capped) — lets us pin real field names for the
+        // instructions/charge-rate/title extraction without re-probing, and
+        // feeds the future create-JO-from-capture slice.
+        rawJob: JSON.stringify(env.job ?? null).slice(0, 40000),
+        rawShifts: JSON.stringify(env.shifts ?? null).slice(0, 40000),
         capturedAt: env.capturedAt ?? null,
         lastSeenAt: now,
       },
