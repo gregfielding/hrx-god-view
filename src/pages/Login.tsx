@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { sendPasswordReset } from '../services/sendPasswordResetCallable';
 import { Box, Button, TextField, Typography, Paper, Alert, CircularProgress, Link as MuiLink } from '@mui/material';
 
 import { auth } from '../firebase';
@@ -131,10 +132,9 @@ const Login = () => {
     }
     setLocalLoading(true);
     try {
-      await sendPasswordResetEmail(auth, email.trim().toLowerCase(), {
-        url: 'https://app.hrxone.com/setup-password?continueUrl=/c1/workers/payroll',
-        handleCodeInApp: true,
-      });
+      // Routes through our authenticated SendGrid sender (deliverable),
+      // not Firebase's built-in mailer which was getting spam-foldered.
+      await sendPasswordReset(email, '/c1/workers/payroll');
       setSuccessMessage(copy.forgotSent);
     } catch (err: unknown) {
       console.warn('sendPasswordResetEmail failed:', err);

@@ -297,7 +297,15 @@ function buildDayInput(entryId: string, data: EntryData): DayInput | null {
     entryId,
     workDate,
     workedMinutes,
-    breaks: overrideHours !== null ? [] : breaks,
+    // Breaks ALWAYS pass through — even for an override entry. The override
+    // only replaces the *worked hours* figure; it must not erase the meal/
+    // rest break records, or a recorded 30-min meal can never clear the CA
+    // meal penalty (Danny 2026-07-29: an open-shift row with manually-entered
+    // hours + a 30-min break was still being charged the meal penalty). With
+    // actualStartTime null below, computeMealBreakPenalty treats these as
+    // duration-only breaks (no 5th-hour clock gate) — a ≥30-min break clears
+    // the meal penalty, which is the intended "enter the meal to clear it".
+    breaks,
     // When using an override, deliberately pass null for the time-of-
     // day boundaries so daily OT rules (CA daily-8, CA 7th-consecutive)
     // skip this day. Weekly OT cascade still applies because it

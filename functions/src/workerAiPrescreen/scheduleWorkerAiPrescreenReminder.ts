@@ -59,6 +59,11 @@ export async function maybeScheduleWorkerAiPrescreenReminder(args: {
     return;
   }
 
+  // Interview already complete (e.g. zero-delta auto-complete from the answer bank).
+  if (after.workerAiPrescreenInterviewCompletedAt) {
+    return;
+  }
+
   const userId = String(after.userId || after.candidateId || '').trim();
   if (!userId) {
     logger.info('scheduleWorkerAiPrescreenReminder: no userId on application', { applicationId, tenantId });
@@ -87,6 +92,7 @@ export async function maybeScheduleWorkerAiPrescreenReminder(args: {
       const snap = await tx.get(ref);
       if (!snap.exists) return;
       const data = snap.data() || {};
+      if (data.workerAiPrescreenInterviewCompletedAt) return;
       if (data.workerAiPrescreenFirstTouchCombinedAt) return;
       if (data.workerAiPrescreenReminderSentAt) return;
       if (data.workerAiPrescreenReminderPending === true && data.workerAiPrescreenReminderDueAt) return;

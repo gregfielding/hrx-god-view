@@ -26,7 +26,7 @@ import {
   FormControlLabel,
   Switch,
 } from '@mui/material';
-import { Add as AddIcon, Edit as EditIcon } from '@mui/icons-material';
+import { Add as AddIcon, Edit as EditIcon, CloudSync as CloudSyncIcon } from '@mui/icons-material';
 import {
   collection,
   getDocs,
@@ -37,6 +37,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { p } from '../../../data/firestorePaths';
+import SyncWcToEvereeDialog from './SyncWcToEvereeDialog';
 
 export interface WorkersCompClassCode {
   id: string;
@@ -73,6 +74,7 @@ const WCClassCodesTab: React.FC<WCClassCodesTabProps> = ({ tenantId }) => {
   const [editingItem, setEditingItem] = useState<WorkersCompClassCode | null>(null);
   const [form, setForm] = useState<Partial<WorkersCompClassCode>>({});
   const [saving, setSaving] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
 
   const fetchItems = async () => {
     if (!tenantId) return;
@@ -170,9 +172,14 @@ const WCClassCodesTab: React.FC<WCClassCodesTabProps> = ({ tenantId }) => {
             </Typography>
           )}
         </Box>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreate}>
-          Add Class Code
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button variant="outlined" startIcon={<CloudSyncIcon />} onClick={() => setSyncOpen(true)}>
+            Sync to Everee
+          </Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreate}>
+            Add Class Code
+          </Button>
+        </Box>
       </Box>
 
       {loading ? (
@@ -316,6 +323,8 @@ const WCClassCodesTab: React.FC<WCClassCodesTabProps> = ({ tenantId }) => {
       <Snackbar open={!!success} autoHideDuration={2000} onClose={() => setSuccess(null)}>
         <Alert severity="success">{success}</Alert>
       </Snackbar>
+
+      <SyncWcToEvereeDialog open={syncOpen} onClose={() => setSyncOpen(false)} tenantId={tenantId} />
     </Box>
   );
 };

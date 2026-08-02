@@ -49,6 +49,7 @@ import {
 } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
+import WcSuggestButton from './WcSuggestButton';
 import { p } from '../data/firestorePaths';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import { additionalScreeningOptions } from '../data/screeningsOptions';
@@ -4449,6 +4450,21 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                 placeholder="e.g. 9015"
                                 helperText={wcCodeHelper(position.workersCompClassCode)}
                               />
+                              <WcSuggestButton
+                                tenantId={tenantId}
+                                jobTitle={(position.jobTitle ?? '').trim()}
+                                state={worksiteStateCodeForPricing}
+                                modifierAccountId={wcModifierAccountId}
+                                onApply={(code, rate) => {
+                                  const updated = [...gigPositions];
+                                  updated[index] = {
+                                    ...updated[index],
+                                    workersCompClassCode: code,
+                                    ...(rate != null ? { workersCompRate: String(rate) } : {}),
+                                  };
+                                  setGigPositions(updated);
+                                }}
+                              />
                             </Box>
                             <Box sx={{ flex: 1 }}>
                               <TextField
@@ -4724,6 +4740,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       onChange={(e) => handleInputChange('workersCompClassCode', e.target.value)}
                       placeholder="e.g. 9015"
                       helperText={wcCodeHelper(formData.workersCompClassCode)}
+                    />
+                    <WcSuggestButton
+                      tenantId={tenantId}
+                      jobTitle={(formData.jobTitle ?? '').trim()}
+                      state={worksiteStateCodeForPricing}
+                      modifierAccountId={wcModifierAccountId}
+                      onApply={(code, rate) => {
+                        handleInputChange('workersCompClassCode', code);
+                        if (rate != null) handleInputChange('workersCompRate', String(rate));
+                      }}
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>

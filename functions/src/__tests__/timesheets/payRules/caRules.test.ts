@@ -348,14 +348,20 @@ describe('timesheets/payRules/rules/ca — California', () => {
       expect(r.mealBreakPenaltyHours).to.equal(1);
     });
 
-    it('30-min break AFTER hour 5 → penalty applies (late meal)', () => {
+    it('30-min break with a late stub start time → still clears (duration-only, Danny 2026-07-29)', () => {
+      // Meal penalty is now DURATION-ONLY: break start times coming off the
+      // grid are synthetic stubs (BreaksCell anchors them at noon), so the
+      // engine must not gate on them. Any recorded ≥30-min break on a >5h
+      // shift clears the meal penalty regardless of its start time — this is
+      // what fixes over-charged open-shift/override rows and early-start
+      // shifts that carry a stubbed noon break time.
       const days = [
         day('a', '2026-05-03', 8, {
-          breaks: [meal('13:30', 30)], // shift 08:00, break at 13:30 = hour 5.5
+          breaks: [meal('13:30', 30)], // stub start time is ignored now
         }),
       ];
       const r = caRules.computeWeekBreakdown(days, '2026-05-03').get('a')!;
-      expect(r.mealBreakPenaltyHours).to.equal(1);
+      expect(r.mealBreakPenaltyHours).to.equal(0);
     });
 
     it('29-min "meal" break → not a qualifying meal break', () => {
@@ -401,59 +407,36 @@ describe('timesheets/payRules/rules/ca — California', () => {
     });
   });
 
-  describe('rest break penalty', () => {
-    it('shift ≤ 3.5h → 0 earned, no penalty', () => {
+  describe('rest break penalty (disabled — not auto-applied, Greg 2026-07-30)', () => {
+    // Rest-break premiums are no longer auto-applied: rest breaks are paid /
+    // on-the-clock and HRX doesn't track them, so absence of a log isn't
+    // evidence of a denied break. computeRestBreakPenalty always returns 0.
+    it('shift ≤ 3.5h → no penalty', () => {
       const days = [day('a', '2026-05-03', 3)];
       const r = caRules.computeWeekBreakdown(days, '2026-05-03').get('a')!;
       expect(r.restBreakPenaltyHours).to.equal(0);
     });
 
-    it('shift 4h, no breaks → 1h penalty (1 earned, 0 taken)', () => {
+    it('shift 4h, no breaks → NO rest penalty', () => {
       const days = [day('a', '2026-05-03', 4)];
-      const r = caRules.computeWeekBreakdown(days, '2026-05-03').get('a')!;
-      expect(r.restBreakPenaltyHours).to.equal(1);
-    });
-
-    it('shift 8h with 30-min meal but no rest → penalty applies', () => {
-      const days = [day('a', '2026-05-03', 8, { breaks: [meal('12:00', 30)] })];
-      const r = caRules.computeWeekBreakdown(days, '2026-05-03').get('a')!;
-      expect(r.restBreakPenaltyHours).to.equal(1);
-    });
-
-    it('shift 8h with meal + 1 rest → 2 earned, 1 taken → still 1h penalty', () => {
-      const days = [
-        day('a', '2026-05-03', 8, {
-          breaks: [meal('10:00', 10), meal('12:00', 30)],
-        }),
-      ];
-      const r = caRules.computeWeekBreakdown(days, '2026-05-03').get('a')!;
-      // shift 8h = 480 min → > 360 → earned 2 rest. 10-min counted as 1 rest.
-      expect(r.restBreakPenaltyHours).to.equal(1);
-    });
-
-    it('shift 8h with meal + 2 rest → 0 penalty', () => {
-      const days = [
-        day('a', '2026-05-03', 8, {
-          breaks: [meal('10:00', 10), meal('12:00', 30), meal('15:00', 10)],
-        }),
-      ];
       const r = caRules.computeWeekBreakdown(days, '2026-05-03').get('a')!;
       expect(r.restBreakPenaltyHours).to.equal(0);
     });
 
-    it('30-min break does NOT count as rest (only meal)', () => {
-      // 8h shift with 1 × 30-min break only → meal satisfied, rest NOT.
-      const days = [
-        day('a', '2026-05-03', 8, {
-          breaks: [meal('12:00', 30)],
-        }),
-      ];
+    it('shift 8h with 30-min meal but no rest → still no rest penalty', () => {
+      const days = [day('a', '2026-05-03', 8, { breaks: [meal('12:00', 30)] })];
       const r = caRules.computeWeekBreakdown(days, '2026-05-03').get('a')!;
-      expect(r.mealBreakPenaltyHours).to.equal(0);
-      expect(r.restBreakPenaltyHours).to.equal(1);
+      expect(r.restBreakPenaltyHours).to.equal(0);
     });
 
-    it('earned breaks lookup table sanity', () => {
+    it('meal + rest are independent: 8h with a 30-min break → meal 0, rest 0', () => {
+      const days = [day('a', '2026-05-03', 8, { breaks: [meal('12:00', 30)] })];
+      const r = caRules.computeWeekBreakdown(days, '2026-05-03').get('a')!;
+      expect(r.mealBreakPenaltyHours).to.equal(0);
+      expect(r.restBreakPenaltyHours).to.equal(0);
+    });
+
+    it('earned breaks lookup table sanity (retained for a future re-enable)', () => {
       // Use internal export to verify the boundary table.
       const { computeEarnedRestBreaks } = __caInternal;
       expect(computeEarnedRestBreaks(0)).to.equal(0);

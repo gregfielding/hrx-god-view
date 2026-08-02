@@ -604,6 +604,12 @@
       "additional_notes": {
         "prompt": "Anything else you want us to know? (Optional — specific details help.)"
       }
+    },
+    "bank": {
+      "deltaBanner": "We kept your answers from your last interview — just {count} quick questions for this job.",
+      "allSetTitle": "You're all set",
+      "allSetBody": "We already have your interview answers from a recent application, so there's nothing new to fill out for this job. Confirm below and we'll use them for this application.",
+      "allSetConfirmCta": "Use my saved answers"
     }
   },
   "workerSettings": {

@@ -64,6 +64,7 @@ import * as XLSX from 'xlsx';
 import {
   DeleteOutline as DeleteIcon,
   Edit as EditIcon,
+  LinkOutlined as LinkIcon,
   OpenInNew as OpenInNewIcon,
   Refresh as RefreshIcon,
   TableChart as TableChartIcon,
@@ -863,6 +864,37 @@ const ImportRow: React.FC<{
       setRechecking(false);
     }
   }, [tenantId, hiringEntityId, row.entry.id, refreshEntry]);
+
+  // Re-resolve: reconnect this import row to the worker's assignment (created
+  // after the row was imported), pulling its pay rate + WC + worksite. One
+  // click instead of re-uploading the CSV (Greg 2026-07-30).
+  const [reresolving, setReresolving] = React.useState(false);
+  const reresolveRow = React.useCallback(async () => {
+    if (!tenantId) return;
+    setReresolving(true);
+    try {
+      const fn = httpsCallable<
+        { tenantId: string; entryId: string },
+        { ok: true; connected: boolean; message?: string }
+      >(functions, 'reresolveImportEntry', { timeout: 60000 });
+      const res = await fn({ tenantId, entryId: row.entry.id });
+      if (res.data?.connected) {
+        // Full reload — worksite/rate/WC all changed; the resolver's WC chain
+        // must re-run so the row shows the connected values, not stale ones.
+        reloadAll();
+      } else {
+        // eslint-disable-next-line no-alert
+        window.alert(res.data?.message || 'No assignment covers this work date yet.');
+      }
+    } catch (e) {
+      console.error('reresolveImportEntry failed:', e);
+      // eslint-disable-next-line no-alert
+      window.alert(e instanceof Error ? e.message : 'Re-resolve failed.');
+    } finally {
+      setReresolving(false);
+    }
+  }, [tenantId, row.entry.id, reloadAll]);
+
   const wcCellSx = {
     fontVariantNumeric: 'tabular-nums' as const,
     cursor: wcEditable ? 'pointer' : 'default',
@@ -895,6 +927,24 @@ const ImportRow: React.FC<{
                       <CircularProgress size={14} />
                     ) : (
                       <RefreshIcon sx={{ fontSize: 15 }} />
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
+            ) : null}
+            {!live ? (
+              <Tooltip title="Re-resolve from assignment — pull pay rate, WC, and worksite from the worker's assignment (use after creating it)">
+                <span>
+                  <IconButton
+                    size="small"
+                    onClick={reresolveRow}
+                    disabled={reresolving}
+                    sx={{ p: 0.25 }}
+                  >
+                    {reresolving ? (
+                      <CircularProgress size={14} />
+                    ) : (
+                      <LinkIcon sx={{ fontSize: 15 }} />
                     )}
                   </IconButton>
                 </span>
@@ -1050,10 +1100,25 @@ const ImportRow: React.FC<{
           onClose={() => setWcDialogOpen(false)}
           onSuccess={() => {
             setWcDialogOpen(false);
-            refreshEntry(row.entry.id);
+            // FULL reload, not refreshEntry: the WC *Code* cell renders
+            // `resolvedWorkersCompCode` from the grid resolver, and refreshEntry
+            // does NOT re-run the resolver — so picking a new code updated the
+            // rate (falls through to the refetched sidecar) but the code cell
+            // kept showing the stale resolved code (Greg 2026-07-31). reloadAll
+            // re-resolves so the new code + matrix rate both show.
+            reloadAll();
           }}
           tenantId={tenantId}
           entryId={row.entry.id}
+          state={
+            // Import rows have no assignment.worksiteState — derive the state
+            // from the import entry's worksite so the code dropdown is scoped.
+            row.assignment.worksiteState ||
+            (imp?.worksiteAddress as { state?: string } | undefined)?.state ||
+            ((row.entry as unknown as Record<string, unknown>).worksiteAddress as { state?: string } | undefined)?.state ||
+            (row.entry as unknown as { workState?: string }).workState ||
+            undefined
+          }
           initialCode={wcCode}
           initialRate={wcRate}
           rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
@@ -1498,12 +1563,16 @@ const EntryRow: React.FC<EntryRowProps> = ({
           onClose={() => setWcDialogOpen(false)}
           onSuccess={() => {
             setWcDialogOpen(false);
-            // Re-resolve so the row picks up the new override (and the
-            // shift back-fill propagates to siblings on next render).
-            void refreshEntry(entry.id);
+            // FULL reload — the row's WC cell renders `resolvedWorkersCompCode`
+            // from the resolver, and refreshEntry does NOT re-run the resolver
+            // (Greg 2026-07-31: "choosing the code doesn't save it to the row"
+            // — it saved, but the cell stayed stale). reloadAll re-resolves so
+            // the new code + matrix-resolved rate + shift back-fill all show.
+            reloadAll();
           }}
           tenantId={tenantId}
           entryId={entry.id}
+          state={row.assignment.worksiteState ?? undefined}
           initialCode={row.resolvedWorkersCompCode}
           initialRate={row.resolvedWorkersCompRate}
           rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
@@ -1884,11 +1953,22 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
         narrowJobOrderIds !== undefined &&
         narrowJobOrderIds.size === 1) ||
       !!narrowShiftId;
-    if (!narrowedToOne || !tenantId || loading) return;
 
-    const fresh = rows.filter(
-      (r) => r.kind === 'empty' && !autoCreatedRef.current.has(r.key),
-    );
+    // Auto-materialize empty rows so the recruiter can start typing
+    // immediately instead of clicking "+ Add entry" on each one (Greg
+    // 2026-07-29 — "let me always just start entering data"). Fire when
+    // narrowed to a single JO/shift OR whenever the current view is small
+    // enough that bulk-creating drafts is safe — a normal account + week
+    // view (the common case) is exactly this. The cap keeps a wide,
+    // unscoped entity-wide view (hundreds of rows across unrelated JOs)
+    // from materializing a pile of empties; those still fall back to the
+    // per-row "+ Add entry" affordance.
+    const emptyRows = rows.filter((r) => r.kind === 'empty');
+    const AUTO_MATERIALIZE_CAP = 200;
+    const shouldAuto = narrowedToOne || emptyRows.length <= AUTO_MATERIALIZE_CAP;
+    if (!shouldAuto || !tenantId || loading) return;
+
+    const fresh = emptyRows.filter((r) => !autoCreatedRef.current.has(r.key));
     if (fresh.length === 0) return;
 
     // Reserve keys synchronously so a re-render mid-flight doesn't

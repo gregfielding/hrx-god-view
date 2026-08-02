@@ -566,9 +566,28 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
         }
       }
 
-      // Breaks → epoch
+      // Breaks → epoch.
+      //
+      // Skip breaks entirely for OVERRIDE entries. `actualHoursOverride` is
+      // the NET worked-hours figure (the recorded break is already excluded
+      // from it), and the shift window above is synthesized as
+      // `start + classifiedHours` with NO room for an unpaid break. Sending
+      // one makes Everee's `shift_validate_is_correctly_classified()` reject
+      // the shift with a 500 ("shift duration … classified duration …
+      // unpayable duration …" — the break's 30 min doesn't fit the span;
+      // Danny 2026-07-30, an open-shift row with a 30-min break). The break
+      // is an HRX-side CA meal-penalty artifact and carries no payroll value
+      // for Everee (hours are already net; any meal premium rides as a
+      // separate payable). Real-punch entries keep sending breaks — their
+      // window comes from actual start/end and naturally contains the break.
+      const overrideRaw = (entry as Record<string, unknown>).actualHoursOverride;
+      const isOverrideEntry =
+        typeof overrideRaw === 'number' && Number.isFinite(overrideRaw) && overrideRaw > 0;
       const breaks: ComposeBreak[] = [];
-      const rawBreaks = Array.isArray(entry.breaks) ? (entry.breaks as Array<Record<string, unknown>>) : [];
+      const rawBreaks =
+        isOverrideEntry || !Array.isArray(entry.breaks)
+          ? []
+          : (entry.breaks as Array<Record<string, unknown>>);
       for (const b of rawBreaks) {
         const bStart = String(b.startTime ?? '');
         const bEnd = String(b.endTime ?? '');

@@ -623,6 +623,12 @@ interface W2Plan {
   regularSeconds: number;
   overtimeSeconds: number;
   doubleTimeSeconds: number;
+  /** Workweek start for OT classification + the pay-week clamp — 'monday'
+   *  when the row's account is flagged payWeekStart:'monday' (VenueSmart
+   *  runs Mon–Sun weeks; FLSA allows a per-group workweek). Everee's
+   *  Sunday-start payment calendar is unaffected — a Sunday shift rides
+   *  the next run. */
+  payWeekStart: 'sunday' | 'monday';
 }
 
 /** Round-to-cent day gross under the reg/OT/DT split (1.5× / 2×). */
@@ -660,14 +666,20 @@ async function priorWeekSecondsForBatch(
   plans: W2Plan[],
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>();
+  // Windows are per-workweek AND per week-start flavor: a Mon–Sun exception
+  // plan's window starts Monday, a default plan's starts Sunday. The group
+  // key (`${workerId}__${weekKey}`) matches classifyWeeklyOt's, which uses
+  // the same weekStart-aware weekKeyFor.
   const weeks = new Map<string, { start: string; end: string }>();
   for (const p of plans) {
-    const wk = weekKeyFor(p.workDate);
-    if (!weeks.has(wk)) {
+    const ws = p.payWeekStart ?? 'sunday';
+    const wk = weekKeyFor(p.workDate, ws);
+    const mapKey = `${ws}:${wk}`;
+    if (!weeks.has(mapKey)) {
       const startDt = new Date(`${wk}T00:00:00Z`);
       const endDt = new Date(startDt);
       endDt.setUTCDate(endDt.getUTCDate() + 6);
-      weeks.set(wk, { start: wk, end: endDt.toISOString().slice(0, 10) });
+      weeks.set(mapKey, { start: wk, end: endDt.toISOString().slice(0, 10) });
     }
   }
   const workerIds = new Set(plans.map((p) => p.userId));
@@ -676,7 +688,9 @@ async function priorWeekSecondsForBatch(
       importEntryDocId({ customer: cust, userId: p.userId, workDate: p.workDate }),
     ),
   );
-  for (const [wk, range] of weeks) {
+  for (const range of weeks.values()) {
+    // The window IS the workweek, so its start date is the group-key week.
+    const wk = range.start;
     // Uses the existing composite index (source ASC, hiringEntityId ASC,
     // workDate ASC) from the P4 grid-resolver work.
     // eslint-disable-next-line no-await-in-loop
@@ -731,6 +745,9 @@ async function submitW2(args: PathArgs) {
   // CA6405 replacing a state-invalid 8044) would be resent wrong forever
   // by a stale tab. Saved corrected codes win over the client copy.
   const wcCorrected = new Map<string, string>();
+  /** Per-row account/JO linkage from the saved entry — feeds the Mon–Sun
+   *  workweek exception lookup below. */
+  const entryLinkage = new Map<string, { accountId: string; jobOrderId: string }>();
   const WC_READ_CHUNK = 300;
   for (let i = 0; i < candidates.length; i += WC_READ_CHUNK) {
     const slice = candidates.slice(i, i + WC_READ_CHUNK);
@@ -742,12 +759,57 @@ async function submitW2(args: PathArgs) {
     // eslint-disable-next-line no-await-in-loop
     const snaps = await db.getAll(...refs);
     snaps.forEach((snap, j) => {
-      const imp = (snap.data()?.import ?? {}) as Record<string, unknown>;
+      const data = (snap.data() ?? {}) as Record<string, unknown>;
+      const imp = (data.import ?? {}) as Record<string, unknown>;
       if (imp.wcManuallyCorrected === true && String(imp.workersCompCode || '').trim()) {
         wcCorrected.set(`${slice[j].userId}__${slice[j].workDate}`, String(imp.workersCompCode).trim());
       }
+      entryLinkage.set(`${slice[j].userId}__${slice[j].workDate}`, {
+        accountId: String(data.accountId ?? '').trim(),
+        jobOrderId: String(data.jobOrderId ?? '').trim(),
+      });
     });
   }
+
+  // ── Mon–Sun workweek exception (VenueSmart, 2026-07-31) ────────────────
+  // Accounts flagged `payWeekStart: 'monday'` classify OT on a Mon–Sun
+  // FLSA workweek (the customer runs Mon–Sun weeks; FLSA permits a fixed
+  // alternate workweek per worker group). Resolution: entry.accountId
+  // direct, else entry.jobOrderId → JO.recruiterAccountId (import rows
+  // often carry an empty accountId but a real event-JO link).
+  const mondayAccountIds = new Set<string>();
+  try {
+    const flagged = await db
+      .collection(`tenants/${tenantId}/accounts`)
+      .where('payWeekStart', '==', 'monday')
+      .get();
+    flagged.forEach((d) => mondayAccountIds.add(d.id));
+  } catch {
+    /* no flagged accounts / missing index → everyone stays Sun–Sat */
+  }
+  const joMondayCache = new Map<string, boolean>();
+  const rowIsMondayWeek = async (key: string): Promise<boolean> => {
+    if (mondayAccountIds.size === 0) return false;
+    const link = entryLinkage.get(key);
+    if (!link) return false;
+    if (link.accountId && mondayAccountIds.has(link.accountId)) return true;
+    if (!link.jobOrderId) return false;
+    const cached = joMondayCache.get(link.jobOrderId);
+    if (cached !== undefined) return cached;
+    let monday = false;
+    for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+      // eslint-disable-next-line no-await-in-loop
+      const s = await db.doc(`tenants/${tenantId}/${coll}/${link.jobOrderId}`).get();
+      if (s.exists) {
+        monday = mondayAccountIds.has(
+          String((s.data() as Record<string, unknown>)?.recruiterAccountId ?? '').trim(),
+        );
+        break;
+      }
+    }
+    joMondayCache.set(link.jobOrderId, monday);
+    return monday;
+  };
 
   const plans: W2Plan[] = [];
   let skippedNoWc = 0;
@@ -758,6 +820,8 @@ async function submitW2(args: PathArgs) {
       skippedNoWc += 1;
       continue;
     }
+    // eslint-disable-next-line no-await-in-loop
+    const mondayWeek = await rowIsMondayWeek(`${userId}__${workDate}`);
     plans.push({
       row,
       userId,
@@ -769,6 +833,7 @@ async function submitW2(args: PathArgs) {
       regularSeconds: 0,
       overtimeSeconds: 0,
       doubleTimeSeconds: 0,
+      payWeekStart: mondayWeek ? 'monday' : 'sunday',
     });
   }
 
@@ -800,6 +865,8 @@ async function submitW2(args: PathArgs) {
         // Brian Battles 2026-07-16: four 11.5-12.5h CA days shipped as
         // weekly-40-only — 32 reg + 14.83 OT + 0.5 DT owed, 40 + 7.33 paid.
         stateCode: p.row.worksiteAddress?.state ?? null,
+        // Mon–Sun exception accounts group their weekly-40 on Mon–Sun.
+        payWeekStart: p.payWeekStart,
       })),
       priorSeconds,
     );
@@ -972,6 +1039,7 @@ async function submitW2(args: PathArgs) {
         worksiteState: p.row.worksiteAddress?.state ?? null,
         breakMinutes: p.row.breakMinutes,
         breakPaid: p.row.paidBreak,
+        payWeekStart: p.payWeekStart,
       });
       // Fully Classified Shifts is enabled on all C1 Everee instances, so
       // the endpoint REQUIRES fullyClassifiedHours (it does NOT auto-classify

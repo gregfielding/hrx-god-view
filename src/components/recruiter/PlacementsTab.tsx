@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import { getAppliedDays } from '../../utils/applicationDays';
 import {
   Box,
   Card,
@@ -2544,34 +2545,75 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               (shiftForAssign as any).endDate,
             ).map((d) => d.date)
           : [];
-      const payload: Record<string, unknown> = {
+      const basePayload: Record<string, unknown> = {
         tenantId,
         jobOrderId,
         shiftId: shiftForAssign.id,
-        userIds: workerIds,
         sourceType: selectedWorkforce || 'manual',
         sourceId: selectedWorkforce.startsWith('group_') ? selectedWorkforce.replace('group_', '') : null,
       };
-      if (useSingleDay) {
-        payload.applyDate = effectiveDay;
-      } else if (bulkDates.length > 0) {
-        payload.applyDates = bulkDates;
-      }
       if (options?.allowOverlapping) {
         // Recruiter explicitly overrode the overlap guard via the
         // "Assign anyway" snackbar action (or programmatically). Server
         // logs `overlapping_assignment_overridden` in warnings.
-        payload.allowOverlapping = true;
+        basePayload.allowOverlapping = true;
       }
       const assignFn = httpsCallable(functions, 'placementsCreateAssignments');
-      const response = await assignFn(payload);
+      let created: any[] = [];
+      let skipped: Array<{ userId: string; reason: string }> = [];
+      let lastResponseData: any = null;
+      const callAssign = async (userIds: string[], dates?: string | string[]) => {
+        const payload: Record<string, unknown> = { ...basePayload, userIds };
+        if (typeof dates === 'string') payload.applyDate = dates;
+        else if (Array.isArray(dates) && dates.length > 0) payload.applyDates = dates;
+        const response = await assignFn(payload);
+        const data = response.data as any;
+        lastResponseData = data;
+        created = created.concat(Array.isArray(data?.created) ? data.created : []);
+        skipped = skipped.concat(Array.isArray(data?.skipped) ? data.skipped : []);
+      };
 
-      const data = response.data as any;
-      const created = Array.isArray(data?.created) ? data.created : [];
+      if (useSingleDay) {
+        await callAssign(workerIds, effectiveDay as string);
+      } else if (bulkDates.length > 0) {
+        // Multi-day fan-out (All Days mode) — the worker's OWN applied days
+        // win (2026-07-31, Lolla: "applied for one day, hired for all four").
+        // The old code sent the shift's full date range for everyone and
+        // never consulted the application. Now: fetch each worker's
+        // application for this JO/shift, intersect its applied days with the
+        // shift's days-with-hours, and hire exactly those days. Workers with
+        // no day metadata (recruiter-sourced adds, career pool) keep the full
+        // fan-out until the P1 "add remaining days?" prompt ships.
+        const groups = new Map<string, string[]>();
+        for (const uid of workerIds) {
+          let days: string[] = [];
+          try {
+            const appsSnap = await getDocs(
+              query(collection(db, 'tenants', tenantId, 'applications'), where('userId', '==', uid)),
+            );
+            const appDoc = appsSnap.docs
+              .map((d) => d.data() as any)
+              .find(
+                (a) =>
+                  String(a.jobOrderId || '') === jobOrderId ||
+                  String(a.shiftId || '') === shiftForAssign.id ||
+                  (Array.isArray(a.shiftIds) && a.shiftIds.includes(shiftForAssign.id)),
+              );
+            if (appDoc) days = getAppliedDays(appDoc).filter((d) => bulkDates.includes(d));
+          } catch {
+            /* lookup failure → fall back to the full fan-out for this worker */
+          }
+          const key = JSON.stringify(days.length > 0 ? [...days].sort() : bulkDates);
+          (groups.get(key) ?? groups.set(key, []).get(key)!).push(uid);
+        }
+        for (const [key, uids] of groups) {
+          // eslint-disable-next-line no-await-in-loop
+          await callAssign(uids, JSON.parse(key) as string[]);
+        }
+      } else {
+        await callAssign(workerIds);
+      }
       const createdCount = created.length;
-      const skipped: Array<{ userId: string; reason: string }> = Array.isArray(data?.skipped)
-        ? data.skipped
-        : [];
 
       // Soft-skip recovery (Kalijah Emmanuel bug, 2026-06-08): the server
       // returns 200 with `{ created: [...], skipped: [{userId, reason}] }`
@@ -2677,7 +2719,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           // Open shifts create an active standing assignment with no worker
           // offer/SMS — say so instead of "offer SMS sent."
           setAssignToast({
-            message: data?.openShift === true
+            message: lastResponseData?.openShift === true
               ? `Added ${createdNames} to ${shiftLabel} (open shift — no offer sent).`
               : `Assigned ${createdNames} to ${shiftLabel} — offer SMS sent.`,
             severity: 'success',

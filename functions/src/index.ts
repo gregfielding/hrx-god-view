@@ -448,6 +448,7 @@ export { onApplicationWriteUpdateCounters } from './applications/applicationCoun
 // flipping it anywhere flips the whole trio.
 export { setHotStatus } from './crm/setHotStatus';
 export { setImportEntryWorksite } from './timesheets/setImportEntryWorksite';
+export { reresolveImportEntry } from './timesheets/reresolveImportEntry';
 export { deleteImportEntry } from './timesheets/deleteImportEntry';
 export { recheckImportTimesheetBlocks } from './timesheets/recheckImportTimesheetBlocks';
 export { approveTimesheetEntriesCallable } from './timesheets/approveTimesheetEntriesCallable';
@@ -529,6 +530,10 @@ export { submitTimesheetBatch } from './payroll/submitTimesheetBatch';
 export { getPayrollCostReport, savePayrollVenueMapping } from './payroll/payrollCostReport';
 export { createOffCyclePayment, searchOffCycleWorkers, listOffCyclePayments } from './payroll/offCyclePayments';
 export { getWorkerNearbyOpportunities } from './users/getWorkerNearbyOpportunities';
+// WC semantic classifier (2026-07-29): suggest a WC code for a novel job
+// title from the codes already rated for that state; confirm learns the
+// title back onto the matrix row (learn-once).
+export { suggestWorkersCompCode, learnWorkersCompAlias } from './workersComp/suggestWorkersCompCode';
 export { submitTimesheetEntryWorker } from './payroll/submitTimesheetEntryWorker';
 export {
   submitTimesheetAdjustment,
@@ -8757,6 +8762,164 @@ export const revokeInviteV2 = onCall(async (request) => {
     
     throw error;
   }
+});
+
+/**
+ * Send a password-reset email via our AUTHENTICATED SendGrid sender
+ * (no-reply@hrxone.com) instead of Firebase Auth's built-in mailer.
+ *
+ * Why (Danny 2026-07-29): the client SDK `sendPasswordResetEmail` sends
+ * from Firebase's default `noreply@hrx1-d3beb.firebaseapp.com`, which has
+ * no SPF/DKIM/DMARC alignment with hrxone.com — so worker reset emails
+ * were being dropped or spam-foldered ("zero notifications, one landed in
+ * spam"). Invites already go through this same authenticated SendGrid
+ * path and deliver fine, so we route resets through it too. We still
+ * generate the reset link with `generatePasswordResetLink` (the link
+ * itself lands on Firebase's action handler → our /setup-password page),
+ * we only change WHO sends the mail.
+ *
+ * Callable is intentionally UNAUTHENTICATED (the "Forgot password?" page
+ * has no session). It is enumeration-safe: an unknown email returns
+ * `{ success: true }` with no hint the account is missing. Authenticated
+ * staff callers (the profile "Send Reset Email" buttons) additionally get
+ * `userExists` so they can tell when a worker has no Auth account yet.
+ */
+export const sendPasswordResetV2 = onCall(async (request) => {
+  const start = Date.now();
+  const rawEmail = (request.data?.email ?? '').toString().trim().toLowerCase();
+  const continueUrl = (request.data?.continueUrl ?? '').toString().trim();
+  const isStaffCaller = !!request.auth?.uid;
+
+  if (!rawEmail || !rawEmail.includes('@')) {
+    throw new HttpsError('invalid-argument', 'A valid email is required.');
+  }
+  if (!SENDGRID_API_KEY || !SENDGRID_API_KEY.startsWith('SG.')) {
+    throw new HttpsError('failed-precondition', 'Email sender is not configured.');
+  }
+
+  const actionCodeSettings = {
+    // MUST be the real production domain (hrxone.com). Firebase Auth only
+    // mints action links for authorized domains — app.hrxone.com is not one,
+    // and generatePasswordResetLink throws "INTERNAL ASSERT FAILED: Unable to
+    // create the email action link" for it, which broke EVERY reset attempt
+    // (worker report 2026-07-31).
+    url:
+      'https://hrxone.com/setup-password' +
+      (continueUrl ? `?continueUrl=${encodeURIComponent(continueUrl)}` : ''),
+    handleCodeInApp: true,
+  };
+
+  let link: string;
+  try {
+    link = await auth.generatePasswordResetLink(rawEmail, actionCodeSettings);
+  } catch (err: any) {
+    // No Auth account for this email. Stay enumeration-safe for the public
+    // flow; give staff callers the truth so they know to (re)provision auth.
+    // NOTE the error shape varies: 'auth/user-not-found', 'auth/email-not-
+    // found', AND — with email-enumeration protection enabled (this project)
+    // — a generic "INTERNAL ASSERT FAILED: Unable to create the email action
+    // link" for a nonexistent user (firebase-admin quirk; verified live
+    // 2026-07-31: unknown email → INTERNAL ASSERT, known email → link OK).
+    // Without catching all three, unknown emails 500 and the login page
+    // shows "Couldn't send reset link" instead of the quiet success.
+    const code = String(err?.code || '');
+    const msg = String(err?.message || '');
+    const looksLikeNoUser =
+      code === 'auth/user-not-found' ||
+      code === 'auth/email-not-found' ||
+      /unable to create the email action link/i.test(msg);
+    if (looksLikeNoUser) {
+      return isStaffCaller
+        ? { success: true, userExists: false }
+        : { success: true };
+    }
+    throw new HttpsError('internal', msg || 'Could not generate reset link.');
+  }
+
+  // Try to greet by first name (best-effort; never blocks the send).
+  let firstName = '';
+  try {
+    const userRecord = await auth.getUserByEmail(rawEmail);
+    const uDoc = await db.collection('users').doc(userRecord.uid).get();
+    firstName = (uDoc.data()?.firstName as string) || '';
+  } catch {
+    /* non-fatal */
+  }
+  const hello = firstName ? `Hi ${firstName},` : 'Hi,';
+
+  const msg = {
+    to: rawEmail,
+    from: { email: 'no-reply@hrxone.com', name: 'HRX' },
+    subject: 'Reset your HRX password',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #1a1a1a;">
+        <div style="background-color: #0057B8; color: #fff; padding: 24px; text-align: center; border-radius: 8px 8px 0 0;">
+          <h1 style="margin: 0; font-size: 24px;">Reset your password</h1>
+        </div>
+        <div style="padding: 28px; background:#fff; border:1px solid #e5e7eb; border-top:none; border-radius: 0 0 8px 8px;">
+          <p style="font-size:15px; line-height:1.6;">${hello}</p>
+          <p style="font-size:15px; line-height:1.6;">
+            We received a request to reset the password for your HRX account. Click the button below to choose a new password.
+          </p>
+          <div style="text-align:center; margin: 28px 0;">
+            <a href="${link}" style="background:#0057B8; color:#fff; text-decoration:none; padding:14px 28px; border-radius:6px; font-size:16px; font-weight:600; display:inline-block;">
+              Reset my password
+            </a>
+          </div>
+          <p style="font-size:13px; color:#555; line-height:1.6;">
+            This link works for a limited time and only once. If it has expired by the time you click it, just go to
+            <a href="https://hrxone.com/setup-password" style="color:#0057B8;">hrxone.com</a> and request a new one.
+          </p>
+          <p style="font-size:13px; color:#555; line-height:1.6;">
+            If you didn't request this, you can safely ignore this email — your password won't change.
+          </p>
+          <p style="font-size:12px; color:#888; line-height:1.6; margin-top:24px;">
+            Or paste this link into your browser:<br/>
+            <span style="word-break:break-all;">${link}</span>
+          </p>
+        </div>
+      </div>
+    `,
+    text: `${hello}
+
+We received a request to reset the password for your HRX account. Open this link to choose a new password:
+
+${link}
+
+This link works for a limited time and only once. If it has expired, go to https://hrxone.com/setup-password and request a new one.
+
+If you didn't request this, you can safely ignore this email — your password won't change.`,
+  };
+
+  try {
+    await sgMail.send(msg as Parameters<typeof sgMail.send>[0]);
+  } catch (emailError: any) {
+    console.error('sendPasswordResetV2 send failed:', {
+      message: emailError?.message,
+      code: emailError?.code,
+      response: emailError?.response?.body,
+    });
+    await logger.aiEvent({
+      userId: request.auth?.uid || 'unknown',
+      actionType: 'password_reset_email_failed',
+      sourceModule: 'SendPasswordResetV2',
+      success: false,
+      errorMessage: emailError?.message,
+      latencyMs: Date.now() - start,
+      versionTag: 'v2',
+      reason: `Failed to send password-reset email to ${rawEmail}`,
+      eventType: 'auth.password-reset-email-failed',
+      targetType: 'user',
+      aiRelevant: false,
+      contextType: 'onboarding',
+      traitsAffected: null,
+      aiTags: null,
+      urgencyScore: null,
+    });
+    throw new HttpsError('internal', 'Could not send the reset email. Please try again.');
+  }
+
+  return isStaffCaller ? { success: true, userExists: true } : { success: true };
 });
 
 /** Normalize US phone to E.164 for Twilio (e.g. 5551234567 -> +15551234567). Returns null if not valid. */

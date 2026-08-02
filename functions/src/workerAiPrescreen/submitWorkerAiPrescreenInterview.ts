@@ -36,6 +36,7 @@ import {
   isValidConfirmedLegalFirstName,
   userDocNeedsLegalFirstNameConfirm,
 } from './legalFirstNameConfirm';
+import { writePrescreenAnswerBankFromSubmission } from './prescreenAnswerBankStore';
 
 const REQUIRED_KEYS = [
   ...PRESCREEN_OPENING_MULTI_SELECT_KEYS,
@@ -94,6 +95,20 @@ function parseOptionalInterviewEntrySource(raw: unknown): string | undefined {
   if (s.length > 120) return undefined;
   if (!/^[a-zA-Z0-9_-]+$/.test(s)) return undefined;
   return s;
+}
+
+/**
+ * Optional list of question ids the client actually rendered this session (cumulative-interview
+ * delta mode). `null` (legacy clients / full interviews) means every stored row was asked.
+ */
+function parseAskedStepIds(raw: unknown): Set<string> | null {
+  if (raw == null || !Array.isArray(raw)) return null;
+  const out = new Set<string>();
+  for (const v of raw.slice(0, 300)) {
+    const s = String(v).trim().slice(0, 200);
+    if (s) out.add(s);
+  }
+  return out;
 }
 
 function parseAnswers(raw: unknown): WorkerAiPrescreenAnswers {
@@ -180,7 +195,7 @@ function parseAnswers(raw: unknown): WorkerAiPrescreenAnswers {
 
 const COMPLIANCE_DETAIL_MIN_CHARS = 15;
 
-function validateComplianceDisclosureFollowUps(
+export function validateComplianceDisclosureFollowUps(
   answers: WorkerAiPrescreenAnswers,
   dynamicStepIds: Set<string>,
 ): void {
@@ -337,6 +352,8 @@ export const submitWorkerAiPrescreenInterview = onCall(
       sessionProfileEnhancements?: unknown;
       /** Prescreen URL `entry` query param (analytics / attribution). */
       entry?: unknown;
+      /** Delta mode: ids of steps actually rendered this session (others carried from the bank). */
+      askedStepIds?: unknown;
     };
     const answers = parseAnswers(data.answers);
     const sessionProfileEnhancements = parseSessionProfileEnhancements(data.sessionProfileEnhancements);
@@ -351,6 +368,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
         : String(data.tenantId).trim().slice(0, 120) || null;
 
     const entrySource = parseOptionalInterviewEntrySource(data.entry);
+    const askedStepIds = parseAskedStepIds(data.askedStepIds);
 
     const db = admin.firestore();
     const userRef = db.collection('users').doc(auth.uid);
@@ -427,6 +445,73 @@ export const submitWorkerAiPrescreenInterview = onCall(
 
     validateComplianceDisclosureFollowUps(answers, dynamicStepIds);
 
+    return performPrescreenSubmission({
+      db,
+      uid: auth.uid,
+      answers,
+      dynamicAnswers,
+      dynamicSteps,
+      dynamicStepIds,
+      interviewContext,
+      applicationId,
+      tenantIdHint,
+      enrichedUd,
+      entrySource,
+      askedStepIds,
+      legalFirstNameToPersist,
+      needsLegalFirstNameConfirm,
+    });
+  },
+);
+
+/** Args for the shared submission core — used by the callable and zero-delta auto-complete. */
+export type PerformPrescreenSubmissionArgs = {
+  db: admin.firestore.Firestore;
+  uid: string;
+  answers: WorkerAiPrescreenAnswers;
+  dynamicAnswers: Record<string, string>;
+  dynamicSteps: ReturnType<typeof buildDynamicPrescreenSteps>;
+  dynamicStepIds: Set<string>;
+  interviewContext: AiInterviewContext | null;
+  applicationId: string | null;
+  tenantIdHint: string | null;
+  enrichedUd: Record<string, unknown>;
+  entrySource?: string;
+  /** Ids rendered this session; null = full interview (all rows `asked`). */
+  askedStepIds: Set<string> | null;
+  legalFirstNameToPersist: string | null;
+  needsLegalFirstNameConfirm: boolean;
+  /** Zero-delta auto-complete: every row carried from the bank; stamps audit markers. */
+  autoCompletedFromBank?: boolean;
+};
+
+/**
+ * Post-validation submission pipeline: score, write users/{uid}/interviews doc, user flags,
+ * application aiAutomation + completion markers, answer bank, and score summaries.
+ */
+export async function performPrescreenSubmission(args: PerformPrescreenSubmissionArgs) {
+  const {
+    db,
+    uid,
+    answers,
+    dynamicAnswers,
+    dynamicSteps,
+    dynamicStepIds,
+    interviewContext,
+    applicationId,
+    tenantIdHint,
+    enrichedUd,
+    entrySource,
+    askedStepIds,
+    legalFirstNameToPersist,
+    needsLegalFirstNameConfirm,
+    autoCompletedFromBank,
+  } = args;
+  /** Body below is the extracted callable pipeline — `auth.uid` shim keeps the diff reviewable. */
+  const auth = { uid };
+  const userRef = db.collection('users').doc(uid);
+
+  {
     const interviewsCol = userRef.collection('interviews');
     const interviewRef = interviewsCol.doc();
     const interviewId = interviewRef.id;
@@ -502,6 +587,10 @@ export const submitWorkerAiPrescreenInterview = onCall(
       });
     }
 
+    /** Delta mode: rows not rendered this session were satisfied from the worker's answer bank. */
+    const sourceForQuestionId = (id: string): 'asked' | 'carried' =>
+      askedStepIds == null || askedStepIds.has(id) ? 'asked' : 'carried';
+
     const questions = [
       ...[...REQUIRED_KEYS, ...OPTIONAL_CORE_STORED_KEYS].filter(
         (id) => !shouldOmitCoreQuestionFromStoredInterview(id, answers, dynamicStepIds, needsLegalFirstNameConfirm),
@@ -510,12 +599,14 @@ export const submitWorkerAiPrescreenInterview = onCall(
         question: WORKER_AI_PRESCREEN_PROMPTS[id] || id,
         answer: formatAnswerForStorage(id, answers),
         type: questionTypeForKey(id),
+        source: sourceForQuestionId(id),
       })),
       ...dynamicSteps.map((step) => ({
         id: step.id,
         question: step.prompt,
         answer: dynamicAnswers[step.id] ?? '',
         type: 'single_select' as const,
+        source: sourceForQuestionId(step.id),
       })),
     ];
 
@@ -575,9 +666,28 @@ export const submitWorkerAiPrescreenInterview = onCall(
       score10,
       isArchived: false,
       ai: aiBlock,
+      ...(autoCompletedFromBank ? { autoCompletedFromBank: true } : {}),
     };
 
     await interviewRef.set(interviewPayload);
+
+    try {
+      await writePrescreenAnswerBankFromSubmission({
+        db,
+        uid: auth.uid,
+        interviewId,
+        applicationId,
+        askedQuestionIds: questions.filter((q) => q.source === 'asked').map((q) => q.id),
+        answers,
+        dynamicAnswers,
+      });
+    } catch (eBank) {
+      logger.warn('submitWorkerAiPrescreenInterview.answer_bank_write_failed', {
+        userId: auth.uid,
+        interviewId,
+        message: eBank instanceof Error ? eBank.message : String(eBank),
+      });
+    }
 
     /** Resolved `createdAt` / `timestamp` from the stored interview — same inputs as latest-interview risk rebuild. */
     let prescreenInterviewCreatedAtForRisk: admin.firestore.Timestamp = admin.firestore.Timestamp.now();
@@ -669,6 +779,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
               ...(orchestratorV1Firestore ? { orchestratorV1: orchestratorV1Firestore } : {}),
             },
             workerAiPrescreenInterviewCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
+            ...(autoCompletedFromBank ? { workerAiPrescreenAutoCompletedFromBank: true } : {}),
             workerAiPrescreenChase1Pending: false,
             workerAiPrescreenChase2Pending: false,
             workerAiPrescreenChase1DueAt: admin.firestore.FieldValue.delete(),
@@ -787,5 +898,5 @@ export const submitWorkerAiPrescreenInterview = onCall(
         reasonCodes: hiringResult.reasonCodes,
       },
     };
-  },
-);
+  }
+}

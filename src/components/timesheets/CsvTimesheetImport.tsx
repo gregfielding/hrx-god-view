@@ -57,6 +57,8 @@ import { httpsCallable } from 'firebase/functions';
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 
 import { db, functions } from '../../firebase';
+import { useWorkersCompRatesByJobTitle } from '../../hooks/useWorkersCompRatesByJobTitle';
+import { normalizeStateCode } from '../../utils/unemploymentRates';
 import type { HiringEntity } from '../../types/recruiter/hiringEntity';
 import {
   mapIndeedFlexRows,
@@ -103,7 +105,7 @@ interface MatchRowResult {
   /** Bill rate from the same resolution chain (assignment → shift → JO). */
   billRate: number | null;
   payRateSource: 'assignment' | 'site_mapping' | 'none';
-  workersCompSource: 'assignment' | 'site_mapping' | 'account' | 'none';
+  workersCompSource: 'assignment' | 'site_mapping' | 'account' | 'matrix' | 'none';
   worksiteSource: 'assignment' | 'site_mapping' | 'account' | 'none';
   needsPayRate: boolean;
   /** Candidate HRX workers to resolve a no-match / ambiguous email. */
@@ -208,10 +210,10 @@ const CONF_LABEL: Record<Conf, string> = {
   select: 'Needs selection',
   problem: 'Problem',
 };
-const sourceConf = (src: 'assignment' | 'site_mapping' | 'account' | 'none'): Conf =>
+const sourceConf = (src: 'assignment' | 'site_mapping' | 'account' | 'matrix' | 'none'): Conf =>
   src === 'assignment'
     ? 'exact'
-    : src === 'site_mapping'
+    : src === 'site_mapping' || src === 'matrix'
       ? 'probable'
       : src === 'account'
         ? 'guess'
@@ -257,6 +259,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [matchError, setMatchError] = useState<string | null>(null);
   // Match result by source rowIndex (only importable rows are matched).
   const [matchByRow, setMatchByRow] = useState<Map<number, MatchRowResult>>(new Map());
+  // WC rate matrix — powers "type a code → its rate auto-fills" and the
+  // one-and-done learn-back when a recruiter sets a code on a row.
+  const wcMaps = useWorkersCompRatesByJobTitle(tenantId);
   // Excluded rows (future / absence / no-email) are hidden by default —
   // they're noise; the recruiter cares about the payable (importable) rows.
   const [showExcluded, setShowExcluded] = useState(false);
@@ -1119,6 +1124,34 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     const raw = editValue.trim();
     const num = raw === '' ? null : Number(raw.replace(/[^0-9.]/g, ''));
     const validNum = num != null && Number.isFinite(num) && num >= 0 ? num : null;
+
+    // Typing a WC code: (a) auto-fill its internal rate from the matrix when
+    // the row has none, and (b) learn this title onto the code's matrix row
+    // so the next import auto-resolves it — one adjustment, one time.
+    let mtxRate: number | null = null;
+    let learnArgs: { state: string; code: string; jobTitle: string } | null = null;
+    if (field === 'workersCompCode' && raw !== '') {
+      const code = raw.trim();
+      const match = matchByRow.get(rowIndex);
+      const stateCode = normalizeStateCode(
+        effectiveWorksite(match, rowIndex).worksiteAddress?.state ?? '',
+      )
+        .trim()
+        .toUpperCase();
+      const jobTitle = String(
+        match?.jobTitle || parsed?.rows.find((r) => r.rowIndex === rowIndex)?.role || '',
+      ).trim();
+      if (stateCode && code) {
+        const rateAlreadySet =
+          overrides.get(rowIndex)?.workersCompRate != null || match?.workersCompRate != null;
+        if (!rateAlreadySet) {
+          const r = wcMaps.wcRatesByStateAndCode[`${stateCode}_${code}`];
+          if (typeof r === 'number' && Number.isFinite(r)) mtxRate = r;
+        }
+        if (jobTitle) learnArgs = { state: stateCode, code, jobTitle };
+      }
+    }
+
     setOverrides((prev) => {
       const next = new Map(prev);
       const cur: RowOverride = { ...(next.get(rowIndex) || {}) };
@@ -1126,6 +1159,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
         delete cur[field];
       } else if (field === 'workersCompCode') {
         cur.workersCompCode = raw;
+        if (mtxRate != null) cur.workersCompRate = mtxRate;
       } else if (validNum != null) {
         cur[field] = validNum;
       }
@@ -1134,6 +1168,12 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       return next;
     });
     setEditing(null);
+    if (learnArgs) {
+      // Fire-and-forget: a learn failure must never block the recruiter.
+      httpsCallable(functions, 'learnWorkersCompAlias')({ tenantId, ...learnArgs }).catch(() => {
+        /* non-fatal */
+      });
+    }
     // Smart copy: a pay rate is usually the same for every worker at a given
     // event, so after typing one, offer to apply it to the rest of that Type.
     if (field === 'payRate' && validNum != null && parsed) {

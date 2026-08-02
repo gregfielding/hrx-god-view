@@ -160,6 +160,13 @@ const PayrollCostsPage: React.FC = () => {
   const [ocSaving, setOcSaving] = useState(false);
   const [ocError, setOcError] = useState<string | null>(null);
   const [ocSuccess, setOcSuccess] = useState<string | null>(null);
+  // Duplicate-pay guard: server found a submitted timesheet for the same
+  // worker + work date — sending requires an explicit second confirm.
+  const [ocDupWarning, setOcDupWarning] = useState<{
+    workDate: string;
+    totalHours: number;
+    totalAmount: number;
+  } | null>(null);
 
   // Debounced worker search for the off-cycle dialog.
   useEffect(() => {
@@ -289,10 +296,11 @@ const PayrollCostsPage: React.FC = () => {
     setOcPerDiem('');
     setOcJo(null);
     setOcNotes('');
+    setOcDupWarning(null);
     void ensureJoOptions();
   };
 
-  const submitOffCycle = async () => {
+  const submitOffCycle = async (overrideDuplicateWarning = false) => {
     if (!tenantId || !ocWorker || !ocEntity) return;
     setOcSaving(true);
     setOcError(null);
@@ -310,8 +318,19 @@ const PayrollCostsPage: React.FC = () => {
         perDiemAmount: Number(ocPerDiem) || 0,
         ...(ocJo ? { jobOrderId: ocJo.id } : {}),
         notes: ocNotes,
+        ...(overrideDuplicateWarning ? { overrideDuplicateWarning: true } : {}),
       });
-      const d = res.data as { total?: number };
+      const d = res.data as {
+        total?: number;
+        status?: string;
+        duplicateWarning?: { workDate: string; totalHours: number; totalAmount: number };
+      };
+      // Duplicate-pay guard: nothing was sent — ask before paying twice.
+      if (d.status === 'duplicate_warning' && d.duplicateWarning) {
+        setOcDupWarning(d.duplicateWarning);
+        return;
+      }
+      setOcDupWarning(null);
       setOcOpen(false);
       setOcSuccess(`Payment of ${usd(d.total)} for ${ocWorker.name} sent to Everee.`);
       await load();
@@ -617,6 +636,12 @@ const PayrollCostsPage: React.FC = () => {
               {ocError}
             </Alert>
           )}
+          {ocDupWarning && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              This worker already has a submitted timesheet for {ocDupWarning.workDate} (
+              {ocDupWarning.totalHours}h, {usd(ocDupWarning.totalAmount)}). Send anyway?
+            </Alert>
+          )}
           <Stack spacing={2}>
             <Autocomplete
               options={ocWorkerOpts}
@@ -624,7 +649,10 @@ const PayrollCostsPage: React.FC = () => {
               isOptionEqualToValue={(a, b) => a.id === b.id}
               filterOptions={(x) => x}
               value={ocWorker}
-              onChange={(_e, v) => setOcWorker(v)}
+              onChange={(_e, v) => {
+                setOcWorker(v);
+                setOcDupWarning(null);
+              }}
               onInputChange={(_e, v) => setOcWorkerQuery(v)}
               noOptionsText={ocWorkerQuery.trim().length < 2 ? 'Type a name or email…' : 'No workers found'}
               renderInput={(params) => <TextField {...params} label="Worker" autoFocus />}
@@ -656,7 +684,10 @@ const PayrollCostsPage: React.FC = () => {
               label="Work date"
               type="date"
               value={ocDate}
-              onChange={(e) => setOcDate(e.target.value)}
+              onChange={(e) => {
+                setOcDate(e.target.value);
+                setOcDupWarning(null);
+              }}
               InputLabelProps={{ shrink: true }}
             />
             <Stack direction="row" spacing={2}>
@@ -717,17 +748,18 @@ const PayrollCostsPage: React.FC = () => {
           </Button>
           <Button
             variant="contained"
+            color={ocDupWarning ? 'warning' : 'primary'}
             disabled={
               ocSaving ||
               !ocWorker ||
               !ocEntity ||
               (Number(ocGross) || 0) + (Number(ocPerDiem) || 0) <= 0
             }
-            onClick={() => void submitOffCycle()}
+            onClick={() => void submitOffCycle(Boolean(ocDupWarning))}
           >
             {ocSaving
               ? 'Sending…'
-              : `Send ${usd((Number(ocGross) || 0) + (Number(ocPerDiem) || 0))} to Everee`}
+              : `Send ${usd((Number(ocGross) || 0) + (Number(ocPerDiem) || 0))} ${ocDupWarning ? 'anyway' : 'to Everee'}`}
           </Button>
         </DialogActions>
       </Dialog>

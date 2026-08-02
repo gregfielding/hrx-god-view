@@ -32,6 +32,7 @@ import {
 import { getEvereeConfigForEntity, evereePaths } from '../integrations/everee/evereeConfig';
 import { extractEvereeHomeAddressFromUserDoc } from '../integrations/everee/evereeUserAddress';
 import { normalizeSite, siteMappingDocId } from './timesheetSiteMappings';
+import { normalizeUsStateCode } from '../recruiter/usStateNormalize';
 import { aliasKeyFor } from '../integrations/indeedFlex/matcher/venueAliases';
 import {
   normalizeEmail,
@@ -108,9 +109,10 @@ interface MatchRowResult {
   /** Where the resolved pay context came from. */
   payRateSource: 'assignment' | 'site_mapping' | 'none';
   /** Provenance of WC + worksite (assignment/JO = exact, site_mapping =
-   *  probable, account = account-level fallback, none = unresolved). Drives
+   *  probable, account = account-level fallback, matrix = resolved from the
+   *  WC rate matrix by state+title / state+code, none = unresolved). Drives
    *  the grid's confidence color-coding. */
-  workersCompSource: 'assignment' | 'site_mapping' | 'account' | 'none';
+  workersCompSource: 'assignment' | 'site_mapping' | 'account' | 'matrix' | 'none';
   worksiteSource: 'assignment' | 'site_mapping' | 'account' | 'none';
   /** True when matched+linked but no pay rate resolved (needs inline entry). */
   needsPayRate: boolean;
@@ -136,7 +138,7 @@ interface MatchWorkersResponse {
   results: MatchRowResult[];
 }
 
-type Assignment = Record<string, any> & { id: string };
+export type Assignment = Record<string, any> & { id: string };
 
 /** sec 5–7 on the active tenant (or HRX). */
 async function assertTimesheetEditor(
@@ -280,7 +282,7 @@ async function queryUsersByLastName(
 
 /** All of a worker's assignments (by userId + candidateId), deduped, with
  *  terminal-cancelled ones dropped. */
-async function loadWorkerAssignments(tenantId: string, userId: string): Promise<Assignment[]> {
+export async function loadWorkerAssignments(tenantId: string, userId: string): Promise<Assignment[]> {
   const col = db.collection(`tenants/${tenantId}/assignments`);
   const [byUser, byCand] = await Promise.all([
     col.where('userId', '==', userId).get(),
@@ -299,7 +301,7 @@ async function loadWorkerAssignments(tenantId: string, userId: string): Promise<
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}/;
-const dateOnly = (v: unknown): string => {
+export const dateOnly = (v: unknown): string => {
   if (typeof v === 'string' && ISO.test(v)) return v.slice(0, 10);
   return '';
 };
@@ -307,7 +309,7 @@ const dateOnly = (v: unknown): string => {
 /** Pick the assignment whose [startDate, endDate] window contains
  *  `workDate` (empty endDate = ongoing). Prefer a paying rate + the most
  *  recent start. */
-function pairAssignment(assignments: Assignment[], workDate: string): Assignment | null {
+export function pairAssignment(assignments: Assignment[], workDate: string): Assignment | null {
   if (!workDate) return null;
   const inWindow = assignments.filter((a) => {
     const start = dateOnly(a.startDate);
@@ -601,6 +603,75 @@ export const importTimesheetMatchWorkers = onCall(
       return { fields: out, filledWorksite, filledWc };
     };
 
+    // ── WC rate matrix (state+title → code, state+code → rate) ──
+    //
+    // The assignment/JO/account chain above only knows a WC code if it's been
+    // stamped somewhere upstream. When it hasn't (a Flex row with no paired
+    // HRX assignment, e.g. Domino's CO Production Associate), fall back to the
+    // central rate matrix — the same source the job-order form resolves from.
+    // Two lookups: `byStateTitle` finds a code from a title we've seen before
+    // (grown one-and-done by learnWorkersCompAlias on manual edits), and
+    // `rateByStateCode` fills the internal rate for any known code+state.
+    const wcByStateTitle = new Map<string, { code: string; rate: number | null }>();
+    const wcRateByStateCode = new Map<string, number>();
+    const wcTitleConflicts = new Set<string>(); // state\ttitle claimed by >1 code
+    try {
+      const wcSnap = await db.collection(`tenants/${tenantId}/workers_comp_rates`).get();
+      wcSnap.forEach((d) => {
+        const v = d.data() as Record<string, unknown>;
+        const st = normalizeUsStateCode(String(v.state ?? ''));
+        const code = String(v.code ?? '').trim();
+        if (!st || !code) return;
+        const rate = Number(v.rate);
+        if (Number.isFinite(rate)) {
+          const rk = `${st}\t${code}`;
+          wcRateByStateCode.set(rk, Math.max(wcRateByStateCode.get(rk) ?? -Infinity, rate));
+        }
+        const titles = Array.isArray(v.jobTitles) ? (v.jobTitles as unknown[]) : [];
+        for (const t of titles) {
+          const lc = String(t ?? '').trim().toLowerCase();
+          if (!lc) continue;
+          const tk = `${st}\t${lc}`;
+          const existing = wcByStateTitle.get(tk);
+          if (existing && existing.code !== code) wcTitleConflicts.add(tk);
+          else if (!existing) wcByStateTitle.set(tk, { code, rate: Number.isFinite(rate) ? rate : null });
+        }
+      });
+      // A title claimed by two different codes in one state is ambiguous —
+      // drop it from all so we never auto-pick the wrong class.
+      for (const k of wcTitleConflicts) wcByStateTitle.delete(k);
+    } catch (err) {
+      console.warn('[importTimesheetMatchWorkers] WC matrix load failed', {
+        tenantId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    /**
+     * Fill WC code + rate from the matrix when the resolution chain didn't.
+     * Mutates `f` in place; returns whether the CODE came from the matrix
+     * (so the caller can stamp `workersCompSource: 'matrix'`).
+     */
+    const applyMatrixWc = (f: ResolvedFields): { filledCode: boolean } => {
+      const stateCode = normalizeUsStateCode(f.worksiteAddress?.state ?? null);
+      if (!stateCode) return { filledCode: false };
+      let filledCode = false;
+      if (!f.workersCompCode) {
+        const title = String(f.jobTitle ?? '').trim().toLowerCase();
+        const hit = title ? wcByStateTitle.get(`${stateCode}\t${title}`) : undefined;
+        if (hit) {
+          f.workersCompCode = hit.code;
+          if (f.workersCompRate == null && hit.rate != null) f.workersCompRate = hit.rate;
+          filledCode = true;
+        }
+      }
+      if (f.workersCompCode && f.workersCompRate == null) {
+        const rate = wcRateByStateCode.get(`${stateCode}\t${f.workersCompCode}`);
+        if (rate != null) f.workersCompRate = rate;
+      }
+      return { filledCode };
+    };
+
     // Site → JO mapping resolution (for rows with no paired assignment).
     const siteMapCache = new Map<string, { jobOrderId: string; positionJobTitle: string } | null>();
     const resolveSiteMapping = async (
@@ -630,6 +701,7 @@ export const importTimesheetMatchWorkers = onCall(
         accountId,
         resolveJobOrderFields(jo, mapping.positionJobTitle || role),
       );
+      const mtxWc = applyMatrixWc(f);
       return {
         assignmentId: null,
         jobOrderId: mapping.jobOrderId,
@@ -642,7 +714,7 @@ export const importTimesheetMatchWorkers = onCall(
         workersCompRate: f.workersCompRate,
         payRate: f.payRate || null,
         billRate: f.billRate || null,
-        workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
+        workersCompSource: f.workersCompCode ? (mtxWc.filledCode ? 'matrix' : filledWc ? 'account' : 'site_mapping') : 'none',
         worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
       };
     };
@@ -777,6 +849,7 @@ export const importTimesheetMatchWorkers = onCall(
         target.accountId,
         resolveJobOrderFields(target.jo, role),
       );
+      const mtxWc = applyMatrixWc(f);
       return {
         assignmentId: null,
         jobOrderId: target.joId,
@@ -789,7 +862,7 @@ export const importTimesheetMatchWorkers = onCall(
         workersCompRate: f.workersCompRate,
         payRate: f.payRate || null,
         billRate: f.billRate || null,
-        workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
+        workersCompSource: f.workersCompCode ? (mtxWc.filledCode ? 'matrix' : filledWc ? 'account' : 'site_mapping') : 'none',
         worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
       };
     };
@@ -867,6 +940,7 @@ export const importTimesheetMatchWorkers = onCall(
           accountId,
           resolveJobOrderFields(best.jo, role),
         );
+        const mtxWc = applyMatrixWc(f);
         result = {
           assignmentId: null,
           jobOrderId: best.id,
@@ -879,7 +953,7 @@ export const importTimesheetMatchWorkers = onCall(
           workersCompRate: f.workersCompRate,
           payRate: f.payRate || null,
           billRate: f.billRate || null,
-          workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'site_mapping') : 'none',
+          workersCompSource: f.workersCompCode ? (mtxWc.filledCode ? 'matrix' : filledWc ? 'account' : 'site_mapping') : 'none',
           worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'site_mapping') : 'none',
         };
       }
@@ -1535,6 +1609,7 @@ export const importTimesheetMatchWorkers = onCall(
           firstGigPosition?.workersCompRate,
         ),
       });
+      const mtxWc = applyMatrixWc(f);
       return {
         ...matchedBase,
         block: false,
@@ -1551,7 +1626,7 @@ export const importTimesheetMatchWorkers = onCall(
         payRate: payRate || null,
         billRate: billRate || null,
         payRateSource: payRate > 0 ? 'assignment' : 'none',
-        workersCompSource: f.workersCompCode ? (filledWc ? 'account' : 'assignment') : 'none',
+        workersCompSource: f.workersCompCode ? (mtxWc.filledCode ? 'matrix' : filledWc ? 'account' : 'assignment') : 'none',
         worksiteSource: f.worksiteAddress ? (filledWorksite ? 'account' : 'assignment') : 'none',
         needsPayRate: !(payRate > 0),
       };

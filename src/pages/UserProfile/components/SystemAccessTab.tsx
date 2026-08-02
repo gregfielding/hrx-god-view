@@ -23,7 +23,8 @@ import {
 } from '@mui/material';
 import { Security as SecurityIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
-import { sendPasswordResetEmail, signOut } from 'firebase/auth';
+import { signOut } from 'firebase/auth';
+import { sendPasswordReset } from '../../../services/sendPasswordResetCallable';
 import { httpsCallable } from 'firebase/functions';
 import { useNavigate } from 'react-router-dom';
 import { db, auth, functions } from '../../../firebase';
@@ -218,7 +219,7 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
       if (userSnap.exists()) {
         const email = userSnap.data().email;
         if (email) {
-          await sendPasswordResetEmail(auth, email);
+          await sendPasswordReset(email);
           setResetEmailSent(true);
           setTimeout(() => setResetEmailSent(false), 5000);
         } else {
