@@ -94,6 +94,8 @@ import {
   ContentCopy as ContentCopyIcon,
   StarBorder as StarBorderIcon,
   Archive as ArchiveIcon,
+  Place as TexasIcon,
+  School as CampusIcon,
   Note as NoteIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -122,6 +124,7 @@ import GoogleIntegration from '../../components/GoogleIntegration';
 import StageChip from '../../components/StageChip';
 import UserTasksDashboard from '../../components/UserTasksDashboard';
 import PipelineFunnel from '../../components/PipelineFunnel';
+import SodexoCampusesTab from '../../components/SodexoCampusesTab';
 import PipelineBubbleChart from '../../components/PipelineBubbleChart';
 import SalesCoach from '../../components/SalesCoach';
 import TasksDashboard from '../../components/TasksDashboard';
@@ -166,6 +169,8 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         'archive': 3,
         'prospect': 1,
         'activity': 1,
+        'texas': 5,
+        'sodexo-campuses': 6,
         'reports': 9,
         'kpi-management': 7,
         'kpi-dashboard': 8,
@@ -1354,6 +1359,8 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         'archive': 3,
         'prospect': 1,
         'activity': 1,
+        'texas': 5,
+        'sodexo-campuses': 6,
         'reports': 9,
         'kpi-management': 7,
         'kpi-dashboard': 8,
@@ -1540,6 +1547,29 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
 
   // Remove the separate useEffects for filter changes - they're now handled in the main useEffect above
 
+  // Texas tab (value 5): the Opportunities view scoped to Texas. A deal is
+  // Texas when the deal record OR its linked company mentions a TX
+  // state/location — deals denormalize location inconsistently, so match on
+  // the serialized record rather than one blessed field.
+  const isTexasRecord = useCallback((obj: any): boolean => {
+    if (!obj) return false;
+    try {
+      return /"TX"|,\s*(TX|Texas)\b/i.test(JSON.stringify(obj));
+    } catch {
+      return false;
+    }
+  }, []);
+  const texasCompanyIds = React.useMemo(() => {
+    const source = allCompanies?.length ? allCompanies : companies;
+    return new Set(source.filter((c: any) => isTexasRecord(c)).map((c: any) => c.id));
+  }, [allCompanies, companies, isTexasRecord]);
+  const isTexasDeal = useCallback(
+    (d: any) => isTexasRecord(d) || texasCompanyIds.has(d?.companyId),
+    [isTexasRecord, texasCompanyIds],
+  );
+  const texasDeals = React.useMemo(() => deals.filter(isTexasDeal), [deals, isTexasDeal]);
+  const texasAllDeals = React.useMemo(() => allDeals.filter(isTexasDeal), [allDeals, isTexasDeal]);
+
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     if (standaloneTab) return;
     console.log('🔄 handleTabChange called:', { newValue, currentTabValue: tabValue, isUserTabChange });
@@ -1568,6 +1598,8 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         1: 'opportunities',
         2: 'pipeline',
         3: 'archive',
+        5: 'texas',
+        6: 'sodexo-campuses',
         9: 'reports',
         7: 'kpi-management',
         8: 'kpi-dashboard'
@@ -1947,6 +1979,8 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
                   { label: 'Opportunities', value: 1, icon: <DealIcon fontSize="small" /> },
                   { label: 'Pipeline', value: 2, icon: <PipelineIcon fontSize="small" /> },
                   { label: 'Archive', value: 3, icon: <ArchiveIcon fontSize="small" /> },
+                  { label: 'Texas', value: 5, icon: <TexasIcon fontSize="small" /> },
+                  { label: 'Sodexo Campuses', value: 6, icon: <CampusIcon fontSize="small" /> },
                 ].map((t) => {
                   const isActive = tabValue === t.value;
                   return (
@@ -2036,7 +2070,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
             </Box>
           ) : (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }} data-testid="crm-header-actions">
-              {(tabValue === 1 || tabValue === 3) && (
+              {(tabValue === 1 || tabValue === 3 || tabValue === 5) && (
                 <InboxSearchBar
                   value={search}
                   onChange={setSearch}
@@ -2192,6 +2226,36 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         </Box>
       )}
       
+      {tabValue === 5 && (
+        <Box data-testid="texas-deals-panel">
+          <DealsTab
+            ref={dealsTabRef}
+            deals={texasDeals}
+            allDeals={texasAllDeals}
+            companies={companies}
+            allCompanies={allCompanies}
+            loadingAllCompanies={loadingAllCompanies}
+            contacts={contacts}
+            pipelineStages={pipelineStages}
+            search={search}
+            onSearchChange={setSearch}
+            onAddNew={() => setOpportunityDialogOpen(true)}
+            dealFilter={dealFilter}
+            onDealFilterChange={handleDealFilterChange}
+            currentUser={currentUser}
+            salesTeam={salesTeam}
+            tenantId={tenantId}
+            opportunityDialogOpen={opportunityDialogOpen}
+            onOpportunityDialogOpenChange={setOpportunityDialogOpen}
+            scrollContainerRef={contentRef}
+          />
+        </Box>
+      )}
+
+      {tabValue === 6 && (
+        <SodexoCampusesTab tenantId={tenantId} />
+      )}
+
       {tabValue === 4 && (
         <ProspectingHub />
       )}
