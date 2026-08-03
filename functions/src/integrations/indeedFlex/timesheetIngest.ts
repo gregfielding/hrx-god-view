@@ -251,6 +251,8 @@ export async function reconcileFlexTimesheets(
   okUnlinkedJob: number;
   workerUnmatched: number;
   noAssignment: number;
+  /** Non-ok rows older than the 7-day attention window — recorded, not nagged. */
+  staleProblems: number;
   problems: Array<{ status: MatchStatus; worker: string; client: string | null; flexJobId: string; workDate: string }>;
 }> {
   // Today the wire is a bare array; tolerate a { data|entries|results: [] }
@@ -418,9 +420,13 @@ export async function reconcileFlexTimesheets(
   }
   if (inBatch > 0) await batch.commit();
 
-  const count = (s: MatchStatus) => verdicts.filter((v) => v.matchStatus === s).length;
+  // Attention window (Greg 2026-08-01): mismatches older than 7 days are
+  // history, not to-dos — snapshot them, but don't nag about them.
+  const cutoff = new Date(capturedAt - 7 * 86400000).toISOString().slice(0, 10);
+  const recent = (v: EntryVerdict) => v.entry.workDate >= cutoff;
+  const count = (s: MatchStatus) => verdicts.filter((v) => v.matchStatus === s && recent(v)).length;
   const problems = verdicts
-    .filter((v) => v.matchStatus !== 'ok')
+    .filter((v) => v.matchStatus !== 'ok' && recent(v))
     .map((v) => ({
       status: v.matchStatus,
       worker: v.entry.workerDisplayName,
@@ -431,10 +437,12 @@ export async function reconcileFlexTimesheets(
 
   const summary = {
     entries: normalized.length,
-    ok: count('ok'),
+    ok: verdicts.filter((v) => v.matchStatus === 'ok').length,
     okUnlinkedJob: verdicts.filter((v) => v.matchStatus === 'ok' && !v.flexJobLinked).length,
     workerUnmatched: count('worker_unmatched'),
     noAssignment: count('no_assignment'),
+    /** Non-ok rows older than the 7-day window — recorded, not actionable. */
+    staleProblems: verdicts.filter((v) => v.matchStatus !== 'ok' && !recent(v)).length,
     problems,
   };
 
