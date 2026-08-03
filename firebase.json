@@ -37,6 +37,25 @@
     ],
     "headers": [
       {
+        "//": "Firebase matches header rules on the REQUEST path, not the served file — so SPA routes like /crm rewrite to index.html but inherited the default max-age=3600, leaving users on stale bundles up to an hour after every deploy. Catch-all no-cache first; the /static rule below re-enables long caching for content-hashed assets.",
+        "source": "**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/static/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
         "source": "/index.html",
         "headers": [
           {
