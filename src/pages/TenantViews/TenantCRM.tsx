@@ -2269,6 +2269,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         <Box data-testid="texas-deals-panel">
           <DealsTab
             ref={dealsTabRef}
+            includeArchived
             deals={texasDeals}
             allDeals={texasAllDeals}
             companies={companies}
@@ -4752,9 +4753,12 @@ const CompaniesTab: React.FC<{
     onOpportunityDialogOpenChange: (next: boolean) => void;
     scrollContainerRef: React.RefObject<HTMLDivElement | null>;
     showArchived?: boolean;
+    /** Texas tab: show archived AND active deals — the whole point is
+     *  reviving stalled (archived) opportunities. */
+    includeArchived?: boolean;
   }
   const DealsTab = forwardRef<{ exportCsv: () => void }, DealsTabProps>(function DealsTab(
-    { deals, allDeals, companies, allCompanies, loadingAllCompanies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange, currentUser, salesTeam, tenantId, opportunityDialogOpen, onOpportunityDialogOpenChange, scrollContainerRef, showArchived = false },
+    { deals, allDeals, companies, allCompanies, loadingAllCompanies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange, currentUser, salesTeam, tenantId, opportunityDialogOpen, onOpportunityDialogOpenChange, scrollContainerRef, showArchived = false, includeArchived = false },
     ref
   ) {
   const navigate = useNavigate();
@@ -5342,7 +5346,10 @@ const CompaniesTab: React.FC<{
     let filtered = deals;
     
     // Filter by archived status
-    if (showArchived) {
+    if (includeArchived) {
+      // Texas tab: archived + active together — reviving stalled deals is
+      // the point, so hiding archived would hide the targets.
+    } else if (showArchived) {
       // Archive tab: only show archived deals
       filtered = filtered.filter(deal => deal.archived === true);
     } else {
@@ -5413,7 +5420,7 @@ const CompaniesTab: React.FC<{
     });
     
     return filtered;
-  }, [deals, dealFilter, currentUser?.uid, search, sortField, sortDirection, selectedSalesperson, showArchived]);
+  }, [deals, dealFilter, currentUser?.uid, search, sortField, sortDirection, selectedSalesperson, showArchived, includeArchived]);
 
   useEffect(() => {
     if (!tenantId || filteredDeals.length === 0) return;
