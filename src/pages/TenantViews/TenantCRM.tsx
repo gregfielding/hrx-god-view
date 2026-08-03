@@ -1554,18 +1554,30 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
   const isTexasRecord = useCallback((obj: any): boolean => {
     if (!obj) return false;
     try {
-      return /"TX"|,\s*(TX|Texas)\b/i.test(JSON.stringify(obj));
+      return /"TX"|,\s*TX\b|\bTexas\b/i.test(JSON.stringify(obj));
     } catch {
       return false;
     }
   }, []);
-  const texasCompanyIds = React.useMemo(() => {
+  // Deals link to companies by companyId OR only by companyName — match both.
+  const texasCompanyKeys = React.useMemo(() => {
     const source = allCompanies?.length ? allCompanies : companies;
-    return new Set(source.filter((c: any) => isTexasRecord(c)).map((c: any) => c.id));
+    const ids = new Set<string>();
+    const names = new Set<string>();
+    source.forEach((c: any) => {
+      if (!isTexasRecord(c)) return;
+      ids.add(c.id);
+      const n = String(c.companyName || c.name || '').trim().toLowerCase();
+      if (n) names.add(n);
+    });
+    return { ids, names };
   }, [allCompanies, companies, isTexasRecord]);
   const isTexasDeal = useCallback(
-    (d: any) => isTexasRecord(d) || texasCompanyIds.has(d?.companyId),
-    [isTexasRecord, texasCompanyIds],
+    (d: any) =>
+      isTexasRecord(d) ||
+      texasCompanyKeys.ids.has(d?.companyId) ||
+      texasCompanyKeys.names.has(String(d?.companyName || '').trim().toLowerCase()),
+    [isTexasRecord, texasCompanyKeys],
   );
   const texasDeals = React.useMemo(() => deals.filter(isTexasDeal), [deals, isTexasDeal]);
   const texasAllDeals = React.useMemo(() => allDeals.filter(isTexasDeal), [allDeals, isTexasDeal]);
