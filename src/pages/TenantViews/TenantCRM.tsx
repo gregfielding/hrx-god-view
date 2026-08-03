@@ -1560,10 +1560,37 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     }
   }, []);
   // Deals link to companies by companyId OR only by companyName — match both.
+  // The page's in-memory company lists are partial (paginated / lazy), so the
+  // Texas tab fetches the FULL company set once to build its match keys.
+  const [texasFetchedKeys, setTexasFetchedKeys] = useState<{ ids: string[]; names: string[] } | null>(null);
+  useEffect(() => {
+    if (tabValue !== 5 || texasFetchedKeys || !tenantId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'tenants', tenantId, 'crm_companies'));
+        const ids: string[] = [];
+        const names: string[] = [];
+        snap.forEach((d) => {
+          const c = d.data() as any;
+          if (!isTexasRecord(c)) return;
+          ids.push(d.id);
+          const n = String(c.companyName || c.name || '').trim().toLowerCase();
+          if (n) names.push(n);
+        });
+        if (!cancelled) setTexasFetchedKeys({ ids, names });
+      } catch {
+        if (!cancelled) setTexasFetchedKeys({ ids: [], names: [] });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tabValue, texasFetchedKeys, tenantId, isTexasRecord]);
   const texasCompanyKeys = React.useMemo(() => {
     const source = allCompanies?.length ? allCompanies : companies;
-    const ids = new Set<string>();
-    const names = new Set<string>();
+    const ids = new Set<string>(texasFetchedKeys?.ids ?? []);
+    const names = new Set<string>(texasFetchedKeys?.names ?? []);
     source.forEach((c: any) => {
       if (!isTexasRecord(c)) return;
       ids.add(c.id);
@@ -1571,7 +1598,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
       if (n) names.add(n);
     });
     return { ids, names };
-  }, [allCompanies, companies, isTexasRecord]);
+  }, [allCompanies, companies, isTexasRecord, texasFetchedKeys]);
   const isTexasDeal = useCallback(
     (d: any) =>
       isTexasRecord(d) ||
