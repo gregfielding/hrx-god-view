@@ -270,6 +270,12 @@ function buildUserDocPatch(args: {
     fullPatch.addressInfo = {
       addressLine1: input.address.addressLine1,
       ...(input.address.addressLine2 ? { addressLine2: input.address.addressLine2 } : {}),
+      // Mirror the profile-UI schema (WorkerBasicIdentityCard/ProfileOverview
+      // read streetAddress/zip) — writing only the Everee keys made wizard
+      // addresses display blank on the profile ("it didn't save", 2026-08-04).
+      streetAddress: input.address.addressLine1,
+      ...(input.address.addressLine2 ? { unitNumber: input.address.addressLine2 } : {}),
+      zip: input.address.postalCode,
       city: input.address.city,
       state: input.address.state,
       postalCode: input.address.postalCode,

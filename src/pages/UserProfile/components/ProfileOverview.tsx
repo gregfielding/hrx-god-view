@@ -117,6 +117,7 @@ import type { ProfileUpdateReminderControls } from './MessagesTab';
 import AddressFormFields, { type AddressFormFieldsHandle } from './AddressTab/AddressFormFields';
 import MapWithMarkers from './AddressTab/MapWithMarkers';
 import RecentPayCard from '../../../components/everee/RecentPayCard';
+import { mirrorAddressShapes } from '../../../utils/mirrorAddressShapes';
 type Props = {
   uid: string;
   onTabChange?: (tab: string) => void;
@@ -716,11 +717,14 @@ const transportOptions: Array<{
             
             // Merge addressInfo with fallbacks from address.coordinates
             setAddressInfo({
-              streetAddress: addressInfoData.streetAddress || addressData.street || '',
-              unitNumber: addressInfoData.unitNumber || addressData.unit || '',
+              // addressLine1/addressLine2/postalCode fallbacks: the admin
+              // create-worker wizard writes the Everee shape — without these
+              // the profile displayed wizard-entered addresses as blank.
+              streetAddress: addressInfoData.streetAddress || addressInfoData.addressLine1 || addressData.street || '',
+              unitNumber: addressInfoData.unitNumber || addressInfoData.addressLine2 || addressData.unit || '',
               city: addressInfoData.city || addressData.city || data.city || '',
               state: addressInfoData.state || addressData.state || data.state || '',
-              zip: addressInfoData.zip || addressInfoData.zipCode || addressData.zipCode || addressData.zip || '',
+              zip: addressInfoData.zip || addressInfoData.zipCode || addressInfoData.postalCode || addressData.zipCode || addressData.zip || '',
               homeLat: addressInfoData.homeLat ?? coordinatesData.lat ?? null,
               homeLng: addressInfoData.homeLng ?? coordinatesData.lng ?? null,
               workLat: addressInfoData.workLat ?? null,
@@ -891,10 +895,11 @@ const transportOptions: Array<{
   const handleAddressChange = async (updatedAddressInfo: any) => {
     setAddressInfo(updatedAddressInfo);
     const userRef = doc(db, 'users', uid);
-    
-    // Only update addressInfo - this is now the single source of truth for address data
-    await updateDoc(userRef, { 
-      addressInfo: updatedAddressInfo
+
+    // Mirror both addressInfo schemas (profile streetAddress/zip + Everee
+    // addressLine1/postalCode) so no writer blanks the other's keys.
+    await updateDoc(userRef, {
+      addressInfo: mirrorAddressShapes(updatedAddressInfo)
     });
   };
 
@@ -1207,7 +1212,7 @@ const transportOptions: Array<{
 
       if (embeddedMode === 'quickProfileOnly' && quickProfileAddressFormRef.current) {
         const addressPayload = await quickProfileAddressFormRef.current.prepareAddressForSubmit();
-        await updateDoc(userRef, { ...finalUpdateData, addressInfo: addressPayload });
+        await updateDoc(userRef, { ...finalUpdateData, addressInfo: mirrorAddressShapes(addressPayload) });
         quickProfileAddressFormRef.current.markSaved();
         setQuickProfileAddressMapPreview(null);
       } else {

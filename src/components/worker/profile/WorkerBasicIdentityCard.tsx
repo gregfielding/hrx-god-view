@@ -24,6 +24,7 @@ import { useT } from '../../../i18n';
 import { formatPhoneNumber, formatUsPhoneProgressive } from '../../../utils/formatPhone';
 import { geocodeAddress } from '../../../utils/geocodeAddress';
 import { normalizeLast4SsnDigits } from '../../../utils/last4Ssn';
+import { mirrorAddressShapes } from '../../../utils/mirrorAddressShapes';
 import ImageCropDialog from '../../common/ImageCropDialog';
 
 export interface WorkerBasicIdentityForm {
@@ -81,10 +82,10 @@ function fromUserDoc(data: Record<string, unknown> | null): WorkerBasicIdentityF
       if (raw.length >= 10) return formatPhoneNumber(raw.slice(-10));
       return String(ec.phone ?? '').trim();
     })(),
-    streetAddress: (addr.streetAddress as string) ?? '',
+    streetAddress: (addr.streetAddress as string) ?? (addr.addressLine1 as string) ?? '',
     city: (addr.city as string) ?? (data.city as string) ?? '',
     state: (addr.state as string) ?? (data.state as string) ?? '',
-    zip: (addr.zip as string) ?? (addr.zipCode as string) ?? '',
+    zip: (addr.zip as string) ?? (addr.zipCode as string) ?? (addr.postalCode as string) ?? '',
     last4SSN: normalizeLast4SsnDigits(data.last4SSN ?? ''),
     homeLat,
     homeLng,
@@ -168,15 +169,18 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
         const f = formRef.current;
         const homeLat = updates.homeLat !== undefined ? updates.homeLat : f.homeLat;
         const homeLng = updates.homeLng !== undefined ? updates.homeLng : f.homeLng;
-        payload.addressInfo = {
+        payload.addressInfo = mirrorAddressShapes({
           ...current,
           streetAddress: updates.streetAddress ?? f.streetAddress,
+          // Explicit edits override the mirror fallbacks from stale keys.
+          addressLine1: updates.streetAddress ?? f.streetAddress,
           city: updates.city ?? f.city,
           state: updates.state ?? f.state,
           zip: updates.zip ?? f.zip,
+          postalCode: updates.zip ?? f.zip,
           homeLat: homeLat ?? null,
           homeLng: homeLng ?? null,
-        };
+        });
       }
       if (updates.last4SSN !== undefined) {
         const d = normalizeLast4SsnDigits(updates.last4SSN);
