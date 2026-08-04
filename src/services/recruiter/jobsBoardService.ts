@@ -1267,54 +1267,30 @@ export class JobsBoardService {
   // Get public jobs board posts (for public job board)
   async getPublicPosts(tenantId: string, userGroups?: string[]): Promise<JobsBoardPost[]> {
     try {
-      // First, try to get all posts (without status filter) to see what we have
-      let allPostsQuery = query(
-        collection(db, 'tenants', tenantId, 'job_postings')
-      );
-      
+      // Query ONLY active postings — the board previously loaded the entire
+      // job_postings collection (incl. every cancelled/complete posting ever)
+      // and filtered client-side, which on worker phones was pure wasted
+      // transfer. Fallback to the old full load if the query fails.
       let allPostsSnapshot;
       try {
-        // Try ordering by createdAt first
-        allPostsQuery = query(
-          collection(db, 'tenants', tenantId, 'job_postings'),
-          orderBy('createdAt', 'desc')
+        allPostsSnapshot = await getDocs(
+          query(collection(db, 'tenants', tenantId, 'job_postings'), where('status', '==', 'active'))
         );
-        allPostsSnapshot = await getDocs(allPostsQuery);
       } catch (error: any) {
-        // If createdAt doesn't exist or index is missing, get all without ordering
-        if (error.code === 'failed-precondition') {
-          console.warn('createdAt field not found or index missing, getting all posts without ordering');
-          allPostsQuery = query(collection(db, 'tenants', tenantId, 'job_postings'));
-          allPostsSnapshot = await getDocs(allPostsQuery);
-        } else {
-          console.error('Error fetching all posts:', error);
-          throw error;
-        }
+        console.warn('Active-postings query failed, falling back to full load:', error?.code);
+        allPostsSnapshot = await getDocs(query(collection(db, 'tenants', tenantId, 'job_postings')));
       }
-      
+
       const allPosts = allPostsSnapshot.docs.map((d) =>
         normalizeJobsBoardPostRecord(d.id, (d.data() || {}) as Record<string, unknown>)
       );
-      
-      // Debug: Log all posts to see their status and visibility
-      console.log(`📊 Found ${allPosts.length} total job postings for tenant ${tenantId}`);
-      const statusCounts: Record<string, number> = {};
-      const visibilityCounts: Record<string, number> = {};
-      allPosts.forEach(post => {
-        statusCounts[post.status || 'undefined'] = (statusCounts[post.status || 'undefined'] || 0) + 1;
-        visibilityCounts[post.visibility || 'undefined'] = (visibilityCounts[post.visibility || 'undefined'] || 0) + 1;
-      });
-      console.log('📊 Status breakdown:', statusCounts);
-      console.log('📊 Visibility breakdown:', visibilityCounts);
-      
+
       // Filter for active posts with public or restricted visibility
       const filteredPosts = allPosts.filter(post => {
         const isActive = post.status === 'active';
         const isPublicOrRestricted = post.visibility === 'public' || post.visibility === 'restricted';
         return isActive && isPublicOrRestricted;
       });
-      
-      console.log(`✅ Filtered to ${filteredPosts.length} active public/restricted posts`);
       
       // Drop active posts whose parent job order is not Open (fixes stale posting docs)
       const jobOrderIdSet = new Set<string>();
@@ -1325,6 +1301,10 @@ export class JobsBoardService {
       }
       const jobOrderIds = Array.from(jobOrderIdSet);
       const jobOrderOpenById = new Map<string, boolean>();
+      // Keep the fetched JO data — consumers (PublicJobsBoard) previously
+      // re-fetched every one of these docs a second time for date/worksite
+      // enrichment. Stamped onto each post as `__jobOrder` below.
+      const jobOrderDataById = new Map<string, Record<string, unknown>>();
       if (jobOrderIds.length > 0) {
         await Promise.all(
           jobOrderIds.map(async (jid) => {
@@ -1335,7 +1315,9 @@ export class JobsBoardService {
                 jobOrderOpenById.set(jid, false);
                 return;
               }
-              jobOrderOpenById.set(jid, isJobOrderBoardLiveStatus((joSnap.data() as Record<string, unknown>)?.status));
+              const joData = joSnap.data() as Record<string, unknown>;
+              jobOrderDataById.set(jid, joData);
+              jobOrderOpenById.set(jid, isJobOrderBoardLiveStatus(joData?.status));
             } catch {
               jobOrderOpenById.set(jid, false);
             }
@@ -1345,6 +1327,11 @@ export class JobsBoardService {
       const filteredByJobOrderStatus = filteredPosts.filter((post) => {
         if (!post.jobOrderId) return true;
         return jobOrderOpenById.get(post.jobOrderId) === true;
+      });
+      filteredByJobOrderStatus.forEach((post) => {
+        if (post.jobOrderId && jobOrderDataById.has(post.jobOrderId)) {
+          (post as unknown as Record<string, unknown>).__jobOrder = jobOrderDataById.get(post.jobOrderId);
+        }
       });
 
       // Filter by group restrictions if user groups are provided

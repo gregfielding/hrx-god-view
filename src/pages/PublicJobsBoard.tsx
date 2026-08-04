@@ -735,50 +735,25 @@ const PublicJobsBoard: React.FC = () => {
             let enrichedStartDate: Date | undefined = post.startDate instanceof Date ? post.startDate : (post.startDate ? new Date(post.startDate) : undefined);
             let enrichedEndDate: Date | undefined = post.endDate instanceof Date ? post.endDate : (post.endDate ? new Date(post.endDate) : undefined);
 
-            // When post is linked to a job order, fetch it for worksiteId and for current start/end dates
-            if ((post as any).jobOrderId) {
-              try {
-                const jobOrderRef = doc(db, 'tenants', specificTenantId, 'job_orders', (post as any).jobOrderId);
-                const jobOrderSnap = await getDoc(jobOrderRef);
-                if (jobOrderSnap.exists()) {
-                  const jobOrderData = jobOrderSnap.data() as Record<string, unknown>;
-                  if (!worksiteId && jobOrderData.worksiteId) worksiteId = jobOrderData.worksiteId as string;
-                  const toDate = (v: unknown): Date | undefined => {
-                    if (v == null) return undefined;
-                    if (v instanceof Date) return v;
-                    if (typeof (v as { toDate?: () => Date }).toDate === 'function') return (v as { toDate: () => Date }).toDate();
-                    if (typeof v === 'string' || typeof v === 'number') return new Date(v);
-                    return undefined;
-                  };
-                  if (jobOrderData.startDate != null) enrichedStartDate = toDate(jobOrderData.startDate);
-                  if (jobOrderData.endDate != null) enrichedEndDate = toDate(jobOrderData.endDate);
-                  // For gig posts, extend end date to last shift date (worker UI override)
-                  if ((post as any).jobType === 'gig') {
-                    try {
-                      const shiftsRef = collection(db, 'tenants', specificTenantId, 'job_orders', (post as any).jobOrderId, 'shifts');
-                      const shiftsSnap = await getDocs(shiftsRef);
-                      const shifts = shiftsSnap.docs
-                        .map((d) => d.data())
-                        // Exclude open shifts (standing-crew, no fixed times) — not posted.
-                        .filter((data: any) => data.shiftType !== 'open' && data.hideFromJobsBoard !== true)
-                        .map((data: any) => ({
-                          shiftDate: data.shiftDate,
-                          endDate: data.endDate,
-                          dateSchedule: data.dateSchedule,
-                        }));
-                      const lastStr = getLastShiftDateFromShifts(shifts);
-                      if (lastStr) {
-                        const lastDate = new Date(lastStr);
-                        if (!enrichedEndDate || lastDate > enrichedEndDate) enrichedEndDate = lastDate;
-                      }
-                    } catch (e) {
-                      console.debug('Failed to fetch shifts for gig post end date', post.id, e);
-                    }
-                  }
-                }
-              } catch (err) {
-                console.debug('Failed to fetch job order for posting', post.id, ':', err);
-              }
+            // JO data rides along on the post as `__jobOrder` (fetched once by
+            // getPublicPosts for its open-check) — this loop previously
+            // re-fetched every JO doc AND every gig JO's entire shifts
+            // subcollection just to refine card dates, which was the bulk of
+            // the board's Firestore waterfall on worker phones. Card dates now
+            // come from the JO doc alone; the posting DETAIL page still
+            // computes exact per-shift dates.
+            const jobOrderData = (post as any).__jobOrder as Record<string, unknown> | undefined;
+            if (jobOrderData) {
+              if (!worksiteId && jobOrderData.worksiteId) worksiteId = jobOrderData.worksiteId as string;
+              const toDate = (v: unknown): Date | undefined => {
+                if (v == null) return undefined;
+                if (v instanceof Date) return v;
+                if (typeof (v as { toDate?: () => Date }).toDate === 'function') return (v as { toDate: () => Date }).toDate();
+                if (typeof v === 'string' || typeof v === 'number') return new Date(v);
+                return undefined;
+              };
+              if (jobOrderData.startDate != null) enrichedStartDate = toDate(jobOrderData.startDate);
+              if (jobOrderData.endDate != null) enrichedEndDate = toDate(jobOrderData.endDate);
             }
             
             // Now fetch location if we have worksiteId and location data is missing
