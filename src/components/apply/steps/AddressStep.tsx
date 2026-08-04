@@ -1,6 +1,7 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Box, Grid, TextField, Typography, Card, CardHeader, CardContent, useTheme, useMediaQuery, Alert } from '@mui/material';
+import { Box, Grid, TextField, Typography, Card, CardHeader, CardContent, useTheme, useMediaQuery, Alert, Button, Link, CircularProgress } from '@mui/material';
 import { Autocomplete } from '@react-google-maps/api';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import ResumeSuggestionField from '../../common/ResumeSuggestionField';
 import { useLoadScript } from '@react-google-maps/api';
 import { GOOGLE_MAPS_LIBRARIES } from '../../../utils/googleMapsLoader';
@@ -18,6 +19,16 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [addressError, setAddressError] = useState<string | null>(null);
+  // Manual-entry escape hatch: on phones the Places dropdown sometimes never
+  // engages (script timing, keyboard covering the list, fat-finger misses) and
+  // the dropdown-only rule turned that into a hard stall — workers abandoned
+  // the wizard at this step and became accounts with no address. Manual mode
+  // geocodes the typed address through the placesGeocodeAddress callable
+  // (browser key is API-restricted; server key isn't), so it produces the
+  // same verified shape (normalized fields + coords + placeId) as a dropdown
+  // pick — the wizard's addressValid gate is unchanged.
+  const [manualMode, setManualMode] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const autocompleteRef = useRef<any>(null);
 
   // Load Google Maps script
@@ -146,6 +157,88 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
     autocompleteRef.current = autocomplete;
   }, []);
 
+  const manualVerified =
+    typeof value?.homeLat === 'number' &&
+    typeof value?.homeLng === 'number' &&
+    !isNaN(value.homeLat) &&
+    !isNaN(value.homeLng);
+
+  /**
+   * Manual-mode edits mirror handleStreetTyping's contract: any change after a
+   * successful verification strips the geocoded fields so a modified-but-
+   * unverified address can never pass the wizard gate.
+   */
+  const handleManualField = (field: string, raw: string) => {
+    const next: any = { ...value, [field]: raw };
+    if (manualVerified || value?.placeId) {
+      next.homeLat = undefined;
+      next.homeLng = undefined;
+      next.placeId = undefined;
+      next.formattedAddress = undefined;
+      next.country = undefined;
+      next.addressGeocodedAt = undefined;
+      next.addressVerifiedVia = undefined;
+    }
+    onChange(next);
+    setAddressError(null);
+  };
+
+  const handleManualVerify = async () => {
+    const street = String(value?.street || '').trim();
+    const city = String(value?.city || '').trim();
+    const state = String(value?.state || '').trim();
+    const zip = String(value?.zip || '').trim();
+    if (!street || !city || !state || !zip) {
+      setAddressError('Please fill in street, city, state, and ZIP code.');
+      return;
+    }
+    setVerifying(true);
+    setAddressError(null);
+    try {
+      const call = httpsCallable(getFunctions(), 'placesGeocodeAddress');
+      const resp: any = await call({ address: `${street}, ${city}, ${state} ${zip}` });
+      const d = resp?.data;
+      if (!d?.ok || typeof d.lat !== 'number' || typeof d.lng !== 'number') {
+        setAddressError(
+          "We couldn't verify that address. Double-check the street number, city, state, and ZIP — then tap Verify again.",
+        );
+        return;
+      }
+      // Prefer the geocoder's normalized fields; fall back to what the user
+      // typed for anything the geocoder omits (e.g. rural results without a
+      // postal_code component). Coordinates are the non-negotiable part.
+      onChange({
+        ...value,
+        street: d.street || street,
+        city: d.city || city,
+        state: d.state || state,
+        zip: d.zipCode || zip,
+        homeLat: d.lat,
+        homeLng: d.lng,
+        placeId: d.placeId || undefined,
+        formattedAddress: d.formattedAddress || undefined,
+        country: d.country || undefined,
+        addressGeocodedAt: new Date().toISOString(),
+        addressVerifiedVia: 'manual_geocode',
+      });
+    } catch (err) {
+      console.error('Manual address verify failed:', err);
+      setAddressError("We couldn't verify that address right now. Please try again in a moment.");
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const enterManualMode = () => {
+    setManualMode(true);
+    setAddressError(null);
+  };
+
+  const exitManualMode = () => {
+    setManualMode(false);
+    setAddressError(null);
+  };
+
   // Single street input shared between mobile + desktop layouts. Wrapped in
   // Google Places `Autocomplete` when the script has loaded; falls back to a
   // bare TextField (with the same inline error) while it loads.
@@ -216,9 +309,105 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
     </>
   ) : null;
 
-  const formGrid = (
+  const manualGrid = (
+    <Grid container spacing={2}>
+      {manualVerified ? (
+        <Grid item xs={12}>
+          <Alert severity="success">✓ Address verified. You can proceed to the next step.</Alert>
+        </Grid>
+      ) : (
+        <Grid item xs={12}>
+          <Typography variant="body2" color="text.secondary">
+            Type your full address and tap Verify — we'll check it for you.
+          </Typography>
+        </Grid>
+      )}
+      <Grid item xs={12}>
+        <TextField
+          fullWidth
+          required
+          label="Street Address"
+          value={value.street || ''}
+          onChange={(e) => handleManualField('street', e.target.value)}
+          autoComplete="street-address"
+        />
+      </Grid>
+      <Grid item xs={12} md={6}>
+        <TextField
+          fullWidth
+          label="Unit / Apt"
+          value={value.unit || ''}
+          onChange={(e) => handle('unit', e.target.value)}
+        />
+      </Grid>
+      <Grid item xs={12} md={6}>
+        <TextField
+          fullWidth
+          required
+          label="City"
+          value={value.city || ''}
+          onChange={(e) => handleManualField('city', e.target.value)}
+          autoComplete="address-level2"
+        />
+      </Grid>
+      <Grid item xs={6} md={3}>
+        <TextField
+          fullWidth
+          required
+          label="State"
+          value={value.state || ''}
+          onChange={(e) => handleManualField('state', e.target.value)}
+          autoComplete="address-level1"
+        />
+      </Grid>
+      <Grid item xs={6} md={3}>
+        <TextField
+          fullWidth
+          required
+          label="Zip Code"
+          value={value.zip || ''}
+          onChange={(e) => handleManualField('zip', e.target.value)}
+          autoComplete="postal-code"
+          inputProps={{ inputMode: 'numeric' }}
+        />
+      </Grid>
+      {addressError ? (
+        <Grid item xs={12}>
+          <Alert severity="error">{addressError}</Alert>
+        </Grid>
+      ) : null}
+      <Grid item xs={12}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+          {!manualVerified && (
+            <Button
+              variant="contained"
+              onClick={handleManualVerify}
+              disabled={verifying}
+              startIcon={verifying ? <CircularProgress size={16} color="inherit" /> : undefined}
+            >
+              {verifying ? 'Verifying…' : 'Verify address'}
+            </Button>
+          )}
+          <Link component="button" type="button" variant="body2" onClick={exitManualMode}>
+            Back to address search
+          </Link>
+        </Box>
+      </Grid>
+    </Grid>
+  );
+
+  const formGrid = manualMode ? (
+    manualGrid
+  ) : (
     <Grid container spacing={2}>
       <Grid item xs={12}>{wrappedStreetField}</Grid>
+      {!verifiedFromGoogle && (
+        <Grid item xs={12} sx={{ pt: '4px !important' }}>
+          <Link component="button" type="button" variant="body2" onClick={enterManualMode}>
+            Can't find your address in the dropdown? Enter it manually
+          </Link>
+        </Grid>
+      )}
       <Grid item xs={12} md={6}>
         <ResumeSuggestionField isFromResume={false} confidence={undefined}>
           <TextField

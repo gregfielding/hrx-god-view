@@ -1533,11 +1533,27 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       return personalData;
     }
     try {
-      const coords = await geocodeAddress(
-        `${street}, ${city}, ${state} ${
-          personalData.zip ? String(personalData.zip).trim() : ''
-        }`.trim(),
-      );
+      const composed = `${street}, ${city}, ${state} ${
+        personalData.zip ? String(personalData.zip).trim() : ''
+      }`.trim();
+      // Server callable first: the browser Maps key is API-restricted for
+      // Geocoding (REQUEST_DENIED, verified live), so the direct REST call
+      // below only works if the key restrictions ever change — it silently
+      // failed in prod, leaving this safety net dead. placesGeocodeAddress
+      // uses the server-only Geocoding key.
+      let coords: { lat: number; lng: number } | null = null;
+      try {
+        const resp: any = await httpsCallable(getFunctions(), 'placesGeocodeAddress')({
+          address: composed,
+        });
+        const d = resp?.data;
+        if (d?.ok && typeof d.lat === 'number' && typeof d.lng === 'number') {
+          coords = { lat: d.lat, lng: d.lng };
+        }
+      } catch {
+        /* fall through to browser-key REST attempt */
+      }
+      if (!coords) coords = await geocodeAddress(composed);
       setFormData((prev: any) => ({
         ...prev,
         personal: {
