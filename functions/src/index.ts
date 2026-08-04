@@ -12775,6 +12775,7 @@ export { indeedFlexApplyShiftRequest } from './integrations/indeedFlex/applyShif
 // cancels roster drops. Authed by INDEED_FLEX_EXTENSION_KEY (Bearer).
 export { indeedFlexPortalIngest } from './integrations/indeedFlex/portalIngest';
 export { indeedFlexTimesheetIngest } from './integrations/indeedFlex/timesheetIngest';
+export { extendJobOrderEndDateOnShiftWrite } from './extendJobOrderEndDate';
 
 // **Fieldglass (Sodexo) inbound-email ingestion — FG Slices 1+2.**
 // Structural sibling of the Indeed Flex pipeline above, sharing the
