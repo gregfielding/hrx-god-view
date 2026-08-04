@@ -661,6 +661,13 @@ const UserProfilePage = () => {
         };
         if (effectiveTenantId) {
           patch[`tenantIds.${effectiveTenantId}.userGroupIds`] = newIds;
+          // Never leave a PARTIAL tenant map: creating it with only
+          // userGroupIds makes the user invisible to the worker directory,
+          // which queries tenantIds.{t}.securityLevel (Latoya Caprice bug).
+          const meta = data.tenantIds?.[effectiveTenantId] as Record<string, unknown> | undefined;
+          if (meta?.securityLevel === undefined || meta?.securityLevel === null) {
+            patch[`tenantIds.${effectiveTenantId}.securityLevel`] = String(data.securityLevel ?? '2');
+          }
         }
         await updateDoc(userRef, patch);
         // Mirror onto the group doc (member list reads `memberIds`) so the
@@ -722,6 +729,13 @@ const UserProfilePage = () => {
         };
         if (effectiveTenantId) {
           patch[`tenantIds.${effectiveTenantId}.userGroupIds`] = newIds;
+          // Never leave a PARTIAL tenant map: creating it with only
+          // userGroupIds makes the user invisible to the worker directory,
+          // which queries tenantIds.{t}.securityLevel (Latoya Caprice bug).
+          const meta = data.tenantIds?.[effectiveTenantId] as Record<string, unknown> | undefined;
+          if (meta?.securityLevel === undefined || meta?.securityLevel === null) {
+            patch[`tenantIds.${effectiveTenantId}.securityLevel`] = String(data.securityLevel ?? '2');
+          }
         }
         await updateDoc(userRef, patch);
         // Membership is bidirectional: the group's member list reads the group

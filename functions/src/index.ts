@@ -10813,10 +10813,21 @@ export const addUsersToGroups = onCall({
 
     // Update user's userGroupIds (and tenant-scoped copy). Use set merge to avoid race if user doc isn't created yet.
     const userRef = db.collection('users').doc(userId);
+    // Never leave a PARTIAL tenant map: creating tenantIds.{t} with only
+    // userGroupIds makes the user invisible to the worker directory, which
+    // queries tenantIds.{t}.securityLevel (Latoya Caprice bug, 2026-08-04).
+    const userSnapForLevel = await userRef.get();
+    const userDataForLevel = (userSnapForLevel.data() ?? {}) as Record<string, unknown>;
+    const tenantMetaForLevel = (userDataForLevel.tenantIds as Record<string, Record<string, unknown>> | undefined)?.[tenantId];
+    const needsLevelStamp =
+      tenantMetaForLevel?.securityLevel === undefined || tenantMetaForLevel?.securityLevel === null;
     await userRef.set(
       {
         userGroupIds: admin.firestore.FieldValue.arrayUnion(...groupIds),
         [`tenantIds.${tenantId}.userGroupIds`]: admin.firestore.FieldValue.arrayUnion(...groupIds),
+        ...(needsLevelStamp
+          ? { [`tenantIds.${tenantId}.securityLevel`]: String(userDataForLevel.securityLevel ?? '2') }
+          : {}),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }

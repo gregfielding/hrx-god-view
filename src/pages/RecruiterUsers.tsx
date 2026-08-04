@@ -567,6 +567,14 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
             if (ids.length >= 2500) break; // matches server MAX_MATCH_IDS
           }
         }
+        if (ids.length === 0) {
+          // Directory miss ≠ user doesn't exist: the directory query needs
+          // tenantIds.{t}.securityLevel, which partial tenant maps lack
+          // (Latoya Caprice bug). The server scan includes those docs — fall
+          // through to it before declaring "no results".
+          await runSlow();
+          return;
+        }
         await hydrateAndSet(ids);
       } catch (e: unknown) {
         if (!isStale()) {
