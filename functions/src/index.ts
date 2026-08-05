@@ -425,7 +425,7 @@ export { onAssignmentWriteEnsureDenormFields } from './timesheets/onAssignmentWr
 // resolver chain when P1.B denorm fields are absent.
 export { createDraftTimesheetEntryCallable } from './timesheets/createDraftTimesheetEntryCallable';
 export { importTimesheetMatchWorkers } from './timesheets/importTimesheetMatchWorkers';
-export { saveTimesheetSiteMapping } from './timesheets/timesheetSiteMappings';
+export { saveTimesheetSiteMapping, createTimesheetWorksite } from './timesheets/timesheetSiteMappings';
 export { saveTimesheetWorkerAlias } from './timesheets/timesheetWorkerAliases';
 export { submitImportTimesheetBatch, voidImportTimesheetPayable } from './timesheets/submitImportTimesheetBatch';
 export { searchTimesheetWorkers } from './timesheets/searchTimesheetWorkers';

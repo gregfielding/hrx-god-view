@@ -58,7 +58,7 @@ import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firesto
 
 import { db, functions } from '../../firebase';
 import { useWorkersCompRatesByJobTitle } from '../../hooks/useWorkersCompRatesByJobTitle';
-import { normalizeStateCode } from '../../utils/unemploymentRates';
+import { normalizeStateCode, US_STATE_CODES } from '../../utils/unemploymentRates';
 import type { HiringEntity } from '../../types/recruiter/hiringEntity';
 import {
   mapIndeedFlexRows,
@@ -338,6 +338,14 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [wsWorksitesLoading, setWsWorksitesLoading] = useState(false);
   const [wsWorksitePick, setWsWorksitePick] = useState<WsWorksite | null>(null);
   const [wsApplyAllSite, setWsApplyAllSite] = useState(true);
+  // Inline "create a new worksite" for weekly travel-crew events (Greg
+  // 2026-08-05): name defaults to the CSV event label, state pre-sniffed
+  // from it ("Mubadala Citi DC Open" → DC). Created under the picked
+  // account's company, then used as the rows' override immediately.
+  const [wsNewMode, setWsNewMode] = useState(false);
+  const [wsNew, setWsNew] = useState({ name: '', street: '', city: '', state: '', zip: '' });
+  const [wsCreating, setWsCreating] = useState(false);
+  const [wsCreateError, setWsCreateError] = useState<string | null>(null);
   // Inline cell overrides (this import session): manually-entered pay rate /
   // WC code / WC rate, keyed by row. They win over the resolved value and
   // survive a re-match; they flow into the Everee submit payload (P4).
@@ -1017,6 +1025,17 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     };
   };
 
+  /** Uppercase 2-letter state token in an event label ("Mubadala Citi DC
+   *  Open" → "DC"). Uppercase-only so words like "in"/"or" never match. */
+  const sniffStateToken = (label: string): string => {
+    for (const tok of String(label || '').split(/[^A-Za-z]+/)) {
+      if (tok.length === 2 && tok === tok.toUpperCase() && (US_STATE_CODES as readonly string[]).includes(tok)) {
+        return tok;
+      }
+    }
+    return '';
+  };
+
   // ── Worksite lookup (pick an HRX account → worksite, client-side) ──
   const openWorksiteDialog = (rowIndex: number, csvSite: string) => {
     setWorksiteDialog({ rowIndex, csvSite });
@@ -1024,8 +1043,28 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     setWsWorksites([]);
     setWsWorksitePick(null);
     setWsApplyAllSite(true);
+    setWsNewMode(false);
+    setWsNew({ name: csvSite.trim(), street: '', city: '', state: sniffStateToken(csvSite), zip: '' });
+    setWsCreateError(null);
     if (!wsAccounts && !wsAccountsLoading) void loadWsAccounts();
   };
+
+  // Pre-select the account from the row's match (e.g. Venue Smart for the
+  // travel crew) once the account list is in — saves a lookup every week.
+  useEffect(() => {
+    if (!worksiteDialog || wsAccountPick || !wsAccounts?.length) return;
+    const m = matchByRow.get(worksiteDialog.rowIndex);
+    const accName = String((m as { accountName?: string } | undefined)?.accountName ?? '')
+      .trim()
+      .toLowerCase();
+    if (!accName) return;
+    const hit = wsAccounts.find((a) => a.name.trim().toLowerCase() === accName);
+    if (hit) {
+      setWsAccountPick(hit);
+      void loadWsWorksites(hit);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- preselect once per dialog open
+  }, [worksiteDialog, wsAccounts]);
 
   const loadWsAccounts = async () => {
     if (!tenantId) return;
@@ -1131,12 +1170,13 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     }
   };
 
-  const applyWorksite = () => {
-    if (!worksiteDialog || !wsWorksitePick) return;
+  const applyWorksite = (picked?: WsWorksite) => {
+    const ws = picked ?? wsWorksitePick;
+    if (!worksiteDialog || !ws) return;
     const ov: WorksiteOverride = {
-      worksiteId: wsWorksitePick.worksiteId,
-      worksiteName: wsWorksitePick.worksiteName,
-      worksiteAddress: wsWorksitePick.address,
+      worksiteId: ws.worksiteId,
+      worksiteName: ws.worksiteName,
+      worksiteAddress: ws.address,
       accountName: wsAccountPick?.name,
     };
     const site = worksiteDialog.csvSite.trim().toLowerCase();
@@ -1153,6 +1193,65 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       return next;
     });
     setWorksiteDialog(null);
+  };
+
+  // Create the event's location under the picked account's company, then use
+  // it as the override right away — one step for a new venue each week.
+  const createAndUseWorksite = async () => {
+    if (!tenantId || !wsAccountPick) return;
+    const companyId =
+      (wsAccountPick.isChild && wsAccountPick.linkedLocations[0]?.companyId) ||
+      wsAccountPick.companyIds[0] ||
+      '';
+    if (!companyId) {
+      setWsCreateError('This account has no linked company to hold the location.');
+      return;
+    }
+    const name = wsNew.name.trim();
+    if (!name) {
+      setWsCreateError('Give the worksite a name.');
+      return;
+    }
+    setWsCreating(true);
+    setWsCreateError(null);
+    try {
+      const fn = httpsCallable<
+        {
+          tenantId: string;
+          companyId: string;
+          name: string;
+          address: { street: string; city: string; state: string; zip: string };
+        },
+        { ok: true; worksiteId: string; companyId: string }
+      >(functions, 'createTimesheetWorksite', { timeout: 60000 });
+      const res = await fn({
+        tenantId,
+        companyId,
+        name,
+        address: {
+          street: wsNew.street.trim(),
+          city: wsNew.city.trim(),
+          state: wsNew.state.trim().toUpperCase(),
+          zip: wsNew.zip.trim(),
+        },
+      });
+      applyWorksite({
+        worksiteId: res.data.worksiteId,
+        companyId,
+        worksiteName: name,
+        address: {
+          street: wsNew.street.trim(),
+          city: wsNew.city.trim(),
+          state: wsNew.state.trim().toUpperCase(),
+          zip: wsNew.zip.trim(),
+        },
+      });
+    } catch (err) {
+      console.error('createTimesheetWorksite failed:', err);
+      setWsCreateError(err instanceof Error ? err.message : 'Failed to create the worksite.');
+    } finally {
+      setWsCreating(false);
+    }
   };
 
   // ── Sortable grid columns (Worker / Date / Worksite) ──
@@ -3056,6 +3155,77 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               </Typography>
             )}
 
+            {/* New-worksite path (weekly travel-crew events, Greg 2026-08-05):
+                name defaults to the CSV event label, state pre-sniffed from
+                it. Created under the account's company, applied immediately. */}
+            {!wsNewMode ? (
+              <Button
+                size="small"
+                variant="text"
+                disabled={!wsAccountPick}
+                onClick={() => setWsNewMode(true)}
+                sx={{ textTransform: 'none', alignSelf: 'flex-start' }}
+              >
+                + New worksite under {wsAccountPick?.name ?? 'this account'}…
+              </Button>
+            ) : (
+              <Stack spacing={1.5} sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5 }}>
+                <Typography variant="caption" color="text.secondary">
+                  New worksite under <strong>{wsAccountPick?.name ?? '—'}</strong>
+                </Typography>
+                <TextField
+                  size="small"
+                  label="Worksite name"
+                  value={wsNew.name}
+                  onChange={(e) => setWsNew((p) => ({ ...p, name: e.target.value }))}
+                  fullWidth
+                />
+                <TextField
+                  size="small"
+                  label="Street"
+                  value={wsNew.street}
+                  onChange={(e) => setWsNew((p) => ({ ...p, street: e.target.value }))}
+                  fullWidth
+                />
+                <Stack direction="row" spacing={1}>
+                  <TextField
+                    size="small"
+                    label="City"
+                    value={wsNew.city}
+                    onChange={(e) => setWsNew((p) => ({ ...p, city: e.target.value }))}
+                    fullWidth
+                  />
+                  <TextField
+                    size="small"
+                    select
+                    label="State"
+                    value={wsNew.state}
+                    onChange={(e) => setWsNew((p) => ({ ...p, state: e.target.value }))}
+                    helperText={wsNew.state ? undefined : 'Drives WC'}
+                    sx={{ width: 110 }}
+                  >
+                    {US_STATE_CODES.map((s) => (
+                      <MenuItem key={s} value={s}>
+                        {s}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                  <TextField
+                    size="small"
+                    label="Zip"
+                    value={wsNew.zip}
+                    onChange={(e) => setWsNew((p) => ({ ...p, zip: e.target.value }))}
+                    sx={{ width: 110 }}
+                  />
+                </Stack>
+                {wsCreateError && (
+                  <Typography variant="caption" color="error">
+                    {wsCreateError}
+                  </Typography>
+                )}
+              </Stack>
+            )}
+
             <FormControlLabel
               control={
                 <Switch checked={wsApplyAllSite} onChange={(e) => setWsApplyAllSite(e.target.checked)} />
@@ -3072,14 +3242,25 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           <Button onClick={() => setWorksiteDialog(null)} sx={{ textTransform: 'none' }}>
             Cancel
           </Button>
-          <Button
-            variant="contained"
-            onClick={applyWorksite}
-            disabled={!wsWorksitePick}
-            sx={{ textTransform: 'none' }}
-          >
-            Use worksite
-          </Button>
+          {wsNewMode ? (
+            <Button
+              variant="contained"
+              onClick={() => void createAndUseWorksite()}
+              disabled={wsCreating || !wsAccountPick || !wsNew.name.trim()}
+              sx={{ textTransform: 'none' }}
+            >
+              {wsCreating ? 'Creating…' : 'Create & use worksite'}
+            </Button>
+          ) : (
+            <Button
+              variant="contained"
+              onClick={() => applyWorksite()}
+              disabled={!wsWorksitePick}
+              sx={{ textTransform: 'none' }}
+            >
+              Use worksite
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
 

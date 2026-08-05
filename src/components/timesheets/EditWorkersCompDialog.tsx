@@ -18,7 +18,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
   CircularProgress,
@@ -30,9 +29,9 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { db, functions } from '../../firebase';
+import { functions } from '../../firebase';
 import { callSetEntryWorkersComp } from '../../services/setEntryWorkersCompCallable';
+import WcCodeSelect from '../workersComp/WcCodeSelect';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
 import { normalizeStateCode, US_STATE_CODES } from '../../utils/unemploymentRates';
 
@@ -47,18 +46,14 @@ interface Props {
   /** Worksite label — when no state resolves, a 2-letter state token in the
    *  name (e.g. "Mubadala Citi DC Open" → DC) pre-selects the state picker. */
   worksiteName?: string;
+  /** Entity-scoped matrix rows for this entity win over generic rows. */
+  hiringEntityId?: string | null;
   /** Pre-filled values — typically the row's resolved (override OR inherited)
    *  values so the recruiter sees what's effective today. */
   initialCode?: string;
   initialRate?: number;
   /** Optional descriptor for the row — e.g. "Aaron T · 2026-05-29". */
   rowLabel?: string;
-}
-
-interface WcOption {
-  code: string;
-  title: string;
-  rate: number | null;
 }
 
 /** Uppercase 2-letter state token in a worksite label ("Mubadala Citi DC Open"
@@ -80,6 +75,7 @@ const EditWorkersCompDialog: React.FC<Props> = ({
   entryId,
   state,
   worksiteName,
+  hiringEntityId,
   initialCode,
   initialRate,
   rowLabel,
@@ -87,8 +83,6 @@ const EditWorkersCompDialog: React.FC<Props> = ({
   const [code, setCode] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [options, setOptions] = useState<WcOption[]>([]);
-  const [loadingOptions, setLoadingOptions] = useState(false);
   // Manual work-state pick for rows that can't resolve one — traveling crews
   // (e.g. VenueSmart) whose assignment has no fixed worksite state. Drives
   // the code dropdown AND is stamped on the entry server-side.
@@ -105,61 +99,6 @@ const EditWorkersCompDialog: React.FC<Props> = ({
     setPickedState(propStateCode ? '' : sniffStateToken(worksiteName));
     setError(null);
   }, [open, initialCode, propStateCode, worksiteName]);
-
-  // Load the codes rated for this worksite state (matrix) + their catalog
-  // titles, so the recruiter picks from the real options.
-  useEffect(() => {
-    if (!open || !tenantId || !stateCode) {
-      setOptions([]);
-      return;
-    }
-    let cancelled = false;
-    setLoadingOptions(true);
-    (async () => {
-      try {
-        const [rateSnap, catSnap] = await Promise.all([
-          getDocs(
-            query(collection(db, 'tenants', tenantId, 'workers_comp_rates'), where('state', '==', stateCode)),
-          ),
-          getDocs(collection(db, 'tenants', tenantId, 'workers_comp_class_codes')),
-        ]);
-        const titleByCode = new Map<string, string>();
-        catSnap.forEach((d) => {
-          const v = d.data() as Record<string, unknown>;
-          const c = String(v.code ?? '').trim();
-          if (c) titleByCode.set(c, String(v.title ?? '').trim());
-        });
-        const byCode = new Map<string, number | null>();
-        rateSnap.forEach((d) => {
-          const v = d.data() as Record<string, unknown>;
-          const c = String(v.code ?? '').trim();
-          if (!c) return;
-          const r = Number(v.rate);
-          const cur = byCode.get(c);
-          const next = Number.isFinite(r) ? (cur == null ? r : Math.max(cur, r)) : cur ?? null;
-          byCode.set(c, next);
-        });
-        const opts: WcOption[] = [...byCode.entries()]
-          .map(([c, r]) => ({ code: c, title: titleByCode.get(c) ?? '', rate: r }))
-          .sort((a, b) => a.code.localeCompare(b.code));
-        // The 8040 placeholder must ALWAYS be pickable — payroll can't stall
-        // on a state whose carrier codes are still pending (Greg 2026-08-05).
-        // $2.35 mirrors the synthetic 8040 convention in the WC monthly
-        // report; the server falls back to the same rate on save.
-        if (!opts.some((o) => o.code === '8040')) {
-          opts.push({ code: '8040', title: 'Placeholder (carrier code pending)', rate: 2.35 });
-        }
-        if (!cancelled) setOptions(opts);
-      } catch {
-        if (!cancelled) setOptions([]);
-      } finally {
-        if (!cancelled) setLoadingOptions(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, tenantId, stateCode]);
 
   const handleSubmit = async (): Promise<void> => {
     const trimmedCode = code.trim();
@@ -221,52 +160,19 @@ const EditWorkersCompDialog: React.FC<Props> = ({
             </TextField>
           )}
 
-          <Autocomplete<WcOption, false, false, true>
-            freeSolo
-            options={options}
-            loading={loadingOptions}
-            inputValue={code}
-            onInputChange={(_, v) => setCode(v)}
-            onChange={(_, v) => {
-              if (v && typeof v !== 'string') setCode(v.code);
-              else if (typeof v === 'string') setCode(v);
-            }}
-            getOptionLabel={(o) => (typeof o === 'string' ? o : o.code)}
-            filterOptions={(opts, s) => {
-              const q = s.inputValue.trim().toLowerCase();
-              if (!q) return opts;
-              return opts.filter(
-                (o) => o.code.toLowerCase().includes(q) || o.title.toLowerCase().includes(q),
-              );
-            }}
-            renderOption={(props, o) => (
-              <li {...props} key={o.code}>
-                <Box>
-                  <Typography variant="body2" fontFamily="monospace" fontWeight={600}>
-                    {o.code}
-                  </Typography>
-                  {(o.title || o.rate != null) && (
-                    <Typography variant="caption" color="text.secondary">
-                      {o.title}
-                      {o.rate != null ? `${o.title ? ' · ' : ''}$${o.rate.toFixed(2)} rate` : ''}
-                    </Typography>
-                  )}
-                </Box>
-              </li>
-            )}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label="NCCI class code"
-                placeholder="e.g. 8044"
-                autoFocus
-                helperText={
-                  stateCode
-                    ? `Codes rated for ${stateCode}. Rate resolves from the matrix; leave blank to clear WC.`
-                    : "4-digit code from your insurer's schedule. Rate resolves from the matrix; leave blank to clear."
-                }
-              />
-            )}
+          <WcCodeSelect
+            tenantId={tenantId}
+            state={stateCode}
+            hiringEntityId={hiringEntityId}
+            value={code}
+            onChange={(c) => setCode(c)}
+            label="NCCI class code"
+            autoFocus
+            helperText={
+              stateCode
+                ? `Codes rated for ${stateCode}. Rate resolves from the matrix; leave blank to clear WC.`
+                : "4-digit code from your insurer's schedule. Rate resolves from the matrix; leave blank to clear."
+            }
           />
 
           {error && <Alert severity="error">{error}</Alert>}

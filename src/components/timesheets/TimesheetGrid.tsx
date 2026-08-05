@@ -1204,6 +1204,7 @@ const ImportRow: React.FC<{
             // + csvSite "Mubadala Citi DC Open" → DC).
             [imp?.worksiteName, imp?.csvSite].filter(Boolean).join(' · ') || undefined
           }
+          hiringEntityId={(row.entry as unknown as { hiringEntityId?: string }).hiringEntityId ?? null}
           initialCode={wcCode}
           initialRate={wcRate}
           rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
@@ -1686,6 +1687,7 @@ const EntryRow: React.FC<EntryRowProps> = ({
             undefined
           }
           worksiteName={row.assignment.worksiteDisplayName ?? undefined}
+          hiringEntityId={row.assignment.hiringEntityId ?? null}
           initialCode={row.resolvedWorkersCompCode}
           initialRate={row.resolvedWorkersCompRate}
           rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}

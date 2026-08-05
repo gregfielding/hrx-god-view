@@ -30,16 +30,22 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  MenuItem,
   Stack,
   TextField,
   Typography,
 } from '@mui/material';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../../firebase';
+import WcCodeSelect from '../workersComp/WcCodeSelect';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
 import { normalizeStateCode } from '../../utils/unemploymentRates';
+
+interface JoPosition {
+  title: string;
+  payRate: number;
+  wcCode: string;
+}
 
 interface JoOption {
   id: string;
@@ -49,15 +55,10 @@ interface JoOption {
   state: string;
   hiringEntityId: string;
   jobTitle: string;
+  /** The JO's positions (positions[] with gigPositions[] fallback) — the
+   *  Position field offers these, and picking one fills pay rate + WC. */
+  positions: JoPosition[];
   sameEntity: boolean;
-}
-
-interface WcOption {
-  code: string;
-  title: string;
-  rate: number | null;
-  /** Titles learned onto this matrix row — drives the pre-selection. */
-  jobTitles: string[];
 }
 
 export interface FixAssignmentRow {
@@ -101,8 +102,8 @@ const FixAssignmentDialog: React.FC<Props> = ({
   const [jo, setJo] = useState<JoOption | null>(null);
   const [title, setTitle] = useState('');
   const [payRate, setPayRate] = useState('');
-  const [wcOptions, setWcOptions] = useState<WcOption[]>([]);
   const [wcCode, setWcCode] = useState('');
+  const [wcRate, setWcRate] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -134,6 +135,21 @@ const FixAssignmentDialog: React.FC<Props> = ({
           const addr = (v.worksiteAddress as Record<string, unknown> | undefined) ?? {};
           const state = normalizeStateCode(str(addr.state)).toUpperCase();
           const entity = str(v.hiringEntityId);
+          const rawPositions = Array.isArray(v.positions) && v.positions.length
+            ? (v.positions as unknown[])
+            : Array.isArray(v.gigPositions)
+              ? (v.gigPositions as unknown[])
+              : [];
+          const positions: JoPosition[] = rawPositions
+            .map((p) => {
+              const rec = (p ?? {}) as Record<string, unknown>;
+              return {
+                title: str(rec.jobTitle) || str(rec.title),
+                payRate: Number(rec.payRate) > 0 ? Number(rec.payRate) : 0,
+                wcCode: str(rec.workersCompCode),
+              };
+            })
+            .filter((p) => p.title);
           return {
             id: d.id,
             label: [num, name, company, site].filter(Boolean).join(' — '),
@@ -142,6 +158,7 @@ const FixAssignmentDialog: React.FC<Props> = ({
             state,
             hiringEntityId: entity,
             jobTitle: str(v.jobTitle),
+            positions,
             sameEntity: !entity || entity === hiringEntityId,
           };
         });
@@ -160,72 +177,6 @@ const FixAssignmentDialog: React.FC<Props> = ({
     };
   }, [open, tenantId, hiringEntityId]);
 
-  // WC options for the JO's state; pre-select by learned title → state
-  // default ('*') → 8040 placeholder (always offered).
-  useEffect(() => {
-    if (!open || !tenantId || !jo?.state) {
-      setWcOptions([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const [rateSnap, catSnap] = await Promise.all([
-          getDocs(
-            query(collection(db, 'tenants', tenantId, 'workers_comp_rates'), where('state', '==', jo.state)),
-          ),
-          getDocs(collection(db, 'tenants', tenantId, 'workers_comp_class_codes')),
-        ]);
-        const titleByCode = new Map<string, string>();
-        catSnap.forEach((d) => {
-          const v = d.data() as Record<string, unknown>;
-          if (str(v.code)) titleByCode.set(str(v.code), str(v.title));
-        });
-        const byCode = new Map<string, WcOption>();
-        rateSnap.forEach((d) => {
-          const v = d.data() as Record<string, unknown>;
-          const c = str(v.code);
-          if (!c) return;
-          const r = Number(v.rate);
-          const titles = Array.isArray(v.jobTitles)
-            ? (v.jobTitles as unknown[]).map((t) => str(t)).filter(Boolean)
-            : [];
-          const cur = byCode.get(c);
-          byCode.set(c, {
-            code: c,
-            title: titleByCode.get(c) ?? '',
-            rate: Number.isFinite(r) ? Math.max(cur?.rate ?? 0, r) : cur?.rate ?? null,
-            jobTitles: [...(cur?.jobTitles ?? []), ...titles],
-          });
-        });
-        if (!byCode.has('8040')) {
-          byCode.set('8040', {
-            code: '8040',
-            title: 'Placeholder (carrier code pending)',
-            rate: 2.35,
-            jobTitles: [],
-          });
-        }
-        const opts = [...byCode.values()].sort((a, b) => a.code.localeCompare(b.code));
-        if (cancelled) return;
-        setWcOptions(opts);
-        const t = (defaultTitle ?? title).trim().toLowerCase();
-        const byTitle = t
-          ? opts.find((o) => o.jobTitles.some((jt) => jt.toLowerCase() === t))
-          : undefined;
-        const byDefault = opts.find((o) => o.jobTitles.includes('*'));
-        setWcCode((byTitle ?? byDefault ?? opts.find((o) => o.code === '8040'))?.code ?? '');
-      } catch {
-        if (!cancelled) setWcOptions([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run on JO/state change only
-  }, [open, tenantId, jo?.state]);
-
-  const selectedWc = wcOptions.find((o) => o.code === wcCode);
   const rate = Number(payRate);
   const canSave =
     Boolean(userId) && Boolean(jo) && Number.isFinite(rate) && rate > 0 && rows.length > 0 && !saving;
@@ -249,7 +200,7 @@ const FixAssignmentDialog: React.FC<Props> = ({
                 payRate: rate,
                 title: title.trim(),
                 state: jo.state,
-                ...(wcCode ? { wcCode, wcRate: selectedWc?.rate ?? undefined } : {}),
+                ...(wcCode.trim() ? { wcCode: wcCode.trim(), wcRate: wcRate ?? undefined } : {}),
               },
             ],
           },
@@ -296,7 +247,18 @@ const FixAssignmentDialog: React.FC<Props> = ({
             value={jo}
             onChange={(_, v) => {
               setJo(v);
-              if (v && !title.trim() && v.jobTitle) setTitle(v.jobTitle);
+              if (!v) return;
+              // Single-position JOs fill everything; multi-position JOs offer
+              // the Position dropdown below.
+              const only = v.positions.length === 1 ? v.positions[0] : null;
+              if (only) {
+                setTitle(only.title);
+                if (only.payRate > 0) setPayRate(String(only.payRate));
+                setWcCode(only.wcCode || '');
+              } else {
+                setWcCode('');
+                if (!title.trim() && v.jobTitle) setTitle(v.jobTitle);
+              }
             }}
             getOptionLabel={(o) => o.label}
             isOptionEqualToValue={(a, b) => a.id === b.id}
@@ -317,11 +279,43 @@ const FixAssignmentDialog: React.FC<Props> = ({
           )}
 
           <Stack direction="row" spacing={2}>
-            <TextField
-              label="Position"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
+            <Autocomplete<JoPosition, false, false, true>
+              freeSolo
               fullWidth
+              options={jo?.positions ?? []}
+              inputValue={title}
+              onInputChange={(_, v) => setTitle(v)}
+              onChange={(_, v) => {
+                // Picking a JO position fills its title + pay rate + WC code;
+                // free-typing a custom title leaves rate/WC as entered.
+                if (v && typeof v !== 'string') {
+                  setTitle(v.title);
+                  if (v.payRate > 0) setPayRate(String(v.payRate));
+                  if (v.wcCode) setWcCode(v.wcCode);
+                } else if (typeof v === 'string') {
+                  setTitle(v);
+                }
+              }}
+              getOptionLabel={(o) => (typeof o === 'string' ? o : o.title)}
+              renderOption={(props, o) => (
+                <li {...props} key={o.title}>
+                  <Box>
+                    <Typography variant="body2">{o.title}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {[o.payRate > 0 ? `$${o.payRate.toFixed(2)}/hr` : null, o.wcCode ? `WC ${o.wcCode}` : null]
+                        .filter(Boolean)
+                        .join(' · ') || 'no rate on position'}
+                    </Typography>
+                  </Box>
+                </li>
+              )}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Position"
+                  placeholder={jo ? 'Pick a JO position or type one' : 'Pick a job order first'}
+                />
+              )}
             />
             <TextField
               label="Pay rate"
@@ -334,24 +328,17 @@ const FixAssignmentDialog: React.FC<Props> = ({
           </Stack>
 
           {jo?.state && (
-            <TextField
-              select
-              label={`WC class code (${jo.state})`}
+            <WcCodeSelect
+              tenantId={tenantId}
+              state={jo.state}
+              hiringEntityId={jo.hiringEntityId || hiringEntityId}
               value={wcCode}
-              onChange={(e) => setWcCode(e.target.value)}
-              helperText="Pre-resolved from your WC matrix — change if needed. The rate follows the matrix."
-              fullWidth
-            >
-              {wcOptions.map((o) => (
-                <MenuItem key={o.code} value={o.code}>
-                  <Box component="span" sx={{ fontFamily: 'monospace', fontWeight: 600, mr: 1 }}>
-                    {o.code}
-                  </Box>
-                  {o.title}
-                  {o.rate != null ? ` · $${o.rate.toFixed(2)}` : ''}
-                </MenuItem>
-              ))}
-            </TextField>
+              onChange={(c, r) => {
+                setWcCode(c);
+                setWcRate(r);
+              }}
+              helperText="Leave blank to auto-resolve from the matrix by position + state; pick a code to pin it."
+            />
           )}
 
           <Box>

@@ -157,3 +157,61 @@ export const saveTimesheetSiteMapping = onCall(
     return { ok: true, docId, accountName };
   },
 );
+
+/**
+ * createTimesheetWorksite — inline location creation from the importer's
+ * "Look up worksite" dialog (Greg 2026-08-05, travel-crew weekly events:
+ * a new event venue each week shouldn't require a CRM detour). Creates a
+ * location under the account's linked company; the dialog then uses it as
+ * the rows' worksite override, so address + state (→ WC) flow to every
+ * row of the event.
+ */
+export const createTimesheetWorksite = onCall(
+  { cors: true, memory: '512MiB', timeoutSeconds: 60 },
+  async (
+    request,
+  ): Promise<{ ok: true; worksiteId: string; companyId: string }> => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    const { tenantId, companyId, name, address } = (request.data || {}) as {
+      tenantId?: string;
+      companyId?: string;
+      name?: string;
+      address?: { street?: string; city?: string; state?: string; zip?: string };
+    };
+    const trimmedName = String(name || '').trim();
+    const state = String(address?.state || '').trim().toUpperCase();
+    if (!tenantId || !companyId || !trimmedName) {
+      throw new HttpsError('invalid-argument', 'tenantId, companyId, and name are required');
+    }
+    if (state && !/^[A-Z]{2}$/.test(state)) {
+      throw new HttpsError('invalid-argument', 'address.state must be a 2-letter code');
+    }
+    await assertTimesheetEditor(
+      request.auth.uid,
+      request.auth.token as Record<string, unknown>,
+      tenantId,
+    );
+    const companySnap = await db.doc(`tenants/${tenantId}/crm_companies/${companyId}`).get();
+    if (!companySnap.exists) throw new HttpsError('not-found', 'Company not found');
+
+    const ref = await db
+      .collection(`tenants/${tenantId}/crm_companies/${companyId}/locations`)
+      .add({
+        name: trimmedName,
+        nickname: trimmedName,
+        address: {
+          street: String(address?.street || '').trim(),
+          city: String(address?.city || '').trim(),
+          state,
+          zipCode: String(address?.zip || '').trim(),
+        },
+        source: 'timesheet_import_event',
+        createdBy: request.auth.uid,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    return { ok: true, worksiteId: ref.id, companyId };
+  },
+);

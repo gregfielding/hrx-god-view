@@ -50,6 +50,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import WcSuggestButton from './WcSuggestButton';
+import WcCodeSelect from './workersComp/WcCodeSelect';
 import { p } from '../data/firestorePaths';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import { additionalScreeningOptions } from '../data/screeningsOptions';
@@ -4437,14 +4438,22 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                           {/* Row 3: Workers Comp Class Code, Workers Comp Rate */}
                           <Box sx={{ display: 'flex', gap: 2 }}>
                             <Box sx={{ flex: 1 }}>
-                              <TextField
-                                fullWidth
+                              <WcCodeSelect
+                                tenantId={tenantId}
+                                state={worksiteStateCodeForPricing}
+                                hiringEntityId={hiringEntityIdForForm}
                                 size="small"
                                 label="Workers Comp Class Code"
                                 value={position.workersCompClassCode ?? ''}
-                                onChange={(e) => {
+                                onChange={(code, rate) => {
                                   const updated = [...gigPositions];
-                                  updated[index] = { ...updated[index], workersCompClassCode: e.target.value };
+                                  updated[index] = {
+                                    ...updated[index],
+                                    workersCompClassCode: code,
+                                    // Picking a rated code fills the rate; free
+                                    // typing leaves the rate as entered.
+                                    ...(rate != null ? { workersCompRate: String(rate) } : {}),
+                                  };
                                   setGigPositions(updated);
                                 }}
                                 placeholder="e.g. 9015"
@@ -4733,11 +4742,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                   )}
                   {/* Row 3: Workers Comp Class Code, Workers Comp Rate */}
                   <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
+                    <WcCodeSelect
+                      tenantId={tenantId}
+                      state={worksiteStateCodeForPricing}
+                      hiringEntityId={hiringEntityIdForForm}
                       label="Workers Comp Class Code"
                       value={formData.workersCompClassCode || ''}
-                      onChange={(e) => handleInputChange('workersCompClassCode', e.target.value)}
+                      onChange={(code, rate) => {
+                        handleInputChange('workersCompClassCode', code);
+                        if (rate != null) handleInputChange('workersCompRate', String(rate));
+                      }}
                       placeholder="e.g. 9015"
                       helperText={wcCodeHelper(formData.workersCompClassCode)}
                     />
