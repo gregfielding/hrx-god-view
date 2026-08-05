@@ -73,9 +73,11 @@ interface SubmitRow {
   hours: number;
   payRate: number;
   /** Flat pay add-ons for the day (dollar amounts ≥ 0). Submitted as separate
-   *  Everee TIPS / BONUS payables alongside the contractor payable / worked shift. */
+   *  Everee TIPS / BONUS / REIMBURSEMENT payables alongside the contractor
+   *  payable / worked shift. Reimbursement is untaxed (per diem). */
   tips?: number;
   bonus?: number;
+  reimbursement?: number;
   /** For display/labeling only. */
   workerName?: string;
   /** The event/site this day belongs to (CSV "Type"/site). Used only to make
@@ -121,16 +123,18 @@ function dayLabel(
 }
 
 interface ExtraPayable {
-  kind: 'TIPS' | 'BONUS';
+  kind: 'TIPS' | 'BONUS' | 'REIMBURSEMENT';
   externalId: string;
   amount: number;
   input: CreatePayableInput;
 }
 
-/** Build the separate Everee TIPS / BONUS payables for a row's flat pay add-ons.
- *  Each is its own payable with a deterministic externalId (…::TIPS / ::BONUS),
- *  keyed to the SAME worker+day as the main row so re-submits are idempotent and
- *  a void can find them. Returns [] when both are zero. */
+/** Build the separate Everee TIPS / BONUS / REIMBURSEMENT payables for a row's
+ *  flat pay add-ons. Each is its own payable with a deterministic externalId
+ *  (…::TIPS / ::BONUS / ::REIMBURSEMENT), keyed to the SAME worker+day as the
+ *  main row so re-submits are idempotent and a void can find them. Returns []
+ *  when all are zero. REIMBURSEMENT is untaxed in Everee (per diem — e.g. the
+ *  VenueSmart travelers' $50/day food per diem, Greg 2026-08-05). */
 function buildExtraPayables(args: {
   tenantId: string;
   customer: string;
@@ -139,10 +143,11 @@ function buildExtraPayables(args: {
   eventLabel: string | null | undefined;
   tips: number;
   bonus: number;
+  reimbursement: number;
   timestamp: number;
 }): ExtraPayable[] {
   const out: ExtraPayable[] = [];
-  const add = (kind: 'TIPS' | 'BONUS', base: string, raw: number) => {
+  const add = (kind: 'TIPS' | 'BONUS' | 'REIMBURSEMENT', base: string, raw: number) => {
     const amount = Math.round(Number(raw) * 100) / 100;
     if (!(amount > 0)) return;
     const externalId = importExternalId({
@@ -170,6 +175,7 @@ function buildExtraPayables(args: {
   };
   add('TIPS', 'Tips', args.tips);
   add('BONUS', 'Bonus', args.bonus);
+  add('REIMBURSEMENT', 'Per diem', args.reimbursement);
   return out;
 }
 
@@ -425,6 +431,7 @@ async function submit1099(args: PathArgs) {
       eventLabel: row.eventLabel,
       tips: Number(row.tips ?? 0),
       bonus: Number(row.bonus ?? 0),
+      reimbursement: Number(row.reimbursement ?? 0),
       timestamp: payTimestamp,
     });
     if (extras.length) {
@@ -1195,6 +1202,7 @@ async function submitW2(args: PathArgs) {
       eventLabel: plan.row.eventLabel,
       tips: Number(plan.row.tips ?? 0),
       bonus: Number(plan.row.bonus ?? 0),
+      reimbursement: Number(plan.row.reimbursement ?? 0),
       timestamp: workDateEpochSeconds(plan.workDate),
     });
     if (!extras.length) continue;
@@ -1547,10 +1555,10 @@ export const voidImportTimesheetPayable = onCall(
         { merge: true },
       );
 
-      // Retract any tips/bonus payables attached to the same row, so voiding the
-      // main earning doesn't leave orphaned TIPS/BONUS payments live in Everee.
-      // Only touch extras that actually have a (non-voided) status doc.
-      for (const kind of ['TIPS', 'BONUS'] as const) {
+      // Retract any tips/bonus/reimbursement payables attached to the same row,
+      // so voiding the main earning doesn't leave orphaned add-on payments live
+      // in Everee. Only touch extras that actually have a (non-voided) status doc.
+      for (const kind of ['TIPS', 'BONUS', 'REIMBURSEMENT'] as const) {
         const exId = importExternalId({ tenantId, customer: vCustomer, userId: vUserId, workDate: vWorkDate, kind });
         const exRef = db.doc(`tenants/${tenantId}/timesheet_import_payables/${payableStatusDocId(exId)}`);
         // eslint-disable-next-line no-await-in-loop

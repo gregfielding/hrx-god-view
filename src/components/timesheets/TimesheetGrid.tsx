@@ -656,11 +656,11 @@ const EmptyRow: React.FC<EmptyRowProps> = ({
       <TableCell>{row.workDate}</TableCell>
       <ScheduledCell row={row} />
       <TableCell align="right">{formatHours(scheduledHrs)}</TableCell>
-      {/* Spans Actual / Breaks / Actual hrs / Tips / Bonus / Notes /
-          Pay rate / WC Code / WC Rate / Total — 10 columns. Bumped from
-          8 → 10 when the WC Code + WC Rate columns were added, so the
+      {/* Spans Actual / Breaks / Actual hrs / Tips / Bonus / Reimb. /
+          Notes / Pay rate / WC Code / WC Rate / Total — 11 columns
+          (10 → 11 when the Reimbursement column was added), so the
           "+ Add entry" link block still spans correctly to the Status cell. */}
-      <TableCell colSpan={10}>
+      <TableCell colSpan={11}>
         <Stack direction="column" spacing={0.25}>
           {creating.status === 'creating' ? (
             <Stack direction="row" alignItems="center" spacing={0.5}>
@@ -868,6 +868,21 @@ const ImportRow: React.FC<{
     },
     [tenantId, row.entry.id, refreshEntry],
   );
+  // Untaxed per diem / reimbursement — submits to Everee as a separate
+  // REIMBURSEMENT payable, never as taxable wages (Greg 2026-08-05,
+  // VenueSmart travelers' $50/day food per diem).
+  const saveReimbursement = React.useCallback(
+    async (value: number | null) => {
+      if (!tenantId) return;
+      const fn = httpsCallable<
+        { tenantId: string; entryId: string; reimbursement: number },
+        { ok: true }
+      >(functions, 'setImportEntryExtras', { timeout: 60000 });
+      await fn({ tenantId, entryId: row.entry.id, reimbursement: value ?? 0 });
+      await refreshEntry(row.entry.id);
+    },
+    [tenantId, row.entry.id, refreshEntry],
+  );
 
   // Re-check this single row's Everee linkage — clears a stale "needs
   // onboarding" block once the worker has actually onboarded (he may have
@@ -1058,6 +1073,25 @@ const ImportRow: React.FC<{
           '—'
         )}
       </TableCell>
+      <TableCell align="right">
+        {hoursEditable ? (
+          <NumberCell
+            value={
+              typeof row.entry.reimbursementAmount === 'number' && row.entry.reimbursementAmount > 0
+                ? row.entry.reimbursementAmount
+                : null
+            }
+            onSave={saveReimbursement}
+            validate={(raw) => validateBonusAmount(raw)}
+            emptyDisplay="+ reimb"
+            ariaLabel="Imported reimbursement (untaxed per diem)"
+          />
+        ) : typeof row.entry.reimbursementAmount === 'number' && row.entry.reimbursementAmount > 0 ? (
+          formatMoney(row.entry.reimbursementAmount)
+        ) : (
+          '—'
+        )}
+      </TableCell>
       <TableCell>{imp?.csvSite || '—'}</TableCell>
       <TableCell align="right">
         {hoursEditable ? (
@@ -1100,7 +1134,9 @@ const ImportRow: React.FC<{
                 : 0;
           const tips = typeof row.entry.tips === 'number' ? row.entry.tips : 0;
           const bonus = typeof row.entry.bonusAmount === 'number' ? row.entry.bonusAmount : 0;
-          const total = base + tips + bonus;
+          const reimb =
+            typeof row.entry.reimbursementAmount === 'number' ? row.entry.reimbursementAmount : 0;
+          const total = base + tips + bonus + reimb;
           return total > 0 ? formatMoney(total) : '—';
         })()}
       </TableCell>
@@ -1459,6 +1495,15 @@ const EntryRow: React.FC<EntryRowProps> = ({
           disabled={readOnly}
           ariaLabel="Bonus"
         />
+      </TableCell>
+
+      {/* Reimbursement (untaxed per diem) — editable on IMPORT rows only for
+          now (the VenueSmart travel crews are import rows); scheduled rows
+          display any stamped value read-only. */}
+      <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+        {typeof entry.reimbursementAmount === 'number' && entry.reimbursementAmount > 0
+          ? formatMoney(entry.reimbursementAmount)
+          : '—'}
       </TableCell>
 
       <TableCell>
@@ -1929,10 +1974,12 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
       const actualHrs = actualHoursForRow(row) ?? 0;
       const tips = typeof entry?.tips === 'number' ? entry.tips : 0;
       const bonus = typeof entry?.bonusAmount === 'number' ? entry.bonusAmount : 0;
+      const reimb =
+        typeof entry?.reimbursementAmount === 'number' ? entry.reimbursementAmount : 0;
       const total = entry
         ? row.kind === 'entry' && row.isImport
-          ? (payRate > 0 && actualHrs > 0 ? actualHrs * payRate : 0) + tips + bonus
-          : computeEntryGrossPay(entry)
+          ? (payRate > 0 && actualHrs > 0 ? actualHrs * payRate : 0) + tips + bonus + reimb
+          : computeEntryGrossPay(entry) + reimb
         : 0;
       const breakMins = Array.isArray(entry?.breaks)
         ? (entry!.breaks as unknown as Array<Record<string, unknown>>).reduce(
@@ -2384,6 +2431,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                     <TableCell align="right">Actual hrs</TableCell>
                     <TableCell align="right">Tips</TableCell>
                     <TableCell align="right">Bonus</TableCell>
+                    <TableCell align="right">Reimb.</TableCell>
                     <TableCell sortDirection={sortBy === 'notes' ? sortDir : false}>
                       <TableSortLabel
                         active={sortBy === 'notes'}

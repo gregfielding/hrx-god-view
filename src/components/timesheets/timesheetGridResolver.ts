@@ -1127,13 +1127,17 @@ export function dollarAmountForRow(row: TimesheetGridRow): number {
   const payRate = typeof e.payRate === 'number' ? e.payRate : 0;
   const tips = typeof e.tips === 'number' ? e.tips : 0;
   const bonus = typeof e.bonusAmount === 'number' ? e.bonusAmount : 0;
+  // Untaxed per diem — part of the cash-out total shown in the grid, but
+  // NEVER wages: excluded from WC gross + Everee worked-shift amounts
+  // (it rides as a separate REIMBURSEMENT payable).
+  const reimb = typeof e.reimbursementAmount === 'number' ? e.reimbursementAmount : 0;
   if (row.isImport) {
     // Import entries now carry a real reg/OT split (FLSA weekly-40 cascade
     // in submitImportTimesheetBatch, 2026-07-06); legacy rows have
     // totalRegularHours == all hours so the formula reduces to flat.
     const iReg = typeof e.totalRegularHours === 'number' ? e.totalRegularHours : actualHoursForRow(row);
     const iOt = typeof e.totalOTHours === 'number' ? e.totalOTHours : 0;
-    const gross = iReg * payRate + iOt * payRate * 1.5 + tips + bonus;
+    const gross = iReg * payRate + iOt * payRate * 1.5 + tips + bonus + reimb;
     return Number.isFinite(gross) ? gross : 0;
   }
   const reg = typeof e.totalRegularHours === 'number' ? e.totalRegularHours : 0;
@@ -1142,7 +1146,7 @@ export function dollarAmountForRow(row: TimesheetGridRow): number {
   const meal = typeof e.mealBreakPenaltyHours === 'number' ? e.mealBreakPenaltyHours : 0;
   const rest = typeof e.restBreakPenaltyHours === 'number' ? e.restBreakPenaltyHours : 0;
   const gross =
-    reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + meal * payRate + rest * payRate + tips + bonus;
+    reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + meal * payRate + rest * payRate + tips + bonus + reimb;
   return Number.isFinite(gross) ? gross : 0;
 }
 

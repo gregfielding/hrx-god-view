@@ -18,9 +18,13 @@ const db = admin.firestore();
 interface Input {
   tenantId: string;
   entryId: string;
-  /** Provide either or both. Each is a dollar amount ≥ 0; 0 clears it. */
+  /** Provide any subset. Each is a dollar amount ≥ 0; 0 clears it. */
   tips?: number;
   bonus?: number;
+  /** Untaxed per diem / expense reimbursement (e.g. VenueSmart travelers'
+   *  $50/day food per diem, Greg 2026-08-05). Submits to Everee as a
+   *  REIMBURSEMENT payable — never as taxable wages. */
+  reimbursement?: number;
 }
 
 /** Generous fat-finger ceiling for a single-day tip/bonus amount. */
@@ -52,9 +56,12 @@ const clean = (v: unknown): number | undefined => {
   return Math.round(n * 100) / 100;
 };
 
-export const setImportEntryExtras = onCall<Input, Promise<{ ok: true; tips?: number; bonusAmount?: number }>>(
+export const setImportEntryExtras = onCall<
+  Input,
+  Promise<{ ok: true; tips?: number; bonusAmount?: number; reimbursementAmount?: number }>
+>(
   { enforceAppCheck: false, cors: true, memory: '512MiB', timeoutSeconds: 60 },
-  async (req): Promise<{ ok: true; tips?: number; bonusAmount?: number }> => {
+  async (req): Promise<{ ok: true; tips?: number; bonusAmount?: number; reimbursementAmount?: number }> => {
     if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Authentication required');
     const { tenantId, entryId } = req.data || ({} as Input);
     if (!tenantId || !entryId) {
@@ -62,8 +69,9 @@ export const setImportEntryExtras = onCall<Input, Promise<{ ok: true; tips?: num
     }
     const tips = clean(req.data?.tips);
     const bonusAmount = clean(req.data?.bonus);
-    if (tips === undefined && bonusAmount === undefined) {
-      throw new HttpsError('invalid-argument', 'Provide tips and/or bonus to set.');
+    const reimbursementAmount = clean(req.data?.reimbursement);
+    if (tips === undefined && bonusAmount === undefined && reimbursementAmount === undefined) {
+      throw new HttpsError('invalid-argument', 'Provide tips, bonus, and/or reimbursement to set.');
     }
     await assertCallerCanEdit(req.auth.uid, tenantId);
 
@@ -93,8 +101,9 @@ export const setImportEntryExtras = onCall<Input, Promise<{ ok: true; tips?: num
     };
     if (tips !== undefined) updates.tips = tips;
     if (bonusAmount !== undefined) updates.bonusAmount = bonusAmount;
+    if (reimbursementAmount !== undefined) updates.reimbursementAmount = reimbursementAmount;
 
     await entryRef.update(updates);
-    return { ok: true, tips, bonusAmount };
+    return { ok: true, tips, bonusAmount, reimbursementAmount };
   },
 );

@@ -323,6 +323,10 @@ export interface TimesheetEntryV2 {
   /* ---------- Adjustments (recruiter-edited) ---------------------------- */
   tips: number;
   bonusAmount: number;
+  /** Untaxed per diem / expense reimbursement for the day (e.g. VenueSmart
+   *  travelers' $50 food per diem). Paid via a separate Everee REIMBURSEMENT
+   *  payable — never taxable wages, never in WC gross. */
+  reimbursementAmount?: number;
   notes?: string;
 
   /* ---------- Rates (snapshot from Assignment, override-able) ----------- */
