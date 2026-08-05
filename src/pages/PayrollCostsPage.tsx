@@ -154,6 +154,19 @@ const PayrollCostsPage: React.FC = () => {
   const [joOptions, setJoOptions] = useState<JoOption[] | null>(null);
   const [mapJo, setMapJo] = useState<JoOption | null>(null);
   const [mapSaving, setMapSaving] = useState(false);
+  /** Complete-the-record wizard (Greg 2026-08-05): position + rate + preview. */
+  const [mapPosition, setMapPosition] = useState('');
+  const [mapRateMode, setMapRateMode] = useState<'actual' | 'fixed'>('actual');
+  const [mapFixedRate, setMapFixedRate] = useState('');
+  const [mapPreview, setMapPreview] = useState<{
+    workers: number;
+    entries: number;
+    dateSpan: string | null;
+    jobOrderName: string | null;
+    jobTitle: string;
+    ongoing: boolean;
+    rateSummary?: string[];
+  } | null>(null);
   // Off-cycle payment dialog state (Mark's manual adjustment form).
   const [ocOpen, setOcOpen] = useState(false);
   const [ocWorkerQuery, setOcWorkerQuery] = useState('');
@@ -309,7 +322,47 @@ const PayrollCostsPage: React.FC = () => {
   const openMapDialog = async (unattributedLabel: string) => {
     setMapVenue(unattributedLabel.replace(/^Unattributed — /, ''));
     setMapJo(null);
+    setMapPosition('');
+    setMapRateMode('actual');
+    setMapFixedRate('');
+    setMapPreview(null);
     void ensureJoOptions();
+  };
+
+  /**
+   * The real repair: create an assignment per worker from the venue's paid
+   * entries (dryRun first for the preview), so rate/worksite/WC persist and
+   * future imports pair automatically — not just a report-time label patch.
+   */
+  const runCompleteMapping = async (dryRun: boolean) => {
+    if (!tenantId || !mapVenue || !mapJo) return;
+    setMapSaving(true);
+    try {
+      const fn = httpsCallable(functions, 'completeVenueMapping');
+      const res = await fn({
+        tenantId,
+        venueLabel: mapVenue,
+        jobOrderId: mapJo.id,
+        positionTitle: mapPosition.trim() || undefined,
+        rateMode: mapRateMode,
+        ...(mapRateMode === 'fixed' ? { fixedRate: Number(mapFixedRate) } : {}),
+        dryRun,
+      });
+      const data = res.data as any;
+      if (dryRun) {
+        setMapPreview(data);
+      } else {
+        setOcSuccess(
+          `Created ${data.assignmentsCreated} assignments (${data.assignmentsReused} already existed) and connected ${data.entriesStamped} payments for “${mapVenue}”.`,
+        );
+        setMapVenue(null);
+        await load();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMapSaving(false);
+    }
   };
 
   const saveMapping = async (venueLabel: string, jobOrderId: string | null) => {
@@ -840,28 +893,106 @@ const PayrollCostsPage: React.FC = () => {
         <DialogTitle>Map “{mapVenue}” to a job order</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Every payroll entry with this venue label — in this report and going forward — will be
-            attributed to the job order you pick.
+            Pick the job order and position, then preview — HRX creates a real assignment for each
+            worker (their actual paid rate, worksite, and workers&apos; comp fill in from the job
+            order), so payroll and WC data stay complete here and in every future import.
           </Typography>
           <Autocomplete
             options={joOptions ?? []}
             loading={joOptions === null}
             value={mapJo}
-            onChange={(_e, v) => setMapJo(v)}
+            onChange={(_e, v) => {
+              setMapJo(v);
+              setMapPreview(null);
+            }}
             renderInput={(params) => <TextField {...params} label="Job order" autoFocus />}
           />
+          <Stack direction="row" spacing={2} sx={{ mt: 2 }} alignItems="center" flexWrap="wrap" useFlexGap>
+            <TextField
+              size="small"
+              label="Position / job title"
+              placeholder="defaults to the job order's title"
+              value={mapPosition}
+              onChange={(e) => {
+                setMapPosition(e.target.value);
+                setMapPreview(null);
+              }}
+              sx={{ minWidth: 240 }}
+            />
+            <FormControl size="small" sx={{ minWidth: 170 }}>
+              <InputLabel>Pay rate</InputLabel>
+              <Select
+                value={mapRateMode}
+                label="Pay rate"
+                onChange={(e) => {
+                  setMapRateMode(e.target.value as 'actual' | 'fixed');
+                  setMapPreview(null);
+                }}
+              >
+                <MenuItem value="actual">Actual paid rates</MenuItem>
+                <MenuItem value="fixed">One rate for all</MenuItem>
+              </Select>
+            </FormControl>
+            {mapRateMode === 'fixed' && (
+              <TextField
+                size="small"
+                label="Rate"
+                value={mapFixedRate}
+                onChange={(e) => {
+                  setMapFixedRate(e.target.value);
+                  setMapPreview(null);
+                }}
+                sx={{ width: 100 }}
+              />
+            )}
+          </Stack>
+          {mapPreview && (
+            <Alert severity={mapPreview.workers > 0 ? 'info' : 'warning'} sx={{ mt: 2 }}>
+              {mapPreview.workers > 0 ? (
+                <>
+                  <strong>{mapPreview.workers} workers · {mapPreview.entries} payments</strong>{' '}
+                  ({mapPreview.dateSpan}) → {mapPreview.workers} assignments under{' '}
+                  {mapPreview.jobOrderName ?? 'this job order'}
+                  {mapPreview.jobTitle ? ` as “${mapPreview.jobTitle}”` : ''}.
+                  {mapPreview.rateSummary?.length ? ` Rates: ${mapPreview.rateSummary.join(', ')}.` : ''}
+                  {mapPreview.ongoing
+                    ? ' Assignments stay open (ongoing venue) so future imports connect automatically.'
+                    : ' Assignments close at each worker’s last day.'}
+                  {' '}No worker notifications are sent.
+                </>
+              ) : (
+                'No unattributed payments matched this venue label — saving will store the label mapping only.'
+              )}
+            </Alert>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setMapVenue(null)} disabled={mapSaving}>
             Cancel
           </Button>
           <Button
-            variant="contained"
             disabled={!mapJo || mapSaving}
             onClick={() => mapVenue && mapJo && void saveMapping(mapVenue, mapJo.id)}
           >
-            {mapSaving ? 'Saving…' : 'Save mapping'}
+            Label only
           </Button>
+          {!mapPreview ? (
+            <Button
+              variant="contained"
+              disabled={!mapJo || mapSaving || (mapRateMode === 'fixed' && !(Number(mapFixedRate) > 0))}
+              onClick={() => void runCompleteMapping(true)}
+            >
+              {mapSaving ? 'Checking…' : 'Preview'}
+            </Button>
+          ) : (
+            <Button
+              variant="contained"
+              disabled={mapSaving || mapPreview.workers === 0}
+              onClick={() => void runCompleteMapping(false)}
+            >
+              {mapSaving ? 'Creating…' : `Create ${mapPreview.workers} assignments & save`}
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
     </Box>

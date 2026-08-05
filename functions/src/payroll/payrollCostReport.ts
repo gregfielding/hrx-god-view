@@ -1114,3 +1114,300 @@ export const upsertWorkersCompRate = onCall(
     return { docId, state, code, rate, jobTitles: mergedTitles, assignmentsStamped, entriesStamped };
   },
 );
+
+/* -------------------------------------------------------------------------
+ * Complete venue mapping — assignments as the point of truth (Greg 2026-08-05)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The venue→JO label mapping alone is a READ-TIME patch: dollars report under
+ * the JO but no assignments exist, so WC, rates, and future imports stay
+ * hollow. This callable does the real repair: map the label AND materialize
+ * an assignment per worker from the paid entries — position, pay rate (their
+ * actual paid rate by default), JO/account/worksite — then stamp the entries
+ * with assignmentId + attribution + WC. The assignment-write denorm trigger
+ * fills worksite address/state; future imports pair to these assignments via
+ * the normal date-window matcher, so the hole never reopens.
+ *
+ * Created assignments carry `retroactive: true` + `notificationsSuppressed:
+ * true` (the existing contract every worker-facing notification trigger
+ * honors) — no SMS/push to the 79 workers.
+ */
+export const completeVenueMapping = onCall(
+  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
+  async (request) => {
+    const tenantId = trim(request.data?.tenantId);
+    const venueLabel = trim(request.data?.venueLabel);
+    const jobOrderId = trim(request.data?.jobOrderId);
+    const positionTitle = trim(request.data?.positionTitle);
+    const rateMode = trim(request.data?.rateMode) === 'fixed' ? 'fixed' : 'actual';
+    const fixedRate = num(request.data?.fixedRate);
+    const sinceDate = /^\d{4}-\d{2}-\d{2}$/.test(trim(request.data?.sinceDate))
+      ? trim(request.data?.sinceDate)
+      : '2026-06-01';
+    const dryRun = request.data?.dryRun !== false;
+    if (!tenantId || !venueLabel || !jobOrderId) {
+      throw new HttpsError('invalid-argument', 'tenantId, venueLabel, jobOrderId are required.');
+    }
+    if (rateMode === 'fixed' && !(fixedRate > 0)) {
+      throw new HttpsError('invalid-argument', 'fixedRate must be > 0 when rateMode is fixed.');
+    }
+    await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+
+    // Job order + account + anchor shift.
+    let jo: Record<string, unknown> | null = null;
+    let joColl = 'job_orders';
+    for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+      const s = await db.doc(`tenants/${tenantId}/${coll}/${jobOrderId}`).get();
+      if (s.exists) {
+        jo = s.data() as Record<string, unknown>;
+        joColl = coll;
+        break;
+      }
+    }
+    if (!jo) throw new HttpsError('not-found', `Job order ${jobOrderId} not found.`);
+    const accountId = trim(jo.recruiterAccountId) || null;
+    let accountName: string | null = trim(jo.accountName) || null;
+    if (accountId && !accountName) {
+      const acct = await db.doc(`tenants/${tenantId}/accounts/${accountId}`).get();
+      accountName = acct.exists ? trim(acct.data()?.name) || null : null;
+    }
+    const joEntityId = trim(jo.hiringEntityId);
+    const joStatus = trim(jo.status).toLowerCase();
+    const ongoing = ['open', 'active', 'in_progress', 'filled'].includes(joStatus);
+    const jobTitle = positionTitle || trim(jo.jobTitle) || '';
+
+    const shiftsSnap = await db.collection(`tenants/${tenantId}/${joColl}/${jobOrderId}/shifts`).get();
+    let anchorShiftId = '';
+    let anchorShift: Record<string, unknown> | null = null;
+    for (const d of shiftsSnap.docs) {
+      const s = d.data();
+      if (trim(s.shiftType) === 'open') {
+        anchorShiftId = d.id;
+        anchorShift = s;
+        break;
+      }
+    }
+    if (!anchorShiftId && shiftsSnap.docs.length > 0) {
+      anchorShiftId = shiftsSnap.docs[0].id;
+      anchorShift = shiftsSnap.docs[0].data();
+    }
+    // No shifts at all: a surrogate keeps the id convention without pointing
+    // at a nonexistent shift doc (grid ignores it; pairing works by userId).
+    const assignmentPrefix = anchorShiftId || `jo_${jobOrderId}`;
+
+    // Entries carrying this venue label with no assignment/JO attribution.
+    const wantedKey = normalizeVenueKey(venueLabel);
+    const entriesSnap = await db
+      .collection(`tenants/${tenantId}/timesheet_entries`)
+      .where('workDate', '>=', sinceDate)
+      .get();
+    interface WorkerGroup {
+      userId: string;
+      entryIds: string[];
+      minDate: string;
+      maxDate: string;
+      rates: Map<number, number>; // rate -> entry count
+      entityIds: Set<string>;
+      states: Set<string>;
+    }
+    const groups = new Map<string, WorkerGroup>();
+    entriesSnap.forEach((d) => {
+      const e = d.data();
+      if (trim(e.assignmentId) || trim(e.jobOrderId)) return;
+      const importSidecar = (e.import ?? {}) as Record<string, unknown>;
+      const label =
+        trim(e.worksiteName) || trim(importSidecar.worksiteName) || trim(importSidecar.csvSite);
+      if (!label || normalizeVenueKey(label) !== wantedKey) return;
+      const userId = trim(e.workerId);
+      if (!userId) return;
+      const workDate = trim(e.workDate);
+      if (!groups.has(userId)) {
+        groups.set(userId, {
+          userId,
+          entryIds: [],
+          minDate: workDate,
+          maxDate: workDate,
+          rates: new Map(),
+          entityIds: new Set(),
+          states: new Set(),
+        });
+      }
+      const g = groups.get(userId)!;
+      g.entryIds.push(d.id);
+      if (workDate < g.minDate) g.minDate = workDate;
+      if (workDate > g.maxDate) g.maxDate = workDate;
+      const r = num(e.payRate);
+      if (r > 0) g.rates.set(r, (g.rates.get(r) ?? 0) + 1);
+      if (trim(e.hiringEntityId)) g.entityIds.add(trim(e.hiringEntityId));
+      const sidecarAddr = (importSidecar.worksiteAddress ?? {}) as Record<string, unknown>;
+      const st =
+        trim(e.workState).toUpperCase() ||
+        trim((e.worksiteAddress as Record<string, unknown> | undefined)?.state).toUpperCase() ||
+        trim(sidecarAddr.state).toUpperCase();
+      if (st) g.states.add(st);
+    });
+
+    const workers = Array.from(groups.values());
+    const totalEntries = workers.reduce((s, g) => s + g.entryIds.length, 0);
+    const dominantEntity =
+      joEntityId ||
+      Array.from(
+        workers.reduce((m, g) => {
+          g.entityIds.forEach((id) => m.set(id, (m.get(id) ?? 0) + 1));
+          return m;
+        }, new Map<string, number>()),
+      ).sort((a, b) => b[1] - a[1])[0]?.[0] ||
+      '';
+
+    // WC via the same chain the report uses (title -> state default).
+    const matrix = dominantEntity ? await loadWcMatrixForEntity(tenantId, dominantEntity) : null;
+    const wcFor = (state: string): { code: string; rate: number } | null => {
+      if (!matrix || !state) return null;
+      if (jobTitle) {
+        const t = matrix.byStateTitle.get(`${state}_${jobTitle.toLowerCase()}`);
+        if (t) return t;
+      }
+      return matrix.byStateDefault.get(state) ?? null;
+    };
+
+    // Worker names for preview + assignment docs.
+    const userDocs = new Map<string, Record<string, unknown>>();
+    const ids = workers.map((g) => g.userId);
+    for (let i = 0; i < ids.length; i += 100) {
+      const snaps = await db.getAll(...ids.slice(i, i + 100).map((id) => db.doc(`users/${id}`)));
+      snaps.forEach((s) => {
+        if (s.exists) userDocs.set(s.id, s.data() as Record<string, unknown>);
+      });
+    }
+
+    const preview = {
+      venueLabel,
+      jobOrderId,
+      jobOrderName: trim(jo.jobOrderName) || null,
+      accountName,
+      jobTitle,
+      rateMode,
+      ongoing,
+      anchorShiftId: assignmentPrefix,
+      hiringEntityId: dominantEntity || null,
+      workers: workers.length,
+      entries: totalEntries,
+      dateSpan: workers.length
+        ? `${workers.reduce((m, g) => (g.minDate < m ? g.minDate : m), workers[0].minDate)} → ${workers.reduce((m, g) => (g.maxDate > m ? g.maxDate : m), workers[0].maxDate)}`
+        : null,
+      rateSummary: Array.from(
+        workers.reduce((m, g) => {
+          g.rates.forEach((n, r) => m.set(r, (m.get(r) ?? 0) + n));
+          return m;
+        }, new Map<number, number>()),
+      )
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([r, n]) => `$${r} × ${n}`),
+      sample: workers.slice(0, 8).map((g) => {
+        const u = userDocs.get(g.userId);
+        return {
+          name: `${trim(u?.firstName)} ${trim(u?.lastName)}`.trim() || g.userId,
+          entries: g.entryIds.length,
+          span: `${g.minDate} → ${g.maxDate}`,
+        };
+      }),
+    };
+    if (dryRun) return { dryRun: true, ...preview };
+
+    // 1) The label mapping (read-time attribution for anything not stamped).
+    await db.doc(`tenants/${tenantId}/payroll_venue_mappings/${venueMappingDocId(venueLabel)}`).set({
+      venueLabel,
+      venueKey: wantedKey,
+      jobOrderId,
+      jobOrderName: trim(jo.jobOrderName) || null,
+      jobOrderNumber: trim(jo.jobOrderNumber) || null,
+      poNumber: trim(jo.poNumber) || null,
+      accountId,
+      accountName,
+      updatedByUid: request.auth?.uid ?? null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // 2) Assignments + entry stamps.
+    let assignmentsCreated = 0;
+    let assignmentsReused = 0;
+    let entriesStamped = 0;
+    for (const g of workers) {
+      const u = userDocs.get(g.userId) ?? {};
+      const assignmentId = `${assignmentPrefix}__${g.userId}`;
+      const aRef = db.doc(`tenants/${tenantId}/assignments/${assignmentId}`);
+      const existing = await aRef.get();
+      // Most common actual rate; ties break to the highest (worker-favorable).
+      const actualRate =
+        Array.from(g.rates.entries()).sort((a, b) => b[1] - a[1] || b[0] - a[0])[0]?.[0] ?? 0;
+      const payRate = rateMode === 'fixed' ? fixedRate : actualRate;
+      const state = g.states.size === 1 ? Array.from(g.states)[0] : Array.from(g.states)[0] ?? '';
+      const wc = wcFor(state);
+      if (!existing.exists) {
+        await aRef.set({
+          tenantId,
+          jobOrderId,
+          shiftId: anchorShiftId || null,
+          candidateId: g.userId,
+          userId: g.userId,
+          status: ongoing ? 'active' : 'ended',
+          startDate: g.minDate,
+          endDate: ongoing ? '' : g.maxDate,
+          startTime: trim(anchorShift?.startTime) || '',
+          endTime: trim(anchorShift?.endTime) || '',
+          payRate,
+          billRate: num(jo.billRate) || 0,
+          timesheetMode: trim(jo.timesheetMode) || 'import',
+          firstName: trim(u.firstName),
+          lastName: trim(u.lastName),
+          email: trim(u.email),
+          phone: trim(u.phone) || trim(u.phoneE164),
+          companyId: trim(jo.companyId) || '',
+          companyName: trim(jo.companyName) || accountName || '',
+          accountId: accountId || null,
+          accountName: accountName || null,
+          hiringEntityId: dominantEntity || null,
+          worksiteName: trim(jo.worksiteName) || venueLabel,
+          jobOrderType: trim(jo.jobType) || 'gig',
+          jobTitle,
+          assignmentSource: 'venue_mapping_backfill',
+          placementMode: 'retro_backfill',
+          retroactive: true,
+          notificationsSuppressed: true,
+          suppressInitialNotification: true,
+          ...(wc ? { workersCompCode: wc.code, workersCompRate: wc.rate, workersCompSource: 'venue_mapping_backfill' } : {}),
+          createdBy: request.auth?.uid ?? null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        assignmentsCreated += 1;
+      } else {
+        assignmentsReused += 1;
+      }
+      // Stamp the worker's entries.
+      for (let i = 0; i < g.entryIds.length; i += 400) {
+        const batch = db.batch();
+        for (const entryId of g.entryIds.slice(i, i + 400)) {
+          const patch: Record<string, unknown> = {
+            assignmentId,
+            jobOrderId,
+            ...(accountId ? { accountId } : {}),
+            ...(accountName ? { accountName } : {}),
+          };
+          if (wc) {
+            patch.workersCompCode = wc.code;
+            patch.workersCompRate = wc.rate;
+            patch.workersCompSource = 'venue_mapping_backfill';
+          }
+          batch.update(db.doc(`tenants/${tenantId}/timesheet_entries/${entryId}`), patch);
+        }
+        await batch.commit();
+        entriesStamped += g.entryIds.length > 400 ? 400 : g.entryIds.length;
+      }
+    }
+
+    return { dryRun: false, ...preview, assignmentsCreated, assignmentsReused, entriesStamped };
+  },
+);
