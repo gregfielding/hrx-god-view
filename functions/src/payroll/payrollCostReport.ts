@@ -622,21 +622,80 @@ export const getPayrollCostReport = onCall(
  * Workers' comp monthly report (WC-C, Greg 2026-08-05)
  * ------------------------------------------------------------------------- */
 
+interface WcMatrixMaps {
+  /** `${STATE}_${code}` → rate, entity-scoped rows winning over generic. */
+  rateByStateCode: Map<string, number>;
+  /** `${STATE}_${lowercased title}` → { code, rate }, entity-scoped first. */
+  byStateTitle: Map<string, { code: string; rate: number }>;
+  /**
+   * `${STATE}` → { code, rate } — the state DEFAULT, from a row whose
+   * jobTitles contain '*'. Fallback when an entry has no resolvable job
+   * title (import rows without a paired assignment); a real title match
+   * always wins over the default.
+   */
+  byStateDefault: Map<string, { code: string; rate: number }>;
+}
+
+/**
+ * Matrix rows may carry an optional `hiringEntityId` scope (added 2026-08-05):
+ * C1 Events reports WC to the carrier on its own rate schedule even though
+ * contractor codes never go to Everee, so the same state+code can price
+ * differently per entity. Entity-scoped rows win; generic rows are the
+ * fallback. Rows scoped to a DIFFERENT entity are ignored. (Account-scoped
+ * `modifierAccountId` rows are excluded here as before — they exist for JO
+ * pricing, not entity reporting.)
+ */
+async function loadWcMatrixForEntity(tenantId: string, hiringEntityId: string): Promise<WcMatrixMaps> {
+  const snap = await db.collection(`tenants/${tenantId}/workers_comp_rates`).get();
+  const rateByStateCode = new Map<string, number>();
+  const byStateTitle = new Map<string, { code: string; rate: number }>();
+  const byStateDefault = new Map<string, { code: string; rate: number }>();
+  const apply = (docData: Record<string, unknown>): void => {
+    const st = trim(docData.state).toUpperCase();
+    const code = trim(docData.code);
+    const rate = num(docData.rate);
+    if (!st || !code) return;
+    rateByStateCode.set(`${st}_${code}`, rate);
+    const titles = Array.isArray(docData.jobTitles) ? (docData.jobTitles as unknown[]) : [];
+    for (const t of titles) {
+      const title = trim(t);
+      if (title === '*') {
+        byStateDefault.set(st, { code, rate });
+        continue;
+      }
+      const key = `${st}_${title.toLowerCase()}`;
+      if (key !== `${st}_`) byStateTitle.set(key, { code, rate });
+    }
+  };
+  // Two passes: generic first, then entity-scoped so scoped entries overwrite.
+  const generic: Array<Record<string, unknown>> = [];
+  const scoped: Array<Record<string, unknown>> = [];
+  snap.forEach((d) => {
+    const x = d.data();
+    if (trim(x.modifierAccountId)) return;
+    const scope = trim(x.hiringEntityId);
+    if (!scope) generic.push(x);
+    else if (scope === hiringEntityId) scoped.push(x);
+  });
+  generic.forEach(apply);
+  scoped.forEach(apply);
+  return { rateByStateCode, byStateTitle, byStateDefault };
+}
+
 /**
  * Gross pay totals by work state + WC class code for one entity and one
- * calendar month — the InSource monthly payroll report, generated from HRX
- * instead of Everee's custom-report builder (which can't show the JO note
- * and force-fits off-policy codes).
+ * calendar month — the carrier's monthly payroll report, generated from HRX.
  *
- * Gross math mirrors getPayrollCostReport (csv_import: reg + 1.5×OT; grid:
- * + 2×DT + break premiums) with one entity-aware difference: contractor
- * entities (C1 Events) pay ALL hours at 1.0× flat (composeContractorPayable)
- * — per Greg 2026-08-05, contractors get no automatic OT premium.
+ * Codes resolve per entry at READ time: entry.workersCompCode →
+ * assignment.workersCompCode → matrix (state + assignment jobTitle). C1
+ * Events contractors are classified this way even though their codes never
+ * reach Everee — C1 reports and pays WC premium on contractors (Greg
+ * 2026-08-05). Whatever still can't resolve is returned as `unresolved`
+ * groups (state + job title) so the UI can offer an assign-code control;
+ * assigning writes a matrix row and the next Generate self-heals.
  *
- * Uncoded / no-state entries are surfaced as explicit rows (never hidden) so
- * the report exposes classification gaps instead of silently dropping pay.
- * Off-cycle payments in the month ride as a separate section (they carry no
- * WC code today).
+ * Gross math mirrors getPayrollCostReport; contractor entities pay all hours
+ * flat (no auto-OT). Premium = gross × rate / 100 per bucket.
  */
 export const getWorkersCompMonthlyReport = onCall(
   { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
@@ -654,7 +713,6 @@ export const getWorkersCompMonthlyReport = onCall(
     const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
     const endDate = `${month}-${String(lastDay).padStart(2, '0')}`;
 
-    // Contractor entities pay flat (no OT premium).
     const entitySnap = await db.doc(`tenants/${tenantId}/entities/${hiringEntityId}`).get();
     const entityData = (entitySnap.data() ?? {}) as Record<string, unknown>;
     const entityName = trim(entityData.name) || hiringEntityId;
@@ -662,20 +720,64 @@ export const getWorkersCompMonthlyReport = onCall(
       trim(entityData.workerType).toLowerCase() === 'contractor' ||
       /events|workforce/i.test(hiringEntityId);
 
-    // Matrix rates for display (generic rows only).
-    const matrixSnap = await db.collection(`tenants/${tenantId}/workers_comp_rates`).get();
-    const matrixRate = new Map<string, number>();
-    matrixSnap.forEach((d) => {
-      const x = d.data() as Record<string, unknown>;
-      if (trim(x.modifierAccountId)) return;
-      matrixRate.set(`${trim(x.state).toUpperCase()}_${trim(x.code)}`, num(x.rate));
-    });
+    const matrix = await loadWcMatrixForEntity(tenantId, hiringEntityId);
 
     const snap = await db
       .collection(`tenants/${tenantId}/timesheet_entries`)
       .where('workDate', '>=', startDate)
       .where('workDate', '<=', endDate)
       .get();
+
+    // First pass: pick entries + collect assignment ids for batched fetch.
+    interface PickedEntry {
+      e: Record<string, unknown>;
+      total: number;
+      hours: number;
+      state: string;
+    }
+    const pickedEntries: PickedEntry[] = [];
+    const assignmentIds = new Set<string>();
+    snap.forEach((d) => {
+      const e = d.data();
+      const status = trim(e.status);
+      if (status !== 'sent_to_everee' && status !== 'submitted' && status !== 'paid') return;
+      if (trim(e.hiringEntityId) !== hiringEntityId) return;
+      const isImport = trim(e.source) === 'csv_import';
+      const rate = num(e.payRate);
+      const reg = num(e.totalRegularHours);
+      const ot = num(e.totalOTHours);
+      const dt = num(e.totalDoubleTimeHours);
+      const premiums = isImport ? 0 : round2((num(e.mealBreakPenaltyHours) + num(e.restBreakPenaltyHours)) * rate);
+      const hourly = isContractor
+        ? round2((reg + ot + dt) * rate)
+        : isImport
+          ? round2(reg * rate + ot * rate * 1.5)
+          : round2(reg * rate + ot * rate * 1.5 + dt * rate * 2);
+      const total = round2(hourly + premiums + num(e.tips) + num(e.bonusAmount));
+      if (total === 0) return;
+      const sidecarAddr = ((e.import ?? {}) as Record<string, unknown>).worksiteAddress as
+        | Record<string, unknown>
+        | undefined;
+      const state =
+        trim(e.workState).toUpperCase() ||
+        trim((e.worksiteAddress as Record<string, unknown> | undefined)?.state).toUpperCase() ||
+        trim(sidecarAddr?.state).toUpperCase() ||
+        '';
+      pickedEntries.push({ e, total, hours: round2(reg + ot + dt), state });
+      const asnId = trim(e.assignmentId);
+      if (asnId && !trim(e.workersCompCode)) assignmentIds.add(asnId);
+    });
+
+    // Batched assignment fetch for the resolution chain.
+    const assignments = new Map<string, Record<string, unknown>>();
+    const asnIdList = Array.from(assignmentIds);
+    for (let i = 0; i < asnIdList.length; i += 100) {
+      const chunk = asnIdList.slice(i, i + 100);
+      const snaps = await db.getAll(...chunk.map((id) => db.doc(`tenants/${tenantId}/assignments/${id}`)));
+      snaps.forEach((s) => {
+        if (s.exists) assignments.set(s.id, s.data() as Record<string, unknown>);
+      });
+    }
 
     interface Bucket {
       state: string;
@@ -686,55 +788,66 @@ export const getWorkersCompMonthlyReport = onCall(
       workers: Set<string>;
     }
     const buckets = new Map<string, Bucket>();
+    interface UnresolvedGroup {
+      state: string;
+      jobTitle: string;
+      gross: number;
+      entries: number;
+      workers: Set<string>;
+    }
+    const unresolvedGroups = new Map<string, UnresolvedGroup>();
     let totalGross = 0;
     let entryCount = 0;
 
-    snap.forEach((d) => {
-      const e = d.data();
-      const status = trim(e.status);
-      if (status !== 'sent_to_everee' && status !== 'submitted' && status !== 'paid') return;
-      if (trim(e.hiringEntityId) !== hiringEntityId) return;
+    for (const p of pickedEntries) {
+      const e = p.e;
+      const state = p.state || '(no state)';
+      // Resolution chain: entry stamp → assignment stamp → matrix by title →
+      // per-state default ('*' title — set from the report's assign control
+      // for import rows that carry no job title).
+      let code = trim(e.workersCompCode);
+      const a = assignments.get(trim(e.assignmentId));
+      const jobTitle = trim(a?.jobTitle) || '(no title)';
+      if (!code && a) {
+        code = trim(a.workersCompCode);
+        if (!code && p.state) {
+          const hit = matrix.byStateTitle.get(`${p.state}_${jobTitle.toLowerCase()}`);
+          if (hit) code = hit.code;
+        }
+      }
+      if (!code && p.state) {
+        const def = matrix.byStateDefault.get(p.state);
+        if (def) code = def.code;
+      }
 
-      const isImport = trim(e.source) === 'csv_import';
-      const rate = num(e.payRate);
-      const reg = num(e.totalRegularHours);
-      const ot = num(e.totalOTHours);
-      const dt = num(e.totalDoubleTimeHours);
-      const premiums = isImport ? 0 : round2((num(e.mealBreakPenaltyHours) + num(e.restBreakPenaltyHours)) * rate);
-      const hourly = isContractor
-        ? round2((reg + ot + dt) * rate) // contractor: all hours flat 1.0×
-        : isImport
-          ? round2(reg * rate + ot * rate * 1.5)
-          : round2(reg * rate + ot * rate * 1.5 + dt * rate * 2);
-      const total = round2(hourly + premiums + num(e.tips) + num(e.bonusAmount));
-      if (total === 0) return;
+      totalGross = round2(totalGross + p.total);
+      entryCount += 1;
+      const workerId = trim(e.workerId);
 
-      const importSidecar = (e.import ?? {}) as Record<string, unknown>;
-      const sidecarAddr = (importSidecar.worksiteAddress ?? {}) as Record<string, unknown>;
-      const topAddr = (e.worksiteAddress ?? {}) as Record<string, unknown>;
-      const state =
-        trim(e.workState).toUpperCase() ||
-        trim(topAddr.state).toUpperCase() ||
-        trim(sidecarAddr.state).toUpperCase() ||
-        '(no state)';
-      const code = trim(e.workersCompCode) || '(no code)';
+      if (!code || state === '(no state)') {
+        const uKey = `${state}|${jobTitle}`;
+        if (!unresolvedGroups.has(uKey)) {
+          unresolvedGroups.set(uKey, { state, jobTitle, gross: 0, entries: 0, workers: new Set() });
+        }
+        const u = unresolvedGroups.get(uKey)!;
+        u.gross = round2(u.gross + p.total);
+        u.entries += 1;
+        if (workerId) u.workers.add(workerId);
+        continue;
+      }
 
       const key = `${state}_${code}`;
       if (!buckets.has(key)) {
         buckets.set(key, { state, code, gross: 0, hours: 0, entries: 0, workers: new Set() });
       }
       const b = buckets.get(key)!;
-      b.gross = round2(b.gross + total);
-      b.hours = round2(b.hours + reg + ot + dt);
+      b.gross = round2(b.gross + p.total);
+      b.hours = round2(b.hours + p.hours);
       b.entries += 1;
-      const workerId = trim(e.workerId);
       if (workerId) b.workers.add(workerId);
-      totalGross = round2(totalGross + total);
-      entryCount += 1;
-    });
+    }
 
-    // Off-cycle payments in the month for this entity (no WC classification —
-    // separate section so they're visible without polluting the class rows).
+    // Off-cycle payments (no WC classification) — separate visible section.
     const ocSnap = await db
       .collection(`tenants/${tenantId}/offcycle_payments`)
       .where('workDate', '>=', startDate)
@@ -756,17 +869,34 @@ export const getWorkersCompMonthlyReport = onCall(
       });
     });
 
+    let totalPremium = 0;
     const rows = Array.from(buckets.values())
-      .map((b) => ({
-        state: b.state,
-        code: b.code,
-        rate: matrixRate.get(`${b.state}_${b.code}`) ?? null,
-        gross: b.gross,
-        hours: b.hours,
-        entries: b.entries,
-        workers: b.workers.size,
-      }))
+      .map((b) => {
+        const rate = matrix.rateByStateCode.get(`${b.state}_${b.code}`) ?? null;
+        const premium = rate != null ? round2((b.gross * rate) / 100) : null;
+        if (premium != null) totalPremium = round2(totalPremium + premium);
+        return {
+          state: b.state,
+          code: b.code,
+          rate,
+          gross: b.gross,
+          hours: b.hours,
+          entries: b.entries,
+          workers: b.workers.size,
+          premium,
+        };
+      })
       .sort((a, b) => a.state.localeCompare(b.state) || a.code.localeCompare(b.code));
+
+    const unresolved = Array.from(unresolvedGroups.values())
+      .map((u) => ({
+        state: u.state,
+        jobTitle: u.jobTitle,
+        gross: u.gross,
+        entries: u.entries,
+        workers: u.workers.size,
+      }))
+      .sort((a, b) => b.gross - a.gross);
 
     return {
       month,
@@ -776,11 +906,61 @@ export const getWorkersCompMonthlyReport = onCall(
       entityName,
       workerType: isContractor ? 'contractor' : 'employee',
       rows,
+      unresolved,
+      unresolvedGross: round2(unresolved.reduce((s, u) => s + u.gross, 0)),
       totalGross,
+      totalPremium,
       entryCount,
       offCycle,
       offCycleTotal,
       grandTotal: round2(totalGross + offCycleTotal),
     };
+  },
+);
+
+/**
+ * Upsert one WC matrix row from the report's assign-code control. Optional
+ * `hiringEntityId` writes an entity-scoped row (`STATE_CODE__e__ENTITY`) that
+ * wins over the generic row for that entity's reports; omitted → generic row
+ * (`STATE_CODE`). `jobTitles` merge (learn-once) so title-based resolution
+ * self-heals next month. Books-gated like the reports it feeds.
+ */
+export const upsertWorkersCompRate = onCall(
+  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 30 },
+  async (request) => {
+    const tenantId = trim(request.data?.tenantId);
+    const hiringEntityId = trim(request.data?.hiringEntityId);
+    const state = trim(request.data?.state).toUpperCase();
+    const code = trim(request.data?.code);
+    const rate = num(request.data?.rate);
+    const jobTitles = Array.isArray(request.data?.jobTitles)
+      ? (request.data.jobTitles as unknown[]).map((t) => trim(t)).filter(Boolean).slice(0, 20)
+      : [];
+    if (!tenantId || !/^[A-Z]{2}$/.test(state) || !/^\d{3,4}$/.test(code) || !(rate >= 0) || rate > 100) {
+      throw new HttpsError('invalid-argument', 'tenantId, state (XX), code (3-4 digits), rate (0-100) are required.');
+    }
+    await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+
+    const docId = hiringEntityId ? `${state}_${code}__e__${hiringEntityId}` : `${state}_${code}`;
+    const ref = db.doc(`tenants/${tenantId}/workers_comp_rates/${docId}`);
+    const existing = await ref.get();
+    const priorTitles = Array.isArray(existing.data()?.jobTitles)
+      ? (existing.data()!.jobTitles as unknown[]).map((t) => trim(t))
+      : [];
+    const mergedTitles = Array.from(new Set([...priorTitles, ...jobTitles])).filter(Boolean);
+    await ref.set(
+      {
+        state,
+        code,
+        rate,
+        jobTitles: mergedTitles,
+        ...(hiringEntityId ? { hiringEntityId } : {}),
+        source: 'wc_report_assign',
+        updatedBy: request.auth?.uid ?? null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    return { docId, state, code, rate, jobTitles: mergedTitles };
   },
 );

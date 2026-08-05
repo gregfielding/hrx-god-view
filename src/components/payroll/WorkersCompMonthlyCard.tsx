@@ -2,10 +2,16 @@
  * Workers' Comp monthly report (WC-C, Greg 2026-08-05).
  *
  * Front-end for `getWorkersCompMonthlyReport`: pick an entity + calendar
- * month, get gross pay totals by work state + WC class code — the monthly
- * report InSource needs, generated from HRX instead of Everee's report
- * builder. Uncoded rows are shown loudly (never hidden) so classification
- * gaps are visible before the report goes out. One-click CSV export.
+ * month, get gross pay totals by work state + WC class code with rates and
+ * computed premium — the carrier's monthly report, generated from HRX.
+ * Applies to BOTH entities: C1 Events contractors are carrier-reported and
+ * premium-paid even though their codes never go to Everee.
+ *
+ * The table is a live review surface: unresolved payroll (no code / no
+ * matrix row) is listed by state + job title with an inline assign control —
+ * assigning writes a matrix row (entity-scoped, learn-once job titles) and
+ * regenerates, so next month self-heals. Export becomes available once
+ * generated; unresolved payroll is flagged loudly first.
  */
 import React, { useState } from 'react';
 import {
@@ -45,6 +51,15 @@ interface WcRow {
   hours: number;
   entries: number;
   workers: number;
+  premium: number | null;
+}
+
+interface WcUnresolved {
+  state: string;
+  jobTitle: string;
+  gross: number;
+  entries: number;
+  workers: number;
 }
 
 interface WcReport {
@@ -53,7 +68,10 @@ interface WcReport {
   entityName: string;
   workerType: 'employee' | 'contractor';
   rows: WcRow[];
+  unresolved: WcUnresolved[];
+  unresolvedGross: number;
   totalGross: number;
+  totalPremium: number;
   entryCount: number;
   offCycle: Array<{ workDate: string; workerName: string; reasonLabel: string; total: number }>;
   offCycleTotal: number;
@@ -82,6 +100,9 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<WcReport | null>(null);
+  /** Per-unresolved-group draft code/rate inputs, keyed `state|title`. */
+  const [drafts, setDrafts] = useState<Record<string, { code: string; rate: string }>>({});
+  const [assigning, setAssigning] = useState<string | null>(null);
 
   const generate = async (): Promise<void> => {
     if (!tenantId || !entityId || !month) return;
@@ -99,28 +120,72 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
     }
   };
 
+  /**
+   * Two callers share this: the unresolved-group Assign button (writes code +
+   * rate + learned title; '(no title)' groups become the entity's per-state
+   * DEFAULT via the '*' title so future months classify automatically), and
+   * the resolved-row "Set" button for codes missing a rate (rate only —
+   * `forcedCode` is the row's existing code, no title learning).
+   */
+  const assign = async (u: WcUnresolved, draftKey?: string, forcedCode?: string): Promise<void> => {
+    const key = draftKey ?? `${u.state}|${u.jobTitle}`;
+    const draft = drafts[key];
+    const code = (forcedCode ?? draft?.code ?? '').trim();
+    const rate = Number(draft?.rate);
+    if (!tenantId || !code || !(rate >= 0) || draft?.rate === '' || draft?.rate == null) return;
+    setAssigning(key);
+    setError(null);
+    try {
+      const call = httpsCallable(functions, 'upsertWorkersCompRate');
+      await call({
+        tenantId,
+        hiringEntityId: entityId,
+        state: u.state,
+        code,
+        rate,
+        jobTitles: forcedCode ? [] : u.jobTitle !== '(no title)' ? [u.jobTitle] : ['*'],
+      });
+      await generate();
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save code/rate');
+    } finally {
+      setAssigning(null);
+    }
+  };
+
   const exportCsv = (): void => {
     if (!report) return;
     const lines: string[] = [];
     lines.push(`Workers' Comp Payroll Report,${report.entityName},${report.month}`);
     lines.push('');
-    lines.push('State,Class code,Rate,Hours,Gross payroll,Workers');
+    lines.push('State,Class code,Rate,Hours,Gross payroll,Premium,Workers');
     for (const r of report.rows) {
       lines.push(
-        [r.state, r.code, r.rate ?? '', r.hours, r.gross.toFixed(2), r.workers].map(csvCell).join(','),
+        [r.state, r.code, r.rate ?? '', r.hours, r.gross.toFixed(2), r.premium?.toFixed(2) ?? '', r.workers]
+          .map(csvCell)
+          .join(','),
       );
     }
-    lines.push(['TOTAL', '', '', '', report.totalGross.toFixed(2), ''].join(','));
+    lines.push(['TOTAL', '', '', '', report.totalGross.toFixed(2), report.totalPremium.toFixed(2), ''].join(','));
+    if (report.unresolved.length > 0) {
+      lines.push('');
+      lines.push('UNRESOLVED (no code assigned),,,,,,');
+      lines.push('State,Job title,,,Gross payroll,,Workers');
+      for (const u of report.unresolved) {
+        lines.push([u.state, u.jobTitle, '', '', u.gross.toFixed(2), '', u.workers].map(csvCell).join(','));
+      }
+      lines.push(['UNRESOLVED TOTAL', '', '', '', report.unresolvedGross.toFixed(2), '', ''].join(','));
+    }
     if (report.offCycle.length > 0) {
       lines.push('');
-      lines.push('Off-cycle payments (not classified),,,,');
-      lines.push('Work date,Worker,Reason,,Amount');
+      lines.push('Off-cycle payments (not classified),,,,,,');
+      lines.push('Work date,Worker,Reason,,Amount,,');
       for (const p of report.offCycle) {
-        lines.push([p.workDate, p.workerName, p.reasonLabel, '', p.total.toFixed(2)].map(csvCell).join(','));
+        lines.push([p.workDate, p.workerName, p.reasonLabel, '', p.total.toFixed(2), '', ''].map(csvCell).join(','));
       }
-      lines.push(['OFF-CYCLE TOTAL', '', '', '', report.offCycleTotal.toFixed(2)].join(','));
-      lines.push(['GRAND TOTAL', '', '', '', report.grandTotal.toFixed(2)].join(','));
+      lines.push(['OFF-CYCLE TOTAL', '', '', '', report.offCycleTotal.toFixed(2), '', ''].join(','));
     }
+    lines.push(['GRAND TOTAL', '', '', '', report.grandTotal.toFixed(2), '', ''].join(','));
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -129,12 +194,6 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
     a.click();
     URL.revokeObjectURL(url);
   };
-
-  const uncodedGross = report
-    ? report.rows
-        .filter((r) => r.code === '(no code)' || r.state === '(no state)')
-        .reduce((s, r) => s + r.gross, 0)
-    : 0;
 
   return (
     <Card sx={{ mb: 2 }}>
@@ -177,8 +236,9 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
           </Button>
         </Stack>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-          Gross payroll by work state + WC class code for the calendar month (sent + paid entries).
-          Use this for the carrier&apos;s monthly payroll report.
+          Gross payroll + premium by work state and WC class code for the calendar month. Both
+          entities are carrier-reported — contractor codes just never go to Everee. Fix anything
+          in the &quot;needs a code&quot; list before exporting.
         </Typography>
 
         {error && (
@@ -192,14 +252,9 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
             <Typography variant="body2" sx={{ mb: 1 }}>
               <strong>{report.entityName}</strong> — {report.month} ·{' '}
               {report.workerType === 'contractor' ? '1099 contractors (flat-rate hours)' : 'W-2 employees'} ·{' '}
-              {report.entryCount} entries
+              {report.entryCount} entries · est. premium <strong>{usd(report.totalPremium)}</strong>
             </Typography>
-            {uncodedGross > 0 && (
-              <Alert severity="warning" sx={{ mb: 1 }}>
-                {usd(uncodedGross)} of payroll has no WC code or work state — fix classification
-                before sending this report to the carrier.
-              </Alert>
-            )}
+
             <TableContainer>
               <Table size="small">
                 <TableHead>
@@ -209,21 +264,45 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
                     <TableCell align="right">Rate</TableCell>
                     <TableCell align="right">Hours</TableCell>
                     <TableCell align="right">Gross payroll</TableCell>
+                    <TableCell align="right">Premium</TableCell>
                     <TableCell align="right">Workers</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {report.rows.map((r) => {
-                    const flagged = r.code === '(no code)' || r.state === '(no state)';
+                    const rateKey = `rate|${r.state}_${r.code}`;
+                    const rateDraft = drafts[rateKey] ?? { code: r.code, rate: '' };
                     return (
-                      <TableRow key={`${r.state}_${r.code}`} sx={flagged ? { bgcolor: 'warning.50' } : undefined}>
+                      <TableRow key={`${r.state}_${r.code}`}>
                         <TableCell>{r.state}</TableCell>
-                        <TableCell sx={flagged ? { color: 'warning.main', fontWeight: 600 } : undefined}>
-                          {r.code}
+                        <TableCell>{r.code}</TableCell>
+                        <TableCell align="right">
+                          {r.rate ?? (
+                            <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                              <TextField
+                                size="small"
+                                placeholder="rate"
+                                sx={{ width: 80 }}
+                                value={rateDraft.rate}
+                                onChange={(e) =>
+                                  setDrafts((p) => ({ ...p, [rateKey]: { code: r.code, rate: e.target.value } }))
+                                }
+                              />
+                              <Button
+                                size="small"
+                                disabled={assigning === rateKey || !(Number(rateDraft.rate) >= 0) || rateDraft.rate === ''}
+                                onClick={() =>
+                                  void assign({ state: r.state, jobTitle: '(no title)', gross: 0, entries: 0, workers: 0 }, rateKey, r.code)
+                                }
+                              >
+                                {assigning === rateKey ? '…' : 'Set'}
+                              </Button>
+                            </Stack>
+                          )}
                         </TableCell>
-                        <TableCell align="right">{r.rate ?? '—'}</TableCell>
                         <TableCell align="right">{r.hours.toFixed(2)}</TableCell>
                         <TableCell align="right">{usd(r.gross)}</TableCell>
+                        <TableCell align="right">{r.premium != null ? usd(r.premium) : '—'}</TableCell>
                         <TableCell align="right">{r.workers}</TableCell>
                       </TableRow>
                     );
@@ -235,6 +314,9 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
                     <TableCell align="right" sx={{ fontWeight: 700 }}>
                       {usd(report.totalGross)}
                     </TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                      {usd(report.totalPremium)}
+                    </TableCell>
                     <TableCell />
                   </TableRow>
                   {report.offCycle.length > 0 && (
@@ -243,12 +325,95 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
                         Off-cycle payments ({report.offCycle.length}, not classified)
                       </TableCell>
                       <TableCell align="right">{usd(report.offCycleTotal)}</TableCell>
-                      <TableCell />
+                      <TableCell colSpan={2} />
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
             </TableContainer>
+
+            {report.unresolved.length > 0 && (
+              <Box sx={{ mt: 2 }}>
+                <Alert severity="warning" sx={{ mb: 1 }}>
+                  {usd(report.unresolvedGross)} of payroll needs a code. Assign a class code + rate
+                  per line — it saves to the rate table for {report.entityName} and future months
+                  classify automatically.
+                </Alert>
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>State</TableCell>
+                        <TableCell>Job title</TableCell>
+                        <TableCell align="right">Gross payroll</TableCell>
+                        <TableCell align="right">Workers</TableCell>
+                        <TableCell>Class code</TableCell>
+                        <TableCell>Rate</TableCell>
+                        <TableCell />
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {report.unresolved.map((u) => {
+                        const key = `${u.state}|${u.jobTitle}`;
+                        const draft = drafts[key] ?? { code: '', rate: '' };
+                        const noState = u.state === '(no state)';
+                        return (
+                          <TableRow key={key}>
+                            <TableCell>{u.state}</TableCell>
+                            <TableCell>{u.jobTitle}</TableCell>
+                            <TableCell align="right">{usd(u.gross)}</TableCell>
+                            <TableCell align="right">{u.workers}</TableCell>
+                            {noState ? (
+                              <TableCell colSpan={3}>
+                                <Typography variant="caption" color="text.secondary">
+                                  No work state on these entries — fix the worksite on the
+                                  timesheet rows first.
+                                </Typography>
+                              </TableCell>
+                            ) : (
+                              <>
+                                <TableCell sx={{ width: 110 }}>
+                                  <TextField
+                                    size="small"
+                                    placeholder="e.g. 9016"
+                                    value={draft.code}
+                                    onChange={(e) =>
+                                      setDrafts((p) => ({ ...p, [key]: { ...draft, code: e.target.value } }))
+                                    }
+                                  />
+                                </TableCell>
+                                <TableCell sx={{ width: 100 }}>
+                                  <TextField
+                                    size="small"
+                                    placeholder="rate"
+                                    value={draft.rate}
+                                    onChange={(e) =>
+                                      setDrafts((p) => ({ ...p, [key]: { ...draft, rate: e.target.value } }))
+                                    }
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    disabled={
+                                      assigning === key || !draft.code.trim() || !(Number(draft.rate) >= 0) || draft.rate === ''
+                                    }
+                                    onClick={() => void assign(u)}
+                                  >
+                                    {assigning === key ? 'Saving…' : 'Assign'}
+                                  </Button>
+                                </TableCell>
+                              </>
+                            )}
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Box>
+            )}
           </Box>
         )}
       </CardContent>
