@@ -47,6 +47,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import PageHeader from '../components/PageHeader';
+import WorkersCompMonthlyCard from '../components/payroll/WorkersCompMonthlyCard';
 
 const usd = (n: unknown): string =>
   Number(n ?? 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -418,6 +419,8 @@ const PayrollCostsPage: React.FC = () => {
           </Typography>
         </CardContent>
       </Card>
+
+      <WorkersCompMonthlyCard tenantId={tenantId} entities={entities} />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>

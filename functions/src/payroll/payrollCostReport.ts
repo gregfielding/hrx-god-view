@@ -591,3 +591,170 @@ export const getPayrollCostReport = onCall(
     };
   },
 );
+
+/* -------------------------------------------------------------------------
+ * Workers' comp monthly report (WC-C, Greg 2026-08-05)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Gross pay totals by work state + WC class code for one entity and one
+ * calendar month — the InSource monthly payroll report, generated from HRX
+ * instead of Everee's custom-report builder (which can't show the JO note
+ * and force-fits off-policy codes).
+ *
+ * Gross math mirrors getPayrollCostReport (csv_import: reg + 1.5×OT; grid:
+ * + 2×DT + break premiums) with one entity-aware difference: contractor
+ * entities (C1 Events) pay ALL hours at 1.0× flat (composeContractorPayable)
+ * — per Greg 2026-08-05, contractors get no automatic OT premium.
+ *
+ * Uncoded / no-state entries are surfaced as explicit rows (never hidden) so
+ * the report exposes classification gaps instead of silently dropping pay.
+ * Off-cycle payments in the month ride as a separate section (they carry no
+ * WC code today).
+ */
+export const getWorkersCompMonthlyReport = onCall(
+  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
+  async (request) => {
+    const tenantId = trim(request.data?.tenantId);
+    const hiringEntityId = trim(request.data?.hiringEntityId);
+    const month = trim(request.data?.month); // YYYY-MM
+    if (!tenantId || !hiringEntityId || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+      throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, month (YYYY-MM) are required.');
+    }
+    await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+
+    const startDate = `${month}-01`;
+    const [y, m] = month.split('-').map(Number);
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const endDate = `${month}-${String(lastDay).padStart(2, '0')}`;
+
+    // Contractor entities pay flat (no OT premium).
+    const entitySnap = await db.doc(`tenants/${tenantId}/entities/${hiringEntityId}`).get();
+    const entityData = (entitySnap.data() ?? {}) as Record<string, unknown>;
+    const entityName = trim(entityData.name) || hiringEntityId;
+    const isContractor =
+      trim(entityData.workerType).toLowerCase() === 'contractor' ||
+      /events|workforce/i.test(hiringEntityId);
+
+    // Matrix rates for display (generic rows only).
+    const matrixSnap = await db.collection(`tenants/${tenantId}/workers_comp_rates`).get();
+    const matrixRate = new Map<string, number>();
+    matrixSnap.forEach((d) => {
+      const x = d.data() as Record<string, unknown>;
+      if (trim(x.modifierAccountId)) return;
+      matrixRate.set(`${trim(x.state).toUpperCase()}_${trim(x.code)}`, num(x.rate));
+    });
+
+    const snap = await db
+      .collection(`tenants/${tenantId}/timesheet_entries`)
+      .where('workDate', '>=', startDate)
+      .where('workDate', '<=', endDate)
+      .get();
+
+    interface Bucket {
+      state: string;
+      code: string;
+      gross: number;
+      hours: number;
+      entries: number;
+      workers: Set<string>;
+    }
+    const buckets = new Map<string, Bucket>();
+    let totalGross = 0;
+    let entryCount = 0;
+
+    snap.forEach((d) => {
+      const e = d.data();
+      const status = trim(e.status);
+      if (status !== 'sent_to_everee' && status !== 'submitted' && status !== 'paid') return;
+      if (trim(e.hiringEntityId) !== hiringEntityId) return;
+
+      const isImport = trim(e.source) === 'csv_import';
+      const rate = num(e.payRate);
+      const reg = num(e.totalRegularHours);
+      const ot = num(e.totalOTHours);
+      const dt = num(e.totalDoubleTimeHours);
+      const premiums = isImport ? 0 : round2((num(e.mealBreakPenaltyHours) + num(e.restBreakPenaltyHours)) * rate);
+      const hourly = isContractor
+        ? round2((reg + ot + dt) * rate) // contractor: all hours flat 1.0×
+        : isImport
+          ? round2(reg * rate + ot * rate * 1.5)
+          : round2(reg * rate + ot * rate * 1.5 + dt * rate * 2);
+      const total = round2(hourly + premiums + num(e.tips) + num(e.bonusAmount));
+      if (total === 0) return;
+
+      const importSidecar = (e.import ?? {}) as Record<string, unknown>;
+      const sidecarAddr = (importSidecar.worksiteAddress ?? {}) as Record<string, unknown>;
+      const topAddr = (e.worksiteAddress ?? {}) as Record<string, unknown>;
+      const state =
+        trim(e.workState).toUpperCase() ||
+        trim(topAddr.state).toUpperCase() ||
+        trim(sidecarAddr.state).toUpperCase() ||
+        '(no state)';
+      const code = trim(e.workersCompCode) || '(no code)';
+
+      const key = `${state}_${code}`;
+      if (!buckets.has(key)) {
+        buckets.set(key, { state, code, gross: 0, hours: 0, entries: 0, workers: new Set() });
+      }
+      const b = buckets.get(key)!;
+      b.gross = round2(b.gross + total);
+      b.hours = round2(b.hours + reg + ot + dt);
+      b.entries += 1;
+      const workerId = trim(e.workerId);
+      if (workerId) b.workers.add(workerId);
+      totalGross = round2(totalGross + total);
+      entryCount += 1;
+    });
+
+    // Off-cycle payments in the month for this entity (no WC classification —
+    // separate section so they're visible without polluting the class rows).
+    const ocSnap = await db
+      .collection(`tenants/${tenantId}/offcycle_payments`)
+      .where('workDate', '>=', startDate)
+      .where('workDate', '<=', endDate)
+      .get();
+    const offCycle: Array<Record<string, unknown>> = [];
+    let offCycleTotal = 0;
+    ocSnap.forEach((d) => {
+      const p = d.data();
+      if (trim(p.hiringEntityId) !== hiringEntityId) return;
+      if (trim(p.status) !== 'sent_to_everee' && trim(p.status) !== 'paid') return;
+      const total = num(p.total);
+      offCycleTotal = round2(offCycleTotal + total);
+      offCycle.push({
+        workDate: trim(p.workDate),
+        workerName: trim(p.workerName),
+        reasonLabel: trim(p.reasonLabel),
+        total,
+      });
+    });
+
+    const rows = Array.from(buckets.values())
+      .map((b) => ({
+        state: b.state,
+        code: b.code,
+        rate: matrixRate.get(`${b.state}_${b.code}`) ?? null,
+        gross: b.gross,
+        hours: b.hours,
+        entries: b.entries,
+        workers: b.workers.size,
+      }))
+      .sort((a, b) => a.state.localeCompare(b.state) || a.code.localeCompare(b.code));
+
+    return {
+      month,
+      startDate,
+      endDate,
+      hiringEntityId,
+      entityName,
+      workerType: isContractor ? 'contractor' : 'employee',
+      rows,
+      totalGross,
+      entryCount,
+      offCycle,
+      offCycleTotal,
+      grandTotal: round2(totalGross + offCycleTotal),
+    };
+  },
+);
