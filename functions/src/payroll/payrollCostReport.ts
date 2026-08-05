@@ -179,6 +179,14 @@ interface ReportRow {
   total: number;
   status: string;
   source: string;
+  /** Full-fields export additions (Greg 2026-08-05). */
+  payRate: number | null;
+  regularHours: number;
+  overtimeHours: number;
+  doubleTimeHours: number;
+  workState: string | null;
+  workersCompCode: string | null;
+  workersCompRate: number | null;
 }
 
 interface GroupTotals {
@@ -376,6 +384,17 @@ export const getPayrollCostReport = onCall(
         total,
         status: trim(e.status),
         source: isImport ? 'csv_import' : 'scheduled',
+        payRate: rate || null,
+        regularHours: round2(reg),
+        overtimeHours: round2(ot),
+        doubleTimeHours: round2(dt),
+        workState:
+          trim(e.workState).toUpperCase() ||
+          trim((e.worksiteAddress as Record<string, unknown> | undefined)?.state).toUpperCase() ||
+          trim((importSidecar.worksiteAddress as Record<string, unknown> | undefined)?.state).toUpperCase() ||
+          null,
+        workersCompCode: trim(e.workersCompCode) || null,
+        workersCompRate: num(e.workersCompRate) || null,
       });
     }
 
@@ -438,6 +457,13 @@ export const getPayrollCostReport = onCall(
         total: num(oc.total),
         status,
         source: `off_cycle (${trim(oc.reasonLabel) || trim(oc.reason)})`,
+        payRate: num(oc.hourlyRate) || null,
+        regularHours: num(oc.hours),
+        overtimeHours: 0,
+        doubleTimeHours: 0,
+        workState: null,
+        workersCompCode: null,
+        workersCompRate: null,
       });
     });
 
