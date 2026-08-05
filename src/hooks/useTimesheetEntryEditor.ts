@@ -63,7 +63,7 @@ export interface UseTimesheetEntryEditorArgs {
   /** Fire after a successful actuals/breaks edit to pick up the
    *  recompute trigger's recomputed totals. Provided by
    *  `useTimesheetGridRows`. */
-  refreshEntry: (entryId: string) => Promise<void>;
+  refreshEntry: (entryId: string) => Promise<unknown>;
 }
 
 export interface TimesheetEntryEditor {

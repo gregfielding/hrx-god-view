@@ -1336,10 +1336,13 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const rowExternalId = (userId: string, workDate: string) =>
     `${tenantId}::import-${customer}-${userId}::${workDate}::${is1099Entity ? 'CONTRACTOR' : 'WORKED_SHIFT'}`;
 
-  // W-2 worked shifts require a WC class code (comp-insurance classification);
-  // a W-2 row without one isn't submittable. 1099 never needs WC.
+  // W-2 worked shifts require a WC class code (comp-insurance classification)
+  // AND a resolved matrix rate — a code with no rate leaves the WC monthly
+  // report hollow, so the row isn't Ready either (Greg 2026-08-05). 1099
+  // never needs WC.
   const rowNeedsWc = (eff: ReturnType<typeof effective>) =>
-    !is1099Entity && !String(eff.workersCompCode || '').trim();
+    !is1099Entity &&
+    (!String(eff.workersCompCode || '').trim() || !(Number(eff.workersCompRate) > 0));
 
   // A row that's live in Everee (submitted or paid) — terminal, not
   // re-submittable. `paid` rows can't be voided (the pay run finalized).
@@ -2593,7 +2596,10 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
             <Typography variant="caption" color="text.secondary">
               Blocked rows need an HRX worker + Everee onboarding before they can be paid.
               “Needs rate” rows have no paired assignment — map their site to a job order or type a
-              pay rate.{!is1099Entity && ' “Needs WC” rows need a workers-comp class code.'} Ready rows
+              pay rate.
+              {!is1099Entity &&
+                ' “Needs WC” rows need a workers-comp class code with a matrix rate for the work state.'}{' '}
+              Ready rows
               submit to Everee as{' '}
               {is1099Entity
                 ? 'contractor pay (hours × rate).'

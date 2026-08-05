@@ -13,6 +13,13 @@ export interface SetEntryWorkersCompInput {
   workersCompCode?: string | null;
   /** Decimal number to set; `null` to clear; `undefined` to leave untouched. */
   workersCompRate?: number | null;
+  /**
+   * Work state picked in the dialog when the row couldn't resolve one
+   * (traveling crews — assignment has no fixed worksite state). Stamped on
+   * the entry when its own workState is empty, and used for the matrix rate
+   * lookup.
+   */
+  workState?: string;
 }
 
 export interface SetEntryWorkersCompResult {

@@ -26,6 +26,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  MenuItem,
   TextField,
   Typography,
 } from '@mui/material';
@@ -33,7 +34,7 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db, functions } from '../../firebase';
 import { callSetEntryWorkersComp } from '../../services/setEntryWorkersCompCallable';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
-import { normalizeStateCode } from '../../utils/unemploymentRates';
+import { normalizeStateCode, US_STATE_CODES } from '../../utils/unemploymentRates';
 
 interface Props {
   open: boolean;
@@ -43,6 +44,9 @@ interface Props {
   entryId: string;
   /** Worksite state — scopes the code dropdown to the matrix's codes for it. */
   state?: string;
+  /** Worksite label — when no state resolves, a 2-letter state token in the
+   *  name (e.g. "Mubadala Citi DC Open" → DC) pre-selects the state picker. */
+  worksiteName?: string;
   /** Pre-filled values — typically the row's resolved (override OR inherited)
    *  values so the recruiter sees what's effective today. */
   initialCode?: string;
@@ -57,6 +61,17 @@ interface WcOption {
   rate: number | null;
 }
 
+/** Uppercase 2-letter state token in a worksite label ("Mubadala Citi DC Open"
+ *  → "DC"). Uppercase-only so words like "in"/"or" never match. */
+function sniffStateToken(name?: string): string {
+  for (const tok of String(name ?? '').split(/[^A-Za-z]+/)) {
+    if (tok.length === 2 && tok === tok.toUpperCase() && (US_STATE_CODES as readonly string[]).includes(tok)) {
+      return tok;
+    }
+  }
+  return '';
+}
+
 const EditWorkersCompDialog: React.FC<Props> = ({
   open,
   onClose,
@@ -64,6 +79,7 @@ const EditWorkersCompDialog: React.FC<Props> = ({
   tenantId,
   entryId,
   state,
+  worksiteName,
   initialCode,
   initialRate,
   rowLabel,
@@ -73,14 +89,22 @@ const EditWorkersCompDialog: React.FC<Props> = ({
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<WcOption[]>([]);
   const [loadingOptions, setLoadingOptions] = useState(false);
+  // Manual work-state pick for rows that can't resolve one — traveling crews
+  // (e.g. VenueSmart) whose assignment has no fixed worksite state. Drives
+  // the code dropdown AND is stamped on the entry server-side.
+  const [pickedState, setPickedState] = useState<string>('');
 
-  const stateCode = normalizeStateCode(state ?? '').trim().toUpperCase();
+  const propStateCode = normalizeStateCode(state ?? '').trim().toUpperCase();
+  const stateCode = propStateCode || pickedState;
 
   useEffect(() => {
     if (!open) return;
     setCode(initialCode ?? '');
+    // No resolvable state → pre-select the picker with a state token sniffed
+    // from the worksite label (recruiter can still change it).
+    setPickedState(propStateCode ? '' : sniffStateToken(worksiteName));
     setError(null);
-  }, [open, initialCode]);
+  }, [open, initialCode, propStateCode, worksiteName]);
 
   // Load the codes rated for this worksite state (matrix) + their catalog
   // titles, so the recruiter picks from the real options.
@@ -118,6 +142,13 @@ const EditWorkersCompDialog: React.FC<Props> = ({
         const opts: WcOption[] = [...byCode.entries()]
           .map(([c, r]) => ({ code: c, title: titleByCode.get(c) ?? '', rate: r }))
           .sort((a, b) => a.code.localeCompare(b.code));
+        // The 8040 placeholder must ALWAYS be pickable — payroll can't stall
+        // on a state whose carrier codes are still pending (Greg 2026-08-05).
+        // $2.35 mirrors the synthetic 8040 convention in the WC monthly
+        // report; the server falls back to the same rate on save.
+        if (!opts.some((o) => o.code === '8040')) {
+          opts.push({ code: '8040', title: 'Placeholder (carrier code pending)', rate: 2.35 });
+        }
         if (!cancelled) setOptions(opts);
       } catch {
         if (!cancelled) setOptions([]);
@@ -139,8 +170,15 @@ const EditWorkersCompDialog: React.FC<Props> = ({
         functions,
         trimmedCode
           ? // Code only — the server resolves the (internal) rate from the WC
-            // matrix by the row's worksite state + code.
-            { tenantId, entryId, workersCompCode: trimmedCode }
+            // matrix by the row's worksite state + code. When the row had no
+            // resolvable state, send the manually picked one so the lookup
+            // works and the entry gets stamped with it.
+            {
+              tenantId,
+              entryId,
+              workersCompCode: trimmedCode,
+              ...(!propStateCode && pickedState ? { workState: pickedState } : {}),
+            }
           : // Blank code = clear the WC override (code + rate).
             { tenantId, entryId, workersCompCode: null, workersCompRate: null },
       );
@@ -161,10 +199,27 @@ const EditWorkersCompDialog: React.FC<Props> = ({
           <Typography variant="body2" color="text.secondary">
             {stateCode
               ? `Pick a class code rated for ${stateCode} — the (internal) rate resolves automatically from the matrix. `
-              : 'Enter the class code — the (internal) rate resolves automatically from your WC matrix. '}
+              : 'This row has no work state (traveling crew) — pick the state worked first, then the class code. '}
             Saves an override on this row AND back-fills the shift when its WC fields are empty, so
             other entries on the same shift inherit too.
           </Typography>
+
+          {!propStateCode && (
+            <TextField
+              select
+              label="Work state"
+              value={pickedState}
+              onChange={(e) => setPickedState(e.target.value)}
+              helperText="State where this work was performed — saved onto the row for WC reporting."
+              fullWidth
+            >
+              {US_STATE_CODES.map((s) => (
+                <MenuItem key={s} value={s}>
+                  {s}
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
 
           <Autocomplete<WcOption, false, false, true>
             freeSolo

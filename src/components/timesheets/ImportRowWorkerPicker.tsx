@@ -51,6 +51,9 @@ export interface ReassignResult {
   evereeLinked: boolean;
   blockReason: string | null;
   displayName: string;
+  /** The HRX userId the recruiter picked — stamped client-side so the parent
+   *  can offer "apply this match to the other rows with the same CSV name". */
+  newUserId?: string;
 }
 
 export interface ScheduledSwapResult {
@@ -154,7 +157,7 @@ const ImportRowWorkerPicker: React.FC<ImportRowWorkerPickerProps> = ({
           ReassignResult
         >(functions, 'reassignImportEntryWorker', { timeout: 60000 });
         const res = await fn({ tenantId, hiringEntityId, entryId, newUserId: pick });
-        onReassigned(res.data);
+        onReassigned({ ...res.data, newUserId: pick });
       }
       reset();
       onClose();

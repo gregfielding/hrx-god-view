@@ -165,9 +165,16 @@ export const reresolveImportEntry = onCall<Input, Promise<Output>>(
     if (jobOrderId) updates.jobOrderId = jobOrderId;
 
     // Recompute the import lifecycle (mirror setImportEntryPayRate/WC).
+    // W-2 rows need BOTH the WC code AND a resolved rate to be ready — a code
+    // without a rate leaves the WC report hollow (Greg 2026-08-05).
     const effPay = payRate != null ? payRate : Number(entry.payRate);
     const effWc = wcCode || strOrNull(entry.workersCompCode, (imp as Record<string, unknown>).workersCompCode);
-    const nextStatus = !(effPay > 0) ? 'needs_rate' : !is1099 && !effWc ? 'needs_wc' : 'ready';
+    const effWcRate =
+      wcRate != null
+        ? wcRate
+        : numOrNull(entry.workersCompRate) ?? numOrNull((imp as Record<string, unknown>).workersCompRate);
+    const nextStatus =
+      !(effPay > 0) ? 'needs_rate' : !is1099 && (!effWc || effWcRate == null) ? 'needs_wc' : 'ready';
     updates['import.matchStatus'] = nextStatus;
 
     await entryRef.update(updates);

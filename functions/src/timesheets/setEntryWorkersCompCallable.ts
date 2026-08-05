@@ -27,6 +27,12 @@ import { normalizeUsStateCode } from '../recruiter/usStateNormalize';
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
 
+/** 8040 is the tenant's placeholder code for "carrier code/rate pending" —
+ *  the WC monthly report synthesizes it at $2.35 for every state, so the
+ *  entry-level resolution falls back to the same rate when the matrix has
+ *  no explicit row. Keeps payroll moving in a not-yet-rated state. */
+const PLACEHOLDER_8040_RATE = 2.35;
+
 /** Resolve the internal WC rate for a state + code from the rate matrix
  *  (highest rate wins on a dup). Returns null when the pair isn't rated. */
 async function resolveMatrixRate(
@@ -45,6 +51,7 @@ async function resolveMatrixRate(
     const r = Number((d.data() || {}).rate);
     if (Number.isFinite(r)) rate = rate == null ? r : Math.max(rate, r);
   });
+  if (rate == null && code === '8040') return PLACEHOLDER_8040_RATE;
   return rate;
 }
 
@@ -95,6 +102,18 @@ export const setEntryWorkersComp = onCall<Input, Promise<Output>>(
       throw new HttpsError('unauthenticated', 'Authentication required');
     }
     const { tenantId, entryId, workersCompCode, workersCompRate } = req.data || ({} as Input);
+    // Dialog-picked work state for rows that can't resolve one (traveling
+    // crews — the assignment has no fixed worksite state, Greg 2026-08-05).
+    // Used for the matrix rate lookup and stamped on the entry when its own
+    // workState is empty, so downstream WC reporting gets the state too.
+    const pickedWorkState = String(
+      (req.data as unknown as Record<string, unknown> | undefined)?.workState ?? '',
+    )
+      .trim()
+      .toUpperCase();
+    if (pickedWorkState && !/^[A-Z]{2}$/.test(pickedWorkState)) {
+      throw new HttpsError('invalid-argument', 'workState must be a 2-letter state code.');
+    }
     if (!tenantId || !entryId) {
       throw new HttpsError('invalid-argument', 'tenantId and entryId are required');
     }
@@ -135,6 +154,7 @@ export const setEntryWorkersComp = onCall<Input, Promise<Output>>(
           entry.workState ||
             (entry.worksiteAddress as Record<string, unknown> | undefined)?.state ||
             impAddr?.state ||
+            pickedWorkState ||
             '',
         ),
       );
@@ -155,6 +175,11 @@ export const setEntryWorkersComp = onCall<Input, Promise<Output>>(
       entryUpdates.workersCompRate = workersCompRate;
     } else if (matrixRate != null) {
       entryUpdates.workersCompRate = matrixRate;
+    }
+    // Stamp the dialog-picked state only when the entry has none of its own —
+    // a resolved worksite state always wins over a manual pick.
+    if (pickedWorkState && !String(entry.workState ?? '').trim()) {
+      entryUpdates.workState = pickedWorkState;
     }
     await entryRef.update(entryUpdates);
 
@@ -185,11 +210,20 @@ export const setEntryWorkersComp = onCall<Input, Promise<Output>>(
         'import.workersCompSource': 'typed',
       };
       // Don't disturb live/blocked rows; otherwise re-derive ready/needs_*.
+      // W-2 rows need BOTH the class code AND a resolved rate to be ready —
+      // a code with no rate (state unresolved, e.g. traveling crews) leaves
+      // the WC report hollow (Greg 2026-08-05). 1099 rows never require WC.
       if (!['submitted', 'paid', 'voided', 'blocked'].includes(ms)) {
+        const hiringEntityId = String(entry.hiringEntityId || '').trim();
+        let is1099 = false;
+        if (hiringEntityId) {
+          const entitySnap = await db.doc(`tenants/${tenantId}/entities/${hiringEntityId}`).get();
+          is1099 = String((entitySnap.data() || {}).workerType || '').trim() === '1099';
+        }
         const payRate = Number(entry.payRate);
         importPatch['import.matchStatus'] = !(payRate > 0)
           ? 'needs_rate'
-          : !finalCode
+          : !is1099 && (!finalCode || finalRate == null)
             ? 'needs_wc'
             : 'ready';
       }

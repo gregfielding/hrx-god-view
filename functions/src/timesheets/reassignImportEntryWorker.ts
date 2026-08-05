@@ -136,12 +136,15 @@ export const reassignImportEntryWorker = onCall(
       (typeof entry.workersCompCode === 'string' && entry.workersCompCode.trim()) ||
       (typeof imp.workersCompCode === 'string' && imp.workersCompCode.trim()) ||
       '';
+    // W-2 needs BOTH code and a resolved rate to be ready (Greg 2026-08-05).
+    const wcRateRaw = num(entry.workersCompRate) || num(imp.workersCompRate);
+    const hasWc = Boolean(wcCode) && wcRateRaw > 0;
 
     const matchStatus: ImportMatchStatus = linkage.blockReason
       ? 'blocked'
       : !(payRate > 0)
         ? 'needs_rate'
-        : !is1099 && !wcCode
+        : !is1099 && !hasWc
           ? 'needs_wc'
           : 'ready';
 

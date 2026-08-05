@@ -99,6 +99,7 @@ import NotesCell from './cells/NotesCell';
 import NumberCell from './cells/NumberCell';
 import TimeCell from './cells/TimeCell';
 import EditWorkersCompDialog from './EditWorkersCompDialog';
+import { callSetEntryWorkersComp } from '../../services/setEntryWorkersCompCallable';
 import ImportRowWorkerPicker from './ImportRowWorkerPicker';
 import ImportRowWorksitePicker from './ImportRowWorksitePicker';
 import ImportGridSubmitBar from './ImportGridSubmitBar';
@@ -481,7 +482,10 @@ interface EntryRowProps extends RowCommonProps {
   tenantId: string;
   entry: TimesheetEntryV2;
   mergeEntryUpdate: (entryId: string, patch: Partial<TimesheetEntryV2>) => void;
-  refreshEntry: (entryId: string) => Promise<void>;
+  refreshEntry: (entryId: string) => Promise<TimesheetEntryV2 | null>;
+  /** Overlay resolved WC onto the shift's other rows after a WC edit —
+   *  mirrors the server's shift back-fill without a full grid reload. */
+  mergeShiftWc: (shiftId: string, code: string, rate?: number) => void;
   /** Fired when the user clicks a `draft` or `submitted` Status pill.
    *  Calls the approve callable; on success the row's status flips to
    *  `approved` and the SubmitBatchToEveree button picks it up. */
@@ -719,7 +723,8 @@ const ImportRow: React.FC<{
   actualHrs: number;
   tenantId?: string;
   hiringEntityId?: string | null;
-  refreshEntry: (entryId: string) => void;
+  refreshEntry: (entryId: string) => Promise<TimesheetEntryV2 | null>;
+  mergeShiftWc: (shiftId: string, code: string, rate?: number) => void;
   /** Full grid reload — needed after a worker reassign because the entry's
    *  synthetic doc id changes (keyed by worker), so a single-entry refresh
    *  can't find the moved row. */
@@ -727,7 +732,28 @@ const ImportRow: React.FC<{
   /** Drop a single row from the local view without a full reload (used after
    *  delete, so the recruiter can clear several rows back-to-back). */
   onDeleted: (entryId: string) => void;
-}> = ({ row, status, actualHrs, tenantId, hiringEntityId, refreshEntry, reloadAll, onDeleted }) => {
+  /** Post-save hook: offer to apply the just-saved WC code to other rows at
+   *  the same worksite still missing one (apply-to-all, Greg 2026-08-05). */
+  onWcSaved: (row: Extract<TimesheetGridRow, { kind: 'entry' }>, fresh: TimesheetEntryV2) => void;
+  /** Post-reassign hook: offer to apply the worker match to other rows with
+   *  the same CSV name, then reload once (doc ids change on reassign). */
+  onWorkerReassigned: (
+    row: Extract<TimesheetGridRow, { kind: 'entry' }>,
+    newUserId: string | null,
+  ) => void;
+}> = ({
+  row,
+  status,
+  actualHrs,
+  tenantId,
+  hiringEntityId,
+  refreshEntry,
+  mergeShiftWc,
+  reloadAll,
+  onDeleted,
+  onWcSaved,
+  onWorkerReassigned,
+}) => {
   const imp = row.entry.import;
   const payRate = typeof row.entry.payRate === 'number' ? row.entry.payRate : 0;
   const wcCode = row.resolvedWorkersCompCode ?? imp?.workersCompCode ?? null;
@@ -1100,13 +1126,25 @@ const ImportRow: React.FC<{
           onClose={() => setWcDialogOpen(false)}
           onSuccess={() => {
             setWcDialogOpen(false);
-            // FULL reload, not refreshEntry: the WC *Code* cell renders
-            // `resolvedWorkersCompCode` from the grid resolver, and refreshEntry
-            // does NOT re-run the resolver — so picking a new code updated the
-            // rate (falls through to the refetched sidecar) but the code cell
-            // kept showing the stale resolved code (Greg 2026-07-31). reloadAll
-            // re-resolves so the new code + matrix rate both show.
-            reloadAll();
+            // In-place: refreshEntry refetches the doc AND overlays the row's
+            // resolved WC display fields (an entry override wins the chain
+            // outright), so no full grid reload (Greg 2026-08-05 — reloading
+            // hundreds of rows after every cell edit). mergeShiftWc mirrors
+            // the server's shift back-fill onto sibling rows locally.
+            void (async () => {
+              const fresh = await refreshEntry(row.entry.id);
+              const freshRec = fresh as unknown as Record<string, unknown> | null;
+              const code =
+                typeof freshRec?.workersCompCode === 'string' && freshRec.workersCompCode.trim()
+                  ? freshRec.workersCompCode.trim()
+                  : null;
+              const rate =
+                typeof freshRec?.workersCompRate === 'number' ? freshRec.workersCompRate : undefined;
+              if (code && row.assignment.shiftId) {
+                mergeShiftWc(row.assignment.shiftId, code, rate);
+              }
+              if (fresh && code) onWcSaved(row, fresh);
+            })();
           }}
           tenantId={tenantId}
           entryId={row.entry.id}
@@ -1119,6 +1157,12 @@ const ImportRow: React.FC<{
             (row.entry as unknown as { workState?: string }).workState ||
             undefined
           }
+          worksiteName={
+            // Include the CSV event label — travel-crew rows carry the state
+            // token there, not in the worksite name (e.g. worksite "Venuesmart"
+            // + csvSite "Mubadala Citi DC Open" → DC).
+            [imp?.worksiteName, imp?.csvSite].filter(Boolean).join(' · ') || undefined
+          }
           initialCode={wcCode}
           initialRate={wcRate}
           rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
@@ -1128,10 +1172,14 @@ const ImportRow: React.FC<{
         <ImportRowWorkerPicker
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
-          onReassigned={() => {
+          onReassigned={(result) => {
             setPickerOpen(false);
-            // The doc id moved (keyed by worker) — reload the whole grid.
-            reloadAll();
+            // Parent offers apply-to-all for same-CSV-name rows, then does
+            // ONE reload at the end (doc ids move on reassign).
+            onWorkerReassigned(
+              row,
+              'newUserId' in result ? (result.newUserId ?? null) : null,
+            );
           }}
           tenantId={tenantId}
           hiringEntityId={hiringEntityId}
@@ -1195,6 +1243,7 @@ const EntryRow: React.FC<EntryRowProps> = ({
   entry,
   mergeEntryUpdate,
   refreshEntry,
+  mergeShiftWc,
   onApproveEntry,
   approvingThisEntry,
   onRevertEntry,
@@ -1563,16 +1612,37 @@ const EntryRow: React.FC<EntryRowProps> = ({
           onClose={() => setWcDialogOpen(false)}
           onSuccess={() => {
             setWcDialogOpen(false);
-            // FULL reload — the row's WC cell renders `resolvedWorkersCompCode`
-            // from the resolver, and refreshEntry does NOT re-run the resolver
-            // (Greg 2026-07-31: "choosing the code doesn't save it to the row"
-            // — it saved, but the cell stayed stale). reloadAll re-resolves so
-            // the new code + matrix-resolved rate + shift back-fill all show.
-            reloadAll();
+            // In-place: refreshEntry overlays the row's resolved WC from the
+            // fresh doc (entry override wins the chain), and mergeShiftWc
+            // mirrors the server's shift back-fill onto sibling rows — no
+            // full grid reload (Greg 2026-08-05).
+            void (async () => {
+              const fresh = await refreshEntry(entry.id);
+              const freshRec = fresh as unknown as Record<string, unknown> | null;
+              const code =
+                typeof freshRec?.workersCompCode === 'string' && freshRec.workersCompCode.trim()
+                  ? freshRec.workersCompCode.trim()
+                  : null;
+              const rate =
+                typeof freshRec?.workersCompRate === 'number' ? freshRec.workersCompRate : undefined;
+              if (code && row.assignment.shiftId) {
+                mergeShiftWc(row.assignment.shiftId, code, rate);
+              }
+            })();
           }}
           tenantId={tenantId}
           entryId={entry.id}
-          state={row.assignment.worksiteState ?? undefined}
+          state={
+            // Assignment first; entry-level fallbacks for traveling crews whose
+            // assignment has no fixed worksite state (mirrors the import mount).
+            row.assignment.worksiteState ||
+            ((entry as unknown as Record<string, unknown>)?.workState as string | undefined) ||
+            (((entry as unknown as Record<string, unknown>)?.worksiteAddress as
+              | Record<string, unknown>
+              | undefined)?.state as string | undefined) ||
+            undefined
+          }
+          worksiteName={row.assignment.worksiteDisplayName ?? undefined}
           initialCode={row.resolvedWorkersCompCode}
           initialRate={row.resolvedWorkersCompRate}
           rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
@@ -1602,6 +1672,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
     refresh,
     mergeEntryUpdate,
     refreshEntry,
+    mergeShiftWc,
   } = useTimesheetGridRows(tenantId, filter);
 
   // External refresh trigger — bump `refreshSignal` from the parent to
@@ -1642,6 +1713,111 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
   // them, and that's the only scope where reassign + import-submit make sense.
   const importHiringEntityId =
     filter?.kind === 'entity_period' ? filter.hiringEntityId : null;
+
+  /* -------------------------------------------------------------------
+   * Apply-to-all (Greg 2026-08-05, mirroring the Import CSV tab): after
+   * fixing ONE row, offer the same fix to its sibling rows in view.
+   * ------------------------------------------------------------------- */
+
+  // Worker reassign → other rows with the same CSV name. One reload at the
+  // end (reassign moves doc ids), instead of one per row.
+  const handleImportWorkerReassigned = useCallback(
+    async (sourceRow: Extract<TimesheetGridRow, { kind: 'entry' }>, newUserId: string | null) => {
+      const csvKey = String(sourceRow.entry.import?.csvKey ?? '');
+      const csvName =
+        String(sourceRow.entry.import?.csvWorkerName ?? '').trim() || 'this worker';
+      if (newUserId && csvKey && tenantId && importHiringEntityId) {
+        const LIVE = new Set(['submitted', 'paid', 'voided']);
+        const sibs = rawRows.filter(
+          (r): r is Extract<TimesheetGridRow, { kind: 'entry' }> =>
+            r.kind === 'entry' &&
+            Boolean(r.isImport) &&
+            r.entry.id !== sourceRow.entry.id &&
+            String(r.entry.import?.csvKey ?? '') === csvKey &&
+            !LIVE.has(String(r.entry.import?.matchStatus ?? '')) &&
+            String(r.entry.workerId ?? '') !== newUserId,
+        );
+        if (
+          sibs.length > 0 &&
+          window.confirm(
+            `Apply this worker match to ${sibs.length} more “${csvName}” row(s) in view?`,
+          )
+        ) {
+          const fn = httpsCallable<
+            { tenantId: string; hiringEntityId: string; entryId: string; newUserId: string },
+            { ok: boolean }
+          >(functions, 'reassignImportEntryWorker', { timeout: 60000 });
+          for (const s of sibs) {
+            try {
+              await fn({
+                tenantId,
+                hiringEntityId: importHiringEntityId,
+                entryId: s.entry.id,
+                newUserId,
+              });
+            } catch (e) {
+              console.error('apply-to-all reassign failed for', s.entry.id, e);
+            }
+          }
+        }
+      }
+      refresh();
+    },
+    [rawRows, tenantId, importHiringEntityId, refresh],
+  );
+
+  // WC code → other rows at the same worksite/event still missing a code.
+  // Each sibling resolves its own matrix rate server-side; in-place refresh,
+  // no grid reload.
+  const handleImportWcSaved = useCallback(
+    async (sourceRow: Extract<TimesheetGridRow, { kind: 'entry' }>, fresh: TimesheetEntryV2) => {
+      if (!tenantId) return;
+      const freshRec = fresh as unknown as Record<string, unknown>;
+      const code =
+        typeof freshRec.workersCompCode === 'string' ? freshRec.workersCompCode.trim() : '';
+      if (!code) return;
+      const siteOf = (r: Extract<TimesheetGridRow, { kind: 'entry' }>) =>
+        String(r.entry.import?.csvSite ?? r.assignment.worksiteDisplayName ?? '').trim();
+      const site = siteOf(sourceRow);
+      if (!site) return;
+      const LIVE = new Set(['submitted', 'paid', 'voided']);
+      const sibs = rawRows.filter(
+        (r): r is Extract<TimesheetGridRow, { kind: 'entry' }> =>
+          r.kind === 'entry' &&
+          Boolean(r.isImport) &&
+          r.entry.id !== sourceRow.entry.id &&
+          siteOf(r) === site &&
+          !LIVE.has(String(r.entry.import?.matchStatus ?? '')) &&
+          !r.resolvedWorkersCompCode,
+      );
+      if (sibs.length === 0) return;
+      if (
+        !window.confirm(
+          `Apply WC code ${code} to ${sibs.length} more “${site}” row(s) missing a code?`,
+        )
+      ) {
+        return;
+      }
+      const workState =
+        typeof freshRec.workState === 'string' && freshRec.workState.trim()
+          ? freshRec.workState.trim()
+          : undefined;
+      for (const s of sibs) {
+        try {
+          await callSetEntryWorkersComp(functions, {
+            tenantId,
+            entryId: s.entry.id,
+            workersCompCode: code,
+            ...(workState ? { workState } : {}),
+          });
+          await refreshEntry(s.entry.id);
+        } catch (e) {
+          console.error('apply-to-all WC failed for', s.entry.id, e);
+        }
+      }
+    },
+    [rawRows, tenantId, refreshEntry],
+  );
 
   // Sortable columns. Default mirrors the resolver's worker-name ordering.
   type GridSortKey = 'worker' | 'notes';
@@ -2260,8 +2436,11 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                           tenantId={tenantId}
                           hiringEntityId={importHiringEntityId}
                           refreshEntry={refreshEntry}
+                          mergeShiftWc={mergeShiftWc}
                           reloadAll={refresh}
                           onDeleted={handleRowDeleted}
+                          onWcSaved={handleImportWcSaved}
+                          onWorkerReassigned={handleImportWorkerReassigned}
                         />
                       );
                     }
@@ -2293,6 +2472,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                         entry={row.entry}
                         mergeEntryUpdate={mergeEntryUpdate}
                         refreshEntry={refreshEntry}
+                        mergeShiftWc={mergeShiftWc}
                         onApproveEntry={handleApproveEntry}
                         approvingThisEntry={approvingEntryIds.has(row.entry.id)}
                         onRevertEntry={handleRevertEntry}

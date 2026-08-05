@@ -98,7 +98,16 @@ export const setImportEntryPayRate = onCall<Input, Promise<{ ok: true; payRate: 
         (typeof entry.workersCompCode === 'string' && entry.workersCompCode.trim()) ||
         (typeof imp.workersCompCode === 'string' && (imp.workersCompCode as string).trim()) ||
         '';
-      nextStatus = !(rounded > 0) ? 'needs_rate' : !is1099 && !wcCode ? 'needs_wc' : 'ready';
+      // W-2 needs BOTH code and a resolved rate to be ready (Greg 2026-08-05).
+      const wcRate =
+        (typeof entry.workersCompRate === 'number' && Number.isFinite(entry.workersCompRate)
+          ? entry.workersCompRate
+          : 0) ||
+        (typeof imp.workersCompRate === 'number' && Number.isFinite(imp.workersCompRate as number)
+          ? (imp.workersCompRate as number)
+          : 0);
+      const hasWc = Boolean(wcCode) && wcRate > 0;
+      nextStatus = !(rounded > 0) ? 'needs_rate' : !is1099 && !hasWc ? 'needs_wc' : 'ready';
       updates['import.matchStatus'] = nextStatus;
     }
 

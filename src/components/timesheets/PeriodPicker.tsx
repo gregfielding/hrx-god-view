@@ -115,8 +115,16 @@ function resolvePolicyMode(
   entity: HiringEntity,
   scope: PeriodPickerScope,
   manualOverride: boolean,
+  customRange: boolean,
 ): PolicyMode {
   const policy = entity.payPeriodPolicy;
+  // Weekly entities can drop into manual date pickers via the "Custom
+  // range…" dropdown option — crews on a different workweek than the
+  // entity's anchor (e.g. VenueSmart travelers' Mon–Sun inside Sun–Sat
+  // C1 Select, Greg 2026-08-05) need a window the fixed weeks can't show.
+  if (customRange && (!policy || policy.policyType === 'weekly')) {
+    return { kind: 'per_event_manual' };
+  }
   // Legacy doc / missing policy → default to weekly Sun-Sat with banner.
   if (!policy) {
     return {
@@ -143,6 +151,9 @@ function resolvePolicyMode(
   return { kind: 'per_event_manual' };
 }
 
+/** Sentinel value for the "Custom range…" MenuItem in the weekly Select. */
+const CUSTOM_RANGE_VALUE = '__custom_range__';
+
 export const PeriodPicker: React.FC<PeriodPickerProps> = ({
   entity,
   value,
@@ -150,6 +161,8 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
   scope = null,
 }) => {
   const [manualOverride, setManualOverride] = useState(false);
+  // Weekly entity, "Custom range…" chosen — manual date pickers active.
+  const [customRange, setCustomRange] = useState(false);
 
   /**
    * Per_event manual mode holds its date pickers' partial state
@@ -177,6 +190,7 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
   // leak the previous entity's half-typed dates.
   useEffect(() => {
     setManualOverride(false);
+    setCustomRange(false);
     setManualStartDate(null);
     setManualEndDate(null);
   }, [entity.id]);
@@ -193,8 +207,8 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
   }, [value]);
 
   const mode = useMemo(
-    () => resolvePolicyMode(entity, scope, manualOverride),
-    [entity, scope, manualOverride],
+    () => resolvePolicyMode(entity, scope, manualOverride, customRange),
+    [entity, scope, manualOverride, customRange],
   );
 
   /* -------------------------------------------------------------------
@@ -288,6 +302,12 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
   }, [mode]);
 
   const handleWeeklySelect = (startIso: string) => {
+    if (startIso === CUSTOM_RANGE_VALUE) {
+      // Keep the current value — the manual pickers seed from it, so the
+      // recruiter just nudges the endpoints (e.g. Sun-start → Mon–Sun).
+      setCustomRange(true);
+      return;
+    }
     const next = weeklyOptions.find((p) => p.start === startIso);
     if (next) onChange(next);
   };
@@ -455,6 +475,11 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
                   </MenuItem>
                 );
               })}
+              <MenuItem value={CUSTOM_RANGE_VALUE}>
+                <Typography component="span" sx={{ fontSize: '0.875rem', fontWeight: 500 }}>
+                  Custom range…
+                </Typography>
+              </MenuItem>
             </Select>
           </FormControl>
         ) : null}
@@ -559,6 +584,11 @@ export const PeriodPicker: React.FC<PeriodPickerProps> = ({
                   },
                 }}
               />
+              {customRange ? (
+                <Button size="small" variant="text" onClick={() => setCustomRange(false)}>
+                  Back to weeks
+                </Button>
+              ) : null}
             </Stack>
             {manualValidationMessage ? (
               <Typography variant="caption" color="text.secondary">
