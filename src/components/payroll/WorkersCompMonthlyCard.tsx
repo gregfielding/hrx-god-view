@@ -20,6 +20,7 @@ import {
   Button,
   Card,
   CardContent,
+  MenuItem,
   Stack,
   Table,
   TableBody,
@@ -66,6 +67,8 @@ interface WcReport {
   rows: WcRow[];
   unresolved: WcUnresolved[];
   unresolvedGross: number;
+  /** Rated codes available per unresolved state — feeds the assign dropdown. */
+  stateCodeOptions: Record<string, Array<{ code: string; rate: number; title: string | null }>>;
   totalGross: number;
   totalPremium: number;
   entryCount: number;
@@ -98,7 +101,7 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<WcReport | null>(null);
   /** Per-unresolved-group draft code/rate inputs, keyed `state|title`. */
-  const [drafts, setDrafts] = useState<Record<string, { code: string; rate: string }>>({});
+  const [drafts, setDrafts] = useState<Record<string, { code: string; rate: string; custom?: boolean }>>({});
   const [assigning, setAssigning] = useState<string | null>(null);
 
   // A report for one entity must never sit under another entity's selection —
@@ -148,6 +151,10 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
         code,
         rate,
         jobTitles: forcedCode ? [] : u.jobTitle !== '(no title)' ? [u.jobTitle] : ['*'],
+        // Connect the code to the data: stamps matching uncoded assignments
+        // (state + title) and this month's uncoded entries server-side, so
+        // the whole chain learns — not just this report.
+        propagateMonth: report?.month ?? month,
       });
       await generate();
     } catch (e: any) {
@@ -366,15 +373,57 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
                               </TableCell>
                             ) : (
                               <>
-                                <TableCell sx={{ width: 110 }}>
-                                  <TextField
-                                    size="small"
-                                    placeholder="e.g. 9016"
-                                    value={draft.code}
-                                    onChange={(e) =>
-                                      setDrafts((p) => ({ ...p, [key]: { ...draft, code: e.target.value } }))
+                                <TableCell sx={{ minWidth: 200 }}>
+                                  {(() => {
+                                    const options = report.stateCodeOptions?.[u.state] ?? [];
+                                    if (options.length === 0 || draft.custom) {
+                                      return (
+                                        <TextField
+                                          size="small"
+                                          placeholder="e.g. 9016"
+                                          value={draft.code}
+                                          onChange={(e) =>
+                                            setDrafts((p) => ({
+                                              ...p,
+                                              [key]: { ...draft, code: e.target.value, custom: true },
+                                            }))
+                                          }
+                                        />
+                                      );
                                     }
-                                  />
+                                    return (
+                                      <TextField
+                                        select
+                                        size="small"
+                                        fullWidth
+                                        value={draft.code}
+                                        SelectProps={{ displayEmpty: true }}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          if (v === '__custom') {
+                                            setDrafts((p) => ({ ...p, [key]: { code: '', rate: '', custom: true } }));
+                                            return;
+                                          }
+                                          const opt = options.find((o) => o.code === v);
+                                          setDrafts((p) => ({
+                                            ...p,
+                                            [key]: { code: v, rate: opt ? String(opt.rate) : draft.rate },
+                                          }));
+                                        }}
+                                      >
+                                        <MenuItem value="" disabled>
+                                          Pick a {u.state} code…
+                                        </MenuItem>
+                                        {options.map((o) => (
+                                          <MenuItem key={o.code} value={o.code}>
+                                            {o.code}
+                                            {o.title ? ` — ${o.title}` : ''} ({o.rate})
+                                          </MenuItem>
+                                        ))}
+                                        <MenuItem value="__custom">Other code…</MenuItem>
+                                      </TextField>
+                                    );
+                                  })()}
                                 </TableCell>
                                 <TableCell sx={{ width: 100 }}>
                                   <TextField

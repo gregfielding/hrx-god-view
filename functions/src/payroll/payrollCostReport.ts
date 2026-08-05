@@ -898,6 +898,29 @@ export const getWorkersCompMonthlyReport = onCall(
       }))
       .sort((a, b) => b.gross - a.gross);
 
+    // Available codes per state for the assign dropdown — same options the
+    // timesheets WC dialog shows: this entity's rated matrix codes, labeled
+    // with the catalog title. Keyed by the states that actually need codes.
+    const catalogSnap = await db.collection(`tenants/${tenantId}/workers_comp_class_codes`).get();
+    const catalogTitle = new Map<string, string>();
+    catalogSnap.forEach((d) => {
+      const code = trim(d.data().code);
+      if (code && !catalogTitle.has(code)) catalogTitle.set(code, trim(d.data().title));
+    });
+    const unresolvedStates = new Set(unresolved.map((u) => u.state).filter((s) => s !== '(no state)'));
+    const stateCodeOptions: Record<string, Array<{ code: string; rate: number; title: string | null }>> = {};
+    for (const [key, rate] of matrix.rateByStateCode) {
+      const sep = key.indexOf('_');
+      const st = key.slice(0, sep);
+      const code = key.slice(sep + 1);
+      if (!unresolvedStates.has(st)) continue;
+      if (!stateCodeOptions[st]) stateCodeOptions[st] = [];
+      stateCodeOptions[st].push({ code, rate, title: catalogTitle.get(code) ?? null });
+    }
+    for (const st of Object.keys(stateCodeOptions)) {
+      stateCodeOptions[st].sort((a, b) => a.code.localeCompare(b.code));
+    }
+
     return {
       month,
       startDate,
@@ -908,6 +931,7 @@ export const getWorkersCompMonthlyReport = onCall(
       rows,
       unresolved,
       unresolvedGross: round2(unresolved.reduce((s, u) => s + u.gross, 0)),
+      stateCodeOptions,
       totalGross,
       totalPremium,
       entryCount,
@@ -961,6 +985,92 @@ export const upsertWorkersCompRate = onCall(
       },
       { merge: true },
     );
-    return { docId, state, code, rate, jobTitles: mergedTitles };
+
+    // Connect the code to the DATA, not just the matrix (Greg 2026-08-05):
+    // stamp every uncoded assignment in this state (same entity + same job
+    // title when one was learned) so the assignment chain — timesheets grid,
+    // imports, payroll export — resolves without the report's read-time
+    // fallback. FUTURE assignments self-classify via the matrix row written
+    // above (the assignment-creation denorm resolver looks up state+title).
+    // With `propagateMonth`, that month's uncoded entries get stamped too.
+    const propagateMonth = trim(request.data?.propagateMonth); // YYYY-MM, optional
+    const realTitles = jobTitles.filter((t) => t !== '*').map((t) => t.toLowerCase());
+    let assignmentsStamped = 0;
+    let entriesStamped = 0;
+    const stampedAssignmentIds = new Set<string>();
+    const asnSnap = await db
+      .collection(`tenants/${tenantId}/assignments`)
+      .where('worksiteState', '==', state)
+      .get();
+    let batch = db.batch();
+    let batchN = 0;
+    const flush = async (): Promise<void> => {
+      if (batchN > 0) {
+        await batch.commit();
+        batch = db.batch();
+        batchN = 0;
+      }
+    };
+    for (const d of asnSnap.docs) {
+      const a = d.data();
+      if (trim(a.workersCompCode)) continue;
+      if (hiringEntityId && trim(a.hiringEntityId) && trim(a.hiringEntityId) !== hiringEntityId) continue;
+      const title = trim(a.jobTitle).toLowerCase();
+      // Real-title assigns stamp matching titles; a state-default ('*')
+      // assign stamps only title-less assignments — titled ones should get
+      // their own explicit code.
+      const titleMatches = realTitles.length > 0 ? realTitles.includes(title) : !title;
+      if (!titleMatches) continue;
+      batch.update(d.ref, {
+        workersCompCode: code,
+        workersCompRate: rate,
+        workersCompSource: 'wc_report_assign',
+      });
+      stampedAssignmentIds.add(d.id);
+      assignmentsStamped += 1;
+      batchN += 1;
+      if (batchN >= 400) await flush();
+    }
+    await flush();
+
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(propagateMonth)) {
+      const pStart = `${propagateMonth}-01`;
+      const [py, pm] = propagateMonth.split('-').map(Number);
+      const pEnd = `${propagateMonth}-${String(new Date(Date.UTC(py, pm, 0)).getUTCDate()).padStart(2, '0')}`;
+      const eSnap = await db
+        .collection(`tenants/${tenantId}/timesheet_entries`)
+        .where('workDate', '>=', pStart)
+        .where('workDate', '<=', pEnd)
+        .get();
+      for (const d of eSnap.docs) {
+        const e = d.data();
+        if (trim(e.workersCompCode)) continue;
+        if (hiringEntityId && trim(e.hiringEntityId) !== hiringEntityId) continue;
+        const sidecarAddr = ((e.import ?? {}) as Record<string, unknown>).worksiteAddress as
+          | Record<string, unknown>
+          | undefined;
+        const eState =
+          trim(e.workState).toUpperCase() ||
+          trim((e.worksiteAddress as Record<string, unknown> | undefined)?.state).toUpperCase() ||
+          trim(sidecarAddr?.state).toUpperCase();
+        if (eState !== state) continue;
+        const asnId = trim(e.assignmentId);
+        // Real-title assigns stamp entries of the assignments stamped above;
+        // state-default assigns stamp assignment-less entries.
+        const matches = realTitles.length > 0 ? stampedAssignmentIds.has(asnId) : !asnId || stampedAssignmentIds.has(asnId);
+        if (!matches) continue;
+        batch.update(d.ref, {
+          workersCompCode: code,
+          workersCompRate: rate,
+          workersCompSource: 'wc_report_assign',
+        });
+        entriesStamped += 1;
+        batchN += 1;
+        if (batchN >= 400) await flush();
+      }
+      await flush();
+    }
+
+    return { docId, state, code, rate, jobTitles: mergedTitles, assignmentsStamped, entriesStamped };
   },
 );
