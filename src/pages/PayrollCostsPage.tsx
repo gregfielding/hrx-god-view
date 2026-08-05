@@ -441,7 +441,11 @@ const PayrollCostsPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      <WorkersCompMonthlyCard tenantId={tenantId} entities={entities} />
+      <WorkersCompMonthlyCard
+        tenantId={tenantId}
+        entityId={entityId}
+        entityName={entities.find((e) => e.id === entityId)?.name ?? null}
+      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>

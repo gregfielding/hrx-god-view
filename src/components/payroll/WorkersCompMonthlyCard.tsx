@@ -20,10 +20,6 @@ import {
   Button,
   Card,
   CardContent,
-  FormControl,
-  InputLabel,
-  MenuItem,
-  Select,
   Stack,
   Table,
   TableBody,
@@ -91,11 +87,12 @@ function csvCell(v: unknown): string {
 
 interface Props {
   tenantId: string | null | undefined;
-  entities: Array<{ id: string; name: string }>;
+  /** Driven by the page-level "Hiring entity" picker — one picker, both reports. */
+  entityId: string;
+  entityName: string | null;
 }
 
-const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
-  const [entityId, setEntityId] = useState('c1_select_llc');
+const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityName }) => {
   const [month, setMonth] = useState(previousMonth());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +100,13 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
   /** Per-unresolved-group draft code/rate inputs, keyed `state|title`. */
   const [drafts, setDrafts] = useState<Record<string, { code: string; rate: string }>>({});
   const [assigning, setAssigning] = useState<string | null>(null);
+
+  // A report for one entity must never sit under another entity's selection —
+  // same stale-table footgun as the cost report (Oakland Arena, 2026-08-05).
+  React.useEffect(() => {
+    setReport(null);
+    setDrafts({});
+  }, [entityId]);
 
   const generate = async (): Promise<void> => {
     if (!tenantId || !entityId || !month) return;
@@ -205,16 +209,6 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
           </Typography>
         </Stack>
         <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
-          <FormControl size="small" sx={{ minWidth: 180 }}>
-            <InputLabel>Hiring entity</InputLabel>
-            <Select value={entityId} label="Hiring entity" onChange={(e) => setEntityId(e.target.value)}>
-              {entities.map((e) => (
-                <MenuItem key={e.id} value={e.id}>
-                  {e.name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
           <TextField
             size="small"
             type="month"
@@ -224,7 +218,7 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
             InputLabelProps={{ shrink: true }}
           />
           <Button variant="contained" onClick={() => void generate()} disabled={loading || !entityId}>
-            {loading ? 'Generating…' : 'Generate'}
+            {loading ? 'Generating…' : entityName ? `Generate — ${entityName}` : 'Generate'}
           </Button>
           <Button
             variant="outlined"
@@ -236,9 +230,9 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entities }) => {
           </Button>
         </Stack>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-          Gross payroll + premium by work state and WC class code for the calendar month. Both
-          entities are carrier-reported — contractor codes just never go to Everee. Fix anything
-          in the &quot;needs a code&quot; list before exporting.
+          {entityId
+            ? 'Gross payroll + premium by work state and WC class code for the calendar month. Both entities are carrier-reported — contractor codes just never go to Everee. Fix anything in the "needs a code" list before exporting.'
+            : 'Pick a hiring entity above — the same picker drives both reports. WC reports are per entity.'}
         </Typography>
 
         {error && (
