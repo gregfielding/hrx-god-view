@@ -9,7 +9,7 @@
  *
  * Plain-English, pick-a-range, no config — per the recruiter-UX ethos.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Autocomplete,
@@ -211,10 +211,13 @@ const PayrollCostsPage: React.FC = () => {
     setError(null);
     try {
       const fn = httpsCallable(functions, 'getPayrollCostReport');
+      // An inverted range (start after end) is a picker slip, not intent —
+      // swap instead of surfacing the server's range error.
+      const [s, e] = startDate <= endDate ? [startDate, endDate] : [endDate, startDate];
       const res = await fn({
         tenantId,
-        startDate,
-        endDate,
+        startDate: s,
+        endDate: e,
         ...(entityId ? { hiringEntityId: entityId } : {}),
       });
       setData(res.data as ReportData);
@@ -225,11 +228,22 @@ const PayrollCostsPage: React.FC = () => {
     }
   }, [tenantId, startDate, endDate, entityId]);
 
+  // Auto-load on mount AND whenever a filter changes (`load`'s identity
+  // tracks entity + dates). The old initial-load-only wiring left a stale
+  // table under fresh-looking controls — Greg read Events rows as a C1
+  // Select misattribution (2026-08-05, Oakland Arena). Debounced so a
+  // quick entity + date adjustment coalesces into one fetch; the Load
+  // button stays as a manual refresh.
+  const loadDebounceRef = useRef<number | null>(null);
   useEffect(() => {
-    void load();
-    // Initial load only — subsequent loads via the button.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId]);
+    if (loadDebounceRef.current) window.clearTimeout(loadDebounceRef.current);
+    loadDebounceRef.current = window.setTimeout(() => {
+      void load();
+    }, 350);
+    return () => {
+      if (loadDebounceRef.current) window.clearTimeout(loadDebounceRef.current);
+    };
+  }, [load]);
 
   const ensureJoOptions = useCallback(async () => {
     if (joOptions || !tenantId) return;
