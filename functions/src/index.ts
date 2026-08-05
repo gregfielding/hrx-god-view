@@ -527,7 +527,7 @@ export { onTimesheetEntryWriteRecomputePayBreakdown } from './timesheets/onTimes
 export { submitTimesheetBatch } from './payroll/submitTimesheetBatch';
 // Payroll cost attribution report (2026-07-28): dollars sent to Everee
 // grouped by account → job order → worksite + per-batch wire splits.
-export { getPayrollCostReport, savePayrollVenueMapping, getWorkersCompMonthlyReport, upsertWorkersCompRate, completeVenueMapping } from './payroll/payrollCostReport';
+export { getPayrollCostReport, savePayrollVenueMapping, getWorkersCompMonthlyReport, upsertWorkersCompRate, completeVenueMapping, createImportAssignments } from './payroll/payrollCostReport';
 export { createOffCyclePayment, searchOffCycleWorkers, listOffCyclePayments } from './payroll/offCyclePayments';
 export { getWorkerNearbyOpportunities } from './users/getWorkerNearbyOpportunities';
 // WC semantic classifier (2026-07-29): suggest a WC code for a novel job

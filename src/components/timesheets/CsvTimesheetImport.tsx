@@ -660,6 +660,77 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     }
   };
 
+  /**
+   * Assignment-as-truth hole filling (Greg 2026-08-05): rows that matched a
+   * WORKER and resolved a JOB ORDER (via site mapping) but paired to NO
+   * assignment. One click creates real assignments (rate from the resolved/
+   * typed value, position from the CSV role, WC from the matrix) BEFORE
+   * submit, then re-matches so the rows pair — the hole never reaches
+   * month-end as unattributed payroll.
+   */
+  const missingAssignmentRows = useMemo(() => {
+    if (!parsed) return [] as Array<{ r: ParsedTimesheetRow; m: MatchRowResult }>;
+    return importableRows
+      .map((r) => ({ r, m: matchByRow.get(r.rowIndex) }))
+      .filter((x): x is { r: ParsedTimesheetRow; m: MatchRowResult } =>
+        Boolean(x.m && x.m.matched && x.m.userId && !x.m.assignmentId && x.m.jobOrderId),
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parsed, matchByRow]);
+  const missingAssignmentWorkers = useMemo(
+    () => new Set(missingAssignmentRows.map((x) => x.m.userId)).size,
+    [missingAssignmentRows],
+  );
+  const [creatingAssignments, setCreatingAssignments] = useState(false);
+
+  const createMissingAssignments = async () => {
+    if (!tenantId || missingAssignmentRows.length === 0) return;
+    setCreatingAssignments(true);
+    setMatchError(null);
+    try {
+      const byJo = new Map<
+        string,
+        Map<string, { dates: Set<string>; payRate: number; title: string; state: string }>
+      >();
+      for (const { r, m } of missingAssignmentRows) {
+        const joId = m.jobOrderId as string;
+        if (!byJo.has(joId)) byJo.set(joId, new Map());
+        const workers = byJo.get(joId)!;
+        const uid = m.userId as string;
+        if (!workers.has(uid)) {
+          workers.set(uid, {
+            dates: new Set(),
+            payRate: overrides.get(r.rowIndex)?.payRate ?? m.payRate ?? 0,
+            title: r.role || m.jobTitle || '',
+            state: m.worksiteAddress?.state || '',
+          });
+        }
+        if (r.workDate) workers.get(uid)!.dates.add(r.workDate);
+      }
+      const fn = httpsCallable(functions, 'createImportAssignments');
+      await fn({
+        tenantId,
+        hiringEntityId: entityId,
+        groups: Array.from(byJo.entries()).map(([jobOrderId, workers]) => ({
+          jobOrderId,
+          workers: Array.from(workers.entries()).map(([userId, w]) => ({
+            userId,
+            dates: Array.from(w.dates),
+            payRate: w.payRate,
+            title: w.title,
+            state: w.state,
+          })),
+        })),
+      });
+      await runMatch();
+    } catch (err: any) {
+      console.error('createMissingAssignments failed:', err);
+      setMatchError(err?.message || 'Failed to create assignments.');
+    } finally {
+      setCreatingAssignments(false);
+    }
+  };
+
   /** Match in batches: bounded per-call work (fits the deadline at any file
    *  size), live progress as each batch lands, and a failed batch costs only
    *  itself — the rest still resolve. */
@@ -2381,6 +2452,21 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
               >
                 {saving ? 'Saving…' : 'Save progress'}
               </Button>
+            )}
+            {missingAssignmentWorkers > 0 && (
+              <Tooltip title="These workers matched and their site maps to a job order, but they have no assignment — create real assignments (rate, worksite, workers' comp) so these and all future rows connect automatically. No worker notifications are sent.">
+                <Button
+                  variant="outlined"
+                  color="secondary"
+                  onClick={() => void createMissingAssignments()}
+                  disabled={creatingAssignments || matching || saving}
+                  sx={{ textTransform: 'none' }}
+                >
+                  {creatingAssignments
+                    ? 'Creating…'
+                    : `Create ${missingAssignmentWorkers} missing assignment${missingAssignmentWorkers === 1 ? '' : 's'}`}
+                </Button>
+              </Tooltip>
             )}
             {matchByRow.size > 0 && (
               <Tooltip title="Remove previously-saved rows for this week that aren't in the current file (paid/submitted rows are kept)">

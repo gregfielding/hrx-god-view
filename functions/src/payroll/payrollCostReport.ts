@@ -1411,3 +1411,148 @@ export const completeVenueMapping = onCall(
     return { dryRun: false, ...preview, assignmentsCreated, assignmentsReused, entriesStamped };
   },
 );
+
+/**
+ * Import-tab companion to completeVenueMapping (phase 2 of the
+ * assignment-as-truth directive): rows that matched a WORKER and resolved a
+ * JOB ORDER (via site mapping) but paired to NO assignment get real
+ * assignments created BEFORE submit — so rate/worksite/WC resolve through
+ * the normal chain and month-end unattributed payroll trends to zero.
+ * The client re-runs the matcher afterwards; the new assignments pair via
+ * the standard date-window matcher.
+ *
+ * Assignment shape mirrors completeVenueMapping's retro docs (retroactive +
+ * notificationsSuppressed — no worker-facing notifications, no onboarding).
+ * Gate matches the import flow: tenant securityLevel 5–7 (or hrx).
+ */
+export const createImportAssignments = onCall(
+  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 120 },
+  async (request) => {
+    const tenantId = trim(request.data?.tenantId);
+    const hiringEntityId = trim(request.data?.hiringEntityId);
+    const groupsIn = Array.isArray(request.data?.groups) ? (request.data.groups as Array<Record<string, unknown>>) : [];
+    if (!tenantId || groupsIn.length === 0) {
+      throw new HttpsError('invalid-argument', 'tenantId and groups are required.');
+    }
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
+    const token = request.auth?.token as Record<string, unknown> | undefined;
+    if (token?.hrx !== true) {
+      const userSnap = await db.collection('users').doc(uid).get();
+      const data = (userSnap.data() || {}) as Record<string, any>;
+      const nested = data.tenantIds?.[tenantId]?.securityLevel;
+      const level = Number.parseInt(String(nested ?? data.securityLevel ?? '0'), 10) || 0;
+      if (!(level >= 5 && level <= 7)) {
+        throw new HttpsError('permission-denied', 'Creating assignments requires tenant security level 5–7.');
+      }
+    }
+
+    const results: Array<{ jobOrderId: string; userId: string; assignmentId: string; created: boolean }> = [];
+    for (const groupRaw of groupsIn.slice(0, 20)) {
+      const jobOrderId = trim(groupRaw.jobOrderId);
+      const workersIn = Array.isArray(groupRaw.workers) ? (groupRaw.workers as Array<Record<string, unknown>>) : [];
+      if (!jobOrderId || workersIn.length === 0) continue;
+
+      // JO context (same resolution as completeVenueMapping).
+      let jo: Record<string, unknown> | null = null;
+      let joColl = 'job_orders';
+      for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+        const s = await db.doc(`tenants/${tenantId}/${coll}/${jobOrderId}`).get();
+        if (s.exists) {
+          jo = s.data() as Record<string, unknown>;
+          joColl = coll;
+          break;
+        }
+      }
+      if (!jo) continue;
+      const accountId = trim(jo.recruiterAccountId) || null;
+      let accountName: string | null = trim(jo.accountName) || null;
+      if (accountId && !accountName) {
+        const acct = await db.doc(`tenants/${tenantId}/accounts/${accountId}`).get();
+        accountName = acct.exists ? trim(acct.data()?.name) || null : null;
+      }
+      const joEntityId = trim(jo.hiringEntityId) || hiringEntityId;
+      const ongoing = ['open', 'active', 'in_progress', 'filled'].includes(trim(jo.status).toLowerCase());
+      const shiftsSnap = await db.collection(`tenants/${tenantId}/${joColl}/${jobOrderId}/shifts`).get();
+      let anchorShiftId = '';
+      for (const d of shiftsSnap.docs) {
+        if (trim(d.data().shiftType) === 'open') {
+          anchorShiftId = d.id;
+          break;
+        }
+      }
+      if (!anchorShiftId && shiftsSnap.docs.length > 0) anchorShiftId = shiftsSnap.docs[0].id;
+      const assignmentPrefix = anchorShiftId || `jo_${jobOrderId}`;
+      const matrix = joEntityId ? await loadWcMatrixForEntity(tenantId, joEntityId) : null;
+
+      for (const w of workersIn.slice(0, 500)) {
+        const userId = trim(w.userId);
+        const dates = Array.isArray(w.dates)
+          ? (w.dates as unknown[]).map((d) => trim(d)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort()
+          : [];
+        if (!userId || dates.length === 0) continue;
+        const payRate = num(w.payRate);
+        const title = trim(w.title) || trim(jo.jobTitle) || '';
+        const state = trim(w.state).toUpperCase();
+        let wc: { code: string; rate: number } | null = null;
+        if (matrix && state) {
+          wc =
+            (title ? matrix.byStateTitle.get(`${state}_${title.toLowerCase()}`) : undefined) ??
+            matrix.byStateDefault.get(state) ??
+            null;
+        }
+        const assignmentId = `${assignmentPrefix}__${userId}`;
+        const aRef = db.doc(`tenants/${tenantId}/assignments/${assignmentId}`);
+        const existing = await aRef.get();
+        if (existing.exists) {
+          results.push({ jobOrderId, userId, assignmentId, created: false });
+          continue;
+        }
+        const uSnap = await db.doc(`users/${userId}`).get();
+        const u = (uSnap.data() ?? {}) as Record<string, unknown>;
+        await aRef.set({
+          tenantId,
+          jobOrderId,
+          shiftId: anchorShiftId || null,
+          candidateId: userId,
+          userId,
+          status: ongoing ? 'active' : 'ended',
+          startDate: dates[0],
+          endDate: ongoing ? '' : dates[dates.length - 1],
+          startTime: '',
+          endTime: '',
+          payRate,
+          billRate: num(jo.billRate) || 0,
+          timesheetMode: trim(jo.timesheetMode) || 'import',
+          firstName: trim(u.firstName),
+          lastName: trim(u.lastName),
+          email: trim(u.email),
+          phone: trim(u.phone) || trim(u.phoneE164),
+          companyId: trim(jo.companyId) || '',
+          companyName: trim(jo.companyName) || accountName || '',
+          accountId: accountId || null,
+          accountName: accountName || null,
+          hiringEntityId: joEntityId || null,
+          worksiteName: trim(jo.worksiteName) || '',
+          jobOrderType: trim(jo.jobType) || 'gig',
+          jobTitle: title,
+          assignmentSource: 'import_backfill',
+          placementMode: 'retro_backfill',
+          retroactive: true,
+          notificationsSuppressed: true,
+          suppressInitialNotification: true,
+          ...(wc ? { workersCompCode: wc.code, workersCompRate: wc.rate, workersCompSource: 'import_backfill' } : {}),
+          createdBy: uid,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        results.push({ jobOrderId, userId, assignmentId, created: true });
+      }
+    }
+    return {
+      created: results.filter((r) => r.created).length,
+      reused: results.filter((r) => !r.created).length,
+      results,
+    };
+  },
+);
