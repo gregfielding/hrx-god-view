@@ -258,6 +258,18 @@ const PayrollCostsPage: React.FC = () => {
 
   const ensureJoOptions = useCallback(async () => {
     if (joOptions || !tenantId) return;
+    // Account names for the option labels (Greg 2026-08-05: "#id — name —
+    // company — worksite") — one bulk read, id → name in memory.
+    const accountName = new Map<string, string>();
+    try {
+      const acctSnap = await getDocs(collection(db, 'tenants', tenantId, 'accounts'));
+      acctSnap.docs.forEach((d) => {
+        const n = String(d.data().name ?? d.data().accountName ?? '').trim();
+        if (n) accountName.set(d.id, n);
+      });
+    } catch {
+      // Accounts unreadable — labels just omit the company part.
+    }
     const opts: JoOption[] = [];
     const seen = new Set<string>();
     for (const coll of ['job_orders', 'recruiter_jobOrders']) {
@@ -271,9 +283,19 @@ const PayrollCostsPage: React.FC = () => {
           if (!name) return;
           const numPart = String(v.jobOrderNumber ?? '').trim();
           const sitePart = String(v.worksiteName ?? '').trim();
+          const company =
+            String(v.accountName ?? '').trim() ||
+            accountName.get(String(v.recruiterAccountId ?? '').trim()) ||
+            '';
           opts.push({
             id: d.id,
-            label: `${numPart ? `#${numPart} ` : ''}${name}${sitePart && sitePart !== name ? ` — ${sitePart}` : ''}`,
+            label: [
+              `${numPart ? `#${numPart} ` : ''}${name}`,
+              company && company !== name ? company : null,
+              sitePart && sitePart !== name && sitePart !== company ? sitePart : null,
+            ]
+              .filter(Boolean)
+              .join(' — '),
           });
         });
       } catch {
