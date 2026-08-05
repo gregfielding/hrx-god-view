@@ -38,6 +38,7 @@ import {
 
 import { db } from '../firebase';
 import {
+  buildImportRow,
   resolveTimesheetGrid,
   type ResolvedWorkersComp,
   type TimesheetGridResolution,
@@ -84,6 +85,13 @@ export interface UseTimesheetGridRowsResult {
    * the other entries on the shift") without a full grid reload.
    */
   mergeShiftWc: (shiftId: string, code: string, rate?: number) => void;
+  /**
+   * Swap ONE import row in place after a worker reassign moves its doc
+   * (import doc ids are keyed by worker): drop the old row, fetch the
+   * new doc, and rebuild just that row — no full grid reload. Falls back
+   * silently on fetch errors (the next manual refresh reconciles).
+   */
+  replaceImportEntry: (oldEntryId: string, newEntryId: string) => Promise<void>;
 }
 
 const EMPTY_RESULT: TimesheetGridResolution = {
@@ -215,6 +223,36 @@ export function useTimesheetGridRows(
     [],
   );
 
+  const replaceImportEntry = useCallback(
+    async (oldEntryId: string, newEntryId: string) => {
+      if (!tenantId) return;
+      try {
+        const snap = await getDoc(doc(db, 'tenants', tenantId, 'timesheet_entries', newEntryId));
+        setResolution((prev) => {
+          // Drop the old row (its doc is gone) and any stale row already
+          // keyed to the new id (the reassign may have merged into an
+          // existing row for that worker+day).
+          const rows = prev.rows.filter(
+            (r) =>
+              !(
+                r.kind === 'entry' &&
+                (r.entry.id === oldEntryId ||
+                  r.key === oldEntryId ||
+                  r.entry.id === newEntryId)
+              ),
+          );
+          if (snap.exists()) {
+            rows.push(buildImportRow({ ...(snap.data() as TimesheetEntryV2), id: snap.id }));
+          }
+          return { ...prev, rows };
+        });
+      } catch {
+        // Best-effort — the next user-initiated refresh() reconciles.
+      }
+    },
+    [tenantId],
+  );
+
   return {
     rows: resolution.rows,
     loading,
@@ -225,6 +263,7 @@ export function useTimesheetGridRows(
     mergeEntryUpdate,
     refreshEntry,
     mergeShiftWc,
+    replaceImportEntry,
   };
 }
 

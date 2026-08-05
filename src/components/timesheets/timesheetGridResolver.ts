@@ -388,6 +388,45 @@ function buildAssignmentSnapshot(
 }
 
 /**
+ * Build a full grid row for ONE CSV-import entry — the same shape the
+ * resolver's step-3b import pass produces, with WC resolved from the entry
+ * itself (override → import sidecar; an entry-level value wins the chain
+ * outright). Used for targeted in-place row replacement after a worker
+ * reassign (the doc id moves), so the grid doesn't need a full reload
+ * (Greg 2026-08-05).
+ */
+export function buildImportRow(
+  entry: TimesheetEntryV2,
+): Extract<TimesheetGridRow, { kind: 'entry' }> {
+  const rec = entry as unknown as Record<string, unknown>;
+  const imp = entry.import;
+  const code =
+    (typeof rec.workersCompCode === 'string' && rec.workersCompCode.trim()) ||
+    (typeof imp?.workersCompCode === 'string' && imp.workersCompCode.trim()) ||
+    '';
+  const rate =
+    typeof rec.workersCompRate === 'number' && Number.isFinite(rec.workersCompRate)
+      ? (rec.workersCompRate as number)
+      : typeof imp?.workersCompRate === 'number' && Number.isFinite(imp.workersCompRate)
+        ? imp.workersCompRate
+        : undefined;
+  return {
+    kind: 'entry',
+    key: entry.id,
+    assignment: buildImportSnapshot(entry),
+    workDate: String(entry.workDate).trim() as IsoDate,
+    scheduled: OPEN_SHIFT_SCHEDULED,
+    entry,
+    isImport: true,
+    ...(code ? { resolvedWorkersCompCode: code } : {}),
+    ...(rate !== undefined ? { resolvedWorkersCompRate: rate } : {}),
+    ...(typeof rec.workersCompCode === 'string' && rec.workersCompCode.trim()
+      ? { hasEntryWorkersCompOverride: true }
+      : {}),
+  };
+}
+
+/**
  * Synthesize an AssignmentSnapshot for a CSV-import entry, which usually has
  * no real assignment. Pulls identity + display from the entry's `import`
  * sidecar so the grid's WorkerSiteCell shows the worker (or the CSV name when

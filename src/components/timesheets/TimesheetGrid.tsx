@@ -48,6 +48,7 @@ import {
   MenuItem,
   Paper,
   Select,
+  Snackbar,
   Stack,
   Table,
   TableBody,
@@ -735,11 +736,11 @@ const ImportRow: React.FC<{
   /** Post-save hook: offer to apply the just-saved WC code to other rows at
    *  the same worksite still missing one (apply-to-all, Greg 2026-08-05). */
   onWcSaved: (row: Extract<TimesheetGridRow, { kind: 'entry' }>, fresh: TimesheetEntryV2) => void;
-  /** Post-reassign hook: offer to apply the worker match to other rows with
-   *  the same CSV name, then reload once (doc ids change on reassign). */
+  /** Post-reassign hook: swaps the moved row in place (doc ids change on
+   *  reassign) and offers to apply the match to other same-CSV-name rows. */
   onWorkerReassigned: (
     row: Extract<TimesheetGridRow, { kind: 'entry' }>,
-    newUserId: string | null,
+    info: { newUserId: string | null; oldEntryId?: string; newEntryId?: string },
   ) => void;
 }> = ({
   row,
@@ -1210,11 +1211,17 @@ const ImportRow: React.FC<{
           onClose={() => setPickerOpen(false)}
           onReassigned={(result) => {
             setPickerOpen(false);
-            // Parent offers apply-to-all for same-CSV-name rows, then does
-            // ONE reload at the end (doc ids move on reassign).
+            // Parent swaps the moved row in place and offers apply-to-all
+            // for same-CSV-name rows via a toast — no grid reload.
             onWorkerReassigned(
               row,
-              'newUserId' in result ? (result.newUserId ?? null) : null,
+              'oldEntryId' in result
+                ? {
+                    newUserId: result.newUserId ?? null,
+                    oldEntryId: result.oldEntryId,
+                    newEntryId: result.newEntryId,
+                  }
+                : { newUserId: null },
             );
           }}
           tenantId={tenantId}
@@ -1718,6 +1725,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
     mergeEntryUpdate,
     refreshEntry,
     mergeShiftWc,
+    replaceImportEntry,
   } = useTimesheetGridRows(tenantId, filter);
 
   // External refresh trigger — bump `refreshSignal` from the parent to
@@ -1761,61 +1769,61 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
 
   /* -------------------------------------------------------------------
    * Apply-to-all (Greg 2026-08-05, mirroring the Import CSV tab): after
-   * fixing ONE row, offer the same fix to its sibling rows in view.
+   * fixing ONE row, a Snackbar toast offers the same fix to its sibling
+   * rows in view — same UX as the import tab's bulk-rate toast. All
+   * updates land in place (replaceImportEntry / refreshEntry); the grid
+   * never fully reloads.
    * ------------------------------------------------------------------- */
+  const [applyPrompt, setApplyPrompt] = useState<
+    | null
+    | { kind: 'worker'; label: string; newUserId: string; entryIds: string[] }
+    | { kind: 'wc'; label: string; code: string; workState?: string; entryIds: string[] }
+  >(null);
+  const [applyingAll, setApplyingAll] = useState(false);
 
-  // Worker reassign → other rows with the same CSV name. One reload at the
-  // end (reassign moves doc ids), instead of one per row.
+  // Worker reassign → swap the moved row in place, then offer the match to
+  // other rows with the same CSV name.
   const handleImportWorkerReassigned = useCallback(
-    async (sourceRow: Extract<TimesheetGridRow, { kind: 'entry' }>, newUserId: string | null) => {
+    async (
+      sourceRow: Extract<TimesheetGridRow, { kind: 'entry' }>,
+      info: { newUserId: string | null; oldEntryId?: string; newEntryId?: string },
+    ) => {
+      if (info.oldEntryId && info.newEntryId) {
+        await replaceImportEntry(info.oldEntryId, info.newEntryId);
+      } else {
+        // Older result shape without doc ids — reload as a fallback.
+        refresh();
+      }
       const csvKey = String(sourceRow.entry.import?.csvKey ?? '');
       const csvName =
         String(sourceRow.entry.import?.csvWorkerName ?? '').trim() || 'this worker';
-      if (newUserId && csvKey && tenantId && importHiringEntityId) {
-        const LIVE = new Set(['submitted', 'paid', 'voided']);
-        const sibs = rawRows.filter(
-          (r): r is Extract<TimesheetGridRow, { kind: 'entry' }> =>
-            r.kind === 'entry' &&
-            Boolean(r.isImport) &&
-            r.entry.id !== sourceRow.entry.id &&
-            String(r.entry.import?.csvKey ?? '') === csvKey &&
-            !LIVE.has(String(r.entry.import?.matchStatus ?? '')) &&
-            String(r.entry.workerId ?? '') !== newUserId,
-        );
-        if (
-          sibs.length > 0 &&
-          window.confirm(
-            `Apply this worker match to ${sibs.length} more “${csvName}” row(s) in view?`,
-          )
-        ) {
-          const fn = httpsCallable<
-            { tenantId: string; hiringEntityId: string; entryId: string; newUserId: string },
-            { ok: boolean }
-          >(functions, 'reassignImportEntryWorker', { timeout: 60000 });
-          for (const s of sibs) {
-            try {
-              await fn({
-                tenantId,
-                hiringEntityId: importHiringEntityId,
-                entryId: s.entry.id,
-                newUserId,
-              });
-            } catch (e) {
-              console.error('apply-to-all reassign failed for', s.entry.id, e);
-            }
-          }
-        }
-      }
-      refresh();
+      if (!info.newUserId || !csvKey || !tenantId || !importHiringEntityId) return;
+      const LIVE = new Set(['submitted', 'paid', 'voided']);
+      const sibs = rawRows.filter(
+        (r): r is Extract<TimesheetGridRow, { kind: 'entry' }> =>
+          r.kind === 'entry' &&
+          Boolean(r.isImport) &&
+          r.entry.id !== sourceRow.entry.id &&
+          r.entry.id !== (info.newEntryId ?? '') &&
+          String(r.entry.import?.csvKey ?? '') === csvKey &&
+          !LIVE.has(String(r.entry.import?.matchStatus ?? '')) &&
+          String(r.entry.workerId ?? '') !== info.newUserId,
+      );
+      if (sibs.length === 0) return;
+      setApplyPrompt({
+        kind: 'worker',
+        label: `Apply this match to ${sibs.length} more “${csvName}” row${sibs.length === 1 ? '' : 's'}?`,
+        newUserId: info.newUserId,
+        entryIds: sibs.map((s) => s.entry.id),
+      });
     },
-    [rawRows, tenantId, importHiringEntityId, refresh],
+    [rawRows, tenantId, importHiringEntityId, refresh, replaceImportEntry],
   );
 
-  // WC code → other rows at the same worksite/event still missing a code.
-  // Each sibling resolves its own matrix rate server-side; in-place refresh,
-  // no grid reload.
+  // WC code → offer to other rows at the same worksite/event still missing a
+  // code. Each sibling resolves its own matrix rate server-side.
   const handleImportWcSaved = useCallback(
-    async (sourceRow: Extract<TimesheetGridRow, { kind: 'entry' }>, fresh: TimesheetEntryV2) => {
+    (sourceRow: Extract<TimesheetGridRow, { kind: 'entry' }>, fresh: TimesheetEntryV2) => {
       if (!tenantId) return;
       const freshRec = fresh as unknown as Record<string, unknown>;
       const code =
@@ -1836,33 +1844,67 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
           !r.resolvedWorkersCompCode,
       );
       if (sibs.length === 0) return;
-      if (
-        !window.confirm(
-          `Apply WC code ${code} to ${sibs.length} more “${site}” row(s) missing a code?`,
-        )
-      ) {
-        return;
-      }
       const workState =
         typeof freshRec.workState === 'string' && freshRec.workState.trim()
           ? freshRec.workState.trim()
           : undefined;
-      for (const s of sibs) {
-        try {
-          await callSetEntryWorkersComp(functions, {
-            tenantId,
-            entryId: s.entry.id,
-            workersCompCode: code,
-            ...(workState ? { workState } : {}),
-          });
-          await refreshEntry(s.entry.id);
-        } catch (e) {
-          console.error('apply-to-all WC failed for', s.entry.id, e);
+      setApplyPrompt({
+        kind: 'wc',
+        label: `Apply WC ${code} to ${sibs.length} more “${site}” row${sibs.length === 1 ? '' : 's'} missing a code?`,
+        code,
+        workState,
+        entryIds: sibs.map((s) => s.entry.id),
+      });
+    },
+    [rawRows, tenantId],
+  );
+
+  // Run the toast's "Apply to all" — sequential so each row's server write
+  // lands before its in-place refresh; errors skip the row, never the batch.
+  const runApplyPrompt = useCallback(async () => {
+    const p = applyPrompt;
+    if (!p || !tenantId) return;
+    setApplyingAll(true);
+    try {
+      if (p.kind === 'worker') {
+        if (!importHiringEntityId) return;
+        const fn = httpsCallable<
+          { tenantId: string; hiringEntityId: string; entryId: string; newUserId: string },
+          { ok: boolean; oldEntryId?: string; newEntryId?: string }
+        >(functions, 'reassignImportEntryWorker', { timeout: 60000 });
+        for (const entryId of p.entryIds) {
+          try {
+            const res = await fn({
+              tenantId,
+              hiringEntityId: importHiringEntityId,
+              entryId,
+              newUserId: p.newUserId,
+            });
+            await replaceImportEntry(res.data.oldEntryId ?? entryId, res.data.newEntryId ?? entryId);
+          } catch (e) {
+            console.error('apply-to-all reassign failed for', entryId, e);
+          }
+        }
+      } else {
+        for (const entryId of p.entryIds) {
+          try {
+            await callSetEntryWorkersComp(functions, {
+              tenantId,
+              entryId,
+              workersCompCode: p.code,
+              ...(p.workState ? { workState: p.workState } : {}),
+            });
+            await refreshEntry(entryId);
+          } catch (e) {
+            console.error('apply-to-all WC failed for', entryId, e);
+          }
         }
       }
-    },
-    [rawRows, tenantId, refreshEntry],
-  );
+    } finally {
+      setApplyingAll(false);
+      setApplyPrompt(null);
+    }
+  }, [applyPrompt, tenantId, importHiringEntityId, replaceImportEntry, refreshEntry]);
 
   // Sortable columns. Default mirrors the resolver's worker-name ordering.
   type GridSortKey = 'worker' | 'notes';
@@ -2534,6 +2576,39 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
             </TableContainer>
           </Paper>
         )}
+
+        {/* Apply-to-all toast — same UX as the Import CSV tab's bulk-rate
+            Snackbar. Stays open while the batch applies (in place, row by
+            row); Dismiss just closes it. */}
+        <Snackbar
+          open={!!applyPrompt}
+          autoHideDuration={applyingAll ? null : 12000}
+          onClose={() => !applyingAll && setApplyPrompt(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          message={applyingAll ? `Applying to ${applyPrompt?.entryIds.length ?? 0} rows…` : applyPrompt?.label ?? ''}
+          action={
+            <>
+              <Button
+                color="primary"
+                size="small"
+                onClick={runApplyPrompt}
+                disabled={applyingAll}
+                sx={{ textTransform: 'none' }}
+              >
+                {applyingAll ? 'Applying…' : 'Apply to all'}
+              </Button>
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => setApplyPrompt(null)}
+                disabled={applyingAll}
+                sx={{ textTransform: 'none' }}
+              >
+                Dismiss
+              </Button>
+            </>
+          }
+        />
       </Stack>
     </TimesheetEditorProvider>
   );
