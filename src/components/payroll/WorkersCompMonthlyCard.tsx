@@ -20,6 +20,13 @@ import {
   Button,
   Card,
   CardContent,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  List,
+  ListItemButton,
+  ListItemText,
   MenuItem,
   Stack,
   Table,
@@ -103,6 +110,15 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
   /** Per-unresolved-group draft code/rate inputs, keyed `state|title`. */
   const [drafts, setDrafts] = useState<Record<string, { code: string; rate: string; custom?: boolean }>>({});
   const [assigning, setAssigning] = useState<string | null>(null);
+  /** Code-picker popup for a resolved row (timesheets-style, Greg 2026-08-05). */
+  const [codeDialog, setCodeDialog] = useState<{
+    state: string;
+    currentCode: string;
+    pickedCode: string;
+    customCode: string;
+    rate: string;
+    saving: boolean;
+  } | null>(null);
 
   // A report for one entity must never sit under another entity's selection —
   // same stale-table footgun as the cost report (Oakland Arena, 2026-08-05).
@@ -161,6 +177,34 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
       setError(e?.message || 'Failed to save code/rate');
     } finally {
       setAssigning(null);
+    }
+  };
+
+  /** Save from the code-picker popup: same code = rate fix; new code = reclassify. */
+  const saveCodeDialog = async (): Promise<void> => {
+    if (!codeDialog || !tenantId) return;
+    const code = (codeDialog.pickedCode === '__custom' ? codeDialog.customCode : codeDialog.pickedCode).trim();
+    const rate = Number(codeDialog.rate);
+    if (!code || !(rate >= 0) || codeDialog.rate === '') return;
+    setCodeDialog((p) => (p ? { ...p, saving: true } : p));
+    setError(null);
+    try {
+      const call = httpsCallable(functions, 'upsertWorkersCompRate');
+      await call({
+        tenantId,
+        hiringEntityId: entityId,
+        state: codeDialog.state,
+        code,
+        rate,
+        jobTitles: [],
+        propagateMonth: report?.month ?? month,
+        ...(code !== codeDialog.currentCode ? { reclassifyFromCode: codeDialog.currentCode } : {}),
+      });
+      setCodeDialog(null);
+      await generate();
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save code/rate');
+      setCodeDialog((p) => (p ? { ...p, saving: false } : p));
     }
   };
 
@@ -270,44 +314,40 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {report.rows.map((r) => {
-                    const rateKey = `rate|${r.state}_${r.code}`;
-                    const rateDraft = drafts[rateKey] ?? { code: r.code, rate: '' };
-                    return (
-                      <TableRow key={`${r.state}_${r.code}`}>
-                        <TableCell>{r.state}</TableCell>
-                        <TableCell>{r.code}</TableCell>
-                        <TableCell align="right">
-                          {r.rate ?? (
-                            <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                              <TextField
-                                size="small"
-                                placeholder="rate"
-                                sx={{ width: 80 }}
-                                value={rateDraft.rate}
-                                onChange={(e) =>
-                                  setDrafts((p) => ({ ...p, [rateKey]: { code: r.code, rate: e.target.value } }))
-                                }
-                              />
-                              <Button
-                                size="small"
-                                disabled={assigning === rateKey || !(Number(rateDraft.rate) >= 0) || rateDraft.rate === ''}
-                                onClick={() =>
-                                  void assign({ state: r.state, jobTitle: '(no title)', gross: 0, entries: 0, workers: 0 }, rateKey, r.code)
-                                }
-                              >
-                                {assigning === rateKey ? '…' : 'Set'}
-                              </Button>
-                            </Stack>
-                          )}
-                        </TableCell>
-                        <TableCell align="right">{r.hours.toFixed(2)}</TableCell>
-                        <TableCell align="right">{usd(r.gross)}</TableCell>
-                        <TableCell align="right">{r.premium != null ? usd(r.premium) : '—'}</TableCell>
-                        <TableCell align="right">{r.workers}</TableCell>
-                      </TableRow>
-                    );
-                  })}
+                  {report.rows.map((r) => (
+                    <TableRow key={`${r.state}_${r.code}`}>
+                      <TableCell>{r.state}</TableCell>
+                      <TableCell>
+                        {/* Code-first editing (timesheets pattern): click the
+                            code → popup of the state's available codes; the
+                            rate follows the matrix. Changing a code
+                            reclassifies the underlying entries/assignments. */}
+                        <Button
+                          size="small"
+                          variant="text"
+                          sx={{ minWidth: 0, p: 0.25, textDecoration: 'underline', fontWeight: r.rate == null ? 700 : 400 }}
+                          color={r.rate == null ? 'warning' : 'primary'}
+                          onClick={() =>
+                            setCodeDialog({
+                              state: r.state,
+                              currentCode: r.code,
+                              pickedCode: r.code,
+                              customCode: '',
+                              rate: r.rate != null ? String(r.rate) : '',
+                              saving: false,
+                            })
+                          }
+                        >
+                          {r.code}
+                        </Button>
+                      </TableCell>
+                      <TableCell align="right">{r.rate ?? '—'}</TableCell>
+                      <TableCell align="right">{r.hours.toFixed(2)}</TableCell>
+                      <TableCell align="right">{usd(r.gross)}</TableCell>
+                      <TableCell align="right">{r.premium != null ? usd(r.premium) : '—'}</TableCell>
+                      <TableCell align="right">{r.workers}</TableCell>
+                    </TableRow>
+                  ))}
                   <TableRow>
                     <TableCell colSpan={4} sx={{ fontWeight: 700 }}>
                       Total
@@ -460,6 +500,81 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
           </Box>
         )}
       </CardContent>
+
+      {/* Code picker popup — the state's available codes with rates, the
+          8040 placeholder always offered, plus free entry. Picking loads the
+          matrix rate; saving a DIFFERENT code reclassifies this row's
+          entries + assignments and relearns their titles. */}
+      <Dialog open={codeDialog !== null} onClose={() => !codeDialog?.saving && setCodeDialog(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>
+          {codeDialog?.state} — class code
+        </DialogTitle>
+        <DialogContent>
+          <List dense>
+            {(report?.stateCodeOptions?.[codeDialog?.state ?? ''] ?? []).map((o) => (
+              <ListItemButton
+                key={o.code}
+                selected={codeDialog?.pickedCode === o.code}
+                onClick={() =>
+                  setCodeDialog((p) => (p ? { ...p, pickedCode: o.code, rate: String(o.rate) } : p))
+                }
+              >
+                <ListItemText
+                  primary={`${o.code}${o.title ? ` — ${o.title}` : ''}`}
+                  secondary={`rate ${o.rate}`}
+                />
+              </ListItemButton>
+            ))}
+            <ListItemButton
+              selected={codeDialog?.pickedCode === '__custom'}
+              onClick={() => setCodeDialog((p) => (p ? { ...p, pickedCode: '__custom', rate: '' } : p))}
+            >
+              <ListItemText primary="Other code…" />
+            </ListItemButton>
+          </List>
+          <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+            {codeDialog?.pickedCode === '__custom' && (
+              <TextField
+                size="small"
+                label="Code"
+                value={codeDialog.customCode}
+                onChange={(e) => setCodeDialog((p) => (p ? { ...p, customCode: e.target.value } : p))}
+              />
+            )}
+            <TextField
+              size="small"
+              label="Rate"
+              value={codeDialog?.rate ?? ''}
+              onChange={(e) => setCodeDialog((p) => (p ? { ...p, rate: e.target.value } : p))}
+            />
+          </Stack>
+          {codeDialog && codeDialog.pickedCode !== '__custom' && codeDialog.pickedCode !== codeDialog.currentCode && (
+            <Alert severity="info" sx={{ mt: 1 }}>
+              Saving moves this row&apos;s workers from {codeDialog.currentCode} to{' '}
+              {codeDialog.pickedCode} — assignments and this month&apos;s entries are updated, and
+              future work classifies to the new code.
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCodeDialog(null)} disabled={codeDialog?.saving}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={
+              !codeDialog ||
+              codeDialog.saving ||
+              codeDialog.rate === '' ||
+              !(Number(codeDialog.rate) >= 0) ||
+              (codeDialog.pickedCode === '__custom' && !codeDialog.customCode.trim())
+            }
+            onClick={() => void saveCodeDialog()}
+          >
+            {codeDialog?.saving ? 'Saving…' : 'Save'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Card>
   );
 };

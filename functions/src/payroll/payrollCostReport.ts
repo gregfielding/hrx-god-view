@@ -907,17 +907,30 @@ export const getWorkersCompMonthlyReport = onCall(
       const code = trim(d.data().code);
       if (code && !catalogTitle.has(code)) catalogTitle.set(code, trim(d.data().title));
     });
-    const unresolvedStates = new Set(unresolved.map((u) => u.state).filter((s) => s !== '(no state)'));
+    // Every state in the report gets options — resolved rows are re-codeable
+    // (click the code → pick the right one; rate follows the matrix), not
+    // just the unresolved groups.
+    const reportStates = new Set([
+      ...unresolved.map((u) => u.state),
+      ...rows.map((r) => r.state),
+    ]);
+    reportStates.delete('(no state)');
     const stateCodeOptions: Record<string, Array<{ code: string; rate: number; title: string | null }>> = {};
     for (const [key, rate] of matrix.rateByStateCode) {
       const sep = key.indexOf('_');
       const st = key.slice(0, sep);
       const code = key.slice(sep + 1);
-      if (!unresolvedStates.has(st)) continue;
+      if (!reportStates.has(st)) continue;
       if (!stateCodeOptions[st]) stateCodeOptions[st] = [];
       stateCodeOptions[st].push({ code, rate, title: catalogTitle.get(code) ?? null });
     }
-    for (const st of Object.keys(stateCodeOptions)) {
+    // The 8040 placeholder (tenant convention, 2.35) is always offerable even
+    // in a state whose matrix lacks the row yet.
+    for (const st of reportStates) {
+      if (!stateCodeOptions[st]) stateCodeOptions[st] = [];
+      if (!stateCodeOptions[st].some((o) => o.code === '8040')) {
+        stateCodeOptions[st].push({ code: '8040', rate: 2.35, title: 'Placeholder' });
+      }
       stateCodeOptions[st].sort((a, b) => a.code.localeCompare(b.code));
     }
 
@@ -993,11 +1006,19 @@ export const upsertWorkersCompRate = onCall(
     // fallback. FUTURE assignments self-classify via the matrix row written
     // above (the assignment-creation denorm resolver looks up state+title).
     // With `propagateMonth`, that month's uncoded entries get stamped too.
+    //
+    // `reclassifyFromCode` (Greg 2026-08-05, code-first editing): move the
+    // state's assignments/entries OFF a wrong or unrated code onto this one
+    // (e.g. NC 9014 → NC 8044, matching how the carrier actually bills), and
+    // relearn the moved assignments' job titles onto the new matrix row so
+    // future work classifies to the corrected code.
     const propagateMonth = trim(request.data?.propagateMonth); // YYYY-MM, optional
+    const reclassifyFromCode = trim(request.data?.reclassifyFromCode); // optional old code
     const realTitles = jobTitles.filter((t) => t !== '*').map((t) => t.toLowerCase());
     let assignmentsStamped = 0;
     let entriesStamped = 0;
     const stampedAssignmentIds = new Set<string>();
+    const movedTitles = new Set<string>();
     const asnSnap = await db
       .collection(`tenants/${tenantId}/assignments`)
       .where('worksiteState', '==', state)
@@ -1013,25 +1034,39 @@ export const upsertWorkersCompRate = onCall(
     };
     for (const d of asnSnap.docs) {
       const a = d.data();
-      if (trim(a.workersCompCode)) continue;
       if (hiringEntityId && trim(a.hiringEntityId) && trim(a.hiringEntityId) !== hiringEntityId) continue;
+      const currentCode = trim(a.workersCompCode);
       const title = trim(a.jobTitle).toLowerCase();
-      // Real-title assigns stamp matching titles; a state-default ('*')
-      // assign stamps only title-less assignments — titled ones should get
-      // their own explicit code.
-      const titleMatches = realTitles.length > 0 ? realTitles.includes(title) : !title;
-      if (!titleMatches) continue;
+      let matches: boolean;
+      if (reclassifyFromCode) {
+        matches = currentCode === reclassifyFromCode;
+      } else {
+        if (currentCode) continue;
+        // Real-title assigns stamp matching titles; a state-default ('*')
+        // assign stamps only title-less assignments — titled ones should get
+        // their own explicit code.
+        matches = realTitles.length > 0 ? realTitles.includes(title) : !title;
+      }
+      if (!matches) continue;
       batch.update(d.ref, {
         workersCompCode: code,
         workersCompRate: rate,
         workersCompSource: 'wc_report_assign',
       });
       stampedAssignmentIds.add(d.id);
+      if (title) movedTitles.add(trim(a.jobTitle));
       assignmentsStamped += 1;
       batchN += 1;
       if (batchN >= 400) await flush();
     }
     await flush();
+
+    // Relearn moved titles onto the new code's matrix row (entity-scoped rows
+    // apply after generic, so these mappings win for this entity).
+    if (reclassifyFromCode && movedTitles.size > 0) {
+      const learned = Array.from(new Set([...mergedTitles, ...movedTitles])).filter(Boolean);
+      await ref.set({ jobTitles: learned }, { merge: true });
+    }
 
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(propagateMonth)) {
       const pStart = `${propagateMonth}-01`;
@@ -1055,9 +1090,14 @@ export const upsertWorkersCompRate = onCall(
           trim(sidecarAddr?.state).toUpperCase();
         if (eState !== state) continue;
         const asnId = trim(e.assignmentId);
-        // Real-title assigns stamp entries of the assignments stamped above;
-        // state-default assigns stamp assignment-less entries.
-        const matches = realTitles.length > 0 ? stampedAssignmentIds.has(asnId) : !asnId || stampedAssignmentIds.has(asnId);
+        // Reclassify moves entries carrying the old code; plain assigns stamp
+        // uncoded entries (real-title: via the stamped assignments;
+        // state-default: assignment-less ones too).
+        const matches = reclassifyFromCode
+          ? trim(e.workersCompCode) === reclassifyFromCode || stampedAssignmentIds.has(asnId)
+          : realTitles.length > 0
+            ? stampedAssignmentIds.has(asnId)
+            : !asnId || stampedAssignmentIds.has(asnId);
         if (!matches) continue;
         batch.update(d.ref, {
           workersCompCode: code,
