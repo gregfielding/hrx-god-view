@@ -29,12 +29,14 @@ import {
   Paper,
   Select,
   Stack,
+  Tab,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
+  Tabs,
   TextField,
   Typography,
 } from '@mui/material';
@@ -140,6 +142,8 @@ const PayrollCostsPage: React.FC = () => {
   const { tenantId } = useAuth();
   const [entities, setEntities] = useState<Array<{ id: string; name: string }>>([]);
   const [entityId, setEntityId] = useState('');
+  /** 0 = Payroll Report, 1 = Workers' Comp Report (Greg 2026-08-05: two tools, two tabs). */
+  const [tab, setTab] = useState(0);
   const [startDate, setStartDate] = useState(monthStartIso());
   const [endDate, setEndDate] = useState(todayIso());
   const [loading, setLoading] = useState(false);
@@ -389,20 +393,34 @@ const PayrollCostsPage: React.FC = () => {
         }
       />
 
+      {/* Shared entity picker + the two report tabs. Each tab owns its own
+          date control (range vs month) — the side-by-side duplicate date
+          fields read as one confusing form (Greg 2026-08-05). */}
+      <Card sx={{ mb: 2 }}>
+        <CardContent sx={{ pb: 0 }}>
+          <FormControl size="small" sx={{ minWidth: 220 }}>
+            <InputLabel>Hiring entity</InputLabel>
+            <Select value={entityId} label="Hiring entity" onChange={(e) => setEntityId(e.target.value)}>
+              <MenuItem value="">All entities</MenuItem>
+              {entities.map((e) => (
+                <MenuItem key={e.id} value={e.id}>
+                  {e.name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Tabs value={tab} onChange={(_e, v) => setTab(v)} sx={{ mt: 1 }}>
+            <Tab label="Payroll Report" />
+            <Tab label="Workers' Comp Report" />
+          </Tabs>
+        </CardContent>
+      </Card>
+
+      {tab === 0 && (
+        <>
       <Card sx={{ mb: 2 }}>
         <CardContent>
           <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
-            <FormControl size="small" sx={{ minWidth: 180 }}>
-              <InputLabel>Hiring entity</InputLabel>
-              <Select value={entityId} label="Hiring entity" onChange={(e) => setEntityId(e.target.value)}>
-                <MenuItem value="">All entities</MenuItem>
-                {entities.map((e) => (
-                  <MenuItem key={e.id} value={e.id}>
-                    {e.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
             <TextField
               size="small"
               type="date"
@@ -440,12 +458,6 @@ const PayrollCostsPage: React.FC = () => {
           </Typography>
         </CardContent>
       </Card>
-
-      <WorkersCompMonthlyCard
-        tenantId={tenantId}
-        entityId={entityId}
-        entityName={entities.find((e) => e.id === entityId)?.name ?? null}
-      />
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
@@ -650,6 +662,16 @@ const PayrollCostsPage: React.FC = () => {
             </Card>
           )}
         </>
+      )}
+        </>
+      )}
+
+      {tab === 1 && (
+        <WorkersCompMonthlyCard
+          tenantId={tenantId}
+          entityId={entityId}
+          entityName={entities.find((e) => e.id === entityId)?.name ?? null}
+        />
       )}
 
       <Dialog open={ocOpen} onClose={() => !ocSaving && setOcOpen(false)} maxWidth="sm" fullWidth>
