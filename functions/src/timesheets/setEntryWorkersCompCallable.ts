@@ -40,7 +40,10 @@ async function resolveMatrixRate(
   state: string | null,
   code: string,
 ): Promise<number | null> {
-  if (!state || !code) return null;
+  if (!code) return null;
+  // No resolvable state: 8040 still gets its synthetic placeholder rate so
+  // the row can price and become Ready; real codes need a state.
+  if (!state) return code === '8040' ? PLACEHOLDER_8040_RATE : null;
   const snap = await db
     .collection(`tenants/${tenantId}/workers_comp_rates`)
     .where('state', '==', state)
