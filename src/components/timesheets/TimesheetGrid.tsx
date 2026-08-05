@@ -102,7 +102,7 @@ import TimeCell from './cells/TimeCell';
 import EditWorkersCompDialog from './EditWorkersCompDialog';
 import { callSetEntryWorkersComp } from '../../services/setEntryWorkersCompCallable';
 import ImportRowWorkerPicker from './ImportRowWorkerPicker';
-import ImportRowWorksitePicker from './ImportRowWorksitePicker';
+import FixAssignmentDialog from './FixAssignmentDialog';
 import ImportGridSubmitBar from './ImportGridSubmitBar';
 import ImportRecheckBar from './ImportRecheckBar';
 import TimesheetTotalsHeader from './TimesheetTotalsHeader';
@@ -742,6 +742,10 @@ const ImportRow: React.FC<{
     row: Extract<TimesheetGridRow, { kind: 'entry' }>,
     info: { newUserId: string | null; oldEntryId?: string; newEntryId?: string },
   ) => void;
+  /** Open the fix-assignment card (worker → job order → worksite/position/
+   *  pay/WC flow from it; creates a REAL assignment covering the worker's
+   *  rows). Replaces the old point-fix worksite picker (Greg 2026-08-05). */
+  onOpenFixAssignment: (row: Extract<TimesheetGridRow, { kind: 'entry' }>) => void;
 }> = ({
   row,
   status,
@@ -754,6 +758,7 @@ const ImportRow: React.FC<{
   onDeleted,
   onWcSaved,
   onWorkerReassigned,
+  onOpenFixAssignment,
 }) => {
   const imp = row.entry.import;
   const payRate = typeof row.entry.payRate === 'number' ? row.entry.payRate : 0;
@@ -778,7 +783,6 @@ const ImportRow: React.FC<{
   const deletable = !!tenantId && !live;
   const [wcDialogOpen, setWcDialogOpen] = React.useState(false);
   const [pickerOpen, setPickerOpen] = React.useState(false);
-  const [worksitePickerOpen, setWorksitePickerOpen] = React.useState(false);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
 
@@ -996,8 +1000,8 @@ const ImportRow: React.FC<{
         }
         worksiteAction={
           worksiteEditable ? (
-            <Tooltip title="Set the worksite (account → location). Everee validates the WC code against the worksite's state.">
-              <IconButton size="small" onClick={() => setWorksitePickerOpen(true)} sx={{ p: 0.25 }}>
+            <Tooltip title="Fix the assignment — link a job order; worksite, position, pay & WC all flow from it and every row for this worker reconnects.">
+              <IconButton size="small" onClick={() => onOpenFixAssignment(row)} sx={{ p: 0.25 }}>
                 <EditIcon sx={{ fontSize: 13 }} />
               </IconButton>
             </Tooltip>
@@ -1229,19 +1233,6 @@ const ImportRow: React.FC<{
           entryId={row.entry.id}
           csvWorkerName={imp?.csvWorkerName ?? null}
           currentWorkerName={row.assignment.workerDisplayName ?? null}
-        />
-      )}
-      {tenantId && (
-        <ImportRowWorksitePicker
-          open={worksitePickerOpen}
-          onClose={() => setWorksitePickerOpen(false)}
-          onSaved={() => {
-            setWorksitePickerOpen(false);
-            refreshEntry(row.entry.id);
-          }}
-          tenantId={tenantId}
-          entryId={row.entry.id}
-          currentWorksiteName={row.assignment.worksiteDisplayName ?? imp?.csvSite ?? null}
         />
       )}
       <Dialog open={deleteOpen} onClose={() => !deleting && setDeleteOpen(false)} maxWidth="xs" fullWidth>
@@ -1858,6 +1849,32 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
     },
     [rawRows, tenantId],
   );
+
+  /* -------------------------------------------------------------------
+   * Fix-assignment card (assignment-as-truth, Greg 2026-08-05): the
+   * worksite pencil opens a mini assignment card — link a job order and
+   * worksite/position/pay/WC flow from it, materialized as a REAL retro
+   * assignment covering all of the worker's fixable rows in view.
+   * ------------------------------------------------------------------- */
+  const [fixTarget, setFixTarget] = useState<Extract<TimesheetGridRow, { kind: 'entry' }> | null>(
+    null,
+  );
+  const fixRows = useMemo(() => {
+    if (!fixTarget) return [] as Array<{ entryId: string; workDate: string }>;
+    const LIVE = new Set(['submitted', 'paid', 'voided']);
+    const workerId = String(fixTarget.entry.workerId ?? '');
+    const csvKey = String(fixTarget.entry.import?.csvKey ?? '');
+    return rawRows
+      .filter(
+        (r): r is Extract<TimesheetGridRow, { kind: 'entry' }> =>
+          r.kind === 'entry' &&
+          Boolean(r.isImport) &&
+          !LIVE.has(String(r.entry.import?.matchStatus ?? '')) &&
+          ((workerId && String(r.entry.workerId ?? '') === workerId) ||
+            (Boolean(csvKey) && String(r.entry.import?.csvKey ?? '') === csvKey)),
+      )
+      .map((r) => ({ entryId: r.entry.id, workDate: r.workDate }));
+  }, [fixTarget, rawRows]);
 
   // Run the toast's "Apply to all" — sequential so each row's server write
   // lands before its in-place refresh; errors skip the row, never the batch.
@@ -2531,6 +2548,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                           onDeleted={handleRowDeleted}
                           onWcSaved={handleImportWcSaved}
                           onWorkerReassigned={handleImportWorkerReassigned}
+                          onOpenFixAssignment={setFixTarget}
                         />
                       );
                     }
@@ -2575,6 +2593,43 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
               </Table>
             </TableContainer>
           </Paper>
+        )}
+
+        {tenantId && importHiringEntityId && fixTarget && (
+          <FixAssignmentDialog
+            open
+            onClose={() => setFixTarget(null)}
+            tenantId={tenantId}
+            hiringEntityId={importHiringEntityId}
+            userId={String(fixTarget.entry.workerId ?? '')}
+            workerName={
+              fixTarget.assignment.workerDisplayName ??
+              fixTarget.entry.import?.csvWorkerName ??
+              'worker'
+            }
+            defaultTitle={
+              String(
+                (fixTarget.entry.import as unknown as Record<string, unknown> | undefined)
+                  ?.csvRole ?? '',
+              ) || undefined
+            }
+            defaultPayRate={
+              typeof fixTarget.entry.payRate === 'number' && fixTarget.entry.payRate > 0
+                ? fixTarget.entry.payRate
+                : undefined
+            }
+            rows={fixRows}
+            onFixed={(ids) => {
+              setFixTarget(null);
+              // Rebuild each fixed row in place (worksite label, JO link,
+              // rate, WC, status all changed) — no grid reload.
+              void (async () => {
+                for (const id of ids) {
+                  await replaceImportEntry(id, id);
+                }
+              })();
+            }}
+          />
         )}
 
         {/* Apply-to-all toast — same UX as the Import CSV tab's bulk-rate

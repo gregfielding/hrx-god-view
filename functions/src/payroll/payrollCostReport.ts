@@ -1484,6 +1484,13 @@ export const createImportAssignments = onCall(
       if (!anchorShiftId && shiftsSnap.docs.length > 0) anchorShiftId = shiftsSnap.docs[0].id;
       const assignmentPrefix = anchorShiftId || `jo_${jobOrderId}`;
       const matrix = joEntityId ? await loadWcMatrixForEntity(tenantId, joEntityId) : null;
+      // Worksite flows from the JO — the whole point of the fix-assignment
+      // card is "link the job order, everything else derives" (Greg 2026-08-05).
+      const joWorksiteAddress =
+        jo.worksiteAddress && typeof jo.worksiteAddress === 'object'
+          ? (jo.worksiteAddress as Record<string, unknown>)
+          : null;
+      const joState = trim(joWorksiteAddress?.state).toUpperCase();
 
       for (const w of workersIn.slice(0, 500)) {
         const userId = trim(w.userId);
@@ -1493,9 +1500,18 @@ export const createImportAssignments = onCall(
         if (!userId || dates.length === 0) continue;
         const payRate = num(w.payRate);
         const title = trim(w.title) || trim(jo.jobTitle) || '';
-        const state = trim(w.state).toUpperCase();
+        const state = trim(w.state).toUpperCase() || joState;
+        // Explicit WC from the fix-assignment card wins; otherwise resolve
+        // via the matrix chain (state+title → state default). 8040 always
+        // rates at the synthetic $2.35 placeholder when unrated.
+        const wcCodeIn = trim(w.wcCode);
+        const wcRateIn = num(w.wcRate);
         let wc: { code: string; rate: number } | null = null;
-        if (matrix && state) {
+        if (wcCodeIn) {
+          const matrixRate = state ? matrix?.rateByStateCode.get(`${state}_${wcCodeIn}`) : undefined;
+          const rate = wcRateIn > 0 ? wcRateIn : matrixRate ?? (wcCodeIn === '8040' ? 2.35 : 0);
+          wc = { code: wcCodeIn, rate };
+        } else if (matrix && state) {
           wc =
             (title ? matrix.byStateTitle.get(`${state}_${title.toLowerCase()}`) : undefined) ??
             matrix.byStateDefault.get(state) ??
@@ -1534,6 +1550,8 @@ export const createImportAssignments = onCall(
           accountName: accountName || null,
           hiringEntityId: joEntityId || null,
           worksiteName: trim(jo.worksiteName) || '',
+          ...(joWorksiteAddress ? { worksiteAddress: joWorksiteAddress } : {}),
+          ...(state ? { worksiteState: state } : {}),
           jobOrderType: trim(jo.jobType) || 'gig',
           jobTitle: title,
           assignmentSource: 'import_backfill',
@@ -1541,7 +1559,13 @@ export const createImportAssignments = onCall(
           retroactive: true,
           notificationsSuppressed: true,
           suppressInitialNotification: true,
-          ...(wc ? { workersCompCode: wc.code, workersCompRate: wc.rate, workersCompSource: 'import_backfill' } : {}),
+          ...(wc
+            ? {
+                workersCompCode: wc.code,
+                ...(wc.rate > 0 ? { workersCompRate: wc.rate } : {}),
+                workersCompSource: 'import_backfill',
+              }
+            : {}),
           createdBy: uid,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
