@@ -370,12 +370,24 @@ export const createOffCyclePayment = onCall(
           timestamp,
           amount: { amount: grossAmount.toFixed(2), currency: 'USD' },
           payableModel: 'PRE_CALCULATED',
+          // Everee's one-time payments update (help article 2026-07-22) makes
+          // rate + hours REQUIRED on hourly pay codes — flat amounts on
+          // REGULAR_HOURLY are the exact pattern being retired. When the admin
+          // didn't enter hours/rate, send 1 unit at the gross amount so
+          // rate × hours always equals the gross (their validation's happy
+          // path). Non-hourly codes (CONTRACTOR/BONUS/REIMBURSEMENT) are
+          // exempt from the requirement.
           ...(hours > 0 && hourlyRate > 0
             ? {
                 unitRate: { amount: hourlyRate.toFixed(2), currency: 'USD' },
                 unitCount: hours,
               }
-            : {}),
+            : payCodeFor(reason, workerType) === 'REGULAR_HOURLY'
+              ? {
+                  unitRate: { amount: grossAmount.toFixed(2), currency: 'USD' },
+                  unitCount: 1,
+                }
+              : {}),
         });
         results.push({ externalId: r.externalId, paymentStatus: r.paymentStatus });
       }
