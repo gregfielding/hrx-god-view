@@ -169,7 +169,11 @@ function buildExtraPayables(args: {
         externalWorkerId: args.userId,
         label: dayLabel(base, args.eventLabel, args.workDate),
         type: kind.toLowerCase(),
-        payCode: kind,
+        // Reimbursements ship on Everee's native PER_DIEM code (Greg
+        // 2026-08-05 — stubs read "Per Diem"; matches the off-cycle path).
+        // The ::REIMBURSEMENT externalId kind is unchanged so idempotency
+        // and void retraction keep working.
+        payCode: kind === 'REIMBURSEMENT' ? 'PER_DIEM' : kind,
         timestamp: args.timestamp,
         amount: { amount: amount.toFixed(2), currency: 'USD' },
         payableModel: 'PRE_CALCULATED',
