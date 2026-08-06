@@ -69,11 +69,20 @@ export interface FixAssignmentRow {
   workDate: string;
 }
 
+interface WorkerHit {
+  userId: string;
+  displayName: string | null;
+  email: string | null;
+  phone: string | null;
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
   tenantId: string;
   hiringEntityId: string;
+  /** The currently-matched HRX worker ('' when the rows are unmatched — the
+   *  card's worker search on the top row fixes that in the same save). */
   userId: string;
   workerName: string;
   defaultTitle?: string;
@@ -122,8 +131,19 @@ const FixAssignmentDialog: React.FC<Props> = ({
   const [wcRate, setWcRate] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Worker (top row): pre-filled with the current match; searchable so an
+  // unmatched CSV name gets matched IN the card (Greg 2026-08-05 — one
+  // dialog, no separate worker pencil). Changing it reassigns the rows'
+  // docs to the picked worker before the assignment is created.
+  const [pickedWorker, setPickedWorker] = useState<WorkerHit | null>(null);
+  const [wHits, setWHits] = useState<WorkerHit[]>([]);
+  const [wSearching, setWSearching] = useState(false);
+  const wDebounce = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const dates = useMemo(() => rows.map((r) => r.workDate).sort(), [rows]);
+  // Reassigning moves entry DOCS — only possible when every row is saved.
+  const canPickWorker = rows.length > 0 && rows.every((r) => Boolean(r.entryId));
+  const effUserId = pickedWorker?.userId ?? userId;
 
   useEffect(() => {
     if (!open) return;
@@ -131,8 +151,27 @@ const FixAssignmentDialog: React.FC<Props> = ({
     setTitle(defaultTitle ?? '');
     setPayRate(defaultPayRate && defaultPayRate > 0 ? String(defaultPayRate) : '');
     setWcCode('');
+    setPickedWorker(userId ? { userId, displayName: workerName, email: null, phone: null } : null);
+    setWHits([]);
     setError(null);
-  }, [open, defaultTitle, defaultPayRate]);
+  }, [open, defaultTitle, defaultPayRate, userId, workerName]);
+
+  const searchWorkers = (q: string) => {
+    if (wDebounce.current) clearTimeout(wDebounce.current);
+    const query = q.trim();
+    if (query.length < 2) return;
+    wDebounce.current = setTimeout(() => {
+      setWSearching(true);
+      httpsCallable<{ tenantId: string; query: string }, { candidates: WorkerHit[] }>(
+        functions,
+        'searchTimesheetWorkers',
+        { timeout: 30000 },
+      )({ tenantId, query })
+        .then((res) => setWHits(res.data?.candidates ?? []))
+        .catch((e) => console.error('searchTimesheetWorkers failed:', e))
+        .finally(() => setWSearching(false));
+    }, 400);
+  };
 
   // Job orders — same-entity first, labeled like the payroll-costs picker.
   useEffect(() => {
@@ -195,23 +234,48 @@ const FixAssignmentDialog: React.FC<Props> = ({
 
   const rate = Number(payRate);
   const canSave =
-    Boolean(userId) && Boolean(jo) && Number.isFinite(rate) && rate > 0 && rows.length > 0 && !saving;
+    Boolean(effUserId) &&
+    Boolean(jo) &&
+    Number.isFinite(rate) &&
+    rate > 0 &&
+    rows.length > 0 &&
+    !saving;
 
   const handleSave = async (): Promise<void> => {
-    if (!jo) return;
+    if (!jo || !effUserId) return;
     setSaving(true);
     setError(null);
     try {
+      // Worker changed (or newly matched): reassign each saved row's doc to
+      // the picked worker first — the assignment must anchor to them.
+      if (pickedWorker && pickedWorker.userId !== userId) {
+        const reassign = httpsCallable<
+          { tenantId: string; hiringEntityId: string; entryId: string; newUserId: string },
+          { ok: boolean }
+        >(functions, 'reassignImportEntryWorker', { timeout: 60000 });
+        for (const r of rows) {
+          if (!r.entryId) continue;
+          await reassign({
+            tenantId,
+            hiringEntityId,
+            entryId: r.entryId,
+            newUserId: pickedWorker.userId,
+          });
+        }
+      }
+      // Create the assignment AND stamp the worker's saved rows server-side
+      // (one call — no per-row re-resolve round-trips).
       const create = httpsCallable(functions, 'createImportAssignments', { timeout: 120000 });
       await create({
         tenantId,
         hiringEntityId,
+        stampEntries: true,
         groups: [
           {
             jobOrderId: jo.id,
             workers: [
               {
-                userId,
+                userId: effUserId,
                 dates,
                 payRate: rate,
                 title: title.trim(),
@@ -222,23 +286,6 @@ const FixAssignmentDialog: React.FC<Props> = ({
           },
         ],
       });
-      // Pair + stamp every SAVED row; per-row failures don't kill the batch.
-      // In-memory rows (no entryId) are covered by the caller's re-match.
-      const reresolve = httpsCallable<{ tenantId: string; entryId: string }, { connected: boolean }>(
-        functions,
-        'reresolveImportEntry',
-        { timeout: 60000 },
-      );
-      const fixed: string[] = [];
-      for (const r of rows) {
-        if (!r.entryId) continue;
-        try {
-          await reresolve({ tenantId, entryId: r.entryId });
-          fixed.push(r.entryId);
-        } catch (e) {
-          console.error('reresolve failed for', r.entryId, e);
-        }
-      }
       onCreated?.({
         jobOrderId: jo.id,
         joLabel: jo.label,
@@ -248,7 +295,7 @@ const FixAssignmentDialog: React.FC<Props> = ({
         wcCode: wcCode.trim() || undefined,
         wcRate: wcRate ?? undefined,
       });
-      onFixed(fixed);
+      onFixed([]);
       onClose();
     } catch (e: unknown) {
       setError(formatFirebaseHttpsError(e));
@@ -263,17 +310,54 @@ const FixAssignmentDialog: React.FC<Props> = ({
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            Link a job order and this creates a real assignment for {workerName} — worksite,
-            account, and WC flow from it, and all {rows.length} of their imported row
+            Link the worker and a job order — this creates a real assignment for {workerName};
+            worksite, account, and WC flow from it, and all {rows.length} of their imported row
             {rows.length === 1 ? '' : 's'} in view reconnect to it.
           </Typography>
 
-          {!userId && (
-            <Alert severity="warning">
-              These rows aren't linked to an HRX worker yet, so an assignment can't be created.
-              Match {workerName} to an HRX worker first (the pencil next to their name on the
-              row), then reopen this card.
-            </Alert>
+          {canPickWorker ? (
+            <Autocomplete<WorkerHit>
+              options={wHits}
+              loading={wSearching}
+              value={pickedWorker}
+              onChange={(_, v) => setPickedWorker(v)}
+              onInputChange={(_, v, reason) => {
+                if (reason === 'input') searchWorkers(v);
+              }}
+              getOptionLabel={(o) => o.displayName || o.email || o.userId}
+              isOptionEqualToValue={(a, b) => a.userId === b.userId}
+              filterOptions={(o) => o}
+              renderOption={(props, o) => (
+                <li {...props} key={o.userId}>
+                  <Box>
+                    <Typography variant="body2">{o.displayName || '(no name)'}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {[o.email, o.phone].filter(Boolean).join(' · ')}
+                    </Typography>
+                  </Box>
+                </li>
+              )}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Worker"
+                  placeholder={`Search HRX by name, email, or phone${userId ? '' : ` — CSV says “${workerName}”`}`}
+                  autoFocus={!userId}
+                  helperText={
+                    userId
+                      ? undefined
+                      : 'These rows aren’t linked to an HRX worker yet — pick who this is.'
+                  }
+                />
+              )}
+            />
+          ) : (
+            !userId && (
+              <Alert severity="warning">
+                These rows aren't linked to an HRX worker yet — match {workerName} with the
+                worker pencil on the row first, then reopen this card.
+              </Alert>
+            )
           )}
 
           <Autocomplete<JoOption>

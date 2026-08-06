@@ -1431,6 +1431,11 @@ export const createImportAssignments = onCall(
     const tenantId = trim(request.data?.tenantId);
     const hiringEntityId = trim(request.data?.hiringEntityId);
     const groupsIn = Array.isArray(request.data?.groups) ? (request.data.groups as Array<Record<string, unknown>>) : [];
+    // When true, each worker's saved csv_import entries on the covered dates
+    // are stamped with the assignment (id/JO/account/worksite/WC/entity) in
+    // the SAME call — one bulk fix instead of a re-resolve per row (Greg
+    // 2026-08-05, ~200-row Lollapalooza cohorts). Live rows never touched.
+    const stampEntries = request.data?.stampEntries === true;
     if (!tenantId || groupsIn.length === 0) {
       throw new HttpsError('invalid-argument', 'tenantId and groups are required.');
     }
@@ -1448,6 +1453,7 @@ export const createImportAssignments = onCall(
     }
 
     const results: Array<{ jobOrderId: string; userId: string; assignmentId: string; created: boolean }> = [];
+    let stamped = 0;
     for (const groupRaw of groupsIn.slice(0, 20)) {
       const jobOrderId = trim(groupRaw.jobOrderId);
       const workersIn = Array.isArray(groupRaw.workers) ? (groupRaw.workers as Array<Record<string, unknown>>) : [];
@@ -1492,6 +1498,88 @@ export const createImportAssignments = onCall(
           : null;
       const joState = trim(joWorksiteAddress?.state).toUpperCase();
 
+      // 1099-ness drives the lifecycle recompute when stamping entries.
+      let is1099 = false;
+      if (stampEntries && joEntityId) {
+        const entSnap = await db.doc(`tenants/${tenantId}/entities/${joEntityId}`).get();
+        is1099 = trim((entSnap.data() || {}).workerType) === '1099';
+      }
+
+      /** Stamp the worker's saved csv_import entries on the covered dates
+       *  with this assignment — the "apply" half of the fix, done server-side
+       *  so a 200-row event is one call, not 200 re-resolves. Live rows and
+       *  rows already anchored to an assignment are never touched. */
+      const stampWorkerEntries = async (args: {
+        userId: string;
+        dates: string[];
+        assignmentId: string;
+        payRate: number;
+        wc: { code: string; rate: number } | null;
+        state: string;
+      }): Promise<number> => {
+        const snap = await db
+          .collection(`tenants/${tenantId}/timesheet_entries`)
+          .where('workerId', '==', args.userId)
+          .where('source', '==', 'csv_import')
+          .get();
+        const dateSet = new Set(args.dates);
+        const LIVE = new Set(['submitted', 'paid', 'voided']);
+        let n = 0;
+        for (const doc of snap.docs) {
+          const e = doc.data() as Record<string, unknown>;
+          const imp = (e.import as Record<string, unknown>) || {};
+          if (!dateSet.has(trim(e.workDate))) continue;
+          if (LIVE.has(trim(imp.matchStatus)) || ['sent_to_everee', 'paid'].includes(trim(e.status))) continue;
+          if (trim(e.assignmentId)) continue;
+          const entryPay = Number(e.payRate);
+          const effPay = entryPay > 0 ? entryPay : args.payRate;
+          const wcCode =
+            trim(e.workersCompCode) || trim(imp.workersCompCode) || (args.wc ? args.wc.code : '');
+          const entryWcRate = Number(e.workersCompRate);
+          const impWcRate = Number(imp.workersCompRate);
+          const wcRate =
+            entryWcRate > 0
+              ? entryWcRate
+              : impWcRate > 0
+                ? impWcRate
+                : args.wc && args.wc.rate > 0
+                  ? args.wc.rate
+                  : 0;
+          const nextStatus =
+            trim(imp.matchStatus) === 'blocked'
+              ? 'blocked'
+              : !(effPay > 0)
+                ? 'needs_rate'
+                : !is1099 && !(wcCode && wcRate > 0)
+                  ? 'needs_wc'
+                  : 'ready';
+          const prevEntity = trim(e.hiringEntityId);
+          n += 1;
+          // eslint-disable-next-line no-await-in-loop
+          await doc.ref.update({
+            assignmentId: args.assignmentId,
+            jobOrderId,
+            shiftId: anchorShiftId || null,
+            hiringEntityId: joEntityId || prevEntity || null,
+            accountId: accountId || null,
+            accountName: accountName || null,
+            ...(entryPay > 0 ? {} : args.payRate > 0 ? { payRate: args.payRate } : {}),
+            ...(wcCode ? { workersCompCode: wcCode } : {}),
+            ...(wcRate > 0 ? { workersCompRate: wcRate } : {}),
+            ...(trim(e.workState) ? {} : args.state ? { workState: args.state } : {}),
+            'import.assignmentId': args.assignmentId,
+            ...(wcCode ? { 'import.workersCompCode': wcCode } : {}),
+            ...(wcRate > 0 ? { 'import.workersCompRate': wcRate } : {}),
+            'import.matchStatus': nextStatus,
+            ...(joEntityId && prevEntity && joEntityId !== prevEntity
+              ? { 'import.entityOverrideFrom': prevEntity }
+              : {}),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+        return n;
+      };
+
       for (const w of workersIn.slice(0, 500)) {
         const userId = trim(w.userId);
         const dates = Array.isArray(w.dates)
@@ -1522,6 +1610,11 @@ export const createImportAssignments = onCall(
         const existing = await aRef.get();
         if (existing.exists) {
           results.push({ jobOrderId, userId, assignmentId, created: false });
+          if (stampEntries) {
+            stamped += await stampWorkerEntries({
+              userId, dates, assignmentId, payRate, wc, state,
+            });
+          }
           continue;
         }
         const uSnap = await db.doc(`users/${userId}`).get();
@@ -1571,11 +1664,15 @@ export const createImportAssignments = onCall(
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         results.push({ jobOrderId, userId, assignmentId, created: true });
+        if (stampEntries) {
+          stamped += await stampWorkerEntries({ userId, dates, assignmentId, payRate, wc, state });
+        }
       }
     }
     return {
       created: results.filter((r) => r.created).length,
       reused: results.filter((r) => !r.created).length,
+      stamped,
       results,
     };
   },

@@ -738,15 +738,9 @@ const ImportRow: React.FC<{
   /** Post-save hook: offer to apply the just-saved WC code to other rows at
    *  the same worksite still missing one (apply-to-all, Greg 2026-08-05). */
   onWcSaved: (row: Extract<TimesheetGridRow, { kind: 'entry' }>, fresh: TimesheetEntryV2) => void;
-  /** Post-reassign hook: swaps the moved row in place (doc ids change on
-   *  reassign) and offers to apply the match to other same-CSV-name rows. */
-  onWorkerReassigned: (
-    row: Extract<TimesheetGridRow, { kind: 'entry' }>,
-    info: { newUserId: string | null; oldEntryId?: string; newEntryId?: string },
-  ) => void;
-  /** Open the fix-assignment card (worker → job order → worksite/position/
-   *  pay/WC flow from it; creates a REAL assignment covering the worker's
-   *  rows). Replaces the old point-fix worksite picker (Greg 2026-08-05). */
+  /** Open the fix-assignment card — the ONE pencil: worker match + job
+   *  order + position + pay + WC in a single dialog; creates a REAL
+   *  assignment covering the worker's rows (Greg 2026-08-05). */
   onOpenFixAssignment: (row: Extract<TimesheetGridRow, { kind: 'entry' }>) => void;
 }> = ({
   row,
@@ -759,7 +753,6 @@ const ImportRow: React.FC<{
   reloadAll,
   onDeleted,
   onWcSaved,
-  onWorkerReassigned,
   onOpenFixAssignment,
 }) => {
   const imp = row.entry.import;
@@ -784,7 +777,6 @@ const ImportRow: React.FC<{
   const worksiteEditable = !!tenantId && !live;
   const deletable = !!tenantId && !live;
   const [wcDialogOpen, setWcDialogOpen] = React.useState(false);
-  const [pickerOpen, setPickerOpen] = React.useState(false);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
 
@@ -956,8 +948,8 @@ const ImportRow: React.FC<{
         action={
           <>
             {canReassign ? (
-              <Tooltip title="Change / fix the matched HRX worker">
-                <IconButton size="small" onClick={() => setPickerOpen(true)} sx={{ p: 0.25 }}>
+              <Tooltip title="Fix this row — worker match, job order, position, pay & WC in one card; creates the assignment for all of this worker's rows">
+                <IconButton size="small" onClick={() => onOpenFixAssignment(row)} sx={{ p: 0.25 }}>
                   <EditIcon sx={{ fontSize: 15 }} />
                 </IconButton>
               </Tooltip>
@@ -1000,15 +992,7 @@ const ImportRow: React.FC<{
             ) : null}
           </>
         }
-        worksiteAction={
-          worksiteEditable ? (
-            <Tooltip title="Fix the assignment — link a job order; worksite, position, pay & WC all flow from it and every row for this worker reconnects.">
-              <IconButton size="small" onClick={() => onOpenFixAssignment(row)} sx={{ p: 0.25 }}>
-                <EditIcon sx={{ fontSize: 13 }} />
-              </IconButton>
-            </Tooltip>
-          ) : undefined
-        }
+        worksiteAction={undefined}
       />
       <TableCell>{row.workDate}</TableCell>
       <TableCell>
@@ -1210,32 +1194,6 @@ const ImportRow: React.FC<{
           initialCode={wcCode}
           initialRate={wcRate}
           rowLabel={`${row.assignment.workerDisplayName ?? ''} · ${row.workDate}`.trim()}
-        />
-      )}
-      {tenantId && hiringEntityId && (
-        <ImportRowWorkerPicker
-          open={pickerOpen}
-          onClose={() => setPickerOpen(false)}
-          onReassigned={(result) => {
-            setPickerOpen(false);
-            // Parent swaps the moved row in place and offers apply-to-all
-            // for same-CSV-name rows via a toast — no grid reload.
-            onWorkerReassigned(
-              row,
-              'oldEntryId' in result
-                ? {
-                    newUserId: result.newUserId ?? null,
-                    oldEntryId: result.oldEntryId,
-                    newEntryId: result.newEntryId,
-                  }
-                : { newUserId: null },
-            );
-          }}
-          tenantId={tenantId}
-          hiringEntityId={hiringEntityId}
-          entryId={row.entry.id}
-          csvWorkerName={imp?.csvWorkerName ?? null}
-          currentWorkerName={row.assignment.workerDisplayName ?? null}
         />
       )}
       <Dialog open={deleteOpen} onClose={() => !deleting && setDeleteOpen(false)} maxWidth="xs" fullWidth>
@@ -1773,46 +1731,76 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
     | null
     | { kind: 'worker'; label: string; newUserId: string; entryIds: string[] }
     | { kind: 'wc'; label: string; code: string; workState?: string; entryIds: string[] }
+    | {
+        kind: 'assignment';
+        label: string;
+        jobOrderId: string;
+        title: string;
+        payRate: number;
+        state: string;
+        wcCode?: string;
+        wcRate?: number;
+        workers: Array<{ userId: string; dates: string[]; payRate: number }>;
+      }
   >(null);
   const [applyingAll, setApplyingAll] = useState(false);
 
-  // Worker reassign → swap the moved row in place, then offer the match to
-  // other rows with the same CSV name.
-  const handleImportWorkerReassigned = useCallback(
-    async (
+  // After ONE worker's assignment is created via the card, offer the same
+  // JO/position to every other matched-but-unassigned worker at the same
+  // event (Greg 2026-08-05 — one Lollapalooza fix → 33 more assignments).
+  const handleGridAssignmentCreated = useCallback(
+    (
       sourceRow: Extract<TimesheetGridRow, { kind: 'entry' }>,
-      info: { newUserId: string | null; oldEntryId?: string; newEntryId?: string },
+      info: {
+        jobOrderId: string;
+        joLabel: string;
+        title: string;
+        payRate: number;
+        state: string;
+        wcCode?: string;
+        wcRate?: number;
+      },
     ) => {
-      if (info.oldEntryId && info.newEntryId) {
-        await replaceImportEntry(info.oldEntryId, info.newEntryId);
-      } else {
-        // Older result shape without doc ids — reload as a fallback.
-        refresh();
-      }
-      const csvKey = String(sourceRow.entry.import?.csvKey ?? '');
-      const csvName =
-        String(sourceRow.entry.import?.csvWorkerName ?? '').trim() || 'this worker';
-      if (!info.newUserId || !csvKey || !tenantId || !importHiringEntityId) return;
+      const site = String(sourceRow.entry.import?.csvSite ?? '').trim();
+      if (!site) return;
+      const siteKey = site.toLowerCase();
       const LIVE = new Set(['submitted', 'paid', 'voided']);
-      const sibs = rawRows.filter(
-        (r): r is Extract<TimesheetGridRow, { kind: 'entry' }> =>
-          r.kind === 'entry' &&
-          Boolean(r.isImport) &&
-          r.entry.id !== sourceRow.entry.id &&
-          r.entry.id !== (info.newEntryId ?? '') &&
-          String(r.entry.import?.csvKey ?? '') === csvKey &&
-          !LIVE.has(String(r.entry.import?.matchStatus ?? '')) &&
-          String(r.entry.workerId ?? '') !== info.newUserId,
-      );
-      if (sibs.length === 0) return;
+      const byWorker = new Map<string, { dates: string[]; payRate: number }>();
+      for (const r of rawRows) {
+        if (r.kind !== 'entry' || !r.isImport) continue;
+        if (String(r.entry.import?.csvSite ?? '').trim().toLowerCase() !== siteKey) continue;
+        const wid = String(r.entry.workerId ?? '');
+        if (!wid || wid === String(sourceRow.entry.workerId ?? '')) continue;
+        if (String((r.entry as unknown as { assignmentId?: string }).assignmentId ?? '').trim()) continue;
+        if (LIVE.has(String(r.entry.import?.matchStatus ?? ''))) continue;
+        const cur = byWorker.get(wid) ?? {
+          dates: [],
+          payRate:
+            typeof r.entry.payRate === 'number' && r.entry.payRate > 0
+              ? r.entry.payRate
+              : info.payRate,
+        };
+        cur.dates.push(r.workDate);
+        byWorker.set(wid, cur);
+      }
+      if (byWorker.size === 0) return;
       setApplyPrompt({
-        kind: 'worker',
-        label: `Apply this match to ${sibs.length} more “${csvName}” row${sibs.length === 1 ? '' : 's'}?`,
-        newUserId: info.newUserId,
-        entryIds: sibs.map((s) => s.entry.id),
+        kind: 'assignment',
+        label: `Create ${byWorker.size} more assignment${byWorker.size === 1 ? '' : 's'} for the other “${site}” workers on ${info.joLabel.split(' — ')[0]} · ${info.title}?`,
+        jobOrderId: info.jobOrderId,
+        title: info.title,
+        payRate: info.payRate,
+        state: info.state,
+        wcCode: info.wcCode,
+        wcRate: info.wcRate,
+        workers: [...byWorker.entries()].map(([userId, w]) => ({
+          userId,
+          dates: [...new Set(w.dates)].sort(),
+          payRate: w.payRate,
+        })),
       });
     },
-    [rawRows, tenantId, importHiringEntityId, refresh, replaceImportEntry],
+    [rawRows],
   );
 
   // WC code → offer to other rows at the same worksite/event still missing a
@@ -1906,6 +1894,30 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
             console.error('apply-to-all reassign failed for', entryId, e);
           }
         }
+      } else if (p.kind === 'assignment') {
+        // One bulk call — the server creates every assignment AND stamps
+        // each worker's rows (stampEntries), then a single grid reload.
+        if (!importHiringEntityId) return;
+        const fn = httpsCallable(functions, 'createImportAssignments', { timeout: 300000 });
+        await fn({
+          tenantId,
+          hiringEntityId: importHiringEntityId,
+          stampEntries: true,
+          groups: [
+            {
+              jobOrderId: p.jobOrderId,
+              workers: p.workers.map((w) => ({
+                userId: w.userId,
+                dates: w.dates,
+                payRate: w.payRate,
+                title: p.title,
+                state: p.state,
+                ...(p.wcCode ? { wcCode: p.wcCode, wcRate: p.wcRate } : {}),
+              })),
+            },
+          ],
+        });
+        refresh();
       } else {
         for (const entryId of p.entryIds) {
           try {
@@ -1921,11 +1933,13 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
           }
         }
       }
+    } catch (e) {
+      console.error('apply-to-all failed:', e);
     } finally {
       setApplyingAll(false);
       setApplyPrompt(null);
     }
-  }, [applyPrompt, tenantId, importHiringEntityId, replaceImportEntry, refreshEntry]);
+  }, [applyPrompt, tenantId, importHiringEntityId, replaceImportEntry, refreshEntry, refresh]);
 
   // Sortable columns. Default mirrors the resolver's worker-name ordering.
   type GridSortKey = 'worker' | 'notes';
@@ -2552,7 +2566,6 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                           reloadAll={refresh}
                           onDeleted={handleRowDeleted}
                           onWcSaved={handleImportWcSaved}
-                          onWorkerReassigned={handleImportWorkerReassigned}
                           onOpenFixAssignment={setFixTarget}
                         />
                       );
@@ -2624,15 +2637,14 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                 : undefined
             }
             rows={fixRows}
-            onFixed={(ids) => {
+            onCreated={(info) => {
+              if (fixTarget) handleGridAssignmentCreated(fixTarget, info);
+            }}
+            onFixed={() => {
               setFixTarget(null);
-              // Rebuild each fixed row in place (worksite label, JO link,
-              // rate, WC, status all changed) — no grid reload.
-              void (async () => {
-                for (const id of ids) {
-                  await replaceImportEntry(id, id);
-                }
-              })();
+              // The server stamped the rows (and a worker match may have
+              // moved doc ids) — one reload shows everything fixed.
+              refresh();
             }}
           />
         )}
@@ -2645,7 +2657,13 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
           autoHideDuration={applyingAll ? null : 12000}
           onClose={() => !applyingAll && setApplyPrompt(null)}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-          message={applyingAll ? `Applying to ${applyPrompt?.entryIds.length ?? 0} rows…` : applyPrompt?.label ?? ''}
+          message={
+            applyingAll
+              ? applyPrompt?.kind === 'assignment'
+                ? `Creating ${applyPrompt.workers.length} assignments…`
+                : `Applying to ${applyPrompt?.entryIds.length ?? 0} rows…`
+              : applyPrompt?.label ?? ''
+          }
           action={
             <>
               <Button

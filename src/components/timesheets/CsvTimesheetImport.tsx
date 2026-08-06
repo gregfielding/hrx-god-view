@@ -1564,10 +1564,11 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     if (!p || !tenantId || !entityId) return;
     setAssignApplying(true);
     try {
-      const fn = httpsCallable(functions, 'createImportAssignments', { timeout: 120000 });
+      const fn = httpsCallable(functions, 'createImportAssignments', { timeout: 300000 });
       await fn({
         tenantId,
         hiringEntityId: entityId,
+        stampEntries: true,
         groups: [
           {
             jobOrderId: p.jobOrderId,
