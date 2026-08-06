@@ -45,6 +45,8 @@ interface JoPosition {
   title: string;
   payRate: number;
   wcCode: string;
+  /** WC rate pinned on the JO position (workersCompRate), if any. */
+  wcRate: number | null;
 }
 
 interface JoOption {
@@ -196,16 +198,20 @@ const FixAssignmentDialog: React.FC<Props> = ({
             : Array.isArray(v.gigPositions)
               ? (v.gigPositions as unknown[])
               : [];
+          const toPosition = (rec: Record<string, unknown>): JoPosition => ({
+            title: str(rec.jobTitle) || str(rec.title),
+            payRate: Number(rec.payRate) > 0 ? Number(rec.payRate) : 0,
+            // The JO form saves workersCompClassCode; workersCompCode is the
+            // older field name.
+            wcCode: str(rec.workersCompClassCode) || str(rec.workersCompCode),
+            wcRate: Number(rec.workersCompRate) > 0 ? Number(rec.workersCompRate) : null,
+          });
           const positions: JoPosition[] = rawPositions
-            .map((p) => {
-              const rec = (p ?? {}) as Record<string, unknown>;
-              return {
-                title: str(rec.jobTitle) || str(rec.title),
-                payRate: Number(rec.payRate) > 0 ? Number(rec.payRate) : 0,
-                wcCode: str(rec.workersCompCode),
-              };
-            })
+            .map((p) => toPosition((p ?? {}) as Record<string, unknown>))
             .filter((p) => p.title);
+          // Career JOs keep their single position top-level (jobTitle/payRate/
+          // workersCompClassCode) with no positions[] array at all.
+          if (!positions.length && str(v.jobTitle)) positions.push(toPosition(v));
           return {
             id: d.id,
             label: [num, name, company, site].filter(Boolean).join(' — '),
@@ -382,8 +388,10 @@ const FixAssignmentDialog: React.FC<Props> = ({
                 setTitle(only.title);
                 if (only.payRate > 0) setPayRate(String(only.payRate));
                 setWcCode(only.wcCode || '');
+                setWcRate(only.wcCode ? only.wcRate : null);
               } else {
                 setWcCode('');
+                setWcRate(null);
                 if (!title.trim() && v.jobTitle) setTitle(v.jobTitle);
               }
             }}
@@ -418,7 +426,10 @@ const FixAssignmentDialog: React.FC<Props> = ({
                 if (v && typeof v !== 'string') {
                   setTitle(v.title);
                   if (v.payRate > 0) setPayRate(String(v.payRate));
-                  if (v.wcCode) setWcCode(v.wcCode);
+                  if (v.wcCode) {
+                    setWcCode(v.wcCode);
+                    setWcRate(v.wcRate);
+                  }
                 } else if (typeof v === 'string') {
                   setTitle(v);
                 }
