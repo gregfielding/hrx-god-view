@@ -64,6 +64,7 @@ export type AutoMessagingSendLogRow = {
   pushDelivered?: number;
   skippedDueToCooldown?: number;
   skippedNoReachableChannel?: number;
+  skippedSmsDailyCap?: number;
   recipientPoolSize?: number;
   messageEnSample?: string;
   messageEsSample?: string;
@@ -206,6 +207,7 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
             smsDelivered: typeof data.smsDelivered === 'number' ? data.smsDelivered : undefined,
             pushDelivered: typeof data.pushDelivered === 'number' ? data.pushDelivered : undefined,
             skippedDueToCooldown: typeof data.skippedDueToCooldown === 'number' ? data.skippedDueToCooldown : undefined,
+            skippedSmsDailyCap: typeof data.skippedSmsDailyCap === 'number' ? data.skippedSmsDailyCap : undefined,
             skippedNoReachableChannel:
               typeof data.skippedNoReachableChannel === 'number' ? data.skippedNoReachableChannel : undefined,
             recipientPoolSize: typeof data.recipientPoolSize === 'number' ? data.recipientPoolSize : undefined,
@@ -647,6 +649,7 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
                   <TableCell>City</TableCell>
                   <TableCell align="right">SMS</TableCell>
                   <TableCell align="right">Push</TableCell>
+                  <TableCell align="right">Skipped (24h SMS cap)</TableCell>
                   <TableCell align="right">Skipped (cooldown)</TableCell>
                   <TableCell>Message (EN)</TableCell>
                 </TableRow>
@@ -677,6 +680,7 @@ const JobOrderAutoMessagingTab: React.FC<JobOrderAutoMessagingTabProps> = ({
                     <TableCell>{row.city ?? '—'}</TableCell>
                     <TableCell align="right">{row.smsDelivered ?? '—'}</TableCell>
                     <TableCell align="right">{row.pushDelivered ?? '—'}</TableCell>
+                    <TableCell align="right">{row.skippedSmsDailyCap ?? '—'}</TableCell>
                     <TableCell align="right">{row.skippedDueToCooldown ?? '—'}</TableCell>
                     <TableCell sx={{ maxWidth: 360, wordBreak: 'break-word' }}>
                       {row.note === 'no_members_in_groups' ? (
