@@ -1443,6 +1443,32 @@ async function submitW2(args: PathArgs) {
       },
       { merge: true },
     );
+    // Per-diem/tips/bonus extras that landed for this retro row → status docs
+    // (void + the paid webhook find payables by their own externalId; without
+    // these the extras are invisible to the ledger and resubmit idempotency).
+    for (const ex of planExtras) {
+      writer.set(
+        db.doc(`tenants/${tenantId}/timesheet_import_payables/${payableStatusDocId(ex.externalId)}`),
+        {
+          externalId: ex.externalId,
+          kind: 'payable',
+          payCode: ex.kind,
+          externalWorkerId: r.plan.userId,
+          workerName: p?.workerName ?? null,
+          customer: cust,
+          hiringEntityId,
+          evereeTenantId: cfg.evereeTenantId,
+          workDate: r.plan.workDate,
+          amount: ex.amount,
+          status: 'submitted',
+          batchId: batchRef.id,
+          submittedByUid: uid,
+          submittedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
     const entryDocId = importEntryDocId({ customer: cust, userId: r.plan.userId, workDate: r.plan.workDate });
     writer.set(
       db.doc(`tenants/${tenantId}/timesheet_entries/${entryDocId}`),
