@@ -1185,7 +1185,10 @@ async function submitW2(args: PathArgs) {
         externalId: retroExternalId,
         externalWorkerId: p.userId,
         label: dayLabel(
-          `Retro wages — period already paid (${p.hours} hrs @ $${p.payRate.toFixed(2)})`,
+          // "Wages", not "Retro wages" — these are first-time wages that
+          // missed the pay-period window, and "retro" read as a duplicate
+          // correction on the approval screen (Greg 2026-08-06).
+          `Wages (${p.hours} hrs @ $${p.payRate.toFixed(2)})`,
           p.row.eventLabel,
           p.workDate,
         ),
