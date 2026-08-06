@@ -2290,6 +2290,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
     setAutoCreating(true);
 
     void (async () => {
+      let created = 0;
       const chunkSize = 8;
       for (let i = 0; i < fresh.length; i += chunkSize) {
         if (cancelled) return;
@@ -2300,21 +2301,32 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
               tenantId,
               assignmentId: r.assignment.id,
               workDate: r.workDate,
-            }).catch((err) => {
-              // Don't fail the whole batch — log + un-reserve so a
-              // later explicit "+ Add entry" click can retry.
-              console.warn(
-                '[TimesheetGrid] auto-create draft entry failed',
-                { key: r.key, err },
-              );
-              autoCreatedRef.current.delete(r.key);
-            }),
+            }).then(
+              () => {
+                created += 1;
+              },
+              (err) => {
+                // Keep the key RESERVED — a row the server rejects (e.g.
+                // failed-precondition) will reject identically on every
+                // retry, and un-reserving here made the refresh below
+                // re-run this effect forever (the Jul-26-week infinite
+                // reload loop). "+ Add entry" doesn't consult the
+                // reservation set, so manual retry still works.
+                console.warn(
+                  '[TimesheetGrid] auto-create draft entry failed',
+                  { key: r.key, err },
+                );
+              },
+            ),
           ),
         );
       }
       if (cancelled) return;
       setAutoCreating(false);
-      refresh();
+      // Only re-resolve when something was actually created — refreshing
+      // after an all-failure pass would just re-run this effect with the
+      // same empty rows.
+      if (created > 0) refresh();
     })();
 
     return () => {

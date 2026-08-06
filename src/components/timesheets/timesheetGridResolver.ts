@@ -701,6 +701,15 @@ export async function resolveTimesheetGrid(
   const tuples: Tuple[] = [];
 
   for (const a of overlapping) {
+    // Backfill assignments exist to anchor already-imported entries (the
+    // payroll/WC point of truth) — their day coverage IS the import rows,
+    // which surface via the csv_import entry path below. Materializing
+    // scheduled-day tuples here would emit phantom empty rows for days the
+    // worker simply didn't work, and auto-create can't make drafts for
+    // them (no weeklySchedule) — the failed create + refresh loops the
+    // whole grid.
+    const aSource = (a as unknown as Record<string, unknown>).assignmentSource;
+    if (aSource === 'import_backfill' || aSource === 'venue_mapping_backfill') continue;
     let perAssignmentDayCount = 0;
     // We've already validated a.startDate via the overlap check, so
     // this typeof guard is a defensive belt-and-suspenders rather

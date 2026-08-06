@@ -664,6 +664,11 @@ const Timesheets: React.FC = () => {
   // unset (e.g. between tenant switches).
   useEffect(() => {
     if (!tenantId) return;
+    // Don't persist until the entity restore has run for this tenant —
+    // otherwise the first render's `entity = null` overwrites the saved
+    // entityId before the entities-loaded effect can re-hydrate it, and
+    // the selection never survives a reload.
+    if (restoredEntityForTenantRef.current !== tenantId) return;
     writePersistedFilters(tenantId, {
       entityId: entity?.id ?? null,
       accountFilter,
