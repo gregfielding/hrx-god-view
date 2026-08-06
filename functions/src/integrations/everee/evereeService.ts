@@ -163,6 +163,48 @@ export interface CreateOnboardingSessionInput {
  *       user-record map ever drifts (e.g. partial writes, manual edits).
  * Either hit returns the existing id without re-POSTing to Everee.
  */
+
+/**
+ * Earliest workDate among the worker's not-yet-paid timesheet entries,
+ * bounded to the last 90 days. Everee positions start on the hire date and
+ * worked shifts dated before it are rejected ("No hourly position present"),
+ * so a worker provisioned after their work already happened (import
+ * backfills, late Resync clicks) needs the hire date to reach back to the
+ * oldest day still owed. Best-effort: any read failure returns null and the
+ * caller falls back to today — provisioning must never fail on this.
+ */
+async function earliestUnpaidWorkDate(
+  tenantId: string,
+  workerId: string,
+): Promise<string | null> {
+  try {
+    const snap = await getFirestore()
+      .collection(`tenants/${tenantId}/timesheet_entries`)
+      .where('workerId', '==', workerId)
+      .get();
+    const floor = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    let earliest: string | null = null;
+    snap.forEach((d) => {
+      const v = d.data() as Record<string, unknown>;
+      const wd = typeof v.workDate === 'string' ? v.workDate : '';
+      const status = typeof v.status === 'string' ? v.status : '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(wd) || wd < floor) return;
+      if (status === 'paid' || status === 'voided') return;
+      if (!earliest || wd < earliest) earliest = wd;
+    });
+    return earliest;
+  } catch (err) {
+    logger.warn('earliestUnpaidWorkDate lookback failed — defaulting hireDate to today', {
+      tenantId,
+      workerId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
 export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   evereeWorkerId: string;
   created: boolean;
@@ -284,6 +326,15 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
   // published OpenAPI). See developer.everee.com "Kick off onboarding for a
   // contractor".
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  // Everee positions start on the hire date, and worked shifts dated BEFORE
+  // the position starts are rejected with "No hourly position present". A
+  // worker provisioned mid-import (Zaon Cox, 2026-08-06: provisioned during
+  // the batch, shifts 7/27–7/31 all 500'd) needs the position to reach back
+  // to their oldest not-yet-paid day, so default the hire date there.
+  const hireDate =
+    input.hireDate ??
+    (await earliestUnpaidWorkDate(input.tenantId, input.firebaseUid)) ??
+    today;
   const phoneDigits = (input.phone ?? '').replace(/\D/g, '').slice(-10);
   const baseUrl = config.evereeApiBaseUrl ?? 'https://api.everee.com';
 
@@ -351,7 +402,7 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
       lastName: input.lastName,
       phoneNumber: phoneDigits,
       email: input.email,
-      startDate: input.hireDate ?? today,
+      startDate: hireDate,
       payeeType: 'INDIVIDUAL',
       externalWorkerId: input.firebaseUid,
     };
@@ -408,7 +459,7 @@ export async function createWorkerIfNeeded(input: CreateWorkerInput): Promise<{
       payType: input.payType ?? 'HOURLY',
       payRate: input.payRate ?? { amount: '20.00', currency: 'USD' },
       typicalWeeklyHours: input.typicalWeeklyHours ?? 40,
-      hireDate: input.hireDate ?? today,
+      hireDate,
       legalWorkAddress: { useHomeAddress: true },
       homeAddress,
       externalWorkerId: input.firebaseUid,
