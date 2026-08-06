@@ -351,10 +351,27 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [fixCard, setFixCard] = useState<null | {
     userId: string;
     workerName: string;
+    site: string;
     defaultTitle?: string;
     defaultPayRate?: number;
     rows: Array<{ workDate: string }>;
   }>(null);
+  // Apply-to-all after an assignment is created: the other unassigned
+  // matched workers at the SAME event get the same JO/position in one bulk
+  // createImportAssignments call (Greg 2026-08-05 — one Lollapalooza fix
+  // → 33 more assignments).
+  const [assignPrompt, setAssignPrompt] = useState<null | {
+    site: string;
+    jobOrderId: string;
+    joLabel: string;
+    title: string;
+    payRate: number;
+    state: string;
+    wcCode?: string;
+    wcRate?: number;
+    workers: Array<{ userId: string; dates: string[]; payRate: number }>;
+  }>(null);
+  const [assignApplying, setAssignApplying] = useState(false);
   // Inline cell overrides (this import session): manually-entered pay rate /
   // WC code / WC rate, keyed by row. They win over the resolved value and
   // survive a re-match; they flow into the Everee submit payload (P4).
@@ -1488,10 +1505,91 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       userId: m.userId,
       workerName:
         m.displayName || [row?.firstName, row?.lastName].filter(Boolean).join(' ') || 'worker',
+      site: (row?.site ?? '').trim(),
       defaultTitle: row?.role || undefined,
       defaultPayRate: typeof eff.payRate === 'number' && eff.payRate > 0 ? eff.payRate : undefined,
       rows: workerRows,
     });
+  };
+
+  // After ONE worker's assignment is created, gather the event's other
+  // matched-but-unassigned workers and offer the same JO/position to all.
+  // Each keeps their own resolved pay rate when they have one.
+  const handleAssignmentCreated = (info: {
+    jobOrderId: string;
+    joLabel: string;
+    title: string;
+    payRate: number;
+    state: string;
+    wcCode?: string;
+    wcRate?: number;
+  }) => {
+    const site = (fixCard?.site ?? '').trim();
+    const sourceUserId = fixCard?.userId ?? '';
+    if (!site) return;
+    const siteKey = site.toLowerCase();
+    const byWorker = new Map<string, { dates: string[]; payRate: number }>();
+    for (const x of parsed?.rows ?? []) {
+      if (x.status !== 'importable') continue;
+      if ((x.site ?? '').trim().toLowerCase() !== siteKey) continue;
+      const m = matchByRow.get(x.rowIndex);
+      if (!m?.userId || m.userId === sourceUserId) continue;
+      if (String(m.assignmentId ?? '').trim()) continue;
+      if (submittedStatusFor(m.userId, x.workDate)) continue;
+      const cur = byWorker.get(m.userId) ?? {
+        dates: [],
+        payRate: (() => {
+          const eff = effective(m, x.rowIndex);
+          return typeof eff.payRate === 'number' && eff.payRate > 0 ? eff.payRate : info.payRate;
+        })(),
+      };
+      cur.dates.push(x.workDate);
+      byWorker.set(m.userId, cur);
+    }
+    if (byWorker.size === 0) return;
+    setAssignPrompt({
+      site,
+      ...info,
+      workers: [...byWorker.entries()].map(([userId, w]) => ({
+        userId,
+        dates: [...new Set(w.dates)].sort(),
+        payRate: w.payRate,
+      })),
+    });
+  };
+
+  // Bulk-create the sibling assignments, then re-match so every row pairs.
+  const runAssignPrompt = async () => {
+    const p = assignPrompt;
+    if (!p || !tenantId || !entityId) return;
+    setAssignApplying(true);
+    try {
+      const fn = httpsCallable(functions, 'createImportAssignments', { timeout: 120000 });
+      await fn({
+        tenantId,
+        hiringEntityId: entityId,
+        groups: [
+          {
+            jobOrderId: p.jobOrderId,
+            workers: p.workers.map((w) => ({
+              userId: w.userId,
+              dates: w.dates,
+              payRate: w.payRate,
+              title: p.title,
+              state: p.state,
+              ...(p.wcCode ? { wcCode: p.wcCode, wcRate: p.wcRate } : {}),
+            })),
+          },
+        ],
+      });
+      setAssignPrompt(null);
+      await runMatch();
+    } catch (err) {
+      console.error('bulk assignment apply-to-all failed:', err);
+    } finally {
+      setAssignApplying(false);
+      setAssignPrompt(null);
+    }
   };
 
   // The Ready rows: matched + Everee-linked + a resolved/typed pay rate (and a
@@ -3363,6 +3461,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           defaultTitle={fixCard.defaultTitle}
           defaultPayRate={fixCard.defaultPayRate}
           rows={fixCard.rows}
+          onCreated={handleAssignmentCreated}
           onFixed={() => {
             setFixCard(null);
             // Rows here are in-memory — the re-match pairs the fresh
@@ -3371,6 +3470,42 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           }}
         />
       )}
+
+      <Snackbar
+        open={!!assignPrompt}
+        autoHideDuration={assignApplying ? null : 15000}
+        onClose={() => !assignApplying && setAssignPrompt(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        message={
+          assignPrompt
+            ? assignApplying
+              ? `Creating ${assignPrompt.workers.length} assignments…`
+              : `Create ${assignPrompt.workers.length} more assignment${assignPrompt.workers.length === 1 ? '' : 's'} for the other “${assignPrompt.site}” workers on ${assignPrompt.joLabel.split(' — ')[0]} · ${assignPrompt.title}?`
+            : ''
+        }
+        action={
+          <>
+            <Button
+              color="primary"
+              size="small"
+              onClick={() => void runAssignPrompt()}
+              disabled={assignApplying}
+              sx={{ textTransform: 'none' }}
+            >
+              {assignApplying ? 'Creating…' : 'Create all'}
+            </Button>
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => setAssignPrompt(null)}
+              disabled={assignApplying}
+              sx={{ textTransform: 'none' }}
+            >
+              Dismiss
+            </Button>
+          </>
+        }
+      />
 
       <Snackbar
         open={!!bulkRatePrompt}

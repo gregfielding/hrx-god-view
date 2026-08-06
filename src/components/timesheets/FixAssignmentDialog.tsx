@@ -84,6 +84,18 @@ interface Props {
   /** Called with the entry ids that were re-resolved; parent refreshes
    *  them in place. */
   onFixed: (entryIds: string[]) => void;
+  /** Fired after the assignment is created, with what was chosen — lets the
+   *  parent offer "apply the same JO/position to the other workers at this
+   *  event" (Greg 2026-08-05: one Lollapalooza fix → 33 more assignments). */
+  onCreated?: (info: {
+    jobOrderId: string;
+    joLabel: string;
+    title: string;
+    payRate: number;
+    state: string;
+    wcCode?: string;
+    wcRate?: number;
+  }) => void;
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
@@ -99,6 +111,7 @@ const FixAssignmentDialog: React.FC<Props> = ({
   defaultPayRate,
   rows,
   onFixed,
+  onCreated,
 }) => {
   const [joOptions, setJoOptions] = useState<JoOption[]>([]);
   const [loadingJos, setLoadingJos] = useState(false);
@@ -226,6 +239,15 @@ const FixAssignmentDialog: React.FC<Props> = ({
           console.error('reresolve failed for', r.entryId, e);
         }
       }
+      onCreated?.({
+        jobOrderId: jo.id,
+        joLabel: jo.label,
+        title: title.trim(),
+        payRate: rate,
+        state: jo.state,
+        wcCode: wcCode.trim() || undefined,
+        wcRate: wcRate ?? undefined,
+      });
       onFixed(fixed);
       onClose();
     } catch (e: unknown) {
