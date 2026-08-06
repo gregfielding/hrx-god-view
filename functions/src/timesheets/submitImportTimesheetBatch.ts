@@ -668,18 +668,24 @@ function splitGross(
 }
 
 /**
- * Net seconds already submitted to Everee (sent/paid import entries) per
- * `${userId}__${weekKey}`, EXCLUDING entries the current batch is about to
- * overwrite — so the weekly-40 threshold accounts for a partial upload
- * earlier in the same week without double-counting a re-upload.
+ * REGULAR seconds already submitted to Everee (sent/paid import entries)
+ * per `${userId}__${weekKey}` → workDate, EXCLUDING entries the current
+ * batch is about to overwrite — so the weekly-40 threshold accounts for a
+ * partial upload earlier in the same week without double-counting a
+ * re-upload. Per-day (not a lump sum) so classifyWeeklyOt can consume the
+ * threshold at each prior day's chronological position — a lump preload
+ * pre-banked LATER days when retry attempts landed Sunday before the
+ * Mon–Sat retro rows (VS week 2026-08-06). Regular-only per the
+ * no-pyramiding rule; falls back to net hours for entries predating the
+ * reg/OT stamps.
  */
 async function priorWeekSecondsForBatch(
   tenantId: string,
   hiringEntityId: string,
   cust: string,
   plans: W2Plan[],
-): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+): Promise<Map<string, Map<string, number>>> {
+  const out = new Map<string, Map<string, number>>();
   // Windows are per-workweek AND per week-start flavor: a Mon–Sun exception
   // plan's window starts Monday, a default plan's starts Sunday. The group
   // key (`${workerId}__${weekKey}`) matches classifyWeeklyOt's, which uses
@@ -722,13 +728,24 @@ async function priorWeekSecondsForBatch(
       if (!workerIds.has(workerId)) continue;
       const status = String(e.status ?? '');
       if (status !== 'sent_to_everee' && status !== 'paid') continue;
-      const hours = Number(
-        e.actualHoursOverride ??
-          Number(e.totalRegularHours ?? 0) + Number(e.totalOTHours ?? 0),
-      );
-      if (!(hours > 0)) continue;
+      // Regular hours only — an already-classified OT hour never consumed
+      // the 40-hour threshold. Older entries without the reg/OT stamps
+      // fall back to net hours (the pre-fix behavior for that entry).
+      const regRaw = e.totalRegularHours;
+      const hours =
+        typeof regRaw === 'number' && Number.isFinite(regRaw)
+          ? regRaw
+          : Number(
+              e.actualHoursOverride ??
+                Number(e.totalRegularHours ?? 0) + Number(e.totalOTHours ?? 0),
+            );
+      if (!(hours >= 0)) continue;
+      const workDate = String(e.workDate ?? '');
+      if (!workDate) continue;
       const gk = `${workerId}__${wk}`;
-      out.set(gk, (out.get(gk) ?? 0) + Math.round(hours * 60) * 60);
+      const days = out.get(gk) ?? new Map<string, number>();
+      days.set(workDate, (days.get(workDate) ?? 0) + Math.round(hours * 60) * 60);
+      out.set(gk, days);
     }
   }
   return out;

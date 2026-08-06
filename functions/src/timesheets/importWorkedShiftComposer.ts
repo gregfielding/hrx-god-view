@@ -294,11 +294,15 @@ const DAILY_CAPS_BY_STATE: Record<string, { regCapSeconds: number; otCapSeconds:
  * Counting only regular hours toward the 40 is CA's no-pyramiding rule
  * and is identity for states without daily OT (all hours are regular).
  *
- * `priorSecondsByWorkerWeek` (key `${userId}__${weekKey}`) carries net
- * seconds already submitted to Everee in earlier batches for the same
- * week — those consume the 40-hour threshold first (chronology caveat:
- * prior hours are assumed earlier in the week, the normal partial-upload
- * case).
+ * `priorRegularSecondsByDay` (key `${userId}__${weekKey}` → workDate →
+ * REGULAR seconds) carries hours already submitted to Everee in earlier
+ * batches for the same week. Each prior day consumes the 40-hour
+ * threshold at its CHRONOLOGICAL position — a lump-sum preload
+ * pre-banked later days: the VS week (2026-08-06) landed Sunday 8/02
+ * first across retry attempts, sliding the crossover from Thursday to
+ * Wednesday and overpaying $262.51 of OT premium. Only the prior day's
+ * REGULAR portion counts toward 40 (no-pyramiding — its OT hours never
+ * consumed the threshold when it was classified).
  *
  * Was FLSA-weekly-only until 2026-07-16: Brian Battles' 47.33-hour CA
  * week (four 11.5–12.5h days) shipped as 40 reg + 7.33 OT instead of
@@ -306,7 +310,7 @@ const DAILY_CAPS_BY_STATE: Record<string, { regCapSeconds: number; otCapSeconds:
  */
 export function classifyWeeklyOt(
   days: WeeklyOtDayInput[],
-  priorSecondsByWorkerWeek: Map<string, number>,
+  priorRegularSecondsByDay: Map<string, Map<string, number>>,
 ): Map<string, WeeklyOtDaySplit> {
   const out = new Map<string, WeeklyOtDaySplit>();
   const groups = new Map<string, WeeklyOtDayInput[]>();
@@ -319,8 +323,19 @@ export function classifyWeeklyOt(
   }
   for (const [gk, group] of groups) {
     group.sort((a, b) => a.workDate.localeCompare(b.workDate));
-    let cumulativeRegular = Math.max(0, Math.round(priorSecondsByWorkerWeek.get(gk) ?? 0));
+    const priorDays = priorRegularSecondsByDay.get(gk) ?? new Map<string, number>();
+    // Walk prior-submitted days in step with the batch days: before
+    // classifying each batch day, bank the regular seconds of every prior
+    // day dated ON OR BEFORE it. Prior days after the last batch day never
+    // consume the threshold the batch days classify against.
+    const priorSorted = [...priorDays.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    let priorIdx = 0;
+    let cumulativeRegular = 0;
     for (const d of group) {
+      while (priorIdx < priorSorted.length && priorSorted[priorIdx][0] <= d.workDate) {
+        cumulativeRegular += Math.max(0, Math.round(priorSorted[priorIdx][1]));
+        priorIdx += 1;
+      }
       const netSeconds = Math.max(60, Math.round(Number(d.netHours) * 60) * 60);
       const caps = DAILY_CAPS_BY_STATE[String(d.stateCode ?? '').trim().toUpperCase()];
 
