@@ -4749,8 +4749,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       label="Workers Comp Class Code"
                       value={formData.workersCompClassCode || ''}
                       onChange={(code, rate) => {
-                        handleInputChange('workersCompClassCode', code);
-                        if (rate != null) handleInputChange('workersCompRate', String(rate));
+                        // One functional update: back-to-back handleInputChange
+                        // calls each spread the stale closure formData, so the
+                        // rate write restored the pre-pick code fragment.
+                        setFormData((prev: any) => ({
+                          ...prev,
+                          workersCompClassCode: code,
+                          ...(rate != null ? { workersCompRate: String(rate) } : {}),
+                        }));
                       }}
                       placeholder="e.g. 9015"
                       helperText={wcCodeHelper(formData.workersCompClassCode)}
@@ -4761,8 +4767,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       state={worksiteStateCodeForPricing}
                       modifierAccountId={wcModifierAccountId}
                       onApply={(code, rate) => {
-                        handleInputChange('workersCompClassCode', code);
-                        if (rate != null) handleInputChange('workersCompRate', String(rate));
+                        setFormData((prev: any) => ({
+                          ...prev,
+                          workersCompClassCode: code,
+                          ...(rate != null ? { workersCompRate: String(rate) } : {}),
+                        }));
                       }}
                     />
                   </Grid>
