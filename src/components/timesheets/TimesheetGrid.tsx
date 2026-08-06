@@ -728,9 +728,10 @@ const ImportRow: React.FC<{
   hiringEntityId?: string | null;
   refreshEntry: (entryId: string) => Promise<TimesheetEntryV2 | null>;
   mergeShiftWc: (shiftId: string, code: string, rate?: number) => void;
-  /** Full grid reload — needed after a worker reassign because the entry's
-   *  synthetic doc id changes (keyed by worker), so a single-entry refresh
-   *  can't find the moved row. */
+  /** Swap ONE row in place from its fresh doc (worksite/rate/WC/status all
+   *  re-derived) — the no-reload path for re-resolve and card fixes. */
+  replaceRow: (oldEntryId: string, newEntryId: string) => Promise<void>;
+  /** Full grid reload — last-resort fallback only. */
   reloadAll: () => void;
   /** Drop a single row from the local view without a full reload (used after
    *  delete, so the recruiter can clear several rows back-to-back). */
@@ -750,6 +751,7 @@ const ImportRow: React.FC<{
   hiringEntityId,
   refreshEntry,
   mergeShiftWc,
+  replaceRow,
   reloadAll,
   onDeleted,
   onWcSaved,
@@ -919,9 +921,9 @@ const ImportRow: React.FC<{
       >(functions, 'reresolveImportEntry', { timeout: 60000 });
       const res = await fn({ tenantId, entryId: row.entry.id });
       if (res.data?.connected) {
-        // Full reload — worksite/rate/WC all changed; the resolver's WC chain
-        // must re-run so the row shows the connected values, not stale ones.
-        reloadAll();
+        // In-place rebuild — worksite/rate/WC changed; buildImportRow
+        // re-derives the row from the fresh doc, no grid reload.
+        await replaceRow(row.entry.id, row.entry.id);
       } else {
         // eslint-disable-next-line no-alert
         window.alert(res.data?.message || 'No assignment covers this work date yet.');
@@ -933,7 +935,7 @@ const ImportRow: React.FC<{
     } finally {
       setReresolving(false);
     }
-  }, [tenantId, row.entry.id, reloadAll]);
+  }, [tenantId, row.entry.id, replaceRow]);
 
   const wcCellSx = {
     fontVariantNumeric: 'tabular-nums' as const,
@@ -1894,8 +1896,16 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
         }
       } else if (p.kind === 'assignment') {
         // One bulk call — the server creates every assignment AND stamps
-        // each worker's rows (stampEntries), then a single grid reload.
+        // each worker's rows (stampEntries); affected rows then swap in
+        // place, no grid reload.
         if (!importHiringEntityId) return;
+        const affected: string[] = [];
+        for (const r of rawRows) {
+          if (r.kind !== 'entry' || !r.isImport) continue;
+          const wid = String(r.entry.workerId ?? '');
+          const w = p.workers.find((x) => x.userId === wid);
+          if (w && w.dates.includes(r.workDate)) affected.push(r.entry.id);
+        }
         const fn = httpsCallable(functions, 'createImportAssignments', { timeout: 300000 });
         await fn({
           tenantId,
@@ -1915,7 +1925,9 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
             },
           ],
         });
-        refresh();
+        for (const id of affected) {
+          await replaceImportEntry(id, id);
+        }
       } else {
         for (const entryId of p.entryIds) {
           try {
@@ -1937,7 +1949,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
       setApplyingAll(false);
       setApplyPrompt(null);
     }
-  }, [applyPrompt, tenantId, importHiringEntityId, replaceImportEntry, refreshEntry, refresh]);
+  }, [applyPrompt, tenantId, importHiringEntityId, replaceImportEntry, refreshEntry, refresh, rawRows]);
 
   // Sortable columns. Default mirrors the resolver's worker-name ordering.
   type GridSortKey = 'worker' | 'notes';
@@ -2561,6 +2573,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
                           hiringEntityId={importHiringEntityId}
                           refreshEntry={refreshEntry}
                           mergeShiftWc={mergeShiftWc}
+                          replaceRow={replaceImportEntry}
                           reloadAll={refresh}
                           onDeleted={handleRowDeleted}
                           onWcSaved={handleImportWcSaved}
@@ -2638,11 +2651,15 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
             onCreated={(info) => {
               if (fixTarget) handleGridAssignmentCreated(fixTarget, info);
             }}
-            onFixed={() => {
+            onFixed={(pairs) => {
               setFixTarget(null);
-              // The server stamped the rows (and a worker match may have
-              // moved doc ids) — one reload shows everything fixed.
-              refresh();
+              // Swap exactly the affected rows in place (ids move when the
+              // worker changed) — no grid reload (Greg 2026-08-05).
+              void (async () => {
+                for (const p of pairs) {
+                  await replaceImportEntry(p.oldId, p.newId);
+                }
+              })();
             }}
           />
         )}

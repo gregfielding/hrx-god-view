@@ -90,9 +90,10 @@ interface Props {
   /** Every fixable (non-live) import row for this worker in view — the
    *  assignment covers all of them and each gets re-resolved on save. */
   rows: FixAssignmentRow[];
-  /** Called with the entry ids that were re-resolved; parent refreshes
-   *  them in place. */
-  onFixed: (entryIds: string[]) => void;
+  /** Called with the affected saved rows' (old → new) doc-id pairs — ids
+   *  move when the worker changed. The parent swaps exactly these rows in
+   *  place; NO full grid reload (Greg 2026-08-05). */
+  onFixed: (pairs: Array<{ oldId: string; newId: string }>) => void;
   /** Fired after the assignment is created, with what was chosen — lets the
    *  parent offer "apply the same JO/position to the other workers at this
    *  event" (Greg 2026-08-05: one Lollapalooza fix → 33 more assignments). */
@@ -247,20 +248,27 @@ const FixAssignmentDialog: React.FC<Props> = ({
     setError(null);
     try {
       // Worker changed (or newly matched): reassign each saved row's doc to
-      // the picked worker first — the assignment must anchor to them.
+      // the picked worker first — the assignment must anchor to them. Track
+      // old→new doc ids so the parent can swap rows in place, no reload.
+      const pairs: Array<{ oldId: string; newId: string }> = [];
       if (pickedWorker && pickedWorker.userId !== userId) {
         const reassign = httpsCallable<
           { tenantId: string; hiringEntityId: string; entryId: string; newUserId: string },
-          { ok: boolean }
+          { ok: boolean; oldEntryId?: string; newEntryId?: string }
         >(functions, 'reassignImportEntryWorker', { timeout: 60000 });
         for (const r of rows) {
           if (!r.entryId) continue;
-          await reassign({
+          const res = await reassign({
             tenantId,
             hiringEntityId,
             entryId: r.entryId,
             newUserId: pickedWorker.userId,
           });
+          pairs.push({ oldId: r.entryId, newId: res.data?.newEntryId ?? r.entryId });
+        }
+      } else {
+        for (const r of rows) {
+          if (r.entryId) pairs.push({ oldId: r.entryId, newId: r.entryId });
         }
       }
       // Create the assignment AND stamp the worker's saved rows server-side
@@ -295,7 +303,7 @@ const FixAssignmentDialog: React.FC<Props> = ({
         wcCode: wcCode.trim() || undefined,
         wcRate: wcRate ?? undefined,
       });
-      onFixed([]);
+      onFixed(pairs);
       onClose();
     } catch (e: unknown) {
       setError(formatFirebaseHttpsError(e));
