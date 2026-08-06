@@ -1150,13 +1150,16 @@ async function submitW2(args: PathArgs) {
     }
   });
 
-  // ── Period-locked fallback: RETRO_WAGES payable ──────────────────────
+  // ── Period-locked fallback: retro-wages payable ──────────────────────
   // Everee permanently locks a pay period once its payroll is approved, so
   // a shift for a missed day can never be created there. Same money goes
-  // out as a RETRO_WAGES payable instead (custom taxable wage code — taxed
-  // like the hourly wages it corrects): pay-stub line item dated to the
-  // actual work date, paid via the payout request below. Wage amount is
-  // HRX-classified REG + 1.5×OT; tips/bonus ride the shared extras flow.
+  // out as a BONUS payable instead — Everee has NO retro/back-pay code and
+  // no self-serve custom pay codes (2026-08-05: 'Unknown payCode:
+  // RETRO_WAGES' — the dashboard dropdown is the full list). Retro pay is
+  // supplemental wages, same withholding class as bonus, and the label
+  // says "Retro wages" so the stub stays honest. Pay-stub line item dated
+  // to the actual work date, paid via the payout request below. Wage
+  // amount is HRX-classified REG + 1.5×OT; tips/bonus ride the extras flow.
   const retroWrites: Array<{ plan: W2Plan; retroExternalId: string; amount: number }> = [];
   if (periodLocked.length > 0) {
     const retroInputs: CreatePayableInput[] = [];
@@ -1183,7 +1186,7 @@ async function submitW2(args: PathArgs) {
           p.workDate,
         ),
         type: 'retro',
-        payCode: 'RETRO_WAGES',
+        payCode: 'BONUS',
         timestamp: workDateEpochSeconds(p.workDate),
         amount: { amount: amount.toFixed(2), currency: 'USD' },
         payableModel: 'PRE_CALCULATED',
@@ -1418,7 +1421,9 @@ async function submitW2(args: PathArgs) {
       {
         externalId: r.retroExternalId,
         kind: 'payable',
-        payCode: 'RETRO_WAGES',
+        // Sent as BONUS on the wire (Everee has no retro code); the ledger
+        // keeps 'retro' semantics via the ::RETRO externalId kind.
+        payCode: 'BONUS',
         externalWorkerId: r.plan.userId,
         workerName: p?.workerName ?? null,
         customer: cust,
