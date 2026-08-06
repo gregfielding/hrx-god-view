@@ -297,6 +297,10 @@ const FixAssignmentDialog: React.FC<Props> = ({
                 }
               }}
               getOptionLabel={(o) => (typeof o === 'string' ? o : o.title)}
+              // ALWAYS show every JO position — the field is pre-seeded with
+              // the CSV role (e.g. "AM Shift"), and the default filter would
+              // hide non-matching positions behind it (Greg 2026-08-05).
+              filterOptions={(opts) => opts}
               renderOption={(props, o) => (
                 <li {...props} key={o.title}>
                   <Box>
