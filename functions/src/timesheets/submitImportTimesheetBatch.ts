@@ -78,6 +78,9 @@ interface SubmitRow {
   tips?: number;
   bonus?: number;
   reimbursement?: number;
+  /** The paired HRX assignment — REQUIRED for W-2 rows (assignment-as-truth
+   *  gate); covers rows matched in memory but not yet saved as entries. */
+  assignmentId?: string | null;
   /** For display/labeling only. */
   workerName?: string;
   /** The event/site this day belongs to (CSV "Type"/site). Used only to make
@@ -752,9 +755,12 @@ async function submitW2(args: PathArgs) {
   // CA6405 replacing a state-invalid 8044) would be resent wrong forever
   // by a stale tab. Saved corrected codes win over the client copy.
   const wcCorrected = new Map<string, string>();
-  /** Per-row account/JO linkage from the saved entry — feeds the Mon–Sun
-   *  workweek exception lookup below. */
-  const entryLinkage = new Map<string, { accountId: string; jobOrderId: string }>();
+  /** Per-row account/JO/assignment linkage from the saved entry — feeds the
+   *  Mon–Sun workweek exception + the assignment-as-truth gate below. */
+  const entryLinkage = new Map<
+    string,
+    { accountId: string; jobOrderId: string; assignmentId: string }
+  >();
   const WC_READ_CHUNK = 300;
   for (let i = 0; i < candidates.length; i += WC_READ_CHUNK) {
     const slice = candidates.slice(i, i + WC_READ_CHUNK);
@@ -774,6 +780,7 @@ async function submitW2(args: PathArgs) {
       entryLinkage.set(`${slice[j].userId}__${slice[j].workDate}`, {
         accountId: String(data.accountId ?? '').trim(),
         jobOrderId: String(data.jobOrderId ?? '').trim(),
+        assignmentId: String(data.assignmentId ?? '').trim(),
       });
     });
   }
@@ -820,7 +827,19 @@ async function submitW2(args: PathArgs) {
 
   const plans: W2Plan[] = [];
   let skippedNoWc = 0;
+  let skippedNoAssignment = 0;
   for (const { row, userId, workDate, hours, payRate } of candidates) {
+    // Assignment-as-truth gate (Greg 2026-08-05): a W-2 row must be anchored
+    // to a REAL assignment before money moves — the fix-assignment card
+    // creates one in a single step. Saved-entry linkage wins; the client
+    // row's assignmentId covers rows matched in memory but not yet saved.
+    const asn =
+      entryLinkage.get(`${userId}__${workDate}`)?.assignmentId ||
+      String(row.assignmentId || '').trim();
+    if (!asn) {
+      skippedNoAssignment += 1;
+      continue;
+    }
     const wc =
       wcCorrected.get(`${userId}__${workDate}`) ?? String(row.workersCompCode || '').trim();
     if (!wc) {
@@ -927,6 +946,7 @@ async function submitW2(args: PathArgs) {
       count: preview.length,
       skipped,
       skippedNoWc,
+      skippedNoAssignment,
       totalAmount,
       preview,
     };
@@ -935,9 +955,11 @@ async function submitW2(args: PathArgs) {
   if (plans.length === 0) {
     throw new HttpsError(
       'invalid-argument',
-      skippedNoWc > 0
-        ? `No submittable rows — ${skippedNoWc} are missing a workers-comp code.`
-        : 'No worked-shift rows to submit (all skipped).',
+      skippedNoAssignment > 0
+        ? `No submittable rows — ${skippedNoAssignment} are missing an assignment (fix via the worksite pencil's assignment card).`
+        : skippedNoWc > 0
+          ? `No submittable rows — ${skippedNoWc} are missing a workers-comp code.`
+          : 'No worked-shift rows to submit (all skipped).',
     );
   }
 
@@ -1251,6 +1273,7 @@ async function submitW2(args: PathArgs) {
     totalAmount,
     submitted,
     skippedNoWc,
+    skippedNoAssignment,
     alreadyLive: alreadyLive.size,
     errors,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),

@@ -51,6 +51,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import EditIcon from '@mui/icons-material/Edit';
 import SearchIcon from '@mui/icons-material/Search';
+import FixAssignmentDialog from './FixAssignmentDialog';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { httpsCallable } from 'firebase/functions';
@@ -346,6 +347,14 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   const [wsNew, setWsNew] = useState({ name: '', street: '', city: '', state: '', zip: '' });
   const [wsCreating, setWsCreating] = useState(false);
   const [wsCreateError, setWsCreateError] = useState<string | null>(null);
+  // Fix-assignment card target (matched worker, no assignment yet).
+  const [fixCard, setFixCard] = useState<null | {
+    userId: string;
+    workerName: string;
+    defaultTitle?: string;
+    defaultPayRate?: number;
+    rows: Array<{ workDate: string }>;
+  }>(null);
   // Inline cell overrides (this import session): manually-entered pay rate /
   // WC code / WC rate, keyed by row. They win over the resolved value and
   // survive a re-match; they flow into the Everee submit payload (P4).
@@ -1443,12 +1452,46 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
     !is1099Entity &&
     (!String(eff.workersCompCode || '').trim() || !(Number(eff.workersCompRate) > 0));
 
+  // Assignment-as-truth gate (Greg 2026-08-05): a W-2 row must be anchored to
+  // a REAL assignment before Everee — the worksite pencil's fix-assignment
+  // card builds one for all of the worker's rows. 1099 rows surface the gap
+  // but aren't blocked yet (270-row Events backlog; flip once worked down).
+  const rowNeedsAssignment = (m?: { userId?: string | null; assignmentId?: string | null } | null) =>
+    !is1099Entity && Boolean(m?.userId) && !String(m?.assignmentId ?? '').trim();
+
   // A row that's live in Everee (submitted or paid) — terminal, not
   // re-submittable. `paid` rows can't be voided (the pay run finalized).
   const submittedStatusFor = (userId?: string, workDate?: string) => {
     if (!userId || !workDate) return undefined;
     const st = submittedByExtId.get(rowExternalId(userId, workDate));
     return st && (st.status === 'submitted' || st.status === 'paid') ? st : undefined;
+  };
+
+  // Fix-assignment card (same as the grid's, Greg 2026-08-05): matched rows
+  // with no assignment build the REAL record here instead of point-picking a
+  // worksite. Rows are in-memory (no entryIds) — after creation we just
+  // re-run the match, which pairs the fresh assignment onto every row.
+  const openFixCard = (rowIndex: number) => {
+    const m = matchByRow.get(rowIndex);
+    if (!m?.userId) return;
+    const row = (parsed?.rows ?? []).find((x) => x.rowIndex === rowIndex);
+    const workerRows = (parsed?.rows ?? [])
+      .filter(
+        (x) =>
+          x.status === 'importable' &&
+          matchByRow.get(x.rowIndex)?.userId === m.userId &&
+          !submittedStatusFor(m.userId ?? undefined, x.workDate),
+      )
+      .map((x) => ({ workDate: x.workDate }));
+    const eff = effective(m, rowIndex);
+    setFixCard({
+      userId: m.userId,
+      workerName:
+        m.displayName || [row?.firstName, row?.lastName].filter(Boolean).join(' ') || 'worker',
+      defaultTitle: row?.role || undefined,
+      defaultPayRate: typeof eff.payRate === 'number' && eff.payRate > 0 ? eff.payRate : undefined,
+      rows: workerRows,
+    });
   };
 
   // The Ready rows: matched + Everee-linked + a resolved/typed pay rate (and a
@@ -1460,6 +1503,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       .filter(({ r, match }) => {
         if (!match || match.block || !match.userId) return false;
         if (submittedStatusFor(match.userId, r.workDate)) return false;
+        if (rowNeedsAssignment(match)) return false;
         const eff = effective(match, r.rowIndex);
         return !eff.needsPayRate && !rowNeedsWc(eff);
       })
@@ -1471,6 +1515,8 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           workDate: r.workDate,
           hours: r.hours,
           payRate: eff.payRate as number,
+          // Assignment-as-truth gate — the server re-checks this too.
+          assignmentId: match!.assignmentId ?? null,
           workerName: match!.displayName || [r.firstName, r.lastName].filter(Boolean).join(' '),
           // The event/site this day belongs to — used for the per-day pay-stub
           // line label (both worker types).
@@ -1667,7 +1713,14 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   };
 
   // ── Save progress (persist the whole grid to timesheet_entries) ──
-  type ImportMatchStatus = 'ready' | 'needs_rate' | 'needs_wc' | 'blocked' | 'submitted' | 'voided';
+  type ImportMatchStatus =
+    | 'ready'
+    | 'needs_assignment'
+    | 'needs_rate'
+    | 'needs_wc'
+    | 'blocked'
+    | 'submitted'
+    | 'voided';
   const matchStatusFor = (
     m: MatchRowResult,
     eff: ReturnType<typeof effective>,
@@ -1675,6 +1728,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
   ): ImportMatchStatus => {
     if (submitted) return 'submitted';
     if (m.block) return 'blocked';
+    if (rowNeedsAssignment(m)) return 'needs_assignment';
     if (eff.needsPayRate) return 'needs_rate';
     if (rowNeedsWc(eff)) return 'needs_wc';
     return 'ready';
@@ -2180,6 +2234,7 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 const addr = ews.worksiteAddress;
                 const eff = effective(match, r.rowIndex);
                 const needsWc = rowNeedsWc(eff);
+                const needsAsn = rowNeedsAssignment(match);
                 const submitted = submittedStatusFor(match?.userId, r.workDate);
                 const extId = match?.userId ? rowExternalId(match.userId, r.workDate) : '';
                 return (
@@ -2228,25 +2283,39 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                         title={
                           match.block
                             ? match.blockReason ?? 'Blocked'
-                            : eff.needsPayRate
-                              ? 'Matched + Everee-linked, but no pay rate yet — map the site, or click the pay-rate cell to type one.'
-                              : needsWc
-                                ? 'Matched + Everee-linked + pay rate, but no workers-comp code yet — click the WC cell to add one (required for W-2).'
-                                : 'Matched + Everee-linked + pay rate resolved'
+                            : needsAsn
+                              ? 'Matched, but no assignment — click the worksite pencil to link a job order and create one (required before Everee).'
+                              : eff.needsPayRate
+                                ? 'Matched + Everee-linked, but no pay rate yet — map the site, or click the pay-rate cell to type one.'
+                                : needsWc
+                                  ? 'Matched + Everee-linked + pay rate, but no workers-comp code yet — click the WC cell to add one (required for W-2).'
+                                  : 'Matched + Everee-linked + pay rate resolved'
                         }
                       >
                         <Chip
                           size="small"
-                          color={match.block ? 'warning' : eff.needsPayRate || needsWc ? 'info' : 'success'}
-                          icon={!match.block && !eff.needsPayRate && !needsWc ? <CheckCircleIcon /> : undefined}
+                          color={
+                            match.block || needsAsn
+                              ? 'warning'
+                              : eff.needsPayRate || needsWc
+                                ? 'info'
+                                : 'success'
+                          }
+                          icon={
+                            !match.block && !needsAsn && !eff.needsPayRate && !needsWc ? (
+                              <CheckCircleIcon />
+                            ) : undefined
+                          }
                           label={
                             match.block
                               ? 'Blocked'
-                              : eff.needsPayRate
-                                ? 'Needs rate'
-                                : needsWc
-                                  ? 'Needs WC'
-                                  : 'Ready'
+                              : needsAsn
+                                ? 'Missing assignment'
+                                : eff.needsPayRate
+                                  ? 'Needs rate'
+                                  : needsWc
+                                    ? 'Needs WC'
+                                    : 'Ready'
                           }
                         />
                       </Tooltip>
@@ -2477,8 +2546,22 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                               </Typography>
                             )}
                           </Typography>
-                          <Tooltip title="Look up / set the HRX worksite for this event">
-                            <IconButton size="small" onClick={() => openWorksiteDialog(r.rowIndex, r.site)} sx={{ p: 0.25 }}>
+                          <Tooltip
+                            title={
+                              match?.userId && !match.assignmentId
+                                ? 'Fix the assignment — link a job order; worksite, position, pay & WC flow from it for all of this worker’s rows'
+                                : 'Look up / set the HRX worksite for this event'
+                            }
+                          >
+                            <IconButton
+                              size="small"
+                              onClick={() =>
+                                match?.userId && !match.assignmentId
+                                  ? openFixCard(r.rowIndex)
+                                  : openWorksiteDialog(r.rowIndex, r.site)
+                              }
+                              sx={{ p: 0.25 }}
+                            >
                               <EditIcon sx={{ fontSize: 15 }} />
                             </IconButton>
                           </Tooltip>
@@ -2604,15 +2687,17 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 ).length;
                 const live = rows.filter(({ r, m }) => !submittedStatusFor(m.userId, r.workDate));
                 const ready = live.filter(({ m }) => {
-                  if (m.block) return false;
+                  if (m.block || rowNeedsAssignment(m)) return false;
                   const eff = effective(m, m.rowIndex);
                   return !eff.needsPayRate && !rowNeedsWc(eff);
                 }).length;
+                const needsAsn = live.filter(({ m }) => !m.block && rowNeedsAssignment(m)).length;
                 const needsRate = live.filter(
-                  ({ m }) => !m.block && effective(m, m.rowIndex).needsPayRate,
+                  ({ m }) =>
+                    !m.block && !rowNeedsAssignment(m) && effective(m, m.rowIndex).needsPayRate,
                 ).length;
                 const needsWc = live.filter(({ m }) => {
-                  if (m.block) return false;
+                  if (m.block || rowNeedsAssignment(m)) return false;
                   const eff = effective(m, m.rowIndex);
                   return !eff.needsPayRate && rowNeedsWc(eff);
                 }).length;
@@ -2620,6 +2705,9 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
                 return (
                   <>
                     <Chip size="small" color="success" label={`Ready: ${ready}`} />
+                    {needsAsn > 0 && (
+                      <Chip size="small" color="warning" label={`Missing assignment: ${needsAsn}`} />
+                    )}
                     {needsRate > 0 && (
                       <Chip size="small" color="info" label={`Needs pay rate: ${needsRate}`} />
                     )}
@@ -3263,6 +3351,26 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
           )}
         </DialogActions>
       </Dialog>
+
+      {tenantId && entityId && fixCard && (
+        <FixAssignmentDialog
+          open
+          onClose={() => setFixCard(null)}
+          tenantId={tenantId}
+          hiringEntityId={entityId}
+          userId={fixCard.userId}
+          workerName={fixCard.workerName}
+          defaultTitle={fixCard.defaultTitle}
+          defaultPayRate={fixCard.defaultPayRate}
+          rows={fixCard.rows}
+          onFixed={() => {
+            setFixCard(null);
+            // Rows here are in-memory — the re-match pairs the fresh
+            // assignment onto every row (rate/WC/worksite fill in).
+            void runMatch();
+          }}
+        />
+      )}
 
       <Snackbar
         open={!!bulkRatePrompt}

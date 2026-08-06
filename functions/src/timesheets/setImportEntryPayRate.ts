@@ -107,7 +107,16 @@ export const setImportEntryPayRate = onCall<Input, Promise<{ ok: true; payRate: 
           ? (imp.workersCompRate as number)
           : 0);
       const hasWc = Boolean(wcCode) && wcRate > 0;
-      nextStatus = !(rounded > 0) ? 'needs_rate' : !is1099 && !hasWc ? 'needs_wc' : 'ready';
+      // Assignment-as-truth gate: W-2 rows need a real assignment (Greg 2026-08-05).
+      const hasAsn = Boolean(String(entry.assignmentId ?? '').trim());
+      nextStatus =
+        !is1099 && !hasAsn
+          ? 'needs_assignment'
+          : !(rounded > 0)
+            ? 'needs_rate'
+            : !is1099 && !hasWc
+              ? 'needs_wc'
+              : 'ready';
       updates['import.matchStatus'] = nextStatus;
     }
 

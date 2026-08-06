@@ -32,7 +32,14 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-type ImportMatchStatus = 'ready' | 'needs_rate' | 'needs_wc' | 'blocked' | 'submitted' | 'voided';
+type ImportMatchStatus =
+  | 'ready'
+  | 'needs_assignment'
+  | 'needs_rate'
+  | 'needs_wc'
+  | 'blocked'
+  | 'submitted'
+  | 'voided';
 
 interface SaveImportRow {
   rowIndex: number;

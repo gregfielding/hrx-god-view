@@ -62,7 +62,10 @@ interface JoOption {
 }
 
 export interface FixAssignmentRow {
-  entryId: string;
+  /** Saved timesheet-entry doc id. Omit for Import-tab rows that only exist
+   *  in memory — those skip the per-entry re-resolve; the caller re-runs the
+   *  match instead (onFixed), which pairs the fresh assignment. */
+  entryId?: string;
   workDate: string;
 }
 
@@ -206,7 +209,8 @@ const FixAssignmentDialog: React.FC<Props> = ({
           },
         ],
       });
-      // Pair + stamp every row; per-row failures don't kill the batch.
+      // Pair + stamp every SAVED row; per-row failures don't kill the batch.
+      // In-memory rows (no entryId) are covered by the caller's re-match.
       const reresolve = httpsCallable<{ tenantId: string; entryId: string }, { connected: boolean }>(
         functions,
         'reresolveImportEntry',
@@ -214,6 +218,7 @@ const FixAssignmentDialog: React.FC<Props> = ({
       );
       const fixed: string[] = [];
       for (const r of rows) {
+        if (!r.entryId) continue;
         try {
           await reresolve({ tenantId, entryId: r.entryId });
           fixed.push(r.entryId);
@@ -240,6 +245,14 @@ const FixAssignmentDialog: React.FC<Props> = ({
             account, and WC flow from it, and all {rows.length} of their imported row
             {rows.length === 1 ? '' : 's'} in view reconnect to it.
           </Typography>
+
+          {!userId && (
+            <Alert severity="warning">
+              These rows aren't linked to an HRX worker yet, so an assignment can't be created.
+              Match {workerName} to an HRX worker first (the pencil next to their name on the
+              row), then reopen this card.
+            </Alert>
+          )}
 
           <Autocomplete<JoOption>
             options={joOptions}

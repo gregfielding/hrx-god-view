@@ -224,11 +224,16 @@ export const setEntryWorkersComp = onCall<Input, Promise<Output>>(
           is1099 = String((entitySnap.data() || {}).workerType || '').trim() === '1099';
         }
         const payRate = Number(entry.payRate);
-        importPatch['import.matchStatus'] = !(payRate > 0)
-          ? 'needs_rate'
-          : !is1099 && (!finalCode || finalRate == null)
-            ? 'needs_wc'
-            : 'ready';
+        // Assignment-as-truth gate: W-2 rows need a real assignment too.
+        const hasAsn = Boolean(String(entry.assignmentId ?? '').trim());
+        importPatch['import.matchStatus'] =
+          !is1099 && !hasAsn
+            ? 'needs_assignment'
+            : !(payRate > 0)
+              ? 'needs_rate'
+              : !is1099 && (!finalCode || finalRate == null)
+                ? 'needs_wc'
+                : 'ready';
       }
       await entryRef.update(importPatch);
     }

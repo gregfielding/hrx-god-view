@@ -33,7 +33,7 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-type ImportMatchStatus = 'ready' | 'needs_rate' | 'needs_wc' | 'blocked';
+type ImportMatchStatus = 'ready' | 'needs_assignment' | 'needs_rate' | 'needs_wc' | 'blocked';
 
 async function assertTimesheetEditor(
   uid: string,
@@ -140,12 +140,15 @@ export const reassignImportEntryWorker = onCall(
     const wcRateRaw = num(entry.workersCompRate) || num(imp.workersCompRate);
     const hasWc = Boolean(wcCode) && wcRateRaw > 0;
 
+    // A reassign points the row at a NEW worker — the old worker's assignment
+    // can't carry over, so W-2 rows land at needs_assignment until the
+    // fix-assignment card (or re-resolve) pairs one for the new worker.
     const matchStatus: ImportMatchStatus = linkage.blockReason
       ? 'blocked'
-      : !(payRate > 0)
-        ? 'needs_rate'
-        : !is1099 && !hasWc
-          ? 'needs_wc'
+      : !is1099
+        ? 'needs_assignment'
+        : !(payRate > 0)
+          ? 'needs_rate'
           : 'ready';
 
     const newDocId = importEntryDocId({ customer, userId: newUserId, workDate });

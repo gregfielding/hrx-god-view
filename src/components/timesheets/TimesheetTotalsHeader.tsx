@@ -141,6 +141,7 @@ type ChipStatus = Exclude<
   | 'no_entry'
   | 'import_ready'
   | 'import_needs_rate'
+  | 'import_needs_assignment'
   | 'import_needs_wc'
   | 'import_blocked'
   | 'import_submitted'

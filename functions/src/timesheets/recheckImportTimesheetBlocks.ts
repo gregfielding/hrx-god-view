@@ -28,7 +28,7 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-type ImportMatchStatus = 'ready' | 'needs_rate' | 'needs_wc' | 'blocked';
+type ImportMatchStatus = 'ready' | 'needs_assignment' | 'needs_rate' | 'needs_wc' | 'blocked';
 
 async function assertTimesheetEditor(
   uid: string,
@@ -139,13 +139,18 @@ export const recheckImportTimesheetBlocks = onCall(
       // W-2 needs BOTH code and a resolved rate to be ready (Greg 2026-08-05).
       const wcRateRaw = num(entry.workersCompRate) || num(imp.workersCompRate);
       const hasWc = Boolean(wcCode) && wcRateRaw > 0;
+      // Assignment-as-truth gate: W-2 rows must be anchored to a real
+      // assignment before Everee (Greg 2026-08-05). 1099 exempt for now.
+      const hasAsn = Boolean(String(entry.assignmentId ?? '').trim());
       const matchStatus: ImportMatchStatus = linkage.blockReason
         ? 'blocked'
-        : !(payRate > 0)
-          ? 'needs_rate'
-          : !is1099 && !hasWc
-            ? 'needs_wc'
-            : 'ready';
+        : !is1099 && !hasAsn
+          ? 'needs_assignment'
+          : !(payRate > 0)
+            ? 'needs_rate'
+            : !is1099 && !hasWc
+              ? 'needs_wc'
+              : 'ready';
 
       summary.rechecked += 1;
       const changed =

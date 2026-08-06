@@ -246,6 +246,7 @@ const STATUS_LABELS: Record<TimesheetRowDisplayStatus, string> = {
   // CSV-import rows (surfaced from the Import tab; resolved/fixed there).
   import_ready: 'Ready (import)',
   import_needs_rate: 'Needs rate (import)',
+  import_needs_assignment: 'Missing assignment (import)',
   import_needs_wc: 'Needs WC (import)',
   import_blocked: 'Blocked (import)',
   import_submitted: '✓ Submitted (import)',
@@ -271,6 +272,7 @@ const STATUS_COLORS: Record<
   error: 'error',
   import_ready: 'success',
   import_needs_rate: 'info',
+  import_needs_assignment: 'warning',
   import_needs_wc: 'info',
   import_blocked: 'warning',
   import_submitted: 'success',
@@ -2097,6 +2099,7 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
   const STATUS_FILTER_OPTIONS: TimesheetRowDisplayStatus[] = [
     'import_blocked',
     'import_needs_rate',
+    'import_needs_assignment',
     'import_needs_wc',
     'import_ready',
     'import_submitted',
