@@ -1536,13 +1536,10 @@ const CsvTimesheetImport: React.FC<CsvTimesheetImportProps> = ({
       if (!m?.userId || m.userId === sourceUserId) continue;
       if (String(m.assignmentId ?? '').trim()) continue;
       if (submittedStatusFor(m.userId, x.workDate)) continue;
-      const cur = byWorker.get(m.userId) ?? {
-        dates: [],
-        payRate: (() => {
-          const eff = effective(m, x.rowIndex);
-          return typeof eff.payRate === 'number' && eff.payRate > 0 ? eff.payRate : info.payRate;
-        })(),
-      };
+      // Carry-through spec (Greg 2026-08-05): JO, position, PAY RATE, and WC
+      // code+rate all come from the card; rows with their own CSV rate keep
+      // it at the entry level.
+      const cur = byWorker.get(m.userId) ?? { dates: [], payRate: info.payRate };
       cur.dates.push(x.workDate);
       byWorker.set(m.userId, cur);
     }

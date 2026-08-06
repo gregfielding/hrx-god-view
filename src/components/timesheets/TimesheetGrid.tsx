@@ -1773,13 +1773,11 @@ export const TimesheetGrid: React.FC<TimesheetGridProps> = ({
         if (!wid || wid === String(sourceRow.entry.workerId ?? '')) continue;
         if (String((r.entry as unknown as { assignmentId?: string }).assignmentId ?? '').trim()) continue;
         if (LIVE.has(String(r.entry.import?.matchStatus ?? ''))) continue;
-        const cur = byWorker.get(wid) ?? {
-          dates: [],
-          payRate:
-            typeof r.entry.payRate === 'number' && r.entry.payRate > 0
-              ? r.entry.payRate
-              : info.payRate,
-        };
+        // Carry-through spec (Greg 2026-08-05): JO, position, PAY RATE, and
+        // WC code+rate all come from the card. Rows with their own explicit
+        // CSV rate keep it at the entry level (server stamping never
+        // overwrites a set entry rate); the assignment carries the card's.
+        const cur = byWorker.get(wid) ?? { dates: [], payRate: info.payRate };
         cur.dates.push(r.workDate);
         byWorker.set(wid, cur);
       }
