@@ -122,7 +122,22 @@ const SodexoOutreachPanel: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     }
   };
 
-  if (loading) return null;
+  if (loading) {
+    return (
+      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+        <Stack direction="row" spacing={2} alignItems="center">
+          <MailIcon color="action" />
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+            Email Outreach
+          </Typography>
+          <CircularProgress size={16} />
+          <Typography variant="body2" color="text.secondary">
+            Checking mailbox + campaign status…
+          </Typography>
+        </Stack>
+      </Paper>
+    );
+  }
 
   return (
     <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>

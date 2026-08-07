@@ -291,10 +291,28 @@ export const getSodexoOutreachStatus = onCall({ cors: true, memory: '512MiB' }, 
   await ensureInternalStaff(uid, tenantId);
 
   const cfg = (await mailboxCfgRef(tenantId).get()).data() ?? {};
-  const counts: Record<string, number> = {};
-  for (const touch of [1, 2, 3]) {
-    counts[`touch${touch}`] = (await eligibleCandidates(tenantId, touch)).length;
-  }
+  // One pass over the contacts for all three touch counts — the per-touch
+  // eligibleCandidates() rescan made this callable painfully slow (the
+  // panel sat invisible in its loading state, Greg 2026-08-07).
+  const now = Date.now();
+  const counts: Record<string, number> = { touch1: 0, touch2: 0, touch3: 0 };
+  const contactsSnap = await db
+    .collection(`tenants/${tenantId}/crm_contacts`)
+    .where('leadSource', '==', LEAD_SOURCE)
+    .where('tier', '==', 1)
+    .get();
+  contactsSnap.forEach((d) => {
+    const v = d.data() as Record<string, unknown>;
+    if (!trim(v.email)) return;
+    const so = (v.sodexoOutreach as Record<string, unknown>) ?? {};
+    if (so.optedOut === true || so.repliedAt) return;
+    const t1 = (so.touch1SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
+    const t2 = (so.touch2SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
+    const t3 = (so.touch3SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
+    if (!t1) counts.touch1 += 1;
+    else if (!t2 && now - t1 >= TOUCH2_MIN_MS) counts.touch2 += 1;
+    else if (t2 && !t3 && now - t2 >= TOUCH3_MIN_MS) counts.touch3 += 1;
+  });
   const batches = await db
     .collection(`tenants/${tenantId}/sodexo_outreach_batches`)
     .orderBy('sentAt', 'desc')
