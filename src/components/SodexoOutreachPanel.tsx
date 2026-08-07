@@ -93,7 +93,11 @@ const SodexoOutreachPanel: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     setError(null);
     setResult(null);
     try {
-      const res = await httpsCallable(getFunctions(), 'sodexoOutreachSendBatch')({
+      // A 60-email batch takes ~1-2 min server-side (human pacing between
+      // sends); the SDK's default 70s deadline made the browser report
+      // deadline-exceeded while the server finished fine. 9-min client
+      // timeout matches the function's own limit.
+      const res = await httpsCallable(getFunctions(), 'sodexoOutreachSendBatch', { timeout: 540000 })({
         tenantId,
         touch,
         limit,
