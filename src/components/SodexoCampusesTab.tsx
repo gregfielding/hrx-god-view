@@ -29,6 +29,7 @@ import {
 import { OpenInNew as OpenInNewIcon } from '@mui/icons-material';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
+import SodexoOutreachPanel from './SodexoOutreachPanel';
 
 const CAMPUS_ACCOUNT_SOURCE = 'sodexomyway_scrape_2026-07-14';
 const CAMPUS_CONTACT_LEAD_SOURCE = 'Sodexo Campus Scrape (sodexomyway.com)';
@@ -135,6 +136,7 @@ const SodexoCampusesTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
 
   return (
     <Box sx={{ px: 2, py: 2 }}>
+      <SodexoOutreachPanel tenantId={tenantId} />
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
         <Typography variant="h6" sx={{ fontWeight: 600, mr: 1 }}>
           Sodexo Campus Dining

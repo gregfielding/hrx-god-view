@@ -1667,6 +1667,18 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           setSaving(false);
           return;
         }
+        // Address is part of account creation now — no account exists
+        // without a verified, geocoded home address (Greg 2026-08-07).
+        if (!isApplyHomeAddressValid(formDataRef.current?.personal || formData?.personal || {})) {
+          alert(
+            t('apply.homeAddressRequired', {
+              defaultValue:
+                'Please select your home address from the dropdown so we can verify it before continuing.',
+            }),
+          );
+          setSaving(false);
+          return;
+        }
       }
       // Address step: hard-block advancing until the home address is selected
       // from the Google dropdown AND geocoded. The disabled Next button already
@@ -3308,16 +3320,30 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const renderStep = () => {
     switch (actualStep) {
       case 0:
+        // Home address is collected AT account creation (Greg 2026-08-07:
+        // "users without an address are nearly worthless") — an account can
+        // no longer exist without a verified, geocoded address. Reuses the
+        // maintained AddressStep (manual entry + server-side geocode), NOT
+        // PersonalInfoStep's legacy showAddressFields (client-side geocode
+        // is REQUEST_DENIED on the browser key — the July footgun).
         return (
-          <PersonalInfoStep
-            value={formData.personal || {}}
-            onChange={(v) => persist({ personal: v })}
-            onPasswordChange={(pwd, confirmPwd) => {
-              setPassword(pwd);
-              setConfirmPassword(confirmPwd);
-            }}
-            showAddressFields={false}
-          />
+          <>
+            <PersonalInfoStep
+              value={formData.personal || {}}
+              onChange={(v) => persist({ personal: v })}
+              onPasswordChange={(pwd, confirmPwd) => {
+                setPassword(pwd);
+                setConfirmPassword(confirmPwd);
+              }}
+              showAddressFields={false}
+            />
+            <Box sx={{ mt: 3 }}>
+              <AddressStep
+                value={formData.personal || {}}
+                onChange={(v) => persist({ personal: v })}
+              />
+            </Box>
+          </>
         );
       case 1:
         return (
@@ -3883,6 +3909,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                         missing.additional.length > 0)) ||
                     (actualStep === 0 &&
                       (!personalValid ||
+                        !addressValid ||
                         (!auth.currentUser &&
                           (password.length < 6 || password !== confirmPassword)))) ||
                     (actualStep === 1 && !addressValid) ||
