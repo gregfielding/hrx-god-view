@@ -337,6 +337,14 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
       return;
     }
 
+    // Tenant-level sales-outreach mailbox connect (Sodexo campaign):
+    // tokens go to tenants/{tid}/integrations/salesOutreachMailbox.
+    if (parsedState?.purpose === 'salesOutreachMailbox') {
+      const { handleSalesOutreachMailboxOAuth } = await import('./sales/sodexoOutreach');
+      await handleSalesOutreachMailboxOAuth(code, parsedState, res);
+      return;
+    }
+
     const { userId } = parsedState;
 
     // DIAGNOSTIC: log the exact values being sent to Google's /token endpoint so we can

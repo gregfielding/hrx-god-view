@@ -12869,3 +12869,10 @@ export {
 } from './categoryScoreEvolution/applyCategoryScoreEvent';
 
 export { syncActivityCategoryScoreOnUserGeocodeWrite } from './categoryScoreEvolution/activityCategoryScoreOnUserWrite';
+// Sodexo campus outreach — send-only Gmail campaign rails (no cron/watch;
+// batches fire only from the CRM Sodexo tab).
+export {
+  getSalesOutreachGmailAuthUrl,
+  getSodexoOutreachStatus,
+  sodexoOutreachSendBatch,
+} from './sales/sodexoOutreach';
