@@ -751,6 +751,21 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     enabled: true,
   },
   {
+    id: 'apply_abandon_nudge',
+    label: 'Incomplete Application Nudge',
+    category: 'engagement',
+    defaultChannels: ['sms'],
+    critical: false,
+    allowReply: true,
+    requiresExplicitSmsOptIn: false,
+    requiresTemplate: false,
+    aiAllowedToDraft: false,
+    aiAllowedToAutoSend: true,
+    description:
+      'Second-stage "finish your application" SMS for signups that stalled before the Address step (processApplyAbandonNudges, daily): 24h+ after account creation, max 2 per worker ≥72h apart, only while no home address and no submitted application. Opt-out semantics.',
+    enabled: true,
+  },
+  {
     id: 'shift_invite',
     label: 'Shift Invite (auto blast)',
     category: 'engagement',

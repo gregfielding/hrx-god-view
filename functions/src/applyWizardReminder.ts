@@ -375,3 +375,174 @@ export const processApplyWizardReminders = onSchedule(
     });
   }
 );
+
+/* -------------------------------------------------------------------------
+ * Second-stage abandon nudge (Greg 2026-08-06)
+ *
+ * The 15-minute reminder above is one-shot — audit of Aug 1–6 signups found
+ * 41 accounts that quit before the Address step (29 already got the 15-min
+ * reminder and never returned; the public-jobs-board signup path never arms
+ * it at all). This daily sweep sends up to TWO later-stage "finish your
+ * application" texts (24h+ after signup, ≥72h apart) to workers who still
+ * have no home address and no submitted application. Distinct goal from the
+ * interview-first 15-min invite: get the application (address) completed.
+ * ------------------------------------------------------------------------- */
+
+const NUDGE_TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
+const NUDGE_MAX_COUNT = 2;
+const NUDGE_MIN_GAP_MS = 72 * 60 * 60 * 1000;
+const NUDGE_MIN_ACCOUNT_AGE_MS = 24 * 60 * 60 * 1000;
+const NUDGE_LOOKBACK_MS = 21 * 24 * 60 * 60 * 1000;
+const NUDGE_MAX_SENDS_PER_RUN = 150;
+
+function hasHomeAddress(data: Record<string, unknown>): boolean {
+  const a = (data.addressInfo as Record<string, unknown>) ?? {};
+  // Both historical schemas (streetAddress/zip and addressLine1/postalCode).
+  return Boolean((a.streetAddress || a.addressLine1) && (a.zip || a.postalCode));
+}
+
+function isTenantWorker(data: Record<string, unknown>): boolean {
+  const map = data.tenantIds as Record<string, Record<string, unknown>> | undefined;
+  const entry = map?.[NUDGE_TENANT];
+  const inTenant = Boolean(entry) || String(data.tenantId || '') === NUDGE_TENANT;
+  if (!inTenant) return false;
+  // Workers/applicants only — never nudge internal staff (level 5+).
+  const lvl = Number(entry?.securityLevel ?? data.securityLevel ?? 2);
+  return !(Number.isFinite(lvl) && lvl >= 5);
+}
+
+async function userHasAnySubmittedApplication(uid: string): Promise<boolean> {
+  try {
+    const apps = await db
+      .collection(`tenants/${NUDGE_TENANT}/applications`)
+      .where('userId', '==', uid)
+      .limit(40)
+      .get();
+    return apps.docs.some(
+      (d) => normalizeApplicationStatus(String((d.data() as Record<string, unknown>).status ?? '')) === 'submitted',
+    );
+  } catch (e) {
+    logger.warn('applyAbandonNudge: application check failed — skipping user to be safe', {
+      uid,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return true;
+  }
+}
+
+export const processApplyAbandonNudges = onSchedule(
+  {
+    // 17:00 UTC = 10am PT / 1pm ET — daytime everywhere C1 operates.
+    schedule: '0 17 * * *',
+    region: 'us-central1',
+    memory: '512MiB',
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const now = Date.now();
+    const windowStart = admin.firestore.Timestamp.fromMillis(now - NUDGE_LOOKBACK_MS);
+    const windowEnd = admin.firestore.Timestamp.fromMillis(now - NUDGE_MIN_ACCOUNT_AGE_MS);
+    const q = await db
+      .collection('users')
+      .where('createdAt', '>=', windowStart)
+      .where('createdAt', '<=', windowEnd)
+      .get();
+
+    let sent = 0;
+    let skippedCap = 0;
+    let suppressed = 0;
+
+    for (const docSnap of q.docs) {
+      if (sent >= NUDGE_MAX_SENDS_PER_RUN) break;
+      const uid = docSnap.id;
+      const data = docSnap.data() as Record<string, unknown>;
+
+      if (!isTenantWorker(data)) continue;
+      if (hasHomeAddress(data)) continue;
+      if (data.smsOptIn === false) continue;
+      if (userIsInActiveMigration(data)) {
+        suppressed += 1;
+        continue;
+      }
+
+      const nudge = (data.applyAbandonNudge as Record<string, unknown>) ?? {};
+      const count = Number(nudge.count ?? 0) || 0;
+      if (count >= NUDGE_MAX_COUNT) continue;
+      const lastAtMs = (nudge.lastAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
+      if (lastAtMs && now - lastAtMs < NUDGE_MIN_GAP_MS) continue;
+      // Don't stack on top of a same-day interview invite from the
+      // 15-minute reminder (or any other invite path).
+      const lastInviteMs = (data.lastInterviewInvitedAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
+      if (lastInviteMs && now - lastInviteMs < NUDGE_MIN_ACCOUNT_AGE_MS) continue;
+
+      const phone = phoneE164FromUser(data);
+      if (!phone) continue;
+
+      if (await userHasAnySubmittedApplication(uid)) continue;
+
+      const snapshot = (data.applyResumeSnapshot as Record<string, unknown>) ?? {};
+      const snapUrl = String(snapshot.resumeUrl || '').trim();
+      const url = /^https?:\/\//.test(snapUrl) ? snapUrl : 'https://hrxone.com/c1/apply';
+
+      const firstName =
+        String(data.firstName || (String(data.displayName || '').trim().split(/\s+/)[0] || '') || 'there').trim() ||
+        'there';
+      const es = String(data.preferredLanguage || 'en').toLowerCase() === 'es';
+      const body = es
+        ? `Hola ${firstName}, tu solicitud de C1 Staffing está casi lista — faltan solo unos minutos para poder recibir trabajo. Continúa aquí: ${url}`
+        : `Hi ${firstName}, your C1 Staffing application is almost done — just a few more minutes and you're eligible for work. Pick up where you left off: ${url}`;
+
+      const smsResult = await sendWorkerMessageInternal(phone, body, {
+        tenantId: NUDGE_TENANT,
+        userId: uid,
+        source: 'system',
+        messageTypeId: 'apply_abandon_nudge',
+        systemContext: true,
+      });
+      if (!smsResult.success) {
+        logger.warn('applyAbandonNudge: send failed', { uid, error: smsResult.error });
+        continue;
+      }
+
+      const sentAt = admin.firestore.Timestamp.now();
+      await docSnap.ref.update({
+        applyAbandonNudge: { count: count + 1, lastAt: sentAt },
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      try {
+        await docSnap.ref.collection('activityLogs').add({
+          action: 'Incomplete-application nudge',
+          actionType: 'sms_sent',
+          description: 'Automated SMS nudging the worker to finish their application (no home address on file)',
+          severity: 'low',
+          source: 'system',
+          metadata: {
+            reminderType: 'apply_abandon_nudge',
+            nudgeNumber: count + 1,
+            phoneE164: phone,
+            url,
+            preferredLanguage: es ? 'es' : 'en',
+            messageBody: body,
+          },
+          timestamp: sentAt,
+          createdAt: sentAt,
+        });
+      } catch (logErr) {
+        logger.warn('applyAbandonNudge: activity log failed', {
+          uid,
+          error: logErr instanceof Error ? logErr.message : String(logErr),
+        });
+      }
+      sent += 1;
+      if (sent >= NUDGE_MAX_SENDS_PER_RUN) skippedCap += 1;
+    }
+
+    logger.info('applyAbandonNudge: run done', {
+      scanned: q.size,
+      sent,
+      suppressedActiveMigration: suppressed,
+      hitPerRunCap: skippedCap > 0,
+    });
+  },
+);

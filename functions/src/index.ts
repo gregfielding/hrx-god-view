@@ -270,6 +270,7 @@ export { reviewAndRescoreUser } from './reviewAndRescoreUser';
 export {
   onUserCreatedScheduleApplyWizardReminder,
   processApplyWizardReminders,
+  processApplyAbandonNudges,
 } from './applyWizardReminder';
 export {
   onUserCreatedScheduleAutoInterviewInvite,
