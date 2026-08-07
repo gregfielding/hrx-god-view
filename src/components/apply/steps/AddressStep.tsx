@@ -196,8 +196,21 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
     setAddressError(null);
     try {
       const call = httpsCallable(getFunctions(), 'placesGeocodeAddress');
-      const resp: any = await call({ address: `${street}, ${city}, ${state} ${zip}` });
-      const d = resp?.data;
+      // Transient-failure retry: cold starts / network flakes throw from the
+      // callable, while a genuine "address not found" comes back `ok: false`
+      // and must NOT be retried. 3 attempts with short backoff before the
+      // user sees the try-again error.
+      let d: any = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const resp: any = await call({ address: `${street}, ${city}, ${state} ${zip}` });
+          d = resp?.data;
+          break;
+        } catch (err) {
+          if (attempt === 2) throw err;
+          await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+        }
+      }
       if (!d?.ok || typeof d.lat !== 'number' || typeof d.lng !== 'number') {
         setAddressError(
           "We couldn't verify that address. Double-check the street number, city, state, and ZIP — then tap Verify again.",

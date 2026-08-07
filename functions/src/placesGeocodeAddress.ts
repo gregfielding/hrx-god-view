@@ -25,9 +25,26 @@ function component(components: GeocodeComponent[], type: string): GeocodeCompone
   return components.find((c) => c.types?.includes(type));
 }
 
+// Signed-out use (2026-08-07, ADDR-1 follow-up): the apply wizard collects
+// the address at step 0, BEFORE the Firebase account exists, so the manual
+// -entry fallback and the interpolated-address recovery both reach this
+// callable unauthenticated. A hard auth requirement stalls exactly the
+// signups the step-0 gate is meant to capture. Unauth calls are allowed but
+// share a per-instance sliding-window cap to bound geocoding-cost abuse;
+// authed calls are uncapped as before.
+const UNAUTH_WINDOW_MS = 60_000;
+const UNAUTH_MAX_PER_WINDOW = 60;
+let unauthCallTimes: number[] = [];
+
 export const placesGeocodeAddress = onCall({ memory: '512MiB' }, async (request) => {
   if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'Sign in required.');
+    const now = Date.now();
+    unauthCallTimes = unauthCallTimes.filter((t) => now - t < UNAUTH_WINDOW_MS);
+    if (unauthCallTimes.length >= UNAUTH_MAX_PER_WINDOW) {
+      logger.warn('[placesGeocodeAddress] unauth rate cap hit');
+      throw new HttpsError('resource-exhausted', 'Too many requests — try again shortly.');
+    }
+    unauthCallTimes.push(now);
   }
   const address = String(request.data?.address ?? '').trim();
   if (!address || address.length > 300) {
