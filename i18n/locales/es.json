@@ -383,6 +383,12 @@
       "dyn_gig_path_willing": "Podemos tener turnos tipo gig antes de que abra un rol de tiempo completo. ¿Estarías dispuesto/a a tomar turnos gig mientras tanto?"
     },
     "signInPrompt": "Inicia sesión para completar esta entrevista.",
+    "addressGate": {
+      "title": "Un paso rápido antes de empezar",
+      "body": "Te conectamos con trabajos cerca de tu casa, así que necesitamos tu dirección antes de la entrevista. Toma unos 15 segundos.",
+      "save": "Guardar dirección y empezar",
+      "saving": "Guardando…"
+    },
     "backToDashboard": "Volver al panel",
     "browseJobsBoard": "Ver empleos",
     "successTitle": "Entrevista enviada",

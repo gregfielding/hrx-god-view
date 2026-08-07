@@ -383,6 +383,12 @@
       "dyn_gig_path_willing": "We may have gig shifts available before a full-time role opens. Would you be willing to take gig shifts in the meantime?"
     },
     "signInPrompt": "Sign in to complete this interview.",
+    "addressGate": {
+      "title": "One quick thing first",
+      "body": "We match you to jobs near your home, so we need your address before the interview. It takes about 15 seconds.",
+      "save": "Save address & start interview",
+      "saving": "Saving…"
+    },
     "backToDashboard": "Back to dashboard",
     "browseJobsBoard": "Browse jobs",
     "successTitle": "Interview submitted",

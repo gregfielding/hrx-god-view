@@ -50,6 +50,7 @@ import type {
 import WorkerAiPrescreenStrengthenPanel from '../../../components/worker/WorkerAiPrescreenStrengthenPanel';
 import { buildPrescreenSessionProfileEnhancements } from '../../../utils/workerAiPrescreenSubmitProfileSnapshot';
 import { userDocNeedsLegalFirstNameConfirm } from '../../../utils/profileDisplayName';
+import PrescreenAddressGate from '../../../components/apply/PrescreenAddressGate';
 import type { WorkerAiPrescreenUiSection } from '../../../utils/workerAiPrescreenUiFlow';
 import {
   buildPrescreenNavEntries,
@@ -471,6 +472,24 @@ const WorkerAiPrescreenPage: React.FC = () => {
   const i18nWorkerPrescreenReady = t('workerAiPrescreen.title');
 
   const needsLegalNameConfirm = useMemo(() => userDocNeedsLegalFirstNameConfirm(userDoc), [userDoc]);
+
+  // ADDR-2: gate the interview on a home address for account shells (workers
+  // who abandoned the apply wizard and re-enter via the prescreen SMS link).
+  // "Present" = street+zip in either schema (legacy addressInfo or canonical
+  // homeAddress) — coordinates are NOT required, so addresses already on file
+  // (pre-geocode-backfill) never re-gate a returning worker.
+  const needsHomeAddress = useMemo(() => {
+    if (!userProfileSnapshotReady) return false;
+    const v = userDoc ?? {};
+    const a = (v.addressInfo as Record<string, unknown>) ?? {};
+    const h = ((v.homeAddress as Record<string, unknown>) ?? {}) as Record<string, unknown>;
+    const str = (x: unknown): string => String(x ?? '').trim();
+    const legacyOk = Boolean(str(a.streetAddress ?? a.addressLine1) && str(a.zip ?? a.postalCode));
+    const canonicalOk = Boolean(str(h.street) && str(h.postalCode));
+    return !legacyOk && !canonicalOk;
+  }, [userProfileSnapshotReady, userDoc]);
+  /** Session latch so the gate closes immediately on save (no snapshot wait). */
+  const [addressGateDone, setAddressGateDone] = useState(false);
 
   const localizedCoreSteps = useMemo(() => {
     return WORKER_AI_PRESCREEN_STEPS.map((step) => {
@@ -1181,6 +1200,22 @@ const WorkerAiPrescreenPage: React.FC = () => {
             ) : null}
           </Stack>
         </Paper>
+      </Box>
+    );
+  }
+
+  if (userProfileSnapshotReady && needsHomeAddress && !addressGateDone) {
+    return (
+      <Box sx={{ p: { xs: 1.5, sm: 2 }, pb: { xs: 3, sm: 4 }, maxWidth: 560, mx: 'auto' }}>
+        {renderFramingHeader()}
+        <PrescreenAddressGate
+          uid={user.uid}
+          title={t('workerAiPrescreen.addressGate.title')}
+          body={t('workerAiPrescreen.addressGate.body')}
+          saveLabel={t('workerAiPrescreen.addressGate.save')}
+          savingLabel={t('workerAiPrescreen.addressGate.saving')}
+          onSaved={() => setAddressGateDone(true)}
+        />
       </Box>
     );
   }

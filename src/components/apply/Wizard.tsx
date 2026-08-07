@@ -80,6 +80,7 @@ import { getUserScore } from '../../utils/scoreSummary';
 import { useT } from '../../i18n';
 import { buildCanonicalWorkerProfileWritePatch } from '../../utils/workerReadinessWriteModel';
 import { buildCanonicalHomeAddressFromWizardPersonal } from '../../utils/buildCanonicalHomeAddress';
+import { isApplyHomeAddressValid } from '../../utils/applyHomeAddressValid';
 import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroupAutoAdd';
 import { isValidUsPhone10, normalizeUsPhoneDigits } from '../../utils/usPhoneValidation';
 import { normalizeLast4SsnDigits, isEmptyOrValidLast4Ssn } from '../../utils/last4Ssn';
@@ -340,41 +341,10 @@ const PostSubmitRedirect: React.FC<PostSubmitRedirectProps> = ({
   );
 };
 
-/**
- * Apply-wizard home-address gate. An address counts as valid when it is complete
- * (street/city/state/zip) AND geocoded to valid coordinates (homeLat/homeLng) —
- * matching the `addressComplete` rule the wizard uses to skip the address step
- * for returning users. We deliberately do NOT require a Google `placeId`: a
- * worker whose address is already on file (geocoded, no placeId persisted) must
- * not be blocked. On the AddressStep itself, free-typed text clears the
- * coordinates, so a NEW entry still has to be picked from the Google dropdown
- * (which geocodes it) to pass — the cause of new users landing without an
- * address. Shared by the Next-button gate, `handleNext`, and the submit backstop.
- */
-export function isApplyHomeAddressValid(personal: any): boolean {
-  const str = (v: unknown): string => (typeof v === 'string' ? v : String(v ?? '')).trim();
-  const street = str(personal?.street);
-  const city = str(personal?.city);
-  const state = str(personal?.state);
-  const zip = str(personal?.zip);
-  const homeLat = personal?.homeLat;
-  const homeLng = personal?.homeLng;
-  if (!street || !city || !state || !zip) return false;
-  if (homeLat === undefined || homeLng === undefined) return false;
-  if (
-    typeof homeLat !== 'number' ||
-    typeof homeLng !== 'number' ||
-    isNaN(homeLat) ||
-    isNaN(homeLng) ||
-    homeLat < -90 ||
-    homeLat > 90 ||
-    homeLng < -180 ||
-    homeLng > 180
-  ) {
-    return false;
-  }
-  return true;
-}
+// Home-address gate — canonical impl moved to utils/applyHomeAddressValid so
+// non-wizard surfaces (prescreen address gate) can share it without pulling
+// the whole wizard into their chunk. Re-exported for existing importers.
+export { isApplyHomeAddressValid };
 
 const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid, signupGroupId = null }) => {
   const theme = useTheme();
