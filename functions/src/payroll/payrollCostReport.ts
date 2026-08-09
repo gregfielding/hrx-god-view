@@ -764,8 +764,11 @@ export const getWorkersCompMonthlyReport = onCall(
         trim(sidecarAddr?.state).toUpperCase() ||
         '';
       pickedEntries.push({ e, total, hours: round2(reg + ot + dt), state });
+      // ALL assignments (2026-08-09) — the coverage report needs venue names
+      // even when the entry already carries a code; the code-resolution chain
+      // is unchanged (entry stamp still wins before the assignment is read).
       const asnId = trim(e.assignmentId);
-      if (asnId && !trim(e.workersCompCode)) assignmentIds.add(asnId);
+      if (asnId) assignmentIds.add(asnId);
     });
 
     // Batched assignment fetch for the resolution chain.
@@ -776,6 +779,23 @@ export const getWorkersCompMonthlyReport = onCall(
       const snaps = await db.getAll(...chunk.map((id) => db.doc(`tenants/${tenantId}/assignments/${id}`)));
       snaps.forEach((s) => {
         if (s.exists) assignments.set(s.id, s.data() as Record<string, unknown>);
+      });
+    }
+
+    // Job orders — worksite-name fallback for the location coverage report.
+    const jobOrderIds = new Set<string>();
+    pickedEntries.forEach((p) => {
+      const joId =
+        trim(p.e.jobOrderId) || trim(assignments.get(trim(p.e.assignmentId))?.jobOrderId);
+      if (joId) jobOrderIds.add(joId);
+    });
+    const joDocs = new Map<string, Record<string, unknown>>();
+    const joIdList = Array.from(jobOrderIds);
+    for (let i = 0; i < joIdList.length; i += 100) {
+      const chunk = joIdList.slice(i, i + 100);
+      const snaps = await db.getAll(...chunk.map((id) => db.doc(`tenants/${tenantId}/job_orders/${id}`)));
+      snaps.forEach((s) => {
+        if (s.exists) joDocs.set(s.id, s.data() as Record<string, unknown>);
       });
     }
 
@@ -796,6 +816,37 @@ export const getWorkersCompMonthlyReport = onCall(
       workers: Set<string>;
     }
     const unresolvedGroups = new Map<string, UnresolvedGroup>();
+    // Missing-classification report (Greg 2026-08-09): 8040 is the tenant's
+    // placeholder class — payroll riding on it is unclassified in the
+    // carrier's eyes even though the report "resolves". Grouped by state +
+    // title + venue with HOW it resolved, so the fix target is obvious.
+    interface PlaceholderGroup {
+      state: string;
+      jobTitle: string;
+      venue: string;
+      gross: number;
+      hours: number;
+      entries: number;
+      workers: Set<string>;
+      via: Set<string>;
+    }
+    const placeholderGroups = new Map<string, PlaceholderGroup>();
+    // Location coverage report: every venue with payroll this month, with its
+    // classification health — compared against the carrier policy's location
+    // schedule via the persisted on-policy flags.
+    interface LocationAgg {
+      state: string;
+      name: string;
+      address: string;
+      gross: number;
+      hours: number;
+      entries: number;
+      workers: Set<string>;
+      codes: Set<string>;
+      placeholderGross: number;
+      unresolvedGross: number;
+    }
+    const locationAggs = new Map<string, LocationAgg>();
     let totalGross = 0;
     let entryCount = 0;
 
@@ -806,23 +857,92 @@ export const getWorkersCompMonthlyReport = onCall(
       // per-state default ('*' title — set from the report's assign control
       // for import rows that carry no job title).
       let code = trim(e.workersCompCode);
+      let codeVia = code ? 'entry stamp' : '';
       const a = assignments.get(trim(e.assignmentId));
       const jobTitle = trim(a?.jobTitle) || '(no title)';
       if (!code && a) {
         code = trim(a.workersCompCode);
+        if (code) codeVia = 'assignment';
         if (!code && p.state) {
           const hit = matrix.byStateTitle.get(`${p.state}_${jobTitle.toLowerCase()}`);
-          if (hit) code = hit.code;
+          if (hit) {
+            code = hit.code;
+            codeVia = 'title match';
+          }
         }
       }
       if (!code && p.state) {
         const def = matrix.byStateDefault.get(p.state);
-        if (def) code = def.code;
+        if (def) {
+          code = def.code;
+          codeVia = 'state default';
+        }
       }
 
       totalGross = round2(totalGross + p.total);
       entryCount += 1;
       const workerId = trim(e.workerId);
+
+      // Venue identity — same fallback order as the payroll cost report.
+      const sidecar = (e.import ?? {}) as Record<string, unknown>;
+      const jo = joDocs.get(trim(e.jobOrderId) || trim(a?.jobOrderId));
+      const venueName =
+        trim(a?.worksiteName) ||
+        trim(jo?.worksiteName) ||
+        trim(sidecar.worksiteName) ||
+        trim(sidecar.csvSite) ||
+        trim(e.worksiteName) ||
+        '(no venue)';
+      const addrSrc = (a?.worksiteAddress ?? jo?.worksiteAddress ?? sidecar.worksiteAddress ?? e.worksiteAddress ?? {}) as Record<string, unknown>;
+      const address = [trim(addrSrc.street), trim(addrSrc.city)].filter(Boolean).join(', ');
+      const locKey = `${state}|${normalizeVenueKey(venueName)}`;
+      if (!locationAggs.has(locKey)) {
+        locationAggs.set(locKey, {
+          state,
+          name: venueName,
+          address,
+          gross: 0,
+          hours: 0,
+          entries: 0,
+          workers: new Set(),
+          codes: new Set(),
+          placeholderGross: 0,
+          unresolvedGross: 0,
+        });
+      }
+      const loc = locationAggs.get(locKey)!;
+      loc.gross = round2(loc.gross + p.total);
+      loc.hours = round2(loc.hours + p.hours);
+      loc.entries += 1;
+      if (workerId) loc.workers.add(workerId);
+      if (!loc.address && address) loc.address = address;
+      if (!code) loc.unresolvedGross = round2(loc.unresolvedGross + p.total);
+      else {
+        loc.codes.add(code);
+        if (code === '8040') loc.placeholderGross = round2(loc.placeholderGross + p.total);
+      }
+
+      if (code === '8040') {
+        const pKey = `${state}|${jobTitle}|${normalizeVenueKey(venueName)}`;
+        if (!placeholderGroups.has(pKey)) {
+          placeholderGroups.set(pKey, {
+            state,
+            jobTitle,
+            venue: venueName,
+            gross: 0,
+            hours: 0,
+            entries: 0,
+            workers: new Set(),
+            via: new Set(),
+          });
+        }
+        const pg = placeholderGroups.get(pKey)!;
+        pg.gross = round2(pg.gross + p.total);
+        pg.hours = round2(pg.hours + p.hours);
+        pg.entries += 1;
+        if (workerId) pg.workers.add(workerId);
+        if (codeVia) pg.via.add(codeVia);
+      }
 
       if (!code || state === '(no state)') {
         const uKey = `${state}|${jobTitle}`;
@@ -898,6 +1018,51 @@ export const getWorkersCompMonthlyReport = onCall(
       }))
       .sort((a, b) => b.gross - a.gross);
 
+    // Carrier-policy location flags (Greg 2026-08-09): the policy's location
+    // schedule lives on paper at InSource — Greg marks each venue on/off
+    // policy ONCE from the report and the flag persists, so every later month
+    // computes state coverage ("2 of 5 locations on policy") automatically.
+    const policySnap = await db
+      .collection(`tenants/${tenantId}/workers_comp_policy_locations`)
+      .where('hiringEntityId', '==', hiringEntityId)
+      .get();
+    const onPolicyByKey = new Map<string, boolean>();
+    policySnap.forEach((d) => {
+      const v = d.data() as Record<string, unknown>;
+      onPolicyByKey.set(`${trim(v.state).toUpperCase()}|${trim(v.venueKey)}`, v.onPolicy === true);
+    });
+
+    const locations = Array.from(locationAggs.entries())
+      .map(([key, l]) => ({
+        state: l.state,
+        name: l.name,
+        address: l.address || null,
+        gross: l.gross,
+        hours: l.hours,
+        entries: l.entries,
+        workers: l.workers.size,
+        codes: Array.from(l.codes).sort(),
+        placeholderGross: l.placeholderGross,
+        unresolvedGross: l.unresolvedGross,
+        /** true/false = reviewed against the policy schedule; null = never marked. */
+        onPolicy: onPolicyByKey.has(key) ? onPolicyByKey.get(key)! : null,
+      }))
+      .sort((a, b) => a.state.localeCompare(b.state) || b.gross - a.gross);
+
+    const placeholders = Array.from(placeholderGroups.values())
+      .map((g) => ({
+        state: g.state,
+        jobTitle: g.jobTitle,
+        venue: g.venue,
+        gross: g.gross,
+        hours: g.hours,
+        entries: g.entries,
+        workers: g.workers.size,
+        via: Array.from(g.via).sort().join(', '),
+      }))
+      .sort((a, b) => b.gross - a.gross);
+    const placeholderGross = round2(placeholders.reduce((s, g) => s + g.gross, 0));
+
     // Available codes per state for the assign dropdown — same options the
     // timesheets WC dialog shows: this entity's rated matrix codes, labeled
     // with the catalog title. Keyed by the states that actually need codes.
@@ -944,6 +1109,9 @@ export const getWorkersCompMonthlyReport = onCall(
       rows,
       unresolved,
       unresolvedGross: round2(unresolved.reduce((s, u) => s + u.gross, 0)),
+      placeholders,
+      placeholderGross,
+      locations,
       stateCodeOptions,
       totalGross,
       totalPremium,
@@ -1133,6 +1301,44 @@ export const upsertWorkersCompRate = onCall(
  * true` (the existing contract every worker-facing notification trigger
  * honors) — no SMS/push to the 79 workers.
  */
+/**
+ * Mark one venue on/off the carrier policy's location schedule (per entity).
+ * The schedule itself lives on paper — this flag is HRX's durable memory of
+ * Greg's reconciliation, read back by the WC monthly report's location
+ * coverage section. Doc id is entity + state + normalized venue so the same
+ * venue name in two states stays distinct.
+ */
+export const setWorkersCompPolicyLocation = onCall(
+  { region: 'us-central1', memory: '512MiB' },
+  async (request) => {
+    const tenantId = trim(request.data?.tenantId);
+    const hiringEntityId = trim(request.data?.hiringEntityId);
+    const state = trim(request.data?.state).toUpperCase();
+    const name = trim(request.data?.name);
+    const onPolicy = request.data?.onPolicy === true;
+    if (!tenantId || !hiringEntityId || !state || !name) {
+      throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, state, name are required.');
+    }
+    await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+    const venueKey = normalizeVenueKey(name);
+    const docId = `${hiringEntityId}__${state}__${venueMappingDocId(name)}`;
+    await db.doc(`tenants/${tenantId}/workers_comp_policy_locations/${docId}`).set(
+      {
+        tenantId,
+        hiringEntityId,
+        state,
+        name,
+        venueKey,
+        onPolicy,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedBy: request.auth?.uid ?? null,
+      },
+      { merge: true },
+    );
+    return { ok: true, onPolicy };
+  },
+);
+
 export const completeVenueMapping = onCall(
   { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
   async (request) => {

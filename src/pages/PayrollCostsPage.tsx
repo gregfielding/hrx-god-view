@@ -44,7 +44,7 @@ import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { httpsCallable } from 'firebase/functions';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 
 import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -156,8 +156,56 @@ const PayrollCostsPage: React.FC = () => {
   const [mapSaving, setMapSaving] = useState(false);
   /** Complete-the-record wizard (Greg 2026-08-05): position + rate + preview. */
   const [mapPosition, setMapPosition] = useState('');
-  const [mapRateMode, setMapRateMode] = useState<'actual' | 'fixed'>('actual');
+  /** 'position' = use the picked JO position's own rate (sent as fixed). */
+  const [mapRateMode, setMapRateMode] = useState<'actual' | 'fixed' | 'position'>('actual');
   const [mapFixedRate, setMapFixedRate] = useState('');
+  /** The selected job order's positions (Greg 2026-08-09) — the Position
+      field must offer THIS JO's titles + rates, not free text. */
+  const [mapJoPositions, setMapJoPositions] = useState<Array<{ title: string; payRate: number }>>([]);
+  const mapPositionRate =
+    mapJoPositions.find((p) => p.title.toLowerCase() === mapPosition.trim().toLowerCase())?.payRate ?? 0;
+
+  useEffect(() => {
+    setMapJoPositions([]);
+    if (!tenantId || !mapJo) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'tenants', tenantId, 'job_orders', mapJo.id));
+        if (cancelled || !snap.exists()) return;
+        const v = snap.data() as Record<string, unknown>;
+        const str = (x: unknown): string => String(x ?? '').trim();
+        // Same shape chain as the timesheets Fix-assignment card: positions[]
+        // → gigPositions[] → career JOs' top-level jobTitle/payRate.
+        const raw =
+          Array.isArray(v.positions) && v.positions.length
+            ? (v.positions as unknown[])
+            : Array.isArray(v.gigPositions)
+              ? (v.gigPositions as unknown[])
+              : [];
+        const toPos = (rec: Record<string, unknown>) => ({
+          title: str(rec.jobTitle) || str(rec.title),
+          payRate: Number(rec.payRate) > 0 ? Number(rec.payRate) : 0,
+        });
+        const positions = raw.map((p) => toPos((p ?? {}) as Record<string, unknown>)).filter((p) => p.title);
+        if (!positions.length && str(v.jobTitle)) positions.push(toPos(v));
+        const seen = new Set<string>();
+        setMapJoPositions(
+          positions.filter((p) => {
+            const k = p.title.toLowerCase();
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          }),
+        );
+      } catch {
+        // Best-effort — the field still accepts free text without options.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, mapJo]);
   const [mapPreview, setMapPreview] = useState<{
     workers: number;
     entries: number;
@@ -344,8 +392,14 @@ const PayrollCostsPage: React.FC = () => {
         venueLabel: mapVenue,
         jobOrderId: mapJo.id,
         positionTitle: mapPosition.trim() || undefined,
-        rateMode: mapRateMode,
-        ...(mapRateMode === 'fixed' ? { fixedRate: Number(mapFixedRate) } : {}),
+        // 'position' is client-side sugar: the picked JO position's own rate,
+        // sent to the server as a fixed rate.
+        rateMode: mapRateMode === 'position' ? 'fixed' : mapRateMode,
+        ...(mapRateMode === 'fixed'
+          ? { fixedRate: Number(mapFixedRate) }
+          : mapRateMode === 'position'
+            ? { fixedRate: mapPositionRate }
+            : {}),
         dryRun,
       });
       const data = res.data as any;
@@ -908,28 +962,51 @@ const PayrollCostsPage: React.FC = () => {
             renderInput={(params) => <TextField {...params} label="Job order" autoFocus />}
           />
           <Stack direction="row" spacing={2} sx={{ mt: 2 }} alignItems="center" flexWrap="wrap" useFlexGap>
-            <TextField
+            <Autocomplete
+              freeSolo
               size="small"
-              label="Position / job title"
-              placeholder="defaults to the job order's title"
-              value={mapPosition}
-              onChange={(e) => {
-                setMapPosition(e.target.value);
+              options={mapJoPositions}
+              getOptionLabel={(o) => (typeof o === 'string' ? o : o.title)}
+              renderOption={(props, o) => (
+                <li {...props} key={o.title}>
+                  {o.title}
+                  {o.payRate > 0 ? ` — $${o.payRate.toFixed(2)}/hr` : ''}
+                </li>
+              )}
+              inputValue={mapPosition}
+              onInputChange={(_e, v) => {
+                setMapPosition(v);
                 setMapPreview(null);
+                // A different position invalidates a position-rate selection.
+                if (mapRateMode === 'position') setMapRateMode('actual');
               }}
               sx={{ minWidth: 240 }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Position / job title"
+                  placeholder={
+                    mapJoPositions.length
+                      ? `${mapJoPositions.length} position${mapJoPositions.length === 1 ? '' : 's'} on this job order`
+                      : "defaults to the job order's title"
+                  }
+                />
+              )}
             />
-            <FormControl size="small" sx={{ minWidth: 170 }}>
+            <FormControl size="small" sx={{ minWidth: 190 }}>
               <InputLabel>Pay rate</InputLabel>
               <Select
                 value={mapRateMode}
                 label="Pay rate"
                 onChange={(e) => {
-                  setMapRateMode(e.target.value as 'actual' | 'fixed');
+                  setMapRateMode(e.target.value as 'actual' | 'fixed' | 'position');
                   setMapPreview(null);
                 }}
               >
                 <MenuItem value="actual">Actual paid rates</MenuItem>
+                {mapPositionRate > 0 && (
+                  <MenuItem value="position">Position rate (${mapPositionRate.toFixed(2)})</MenuItem>
+                )}
                 <MenuItem value="fixed">One rate for all</MenuItem>
               </Select>
             </FormControl>

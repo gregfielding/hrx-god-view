@@ -20,6 +20,8 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -36,6 +38,7 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
@@ -66,6 +69,34 @@ interface WcUnresolved {
   workers: number;
 }
 
+/** Payroll riding the 8040 placeholder — classified in name only. */
+interface WcPlaceholder {
+  state: string;
+  jobTitle: string;
+  venue: string;
+  gross: number;
+  hours: number;
+  entries: number;
+  workers: number;
+  via: string;
+}
+
+/** One venue with payroll this month + its policy-schedule flag. */
+interface WcLocation {
+  state: string;
+  name: string;
+  address: string | null;
+  gross: number;
+  hours: number;
+  entries: number;
+  workers: number;
+  codes: string[];
+  placeholderGross: number;
+  unresolvedGross: number;
+  /** true/false = reviewed against the carrier policy; null = never marked. */
+  onPolicy: boolean | null;
+}
+
 interface WcReport {
   month: string;
   hiringEntityId: string;
@@ -74,6 +105,9 @@ interface WcReport {
   rows: WcRow[];
   unresolved: WcUnresolved[];
   unresolvedGross: number;
+  placeholders: WcPlaceholder[];
+  placeholderGross: number;
+  locations: WcLocation[];
   /** Rated codes available per unresolved state — feeds the assign dropdown. */
   stateCodeOptions: Record<string, Array<{ code: string; rate: number; title: string | null }>>;
   totalGross: number;
@@ -208,6 +242,33 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
     }
   };
 
+  /**
+   * On-policy flag per venue — optimistic flip, persisted server-side so the
+   * reconciliation against the carrier's location schedule is done ONCE and
+   * every later month's report computes coverage from it.
+   */
+  const [policySaving, setPolicySaving] = useState<string | null>(null);
+  const togglePolicy = async (loc: WcLocation): Promise<void> => {
+    if (!tenantId) return;
+    const next = loc.onPolicy !== true;
+    const key = `${loc.state}|${loc.name}`;
+    setPolicySaving(key);
+    setReport((p) =>
+      p ? { ...p, locations: p.locations.map((l) => (l === loc ? { ...l, onPolicy: next } : l)) } : p,
+    );
+    try {
+      const call = httpsCallable(functions, 'setWorkersCompPolicyLocation');
+      await call({ tenantId, hiringEntityId: entityId, state: loc.state, name: loc.name, onPolicy: next });
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save policy flag');
+      setReport((p) =>
+        p ? { ...p, locations: p.locations.map((l) => (l.state === loc.state && l.name === loc.name ? { ...l, onPolicy: loc.onPolicy } : l)) } : p,
+      );
+    } finally {
+      setPolicySaving(null);
+    }
+  };
+
   const exportCsv = (): void => {
     if (!report) return;
     const lines: string[] = [];
@@ -230,6 +291,37 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
         lines.push([u.state, u.jobTitle, '', '', u.gross.toFixed(2), '', u.workers].map(csvCell).join(','));
       }
       lines.push(['UNRESOLVED TOTAL', '', '', '', report.unresolvedGross.toFixed(2), '', ''].join(','));
+    }
+    if ((report.placeholders?.length ?? 0) > 0) {
+      lines.push('');
+      lines.push('8040 PLACEHOLDER (no real class),,,,,,');
+      lines.push('State,Job title,Location,Hours,Gross payroll,Came from,Workers');
+      for (const g of report.placeholders) {
+        lines.push(
+          [g.state, g.jobTitle, g.venue, g.hours, g.gross.toFixed(2), g.via, g.workers].map(csvCell).join(','),
+        );
+      }
+      lines.push(['8040 TOTAL', '', '', '', report.placeholderGross.toFixed(2), '', ''].join(','));
+    }
+    if ((report.locations?.length ?? 0) > 0) {
+      lines.push('');
+      lines.push('LOCATION COVERAGE,,,,,,');
+      lines.push('State,Location,Address,Hours,Gross payroll,Classes,On policy');
+      for (const l of report.locations) {
+        lines.push(
+          [
+            l.state,
+            l.name,
+            l.address ?? '',
+            l.hours,
+            l.gross.toFixed(2),
+            l.codes.join(' '),
+            l.onPolicy == null ? 'not reviewed' : l.onPolicy ? 'yes' : 'NO',
+          ]
+            .map(csvCell)
+            .join(','),
+        );
+      }
     }
     if (report.offCycle.length > 0) {
       lines.push('');
@@ -490,6 +582,166 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
                               </>
                             )}
                           </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Box>
+            )}
+
+            {/* Missing classifications — payroll riding the 8040 placeholder.
+                Fixing happens through the existing controls: click 8040 in the
+                by-class table to reclassify a state's placeholder payroll. */}
+            <Box sx={{ mt: 3 }}>
+              <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
+                Missing classes — 8040 placeholder
+              </Typography>
+              {(report.placeholders?.length ?? 0) === 0 ? (
+                <Alert severity="success">
+                  No payroll on the 8040 placeholder this month — every dollar is on a real class code.
+                </Alert>
+              ) : (
+                <>
+                  <Alert severity="warning" sx={{ mb: 1 }}>
+                    {usd(report.placeholderGross)} of payroll is classified 8040 (placeholder) — the
+                    carrier sees these workers without a real class. To fix a line, click{' '}
+                    <strong>8040</strong> in the by-class table above and pick the real code — that
+                    reclassifies the state&apos;s placeholder payroll and future months follow.
+                  </Alert>
+                  <TableContainer>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>State</TableCell>
+                          <TableCell>Job title</TableCell>
+                          <TableCell>Location</TableCell>
+                          <TableCell align="right">Workers</TableCell>
+                          <TableCell align="right">Hours</TableCell>
+                          <TableCell align="right">Gross payroll</TableCell>
+                          <TableCell>Came from</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {report.placeholders.map((g) => (
+                          <TableRow key={`${g.state}|${g.jobTitle}|${g.venue}`}>
+                            <TableCell>{g.state}</TableCell>
+                            <TableCell>{g.jobTitle}</TableCell>
+                            <TableCell>{g.venue}</TableCell>
+                            <TableCell align="right">{g.workers}</TableCell>
+                            <TableCell align="right">{g.hours.toFixed(2)}</TableCell>
+                            <TableCell align="right">{usd(g.gross)}</TableCell>
+                            <TableCell>
+                              <Typography variant="caption" color="text.secondary">
+                                {g.via || '—'}
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </>
+              )}
+            </Box>
+
+            {/* Location coverage — every venue with payroll vs the carrier
+                policy's location schedule. The checkbox is the one-time
+                reconciliation; per-state "N of M" headers show the gap. */}
+            {(report.locations?.length ?? 0) > 0 && (
+              <Box sx={{ mt: 3 }}>
+                <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
+                  Location coverage
+                </Typography>
+                <Alert severity="info" sx={{ mb: 1 }}>
+                  Every location with payroll this month. Check <strong>On policy</strong> for each
+                  venue that appears on the carrier&apos;s location schedule — the flag sticks, so
+                  future months show each state&apos;s coverage automatically. Unchecked or
+                  unreviewed venues with payroll are your exposure list for InSource.
+                </Alert>
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Location</TableCell>
+                        <TableCell align="right">Workers</TableCell>
+                        <TableCell align="right">Hours</TableCell>
+                        <TableCell align="right">Gross payroll</TableCell>
+                        <TableCell>Classes</TableCell>
+                        <TableCell align="center">On policy</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {Array.from(new Set(report.locations.map((l) => l.state))).map((st) => {
+                        const locs = report.locations.filter((l) => l.state === st);
+                        const onCount = locs.filter((l) => l.onPolicy === true).length;
+                        const covered = onCount === locs.length;
+                        return (
+                          <React.Fragment key={st}>
+                            <TableRow sx={{ bgcolor: 'action.hover' }}>
+                              <TableCell colSpan={5} sx={{ fontWeight: 700 }}>
+                                {st}
+                              </TableCell>
+                              <TableCell align="center">
+                                <Chip
+                                  size="small"
+                                  color={covered ? 'success' : 'warning'}
+                                  label={`${onCount} of ${locs.length} on policy`}
+                                />
+                              </TableCell>
+                            </TableRow>
+                            {locs.map((l) => (
+                              <TableRow key={`${l.state}|${l.name}`}>
+                                <TableCell>
+                                  {l.name}
+                                  {l.address && (
+                                    <Typography variant="caption" color="text.secondary" display="block">
+                                      {l.address}
+                                    </Typography>
+                                  )}
+                                </TableCell>
+                                <TableCell align="right">{l.workers}</TableCell>
+                                <TableCell align="right">{l.hours.toFixed(2)}</TableCell>
+                                <TableCell align="right">{usd(l.gross)}</TableCell>
+                                <TableCell>
+                                  <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                                    {l.codes.filter((c) => c !== '8040').map((c) => (
+                                      <Chip key={c} size="small" variant="outlined" label={c} />
+                                    ))}
+                                    {l.placeholderGross > 0 && (
+                                      <Tooltip title={`${usd(l.placeholderGross)} on the 8040 placeholder`}>
+                                        <Chip size="small" color="warning" label="8040" />
+                                      </Tooltip>
+                                    )}
+                                    {l.unresolvedGross > 0 && (
+                                      <Tooltip title={`${usd(l.unresolvedGross)} with no code at all`}>
+                                        <Chip size="small" color="error" label="no code" />
+                                      </Tooltip>
+                                    )}
+                                  </Stack>
+                                </TableCell>
+                                <TableCell align="center">
+                                  <Tooltip
+                                    title={
+                                      l.onPolicy == null
+                                        ? 'Not reviewed yet — check if this venue is on the carrier policy'
+                                        : l.onPolicy
+                                          ? 'On the carrier policy'
+                                          : 'Reviewed: NOT on the carrier policy'
+                                    }
+                                  >
+                                    <Checkbox
+                                      size="small"
+                                      checked={l.onPolicy === true}
+                                      indeterminate={l.onPolicy == null}
+                                      disabled={policySaving === `${l.state}|${l.name}` || l.name === '(no venue)'}
+                                      onChange={() => void togglePolicy(l)}
+                                    />
+                                  </Tooltip>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </React.Fragment>
                         );
                       })}
                     </TableBody>
