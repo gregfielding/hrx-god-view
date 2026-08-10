@@ -494,6 +494,27 @@ export const getPayrollCostReport = onCall(
     // future QBO class — is the NAME, scoped by account to avoid
     // cross-client collisions. Multiple JOs sharing a name merge into
     // one row; their #numbers and POs are listed as refs.
+    // Worker-name fill (Greg 2026-08-09): unattributed/import rows have no
+    // assignment to name the worker from, which blanked names exactly where
+    // the who-was-paid expansion + CSV need them — fill from the user docs.
+    const unnamedIds = Array.from(
+      new Set(rows.filter((r) => !r.workerName && r.workerId).map((r) => r.workerId)),
+    );
+    for (let i = 0; i < unnamedIds.length; i += 100) {
+      const chunk = unnamedIds.slice(i, i + 100);
+      const snaps = await db.getAll(...chunk.map((id) => db.doc(`users/${id}`)));
+      const names = new Map<string, string>();
+      snaps.forEach((s) => {
+        if (!s.exists) return;
+        const u = s.data() as Record<string, unknown>;
+        const n = `${trim(u.firstName)} ${trim(u.lastName)}`.trim() || trim(u.displayName);
+        if (n) names.set(s.id, n);
+      });
+      rows.forEach((r) => {
+        if (!r.workerName && names.has(r.workerId)) r.workerName = names.get(r.workerId)!;
+      });
+    }
+
     interface ClassGroup extends GroupTotals {
       accountName: string | null;
       attributed: boolean;

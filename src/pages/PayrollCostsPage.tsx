@@ -9,7 +9,7 @@
  *
  * Plain-English, pick-a-range, no config — per the recruiter-UX ethos.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Autocomplete,
@@ -41,6 +41,8 @@ import {
   Typography,
 } from '@mui/material';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { httpsCallable } from 'firebase/functions';
@@ -149,6 +151,41 @@ const PayrollCostsPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ReportData | null>(null);
+  /** Who-was-paid expansion (Greg 2026-08-09): open group keys in the by-JO table. */
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  /**
+   * Per-group worker rollup from the detail rows the report already returns.
+   * The key formula MUST mirror the server's classMap key
+   * (`accountId|jo-or-venue|name`) so each table row finds its workers.
+   */
+  const workersByGroupKey = useMemo(() => {
+    const map = new Map<string, Array<{ id: string; name: string; entries: number; hours: number; total: number }>>();
+    const agg = new Map<string, Map<string, { name: string; entries: number; hours: number; total: number }>>();
+    for (const r of data?.rows ?? []) {
+      const jobOrderName = (r.jobOrderName as string | null) || null;
+      const name = jobOrderName ?? ((r.worksiteName as string | null) || null) ?? 'Unknown';
+      const key = `${(r.accountId as string | null) ?? ''}|${jobOrderName ? 'jo' : 'venue'}|${name}`;
+      if (!agg.has(key)) agg.set(key, new Map());
+      const workers = agg.get(key)!;
+      const wid = String(r.workerId ?? '');
+      const w = workers.get(wid) ?? { name: '', entries: 0, hours: 0, total: 0 };
+      if (!w.name && r.workerName) w.name = String(r.workerName);
+      w.entries += 1;
+      w.hours += Number(r.hours) || 0;
+      w.total += Number(r.total) || 0;
+      workers.set(wid, w);
+    }
+    for (const [key, workers] of agg) {
+      map.set(
+        key,
+        Array.from(workers.entries())
+          .map(([id, w]) => ({ id, ...w, name: w.name || '(no name on file)' }))
+          .sort((a, b) => b.total - a.total),
+      );
+    }
+    return map;
+  }, [data]);
+
   // Venue → job order mapping dialog state.
   const [mapVenue, setMapVenue] = useState<string | null>(null);
   const [joOptions, setJoOptions] = useState<JoOption[] | null>(null);
@@ -653,28 +690,86 @@ const PayrollCostsPage: React.FC = () => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {data.byJobOrder.map((g) => (
-                      <TableRow key={g.key} hover>
-                        <TableCell>{g.label}</TableCell>
-                        <TableCell>{g.accountName ?? '—'}</TableCell>
-                        <TableCell>
-                          {g.attributed === false ? (
-                            <Button size="small" variant="outlined" onClick={() => void openMapDialog(g.label)}>
-                              Map to job order
-                            </Button>
-                          ) : (
-                            [
-                              ...(g.poNumbers ?? []).map((p) => `PO ${p}`),
-                              ...(g.jobOrderRefs ?? []),
-                            ].join(', ') || '—'
+                    {data.byJobOrder.map((g) => {
+                      const open = expandedGroups.has(g.key);
+                      const groupWorkers = workersByGroupKey.get(g.key) ?? [];
+                      const toggle = () =>
+                        setExpandedGroups((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(g.key)) next.delete(g.key);
+                          else next.add(g.key);
+                          return next;
+                        });
+                      return (
+                        <React.Fragment key={g.key}>
+                          <TableRow hover onClick={toggle} sx={{ cursor: 'pointer' }}>
+                            <TableCell>
+                              <Stack direction="row" spacing={0.5} alignItems="center">
+                                {open ? (
+                                  <KeyboardArrowUpIcon fontSize="small" color="action" />
+                                ) : (
+                                  <KeyboardArrowDownIcon fontSize="small" color="action" />
+                                )}
+                                <span>{g.label}</span>
+                              </Stack>
+                            </TableCell>
+                            <TableCell>{g.accountName ?? '—'}</TableCell>
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              {g.attributed === false ? (
+                                <Button size="small" variant="outlined" onClick={() => void openMapDialog(g.label)}>
+                                  Map to job order
+                                </Button>
+                              ) : (
+                                [
+                                  ...(g.poNumbers ?? []).map((p) => `PO ${p}`),
+                                  ...(g.jobOrderRefs ?? []),
+                                ].join(', ') || '—'
+                              )}
+                            </TableCell>
+                            <TableCell align="right">{g.workers}</TableCell>
+                            <TableCell align="right">{g.hours.toFixed(1)}</TableCell>
+                            <TableCell align="right">{usd(g.total)}</TableCell>
+                            <TableCell align="right">{g.pct}%</TableCell>
+                          </TableRow>
+                          {open && (
+                            <TableRow>
+                              <TableCell colSpan={7} sx={{ py: 0, bgcolor: 'action.hover' }}>
+                                <Box sx={{ maxHeight: 260, overflowY: 'auto', py: 1 }}>
+                                  <Table size="small">
+                                    <TableBody>
+                                      {groupWorkers.map((w) => (
+                                        <TableRow key={w.id}>
+                                          <TableCell sx={{ border: 0, py: 0.25 }}>{w.name}</TableCell>
+                                          <TableCell sx={{ border: 0, py: 0.25 }} align="right">
+                                            {w.entries} {w.entries === 1 ? 'payment' : 'payments'}
+                                          </TableCell>
+                                          <TableCell sx={{ border: 0, py: 0.25 }} align="right">
+                                            {w.hours.toFixed(1)} h
+                                          </TableCell>
+                                          <TableCell sx={{ border: 0, py: 0.25 }} align="right">
+                                            {usd(w.total)}
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                      {groupWorkers.length === 0 && (
+                                        <TableRow>
+                                          <TableCell sx={{ border: 0 }}>
+                                            <Typography variant="caption" color="text.secondary">
+                                              Detail rows unavailable for this range (report truncated) —
+                                              narrow the dates to see workers.
+                                            </Typography>
+                                          </TableCell>
+                                        </TableRow>
+                                      )}
+                                    </TableBody>
+                                  </Table>
+                                </Box>
+                              </TableCell>
+                            </TableRow>
                           )}
-                        </TableCell>
-                        <TableCell align="right">{g.workers}</TableCell>
-                        <TableCell align="right">{g.hours.toFixed(1)}</TableCell>
-                        <TableCell align="right">{usd(g.total)}</TableCell>
-                        <TableCell align="right">{g.pct}%</TableCell>
-                      </TableRow>
-                    ))}
+                        </React.Fragment>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </TableContainer>
