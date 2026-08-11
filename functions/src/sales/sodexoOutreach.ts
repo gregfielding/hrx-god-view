@@ -379,8 +379,27 @@ export const sodexoOutreachSendBatch = onCall(
       if (touch > 1 && c.touch1At) {
         try {
           const q = `from:${c.email} after:${Math.floor(c.touch1At / 1000)}`;
-          const res = await gmail.users.messages.list({ userId: 'me', q, maxResults: 1 });
-          if ((res.data.messages ?? []).length > 0) {
+          const res = await gmail.users.messages.list({ userId: 'me', q, maxResults: 3 });
+          // Out-of-office autoresponders are not engagement (2026-08-11: 5 of
+          // the first 10 "replies" were OOO) — only a message whose subject
+          // isn't an auto-reply counts, so those contacts stay in sequence.
+          let humanReply = false;
+          for (const m of res.data.messages ?? []) {
+            if (!m.id) continue;
+            const meta = await gmail.users.messages.get({
+              userId: 'me',
+              id: m.id,
+              format: 'metadata',
+              metadataHeaders: ['Subject'],
+            });
+            const subject =
+              meta.data.payload?.headers?.find((h) => h.name?.toLowerCase() === 'subject')?.value ?? '';
+            if (!/^(automatic reply|auto(matic)?[- ]?reply|out of office)/i.test(subject.trim())) {
+              humanReply = true;
+              break;
+            }
+          }
+          if (humanReply) {
             await c.ref.set(
               { sodexoOutreach: { repliedAt: admin.firestore.FieldValue.serverTimestamp() } },
               { mergeFields: ['sodexoOutreach.repliedAt'] },
