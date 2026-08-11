@@ -12877,3 +12877,4 @@ export {
   sodexoOutreachSendBatch,
 } from './sales/sodexoOutreach';
 export { sodexoReplyScanCron, sodexoReplyScanNow, resolveSodexoReply } from './sales/sodexoReplies';
+export { getCrmReengagementStatus, crmReengagementSendBatch } from './sales/crmReengagement';

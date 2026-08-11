@@ -47,8 +47,8 @@ function newOAuthClient() {
   return new google.auth.OAuth2(clientId.value(), clientSecret.value(), redirectUri.value());
 }
 
-/** Internal staff gate — same rule as sodexoOutreach.ts. */
-async function ensureInternalStaff(uid: string | undefined, tenantId: string): Promise<void> {
+/** Internal staff gate — same rule as sodexoOutreach.ts. Shared with crmReengagement.ts. */
+export async function ensureInternalStaff(uid: string | undefined, tenantId: string): Promise<void> {
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   const snap = await db.doc(`users/${uid}`).get();
   const v = (snap.data() ?? {}) as Record<string, unknown>;
@@ -59,7 +59,7 @@ async function ensureInternalStaff(uid: string | undefined, tenantId: string): P
   }
 }
 
-async function gmailClientFor(tenantId: string): Promise<{ gmail: gmail_v1.Gmail; fromEmail: string } | null> {
+export async function gmailClientFor(tenantId: string): Promise<{ gmail: gmail_v1.Gmail; fromEmail: string } | null> {
   const cfgSnap = await db.doc(`tenants/${tenantId}/integrations/salesOutreachMailbox`).get();
   const cfg = (cfgSnap.data() ?? {}) as Record<string, unknown>;
   const tokens = (cfg.gmailTokens ?? {}) as Record<string, unknown>;
@@ -108,13 +108,16 @@ async function classifyAndDraft(input: {
   campus: string;
   theirMessage: string;
   subject: string;
+  campaign: 'sodexo' | 'reengagement';
 }): Promise<Classified> {
   const apiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY;
   if (!apiKey) throw new Error('OPENAI_API_KEY unset');
   const OpenAI = (await import('openai')).default;
   const openai = new OpenAI({ apiKey });
   const prompt = [
-    `A Sodexo campus-dining manager replied to Greg Fielding's cold outreach about fall staffing coverage. Classify the reply and draft Greg's response.`,
+    input.campaign === 'sodexo'
+      ? `A Sodexo campus-dining manager replied to Greg Fielding's cold outreach about fall staffing coverage. Classify the reply and draft Greg's response.`
+      : `A business contact replied to Greg Fielding's re-engagement outreach about hourly staffing (warehouse, food service, events, janitorial). Classify the reply and draft Greg's response.`,
     ``,
     `Context you may use (never invent beyond it):`,
     `- Greg Fielding runs C1 Staffing, a national hourly staffing agency (cooks, food service workers, dishwashers, utility/janitorial, warehouse).`,
@@ -213,7 +216,9 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
   }
   const { gmail, fromEmail } = client;
 
-  const snap = await db.collection(`tenants/${tenantId}/crm_contacts`).where('leadSource', '==', LEAD_SOURCE).get();
+  // BOTH campaigns share this desk (2026-08-11): sodexo contacts keyed by
+  // leadSource, everyone else via crmReengagement state. One full scan.
+  const snap = await db.collection(`tenants/${tenantId}/crm_contacts`).get();
   interface Target {
     ref: FirebaseFirestore.DocumentReference;
     id: string;
@@ -224,11 +229,15 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
     touch1Ms: number;
     processed: string[];
     replied: boolean;
+    campaign: 'sodexo' | 'reengagement';
+    stateKey: 'sodexoOutreach' | 'crmReengagement';
   }
   const targets: Target[] = [];
   snap.forEach((d) => {
     const v = d.data() as Record<string, unknown>;
-    const so = (v.sodexoOutreach ?? {}) as Record<string, unknown>;
+    const isSodexo = (trim(v.leadSource) || trim(v.source)).startsWith('Sodexo Campus Scrape');
+    const stateKey = isSodexo ? 'sodexoOutreach' : 'crmReengagement';
+    const so = (v[stateKey] ?? {}) as Record<string, unknown>;
     const t1 = so.touch1SentAt as admin.firestore.Timestamp | undefined;
     if (!t1?.toMillis) return;
     if (so.optedOut === true) return;
@@ -244,6 +253,8 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
       touch1Ms: t1.toMillis(),
       processed: Array.isArray(so.processedReplyMsgIds) ? (so.processedReplyMsgIds as string[]) : [],
       replied: Boolean(so.repliedAt),
+      campaign: isSodexo ? 'sodexo' : 'reengagement',
+      stateKey,
     });
   });
   result.contactsScanned = targets.length;
@@ -260,8 +271,8 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
         const subject = header(full.data, 'Subject');
         const markProcessed = async () =>
           c.ref.set(
-            { sodexoOutreach: { processedReplyMsgIds: admin.firestore.FieldValue.arrayUnion(m.id) } },
-            { mergeFields: ['sodexoOutreach.processedReplyMsgIds'] },
+            { [c.stateKey]: { processedReplyMsgIds: admin.firestore.FieldValue.arrayUnion(m.id) } },
+            { mergeFields: [`${c.stateKey}.processedReplyMsgIds`] },
           );
         if (AUTO_REPLY_RE.test(subject.trim())) {
           result.oooSkipped += 1;
@@ -274,6 +285,7 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
           campus: c.campus,
           theirMessage: body,
           subject,
+          campaign: c.campaign,
         }).catch((e) => {
           logger.warn('sodexoReplies: classify failed — filing as other', { email: c.email, e: String(e) });
           return { classification: 'other' as const, summary: '', draftReply: '' };
@@ -301,6 +313,7 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
         const replyRef = db.doc(`tenants/${tenantId}/sodexo_outreach_replies/${m.id}`);
         await replyRef.set({
           tenantId,
+          campaign: c.campaign,
           contactId: c.id,
           email: c.email,
           name: c.name,
@@ -341,7 +354,7 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
           result.newReplies += 1;
           digest.push(`• ${c.name} (${c.campus}) — ${ai.classification}: ${ai.summary || subject} — NEEDS REVIEW`);
         }
-        await c.ref.set({ sodexoOutreach: contactPatch }, { merge: true });
+        await c.ref.set({ [c.stateKey]: contactPatch }, { merge: true });
       }
       await new Promise((r) => setTimeout(r, 100));
     } catch (e) {

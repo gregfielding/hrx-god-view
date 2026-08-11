@@ -96,6 +96,7 @@ import {
   Archive as ArchiveIcon,
   Place as TexasIcon,
   School as CampusIcon,
+  ForwardToInbox as ReengageIcon,
   Note as NoteIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -125,6 +126,7 @@ import StageChip from '../../components/StageChip';
 import UserTasksDashboard from '../../components/UserTasksDashboard';
 import PipelineFunnel from '../../components/PipelineFunnel';
 import SodexoCampusesTab from '../../components/SodexoCampusesTab';
+import CrmReengagementPanel from '../../components/CrmReengagementPanel';
 import PipelineBubbleChart from '../../components/PipelineBubbleChart';
 import SalesCoach from '../../components/SalesCoach';
 import TasksDashboard from '../../components/TasksDashboard';
@@ -174,6 +176,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         'reports': 9,
         'kpi-management': 7,
         'kpi-dashboard': 8,
+        'reengagement': 10,
       };
       return tabMap[tabParam] ?? 1;
     }
@@ -1364,6 +1367,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         'reports': 9,
         'kpi-management': 7,
         'kpi-dashboard': 8,
+        'reengagement': 10,
       };
       const newTabValue = tabMap[tabParam] ?? 1;
       if (newTabValue !== tabValue) {
@@ -2020,6 +2024,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
                   { label: 'Archive', value: 3, icon: <ArchiveIcon fontSize="small" /> },
                   { label: 'Texas', value: 5, icon: <TexasIcon fontSize="small" /> },
                   { label: 'Sodexo Campuses', value: 6, icon: <CampusIcon fontSize="small" /> },
+                  { label: 'Re-engagement', value: 10, icon: <ReengageIcon fontSize="small" /> },
                 ].map((t) => {
                   const isActive = tabValue === t.value;
                   return (
@@ -2294,6 +2299,10 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
 
       {tabValue === 6 && (
         <SodexoCampusesTab tenantId={tenantId} />
+      )}
+
+      {tabValue === 10 && (
+        <CrmReengagementPanel tenantId={tenantId} />
       )}
 
       {tabValue === 4 && (
