@@ -22,6 +22,7 @@
  * tenants/{t}/crm_reengagement_batches.
  */
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 
@@ -173,11 +174,13 @@ export const getCrmReengagementStatus = onCall({ cors: true, memory: '512MiB', t
     .limit(10)
     .get()
     .catch(() => null);
+  const autopilot = ((await AUTOPILOT_CFG(tenantId).get()).data() ?? {}) as Record<string, unknown>;
   return {
     connected: (cfg as Record<string, unknown>).connected === true,
     email: trim(((cfg as Record<string, unknown>).gmailTokens as Record<string, unknown>)?.email) || null,
     expectedEmail: trim((cfg as Record<string, unknown>).expectedEmail) || 'g.fielding@c1staffing.com',
     eligible: counts,
+    autopilot: { enabled: autopilot.enabled === true, dailyLimit: Number(autopilot.dailyLimit) || 60 },
     recentBatches: (batches?.docs ?? []).map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) })),
   };
 });
@@ -209,15 +212,31 @@ export const crmReengagementSendBatch = onCall(
       };
     }
 
-    const client = await gmailClientFor(tenantId);
-    if (!client) throw new HttpsError('failed-precondition', 'Mailbox not connected — connect it on the Sodexo tab first.');
-    const { gmail, fromEmail } = client;
+    const result = await executeSendBatch(tenantId, touch, candidates, request.auth?.uid ?? null, 'manual');
+    return { dryRun: false, ...result };
+  },
+);
 
-    const batchRef = db.collection(`tenants/${tenantId}/crm_reengagement_batches`).doc();
-    let sent = 0;
-    let skippedReplied = 0;
-    const errors: string[] = [];
-    for (const c of candidates) {
+/**
+ * The one send path — shared by the panel's Send click and the business-day
+ * autopilot. Candidates are pre-sliced by the caller.
+ */
+async function executeSendBatch(
+  tenantId: string,
+  touch: number,
+  candidates: Candidate[],
+  sentBy: string | null,
+  source: 'manual' | 'autopilot',
+): Promise<{ sent: number; skippedReplied: number; errors: string[] }> {
+  const client = await gmailClientFor(tenantId);
+  if (!client) throw new HttpsError('failed-precondition', 'Mailbox not connected — connect it on the Sodexo tab first.');
+  const { gmail, fromEmail } = client;
+
+  const batchRef = db.collection(`tenants/${tenantId}/crm_reengagement_batches`).doc();
+  let sent = 0;
+  let skippedReplied = 0;
+  const errors: string[] = [];
+  for (const c of candidates) {
       // Follow-ups: targeted human-reply check (auto-reply subjects ignored)
       // — repliers exit the sequence and land in the shared reply desk.
       if (touch > 1 && c.touch1At) {
@@ -270,9 +289,67 @@ export const crmReengagementSendBatch = onCall(
       errors: errors.slice(0, 20),
       requested: candidates.length,
       sentAt: admin.firestore.FieldValue.serverTimestamp(),
-      sentBy: request.auth?.uid ?? null,
+      sentBy,
+      source,
     });
-    logger.info('crmReengagement: batch complete', { touch, sent, skippedReplied, errors: errors.length });
-    return { dryRun: false, sent, skippedReplied, errors };
+  logger.info('crmReengagement: batch complete', { touch, sent, skippedReplied, errors: errors.length, source });
+  return { sent, skippedReplied, errors };
+}
+
+/** Single-tenant reality — the cron has no caller to read a tenant from. */
+const PRIMARY_TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
+const AUTOPILOT_CFG = (tenantId: string) => db.doc(`tenants/${tenantId}/integrations/crmReengagementAutopilot`);
+
+/**
+ * Business-day autopilot (Greg 2026-08-11: "sends 60 per business day? All
+ * of touch one, then touch 2, etc"): every Mon–Fri at 9am PT, send up to the
+ * daily limit, filling from touch 1 FIRST — touches 2/3 only get budget once
+ * earlier touches have no eligible candidates left (their own ≥4d/≥5d
+ * spacing still applies). The panel's Autopilot toggle is the kill switch;
+ * a missing/false config doc means OFF.
+ */
+export const crmReengagementDailyCron = onSchedule(
+  {
+    schedule: '0 9 * * 1-5',
+    timeZone: 'America/Los_Angeles',
+    region: 'us-central1',
+    memory: '1GiB',
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const cfg = (await AUTOPILOT_CFG(PRIMARY_TENANT).get()).data() ?? {};
+    if ((cfg as Record<string, unknown>).enabled !== true) {
+      logger.info('crmReengagement autopilot: disabled — skipping');
+      return;
+    }
+    const dailyLimit = Math.max(1, Math.min(MAX_LIMIT, Number((cfg as Record<string, unknown>).dailyLimit) || 60));
+    let remaining = dailyLimit;
+    const summary: Record<string, number> = {};
+    for (const touch of [1, 2, 3]) {
+      if (remaining <= 0) break;
+      const candidates = (await eligibleCandidates(PRIMARY_TENANT, touch)).slice(0, remaining);
+      if (candidates.length === 0) continue;
+      const res = await executeSendBatch(PRIMARY_TENANT, touch, candidates, null, 'autopilot');
+      summary[`touch${touch}`] = res.sent;
+      remaining -= res.sent;
+    }
+    logger.info('crmReengagement autopilot: day complete', { dailyLimit, ...summary });
   },
 );
+
+/** Panel toggle for the autopilot — staff-gated; also sets dailyLimit. */
+export const setCrmReengagementAutopilot = onCall({ cors: true }, async (request) => {
+  const tenantId = trim(request.data?.tenantId) || PRIMARY_TENANT;
+  const enabled = request.data?.enabled === true;
+  await ensureInternalStaff(request.auth?.uid, tenantId);
+  await AUTOPILOT_CFG(tenantId).set(
+    {
+      enabled,
+      dailyLimit: Math.max(1, Math.min(MAX_LIMIT, Number(request.data?.dailyLimit) || 60)),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: request.auth?.uid ?? null,
+    },
+    { merge: true },
+  );
+  return { ok: true, enabled };
+});

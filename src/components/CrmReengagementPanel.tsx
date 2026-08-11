@@ -27,6 +27,7 @@ interface ReengagementStatus {
   email: string | null;
   expectedEmail: string;
   eligible: Record<string, number>;
+  autopilot?: { enabled: boolean; dailyLimit: number };
   recentBatches: Array<{
     id: string;
     touch?: number;
@@ -66,6 +67,25 @@ const CrmReengagementPanel: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   useEffect(() => {
     void loadStatus();
   }, [loadStatus]);
+
+  const toggleAutopilot = async () => {
+    const next = !(status?.autopilot?.enabled === true);
+    setBusy('autopilot');
+    setError(null);
+    try {
+      await httpsCallable(getFunctions(), 'setCrmReengagementAutopilot')({
+        tenantId,
+        enabled: next,
+        dailyLimit: status?.autopilot?.dailyLimit ?? 60,
+      });
+      setStatus((p) => (p ? { ...p, autopilot: { enabled: next, dailyLimit: p.autopilot?.dailyLimit ?? 60 } } : p));
+      setResult(next ? 'Autopilot ON — 60 emails every business day at 9am PT, touch 1 first.' : 'Autopilot paused — nothing sends until you resume.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const runBatch = async (dryRun: boolean) => {
     setBusy(dryRun ? 'preview' : 'send');
@@ -131,6 +151,18 @@ const CrmReengagementPanel: React.FC<{ tenantId: string }> = ({ tenantId }) => {
           <Chip size="small" color="success" label={`Sending as ${status.email}`} />
         ) : (
           <Chip size="small" color="warning" label="Mailbox not connected — connect it on the Sodexo Campuses tab" />
+        )}
+        {status?.connected && (
+          <>
+            <Chip
+              size="small"
+              color={status?.autopilot?.enabled ? 'success' : 'default'}
+              label={status?.autopilot?.enabled ? `Autopilot: ${status.autopilot.dailyLimit}/business day` : 'Autopilot: off'}
+            />
+            <Button size="small" variant="outlined" onClick={() => void toggleAutopilot()} disabled={busy !== null}>
+              {busy === 'autopilot' ? 'Saving…' : status?.autopilot?.enabled ? 'Pause autopilot' : 'Turn on autopilot'}
+            </Button>
+          </>
         )}
         <Box sx={{ flex: 1 }} />
         <Chip size="small" label={`Touch 1 ready: ${status?.eligible?.touch1 ?? 0}`} />
