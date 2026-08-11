@@ -126,6 +126,30 @@ const AssignmentDrawer: React.FC<{
     try {
       // The (worker, shift) family — covers per-day doc sets and the single
       // open-ended doc alike. Single-field query + client filter, no index.
+      const toFamilyDoc = (id: string, r: Record<string, unknown>): FamilyDoc => {
+        const ws = (r.weeklySchedule ?? null) as Record<string, { enabled?: boolean }> | null;
+        return {
+          id,
+          startDate: typeof r.startDate === 'string' ? r.startDate.slice(0, 10) : '',
+          endDate: typeof r.endDate === 'string' ? r.endDate.slice(0, 10) : '',
+          status: String(r.status ?? ''),
+          payRate: Number(r.payRate) > 0 ? Number(r.payRate) : 0,
+          billRate: Number(r.billRate) > 0 ? Number(r.billRate) : 0,
+          phone: String(r.phone ?? ''),
+          jobTitle: String(r.jobTitle ?? r.shiftTitle ?? ''),
+          worksiteName: String(r.worksiteName ?? r.locationNickname ?? ''),
+          companyName: String(r.companyName ?? ''),
+          isOpenShift: r.isOpenShift === true || r.noFixedTimes === true,
+          weeklyDays: ws
+            ? Object.entries(ws)
+                .filter(([, v]) => v && v.enabled === true)
+                .map(([k]) => Number(k))
+                .filter((n) => Number.isFinite(n))
+                .sort()
+            : [],
+          raw: r,
+        };
+      };
       let docs: FamilyDoc[] = [];
       if (target.shiftId) {
         const snap = await getDocs(
@@ -135,38 +159,20 @@ const AssignmentDrawer: React.FC<{
           ),
         );
         docs = snap.docs
-          .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }))
+          .map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }))
           .filter(
             (x) =>
-              String((x as { userId?: unknown }).userId ?? (x as { candidateId?: unknown }).candidateId ?? '') ===
-              target.workerId,
+              String(x.data.userId ?? x.data.candidateId ?? '') === target.workerId,
           )
-          .map((x) => {
-            const r = x as Record<string, unknown>;
-            const ws = (r.weeklySchedule ?? null) as Record<string, { enabled?: boolean }> | null;
-            return {
-              id: String(r.id),
-              startDate: typeof r.startDate === 'string' ? r.startDate.slice(0, 10) : '',
-              endDate: typeof r.endDate === 'string' ? r.endDate.slice(0, 10) : '',
-              status: String(r.status ?? ''),
-              payRate: Number(r.payRate) > 0 ? Number(r.payRate) : 0,
-              billRate: Number(r.billRate) > 0 ? Number(r.billRate) : 0,
-              phone: String(r.phone ?? ''),
-              jobTitle: String(r.jobTitle ?? r.shiftTitle ?? ''),
-              worksiteName: String(r.worksiteName ?? r.locationNickname ?? ''),
-              companyName: String(r.companyName ?? ''),
-              isOpenShift: r.isOpenShift === true || r.noFixedTimes === true,
-              weeklyDays: ws
-                ? Object.entries(ws)
-                    .filter(([, v]) => v && v.enabled === true)
-                    .map(([k]) => Number(k))
-                    .filter((n) => Number.isFinite(n))
-                    .sort()
-                : [],
-              raw: r,
-            };
-          })
+          .map((x) => toFamilyDoc(x.id, x.data))
           .sort((a, b) => a.startDate.localeCompare(b.startDate));
+      }
+      // Backfill/import assignments (venue-mapping + CSV-import repairs)
+      // carry NO shiftId — the family query finds nothing and every action
+      // sat disabled (Greg 2026-08-11, Domino's rows). Load the doc directly.
+      if (docs.length === 0 && target.assignmentId) {
+        const one = await getDoc(doc(db, 'tenants', tenantId, 'assignments', target.assignmentId));
+        if (one.exists()) docs = [toFamilyDoc(one.id, one.data() as Record<string, unknown>)];
       }
       setFamily(docs);
 
