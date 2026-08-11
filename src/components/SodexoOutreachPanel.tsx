@@ -123,6 +123,33 @@ const SodexoOutreachPanel: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     }
   };
 
+  /** Send every visible card as currently drafted/edited, one by one —
+      dismiss anything you DON'T want sent before clicking. */
+  const sendAllReplies = async () => {
+    const replies = status?.pendingReplies ?? [];
+    setBusy('sendall');
+    setError(null);
+    let sent = 0;
+    const failed: string[] = [];
+    for (const r of replies) {
+      const body = (replyDrafts[r.id] ?? r.aiDraft).trim();
+      if (!body) continue;
+      setReplyBusy(r.id);
+      try {
+        await httpsCallable(getFunctions(), 'resolveSodexoReply')({ tenantId, replyId: r.id, action: 'send', body });
+        sent += 1;
+        setStatus((p) =>
+          p ? { ...p, pendingReplies: (p.pendingReplies ?? []).filter((x) => x.id !== r.id) } : p,
+        );
+      } catch {
+        failed.push(r.name);
+      }
+    }
+    setReplyBusy(null);
+    setBusy(null);
+    setResult(`Sent ${sent} repl${sent === 1 ? 'y' : 'ies'}${failed.length ? ` · failed: ${failed.join(', ')}` : ''}`);
+  };
+
   const resolveReply = async (replyId: string, action: 'send' | 'dismiss') => {
     setReplyBusy(replyId);
     setError(null);
@@ -279,9 +306,16 @@ const SodexoOutreachPanel: React.FC<{ tenantId: string }> = ({ tenantId }) => {
       )}
       {(status?.pendingReplies?.length ?? 0) > 0 && (
         <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
-            Replies to review ({status!.pendingReplies!.length})
-          </Typography>
+          <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+              Replies to review ({status!.pendingReplies!.length})
+            </Typography>
+            {status!.pendingReplies!.length > 1 && (
+              <Button size="small" variant="contained" disabled={busy !== null || replyBusy !== null} onClick={() => void sendAllReplies()}>
+                {busy === 'sendall' ? 'Sending…' : `Send all ${status!.pendingReplies!.length}`}
+              </Button>
+            )}
+          </Stack>
           <Stack spacing={1.5}>
             {status!.pendingReplies!.map((r) => (
               <Paper key={r.id} variant="outlined" sx={{ p: 1.5 }}>
