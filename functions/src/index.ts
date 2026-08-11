@@ -12876,3 +12876,4 @@ export {
   getSodexoOutreachStatus,
   sodexoOutreachSendBatch,
 } from './sales/sodexoOutreach';
+export { sodexoReplyScanCron, sodexoReplyScanNow, resolveSodexoReply } from './sales/sodexoReplies';

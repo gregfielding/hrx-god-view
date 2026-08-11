@@ -319,12 +319,36 @@ export const getSodexoOutreachStatus = onCall({ cors: true, memory: '512MiB' }, 
     .limit(10)
     .get()
     .catch(() => null);
+  // Reply desk (2026-08-11): pending AI-drafted replies for the review section.
+  const pendingReplies = await db
+    .collection(`tenants/${tenantId}/sodexo_outreach_replies`)
+    .where('status', '==', 'pending')
+    .limit(25)
+    .get()
+    .catch(() => null);
   return {
     connected: cfg.connected === true,
     email: trim((cfg.gmailTokens as Record<string, unknown>)?.email) || null,
     expectedEmail: trim(cfg.expectedEmail) || DEFAULT_MAILBOX,
     eligible: counts,
     recentBatches: (batches?.docs ?? []).map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) })),
+    pendingReplies: (pendingReplies?.docs ?? [])
+      .map((d) => {
+        const v = d.data() as Record<string, unknown>;
+        return {
+          id: d.id,
+          name: trim(v.name),
+          campus: trim(v.campus),
+          email: trim(v.email),
+          subject: trim(v.subject),
+          receivedAt: trim(v.receivedAt),
+          body: trim(v.body),
+          classification: trim(v.classification),
+          summary: trim(v.summary),
+          aiDraft: trim(v.aiDraft),
+        };
+      })
+      .sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1)),
   };
 });
 

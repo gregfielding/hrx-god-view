@@ -32,6 +32,19 @@ interface OutreachStatus {
     skippedReplied?: number;
     sentAt?: { seconds?: number };
   }>;
+  /** AI-drafted replies awaiting Greg's send/dismiss (reply desk, 2026-08-11). */
+  pendingReplies?: Array<{
+    id: string;
+    name: string;
+    campus: string;
+    email: string;
+    subject: string;
+    receivedAt: string;
+    body: string;
+    classification: string;
+    summary: string;
+    aiDraft: string;
+  }>;
 }
 
 interface Preview {
@@ -85,6 +98,48 @@ const SodexoOutreachPanel: React.FC<{ tenantId: string }> = ({ tenantId }) => {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
+    }
+  };
+
+  /** Per-reply editable draft text, keyed by reply id (default = AI draft). */
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [replyBusy, setReplyBusy] = useState<string | null>(null);
+
+  const checkRepliesNow = async () => {
+    setBusy('scan');
+    setError(null);
+    try {
+      const res = await httpsCallable(getFunctions(), 'sodexoReplyScanNow', { timeout: 540000 })({ tenantId });
+      const d = res.data as Record<string, number>;
+      setResult(
+        `Checked ${d.contactsScanned} contacts — ${d.newReplies} new repl${d.newReplies === 1 ? 'y' : 'ies'}` +
+          (d.autoUnsubscribed ? `, ${d.autoUnsubscribed} unsubscribed` : ''),
+      );
+      await loadStatus();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const resolveReply = async (replyId: string, action: 'send' | 'dismiss') => {
+    setReplyBusy(replyId);
+    setError(null);
+    try {
+      await httpsCallable(getFunctions(), 'resolveSodexoReply')({
+        tenantId,
+        replyId,
+        action,
+        ...(action === 'send' && replyDrafts[replyId] !== undefined ? { body: replyDrafts[replyId] } : {}),
+      });
+      setStatus((p) =>
+        p ? { ...p, pendingReplies: (p.pendingReplies ?? []).filter((r) => r.id !== replyId) } : p,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReplyBusy(null);
     }
   };
 
@@ -184,6 +239,9 @@ const SodexoOutreachPanel: React.FC<{ tenantId: string }> = ({ tenantId }) => {
           <Button variant="outlined" onClick={() => void runBatch(true)} disabled={busy !== null}>
             {busy === 'preview' ? 'Previewing…' : 'Preview batch'}
           </Button>
+          <Button variant="outlined" onClick={() => void checkRepliesNow()} disabled={busy !== null}>
+            {busy === 'scan' ? 'Checking…' : 'Check replies now'}
+          </Button>
           <Button
             variant="contained"
             color="primary"
@@ -218,6 +276,70 @@ const SodexoOutreachPanel: React.FC<{ tenantId: string }> = ({ tenantId }) => {
         <Alert severity="error" sx={{ mt: 2 }} onClose={() => setError(null)}>
           {error}
         </Alert>
+      )}
+      {(status?.pendingReplies?.length ?? 0) > 0 && (
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+            Replies to review ({status!.pendingReplies!.length})
+          </Typography>
+          <Stack spacing={1.5}>
+            {status!.pendingReplies!.map((r) => (
+              <Paper key={r.id} variant="outlined" sx={{ p: 1.5 }}>
+                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {r.name}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {r.campus}
+                  </Typography>
+                  <Chip
+                    size="small"
+                    color={
+                      r.classification === 'interested'
+                        ? 'success'
+                        : r.classification === 'question'
+                          ? 'info'
+                          : 'default'
+                    }
+                    label={r.classification.replace('_', ' ')}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    {r.receivedAt}
+                  </Typography>
+                </Stack>
+                <Typography
+                  variant="body2"
+                  sx={{ mt: 1, whiteSpace: 'pre-wrap', bgcolor: 'action.hover', p: 1, borderRadius: 1, maxHeight: 120, overflowY: 'auto' }}
+                >
+                  {r.body || r.summary}
+                </Typography>
+                <TextField
+                  fullWidth
+                  multiline
+                  minRows={3}
+                  size="small"
+                  label="Your reply (AI draft — edit freely)"
+                  sx={{ mt: 1.5 }}
+                  value={replyDrafts[r.id] ?? r.aiDraft}
+                  onChange={(e) => setReplyDrafts((p) => ({ ...p, [r.id]: e.target.value }))}
+                />
+                <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    disabled={replyBusy !== null || !(replyDrafts[r.id] ?? r.aiDraft).trim()}
+                    onClick={() => void resolveReply(r.id, 'send')}
+                  >
+                    {replyBusy === r.id ? 'Sending…' : `Send reply to ${r.name.split(' ')[0]}`}
+                  </Button>
+                  <Button size="small" disabled={replyBusy !== null} onClick={() => void resolveReply(r.id, 'dismiss')}>
+                    Dismiss (no reply)
+                  </Button>
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
+        </Box>
       )}
       {(status?.recentBatches?.length ?? 0) > 0 && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
