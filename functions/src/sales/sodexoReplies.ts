@@ -6,12 +6,14 @@
  * killed prior Gmail integrations; ~300 targeted queries per run, idle cost
  * between runs is zero) reads replies to the campaign via the SAME stored
  * OAuth grant the sends use, classifies each with AI, and drafts a reply.
- * Drafts land in `tenants/{t}/sodexo_outreach_replies` as status 'pending'
- * and surface in the Sodexo tab's "Replies to review" section — NOTHING is
- * sent automatically; Greg's Send click (resolveSodexoReply) is the per-
- * message OK. Unsubscribes auto-stamp optedOut. OOO autoresponders are
- * ignored. When a run finds new replies it emails Greg a digest (self-send
- * from his own mailbox).
+ * Drafts land in `tenants/{t}/sodexo_outreach_replies` and surface in the
+ * Sodexo tab's "Replies to review" section. Autonomy tiers (Greg 2026-08-11
+ * "flip it"): the not_interested gracious close AUTO-SENDS at scan time
+ * (lowest-risk class; failures degrade to a pending card); interested /
+ * question / other stay behind Greg's Send click (resolveSodexoReply).
+ * Unsubscribes auto-stamp optedOut. OOO autoresponders are ignored. Every
+ * run that finds replies emails Greg a digest (self-send from his own
+ * mailbox) listing both the auto-handled and the needs-review items.
  *
  * State per contact: sodexoOutreach.processedReplyMsgIds (cap 20) so multi-
  * turn threads keep working — a new message after Greg's reply is picked up
@@ -171,16 +173,39 @@ function buildReplyMime(input: {
   return Buffer.from(msg).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/** One threaded outbound reply — shared by the resolve callable + auto-send. */
+async function sendThreadedReply(
+  gmail: gmail_v1.Gmail,
+  fromEmail: string,
+  input: { to: string; subject: string; body: string; inReplyTo: string; threadId?: string },
+): Promise<string | null> {
+  const res = await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: {
+      raw: buildReplyMime({
+        from: fromEmail,
+        to: input.to,
+        subject: input.subject || 'Re: your note',
+        body: input.body,
+        inReplyTo: input.inReplyTo,
+      }),
+      threadId: input.threadId || undefined,
+    },
+  });
+  return res.data.id ?? null;
+}
+
 interface ScanResult {
   contactsScanned: number;
   newReplies: number;
+  autoReplied: number;
   autoUnsubscribed: number;
   oooSkipped: number;
   errors: number;
 }
 
 export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
-  const result: ScanResult = { contactsScanned: 0, newReplies: 0, autoUnsubscribed: 0, oooSkipped: 0, errors: 0 };
+  const result: ScanResult = { contactsScanned: 0, newReplies: 0, autoReplied: 0, autoUnsubscribed: 0, oooSkipped: 0, errors: 0 };
   const client = await gmailClientFor(tenantId);
   if (!client) {
     logger.warn('sodexoReplies: mailbox not connected — nothing to scan');
@@ -254,6 +279,25 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
           return { classification: 'other' as const, summary: '', draftReply: '' };
         });
         const isUnsub = ai.classification === 'unsubscribe' || /^\s*unsubscribe\b/i.test(body);
+        // Auto-send tier (Greg 2026-08-11 "flip it"): the not_interested
+        // gracious close is the lowest-risk class — send it without review.
+        // Interested/question/other stay behind Greg's click. A failed send
+        // degrades to a normal pending card, never a lost reply.
+        let autoSentId: string | null = null;
+        const rfcMessageId = header(full.data, 'Message-ID') || '';
+        if (!isUnsub && ai.classification === 'not_interested' && ai.draftReply) {
+          try {
+            autoSentId = await sendThreadedReply(gmail, fromEmail, {
+              to: c.email,
+              subject,
+              body: ai.draftReply,
+              inReplyTo: rfcMessageId,
+              threadId: full.data.threadId ?? undefined,
+            });
+          } catch (e) {
+            logger.warn('sodexoReplies: auto-send failed — leaving pending', { email: c.email, e: String(e) });
+          }
+        }
         const replyRef = db.doc(`tenants/${tenantId}/sodexo_outreach_replies/${m.id}`);
         await replyRef.set({
           tenantId,
@@ -263,14 +307,22 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
           campus: c.campus,
           threadId: full.data.threadId ?? null,
           messageId: m.id,
-          rfcMessageId: header(full.data, 'Message-ID') || null,
+          rfcMessageId: rfcMessageId || null,
           subject,
           receivedAt: header(full.data, 'Date') || null,
           body,
           classification: isUnsub ? 'unsubscribe' : ai.classification,
           summary: ai.summary,
           aiDraft: isUnsub ? '' : ai.draftReply,
-          status: isUnsub ? 'auto_unsubscribed' : 'pending',
+          status: isUnsub ? 'auto_unsubscribed' : autoSentId ? 'auto_sent' : 'pending',
+          ...(autoSentId
+            ? {
+                sentBody: ai.draftReply,
+                sentMessageId: autoSentId,
+                resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+                resolvedBy: 'auto',
+              }
+            : {}),
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         const contactPatch: Record<string, unknown> = {
@@ -282,9 +334,12 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
           contactPatch.optedOutAt = admin.firestore.FieldValue.serverTimestamp();
           contactPatch.optOutReason = 'replied "unsubscribe"';
           result.autoUnsubscribed += 1;
+        } else if (autoSentId) {
+          result.autoReplied += 1;
+          digest.push(`• ${c.name} (${c.campus}) — not interested → auto-replied with a gracious close`);
         } else {
           result.newReplies += 1;
-          digest.push(`• ${c.name} (${c.campus}) — ${isUnsub ? 'unsubscribe' : ai.classification}: ${ai.summary || subject}`);
+          digest.push(`• ${c.name} (${c.campus}) — ${ai.classification}: ${ai.summary || subject} — NEEDS REVIEW`);
         }
         await c.ref.set({ sodexoOutreach: contactPatch }, { merge: true });
       }
@@ -299,7 +354,8 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
   if (digest.length > 0) {
     try {
       const bodyText =
-        `${digest.length} new Sodexo campaign repl${digest.length === 1 ? 'y' : 'ies'} to review:\n\n` +
+        `Sodexo campaign: ${result.newReplies} repl${result.newReplies === 1 ? 'y' : 'ies'} to review, ` +
+        `${result.autoReplied} auto-handled:\n\n` +
         `${digest.join('\n')}\n\nReview + send drafted replies: ${PANEL_URL}\n`;
       await gmail.users.messages.send({
         userId: 'me',
@@ -380,24 +436,18 @@ export const resolveSodexoReply = onCall(
     if (!body) throw new HttpsError('invalid-argument', 'Reply body is empty.');
     const client = await gmailClientFor(tenantId);
     if (!client) throw new HttpsError('failed-precondition', 'Mailbox not connected.');
-    const res = await client.gmail.users.messages.send({
-      userId: 'me',
-      requestBody: {
-        raw: buildReplyMime({
-          from: client.fromEmail,
-          to: trim(r.email),
-          subject: trim(r.subject) || 'Re: your note',
-          body,
-          inReplyTo: trim(r.rfcMessageId),
-        }),
-        threadId: trim(r.threadId) || undefined,
-      },
+    const sentId = await sendThreadedReply(client.gmail, client.fromEmail, {
+      to: trim(r.email),
+      subject: trim(r.subject),
+      body,
+      inReplyTo: trim(r.rfcMessageId),
+      threadId: trim(r.threadId) || undefined,
     });
     await ref.set(
       {
         status: 'sent',
         sentBody: body,
-        sentMessageId: res.data.id ?? null,
+        sentMessageId: sentId,
         resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
         resolvedBy: request.auth?.uid ?? null,
       },
