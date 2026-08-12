@@ -82,7 +82,7 @@ import { triggerAINoteReview, triggerAINoteReviewHttp } from './triggerAINoteRev
 import { findDecisionMakers, findDecisionMakersHttp } from './findDecisionMakers';
 import { enhanceCompanyWithSerp } from './enhanceCompanyWithSerp';
 import { enhanceContactWithAI } from './enhanceContactWithAI';
-import { fetchFollowedCompanyNews } from './fetchFollowedCompanyNews';
+// import { fetchFollowedCompanyNews } from './fetchFollowedCompanyNews'; // RETIRED 2026-08-12 (SerpAPI cancelled)
 import { removeDuplicateCompanies } from './removeDuplicateCompanies';
 import { removeContactsWithoutNames } from './removeContactsWithoutNames';
 import { removeDuplicateContacts } from './removeDuplicateContacts';
@@ -12320,7 +12320,9 @@ export { enhanceCompanyWithSerp };
 export { enhanceContactWithAI };
 
 // News Feed Functions
-export { fetchFollowedCompanyNews };
+// RETIRED 2026-08-12: SerpAPI plan cancelled (expires 2026-08-22) — the
+// every-12h followed-company news cron would error forever after that.
+// export { fetchFollowedCompanyNews };
 
 // Company Management Functions
 export { removeDuplicateCompanies, findTenantIds };
