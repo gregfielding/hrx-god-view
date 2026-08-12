@@ -12878,4 +12878,5 @@ export {
   sodexoOutreachSendBatch,
 } from './sales/sodexoOutreach';
 export { sodexoReplyScanCron, sodexoReplyScanNow, resolveSodexoReply } from './sales/sodexoReplies';
+export { inboxTriageCron, inboxMorningBriefCron, inboxTriageNow, inboxMorningBriefNow } from './sales/inboxChiefOfStaff';
 export { getCrmReengagementStatus, crmReengagementSendBatch, crmReengagementDailyCron, setCrmReengagementAutopilot } from './sales/crmReengagement';

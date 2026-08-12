@@ -44,6 +44,10 @@ const DEFAULT_MAILBOX = 'g.fielding@c1staffing.com';
 const SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/gmail.readonly',
+  // Inbox chief-of-staff (Greg 2026-08-12 "go"): labels, archive, and
+  // in-thread reply drafts. gmail.modify = everything except permanent
+  // deletion — deliberately NOT requesting delete capability.
+  'https://www.googleapis.com/auth/gmail.modify',
 ];
 const LEAD_SOURCE = 'Sodexo Campus Scrape (sodexomyway.com)';
 const ACCOUNT_SOURCE = 'sodexomyway_scrape_2026-07-14';

@@ -233,7 +233,14 @@ const SodexoOutreachPanel: React.FC<{ tenantId: string }> = ({ tenantId }) => {
           Email Outreach
         </Typography>
         {status?.connected ? (
-          <Chip size="small" color="success" label={`Sending as ${status.email}`} />
+          <>
+            <Chip size="small" color="success" label={`Sending as ${status.email}`} />
+            {/* Re-runs OAuth with the current scope list — needed when new
+                capabilities (inbox triage labels/drafts) expand the grant. */}
+            <Button size="small" onClick={() => void connect()} disabled={busy === 'connect'}>
+              Upgrade permissions
+            </Button>
+          </>
         ) : (
           <>
             <Chip size="small" color="warning" label="Mailbox not connected" />
