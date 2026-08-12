@@ -122,11 +122,16 @@ async function classifyAndDraft(input: {
     `Context you may use (never invent beyond it):`,
     `- Greg Fielding runs C1 Staffing, a national hourly staffing agency (cooks, food service workers, dishwashers, utility/janitorial, warehouse).`,
     `- C1 already staffs Sodexo healthcare/government sites and is an active supplier in SAP Fieldglass — if they mention Fieldglass postings, C1 can pick those up; ask which site/req or offer to grab them directly.`,
-    `- Offer framing: no minimums, try one shift, C1 handles payroll/WC/onboarding. NEVER state prices, bill rates, or contract terms.`,
+    `- NEVER state C1's prices, bill rates, or contract terms. Asking what THEY pay for a position is fine — it's a qualifying question Greg likes.`,
     `- Sign-off: "Greg" then "Greg Fielding · C1 Staffing · 925-448-0579".`,
     ``,
-    `Draft rules: under 110 words, plain text, greet by first name (${input.firstName || 'there'}), direct and warm like a busy founder, one clear next step (send their open positions, or a 10-minute call), no bullet lists, no corporate filler.`,
-    `If not interested: 1–2 gracious sentences keeping the door open for mid-semester call-offs; nothing salesy.`,
+    `Draft rules — Greg's real voice is calm, brief, and unhurried; drafts must read like he dashed them off between calls:`,
+    `- Under 70 words, 3–4 sentences, plain text. Greet by first name (${input.firstName || 'there'}); close with "Thank you!" before the sign-off.`,
+    `- Match their pace. If they're still deciding or checking internally, don't push and don't over-promise — acknowledge, and ask them to send details when they're ready. Never promise same-day resumes or turnaround times.`,
+    `- No capability lists (don't recite payroll/WC/onboarding), no bullet lists, no corporate filler. Mention no-minimums/try-one-shift ONLY if it directly answers a hesitation they raised.`,
+    `- Where natural, end with 1–2 short qualifying questions — e.g. "What does the position pay?" and "Do you use Fieldglass?".`,
+    `- Example of Greg's actual tone (a real reply he sent): "Paul, Absolutely - we definitely have experienced catering cooks in the area. Please send more details after you see how coverage looks. 2 questions... what does the position pay? And do you use Fieldglass? Thank you!"`,
+    `If not interested: 1–2 gracious sentences keeping the door open for future call-offs; nothing salesy.`,
     `If they asked a question you can't answer from context: acknowledge and say Greg will follow up with specifics — do not guess.`,
     ``,
     `Campus: ${input.campus}`,
@@ -231,6 +236,7 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
     replied: boolean;
     campaign: 'sodexo' | 'reengagement';
     stateKey: 'sodexoOutreach' | 'crmReengagement';
+    accountId: string;
   }
   const targets: Target[] = [];
   snap.forEach((d) => {
@@ -255,6 +261,7 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
       replied: Boolean(so.repliedAt),
       campaign: isSodexo ? 'sodexo' : 'reengagement',
       stateKey,
+      accountId: trim(v.accountId),
     });
   });
   result.contactsScanned = targets.length;
@@ -355,6 +362,26 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
           digest.push(`• ${c.name} (${c.campus}) — ${ai.classification}: ${ai.summary || subject} — NEEDS REVIEW`);
         }
         await c.ref.set({ [c.stateKey]: contactPatch }, { merge: true });
+        // Affirmative replies become hot leads automatically (Greg 2026-08-11:
+        // "anyone who responds in such an affirmative way needs to be saved and
+        // managed as a hot lead"). interested/question = engaged; the contact
+        // and its child account get the same 🔥 the flame toggle sets.
+        if (!isUnsub && (ai.classification === 'interested' || ai.classification === 'question')) {
+          const hotStamp = {
+            hot: true,
+            hotUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            hotUpdatedBy: 'reply_desk_auto',
+            hotReason: 'affirmative_reply',
+          };
+          await c.ref.set(hotStamp, { merge: true });
+          if (c.accountId) {
+            // Existence check mirrors setHotStatus — a merge-set on a wrong id
+            // would conjure a phantom accounts doc.
+            const acctRef = db.doc(`tenants/${tenantId}/accounts/${c.accountId}`);
+            const acct = await acctRef.get();
+            if (acct.exists) await acctRef.set(hotStamp, { merge: true });
+          }
+        }
       }
       await new Promise((r) => setTimeout(r, 100));
     } catch (e) {
