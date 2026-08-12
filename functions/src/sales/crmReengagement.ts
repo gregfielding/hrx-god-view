@@ -141,6 +141,14 @@ async function eligibleCandidates(tenantId: string, touch: number): Promise<Cand
     if (re.optedOut === true || re.repliedAt) return;
     const ms = (x: unknown): number | null =>
       (x as admin.firestore.Timestamp | undefined)?.toMillis ? (x as admin.firestore.Timestamp).toMillis() : null;
+    // Cross-channel suppression (Greg 2026-08-12): the LinkedIn desk skips
+    // anyone emailed in the last 7 days — mirror it here so a contact DM'd
+    // on LinkedIn this week doesn't also get a campaign email, and one who
+    // REPLIED on LinkedIn never gets boilerplate (that conversation is live).
+    const lo = (v.linkedinOutreach ?? {}) as Record<string, unknown>;
+    if (lo.repliedAt) return;
+    const liMsgAt = ms(lo.messagedAt);
+    if (liMsgAt && now - liMsgAt < 7 * 24 * 3600e3) return;
     const t1 = ms(re.touch1SentAt);
     const t2 = ms(re.touch2SentAt);
     const t3 = ms(re.touch3SentAt);
