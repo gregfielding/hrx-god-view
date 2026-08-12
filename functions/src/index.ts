@@ -415,6 +415,7 @@ export { backfillAssignmentDenormFieldsCallable } from './timesheets/backfillAss
 // this, new assignments created after deploy time would miss the denorm
 // fields until the next backfill run.
 export { onAssignmentWriteEnsureDenormFields } from './timesheets/onAssignmentWriteEnsureDenormFields';
+export { onAssignmentWritePropagateWcToEntries } from './timesheets/onAssignmentWritePropagateWcToEntries';
 // **TS.1.P1.D** — Timesheet entry creation primitive. Get-or-create
 // callable that materializes the first draft TimesheetEntryV2 doc
 // for a (assignment, workDate) tuple. Powers the recruiter grid's
