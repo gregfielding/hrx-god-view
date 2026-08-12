@@ -105,6 +105,7 @@ interface Candidate {
   companyName: string;
   touch1At: number | null;
   touch2At: number | null;
+  verified: boolean;
 }
 
 /**
@@ -165,8 +166,13 @@ async function eligibleCandidates(tenantId: string, touch: number): Promise<Cand
       companyName,
       touch1At: t1,
       touch2At: t2,
+      verified: v.verifiedEmail === true,
     });
   });
+  // Verified addresses first (2026-08-12 bounce response): the Apollo-checked
+  // majority sends before the unverifiable tail, keeping daily bounce rates
+  // low while the cron sweep retires the tail's failures one by one.
+  out.sort((a, b) => Number(b.verified) - Number(a.verified));
   return out;
 }
 
