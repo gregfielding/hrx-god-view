@@ -179,7 +179,9 @@ ${notify ? `<script>if (window.opener && typeof window.opener.postMessage === 'f
 // ─────────────────────────────────────────────────────────────────────
 
 const FOOTER =
-  '\n\n—\nGreg Fielding · C1 Staffing\n1309 Coffeen Ave STE 1200, Sheridan, WY 82801\n' +
+  '\n\n—\nGreg Fielding · C1 Staffing · 925-448-0579\n' +
+  'linkedin.com/in/gregpfielding · c1staffing.com\n' +
+  '1309 Coffeen Ave STE 1200, Sheridan, WY 82801\n' +
   "If you'd rather not hear from me, reply “unsubscribe” and I won't email again.";
 
 function renderTouch(touch: number, firstName: string, campus: string): { subject: string; body: string } {

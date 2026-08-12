@@ -51,7 +51,9 @@ const MAX_LIMIT = 150;
 const trim = (v: unknown): string => String(v ?? '').trim();
 
 const FOOTER =
-  '\n\n—\nGreg Fielding · C1 Staffing\n1309 Coffeen Ave STE 1200, Sheridan, WY 82801\n' +
+  '\n\n—\nGreg Fielding · C1 Staffing · 925-448-0579\n' +
+  'linkedin.com/in/gregpfielding · c1staffing.com\n' +
+  '1309 Coffeen Ave STE 1200, Sheridan, WY 82801\n' +
   'Reply "unsubscribe" and you will not hear from us again.';
 
 function template(touch: number, firstName: string, company: string): { subject: string; body: string } {

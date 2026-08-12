@@ -123,7 +123,7 @@ async function classifyAndDraft(input: {
     `- Greg Fielding runs C1 Staffing, a national hourly staffing agency (cooks, food service workers, dishwashers, utility/janitorial, warehouse).`,
     `- C1 already staffs Sodexo healthcare/government sites and is an active supplier in SAP Fieldglass — if they mention Fieldglass postings, C1 can pick those up; ask which site/req or offer to grab them directly.`,
     `- NEVER state C1's prices, bill rates, or contract terms. Asking what THEY pay for a position is fine — it's a qualifying question Greg likes.`,
-    `- Sign-off: "Greg" then "Greg Fielding · C1 Staffing · 925-448-0579".`,
+    `- Sign-off: "Greg" then "Greg Fielding · C1 Staffing · 925-448-0579" then "linkedin.com/in/gregpfielding".`,
     ``,
     `Draft rules — Greg's real voice is calm, brief, and unhurried; drafts must read like he dashed them off between calls:`,
     `- Under 70 words, 3–4 sentences, plain text. Greet by first name (${input.firstName || 'there'}); close with "Thank you!" before the sign-off.`,
