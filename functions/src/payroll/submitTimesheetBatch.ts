@@ -93,6 +93,11 @@ export interface SubmitEntryTaskPayload {
    *  `label`s so every dollar in Everee self-describes its job order +
    *  worksite (Greg 2026-07-28 — payroll cost accounting). */
   attributionTag?: string;
+  /** The SHIFT's own title when it differs from the JO name — at event
+   *  venues (Oakland Arena) each shift IS the event ("IVE WORLD TOUR
+   *  Ushers"). Leads the worked-shift note / payable labels so the event
+   *  name reaches the worker's pay stub (Greg 2026-08-12). */
+  shiftTitle?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -353,6 +358,15 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
           shiftCache.set(shiftId, shift);
         }
       }
+      // Event-venue shifts carry the event as their title ("IVE WORLD TOUR
+      // Ushers" at Oakland Arena); surface it to Everee so the worked-shift
+      // note / payable labels self-describe the event on the worker's pay
+      // record (Greg 2026-08-12). Skipped when it just mirrors the JO name.
+      const shiftEventTitle = (() => {
+        const t = typeof shift?.shiftTitle === 'string' ? shift.shiftTitle.trim() : '';
+        if (!t || t === joName) return '';
+        return t.slice(0, 60);
+      })();
       const firstGigPosition =
         Array.isArray(jo?.gigPositions) && jo.gigPositions.length > 0
           ? ((jo.gigPositions as unknown[])[0] as Record<string, unknown>)
@@ -620,6 +634,7 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
         breaks,
         worksiteTz,
         ...(attributionTag ? { attributionTag } : {}),
+        ...(shiftEventTitle ? { shiftTitle: shiftEventTitle } : {}),
       });
     }
 

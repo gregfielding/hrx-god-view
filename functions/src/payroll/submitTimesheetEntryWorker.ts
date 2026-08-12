@@ -146,13 +146,15 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
         shiftStartEpochSeconds: payload.shiftStartEpochSeconds,
         shiftEndEpochSeconds: payload.shiftEndEpochSeconds,
         breaks: payload.breaks,
-        // Attribution tag first ("JO#182 FIFA Dallas — Adidas KC"), then any
-        // recruiter note — every worked-shift in Everee self-describes its job.
+        // Event name first when the shift has one ("IVE WORLD TOUR Ushers" —
+        // pay-stub visibility, Greg 2026-08-12), then the attribution tag,
+        // then any recruiter note — every worked-shift self-describes.
         note:
-          [payload.attributionTag, typeof entry.notes === 'string' ? entry.notes.trim() : '']
+          [payload.shiftTitle, payload.attributionTag, typeof entry.notes === 'string' ? entry.notes.trim() : '']
             .filter(Boolean)
             .join(' | ') || undefined,
-        labelPrefix: payload.attributionTag,
+        labelPrefix:
+          [payload.attributionTag, payload.shiftTitle].filter(Boolean).join(' · ') || undefined,
       };
 
       const composed = composeBatchEntryPayloads(composeInput);
