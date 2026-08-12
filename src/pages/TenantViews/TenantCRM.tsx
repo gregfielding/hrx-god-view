@@ -3997,6 +3997,7 @@ const ContactsTab: React.FC<{
             <ContactTableRow
               key={contact.id}
               contact={contact}
+              tenantId={tenantId || undefined}
               isFavorite={isFavorite}
               toggleFavorite={toggleFavorite}
               onRowClick={() => navigate(`/contacts/${contact.id}`)}

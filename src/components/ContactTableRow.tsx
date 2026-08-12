@@ -14,12 +14,16 @@ import {
   LocationOn as LocationOnIcon,
 } from '@mui/icons-material';
 import FavoriteButton from './FavoriteButton';
+import HotToggle from './HotToggle';
 import SafeAvatar from './SafeAvatar';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 
 interface ContactTableRowProps {
   contact: any;
+  /** When provided, renders the 🔥 HotToggle after the name (same
+   *  placement as the Job Orders table). */
+  tenantId?: string;
   isFavorite: (id: string) => boolean;
   toggleFavorite: (id: string) => string[];
   onRowClick: (contact: any) => void;
@@ -50,6 +54,7 @@ interface ContactTableRowProps {
 
 const ContactTableRow: React.FC<ContactTableRowProps> = ({
   contact,
+  tenantId,
   isFavorite,
   toggleFavorite,
   onRowClick,
@@ -225,6 +230,14 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
             >
               {fullName}
             </Typography>
+            {tenantId && (
+              <HotToggle
+                tenantId={tenantId}
+                originType="contact"
+                originId={contact.id}
+                hot={contact.hot === true}
+              />
+            )}
           </Box>
         </TableCell>
       )}
