@@ -390,6 +390,57 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
     }
   }
 
+  // Bounce sweep (Greg 2026-08-12, 11% bounce rate discovered): flag dead
+  // addresses so eligibility skips them — touch 2/3 must never fire at an
+  // address that already bounced. Rescue (Apollo re-enrichment) is separate.
+  try {
+    const bounceRe = [
+      /wasn'?t delivered to ([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/gi,
+      /message to ([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}) (?:couldn'?t be delivered|has been blocked)/gi,
+    ];
+    const bounceList = await gmail.users.messages.list({
+      userId: 'me',
+      q: '(from:mailer-daemon OR from:postmaster OR subject:"Delivery Status Notification") newer_than:2d',
+      maxResults: 100,
+    });
+    const failedEmails = new Set<string>();
+    for (const m of bounceList.data.messages ?? []) {
+      const full = await gmail.users.messages.get({ userId: 'me', id: m.id!, format: 'full' });
+      const xFailed = full.data.payload?.headers?.find((h) => h.name?.toLowerCase() === 'x-failed-recipients')?.value;
+      if (xFailed) xFailed.split(/[,;\s]+/).filter((e) => e.includes('@')).forEach((e) => failedEmails.add(e.toLowerCase()));
+      const parts: string[] = [full.data.snippet ?? ''];
+      const walk = (p: any): void => {
+        if (p?.body?.data) parts.push(Buffer.from(p.body.data, 'base64').toString('utf8'));
+        (p?.parts ?? []).forEach(walk);
+      };
+      walk(full.data.payload);
+      const body = parts.join('\n');
+      for (const re of bounceRe) {
+        re.lastIndex = 0;
+        let match;
+        while ((match = re.exec(body))) failedEmails.add(match[1].toLowerCase());
+      }
+    }
+    let newlyBounced = 0;
+    for (const email of failedEmails) {
+      if (email.endsWith('@c1staffing.com')) continue;
+      const hit = await db.collection(`tenants/${tenantId}/crm_contacts`).where('email', '==', email).limit(1).get();
+      if (hit.empty || hit.docs[0].get('emailBounced') === true) continue;
+      await hit.docs[0].ref.set(
+        {
+          emailBounced: true,
+          emailBouncedAt: admin.firestore.FieldValue.serverTimestamp(),
+          bouncedEmail: email,
+        },
+        { merge: true },
+      );
+      newlyBounced += 1;
+    }
+    if (newlyBounced > 0) digest.push(`• ${newlyBounced} address${newlyBounced === 1 ? '' : 'es'} bounced — flagged; Apollo rescue will retry them with fresh emails`);
+  } catch (e) {
+    logger.warn('sodexoReplies: bounce sweep failed', { e: String(e) });
+  }
+
   // Digest — self-send so Greg hears about new replies where he already lives.
   if (digest.length > 0) {
     try {

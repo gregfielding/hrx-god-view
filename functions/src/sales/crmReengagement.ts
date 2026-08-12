@@ -141,6 +141,7 @@ async function eligibleCandidates(tenantId: string, touch: number): Promise<Cand
     if (companyName && DENY_COMPANIES.some((re) => re.test(companyName))) return;
     const re = (v.crmReengagement ?? {}) as Record<string, unknown>;
     if (re.optedOut === true || re.repliedAt) return;
+    if (v.emailBounced === true) return; // dead address (bounce sweep) — no more sends until rescued
     const ms = (x: unknown): number | null =>
       (x as admin.firestore.Timestamp | undefined)?.toMillis ? (x as admin.firestore.Timestamp).toMillis() : null;
     // Cross-channel suppression (Greg 2026-08-12): the LinkedIn desk skips

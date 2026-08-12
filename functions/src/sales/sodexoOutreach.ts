@@ -264,6 +264,7 @@ async function eligibleCandidates(tenantId: string, touch: number): Promise<Cand
     if (!email) return;
     const so = (v.sodexoOutreach as Record<string, unknown>) ?? {};
     if (so.optedOut === true || so.repliedAt) return;
+    if (v.emailBounced === true) return; // dead address (bounce sweep) — no more sends until rescued
     const t1 = (so.touch1SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
     const t2 = (so.touch2SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
     const t3 = (so.touch3SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
@@ -308,6 +309,7 @@ export const getSodexoOutreachStatus = onCall({ cors: true, memory: '512MiB' }, 
     if (!trim(v.email)) return;
     const so = (v.sodexoOutreach as Record<string, unknown>) ?? {};
     if (so.optedOut === true || so.repliedAt) return;
+    if (v.emailBounced === true) return; // dead address (bounce sweep) — no more sends until rescued
     const t1 = (so.touch1SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
     const t2 = (so.touch2SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
     const t3 = (so.touch3SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
