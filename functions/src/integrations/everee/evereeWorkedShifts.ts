@@ -34,6 +34,8 @@
  * shapes the spec is derived from.
  */
 
+import { logger } from 'firebase-functions/v2';
+
 import { evereeRequest } from './evereeHttp';
 import type { EvereeEntityConfig } from './evereeConfig';
 
@@ -121,6 +123,21 @@ export interface CreateWorkedShiftResult {
 }
 
 /**
+ * Everee serializes `workedShiftId` as a JSON STRING ("4071156"), not a
+ * number — confirmed by live probe 2026-08-13 (list items + single GET
+ * both carry the string form; every POST since Phase 4 parsed to 0 under
+ * the old number-only check). Accepts either form.
+ */
+export function parseWorkedShiftId(v: unknown): number {
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+  if (typeof v === 'string' && /^\d+$/.test(v.trim())) {
+    const n = Number(v.trim());
+    if (n > 0) return n;
+  }
+  return 0;
+}
+
+/**
  * POST a new worked shift. The orchestrator stores the returned
  * `workedShiftId` on `timesheet_entries.everee.workedShiftId` for
  * future PUT idempotency.
@@ -138,14 +155,16 @@ export async function createWorkedShift(
   // correction into the next pay run.
   const base = '/integration/v1/labor/timesheet/worked-shifts';
   const path = opts?.correctionAuthorized ? `${base}?correction-authorized=true` : base;
-  const raw = await evereeRequest<{ workedShiftId?: number; id?: number } & Record<string, unknown>>(
-    config,
-    'POST',
-    path,
-    input,
-  );
-  const workedShiftId =
-    typeof raw?.workedShiftId === 'number' ? raw.workedShiftId : typeof raw?.id === 'number' ? raw.id : 0;
+  const raw = await evereeRequest<
+    { workedShiftId?: number | string; id?: number | string } & Record<string, unknown>
+  >(config, 'POST', path, input);
+  const workedShiftId = parseWorkedShiftId(raw?.workedShiftId) || parseWorkedShiftId(raw?.id);
+  if (!workedShiftId) {
+    // A zero id silently breaks every downstream void/revert/PUT-retry —
+    // surface the actual body so a future shape change is caught in logs,
+    // not months later in a stuck void (2026-08-13 Zaon Cox).
+    logger.warn('[createWorkedShift] response had no parseable workedShiftId', { raw });
+  }
   return { workedShiftId, raw };
 }
 
@@ -162,19 +181,67 @@ export async function updateWorkedShift(
 ): Promise<CreateWorkedShiftResult> {
   const base = `/integration/v1/labor/timesheet/worked-shifts/${workedShiftId}`;
   const path = opts?.correctionAuthorized ? `${base}?correction-authorized=true` : base;
-  const raw = await evereeRequest<{ workedShiftId?: number; id?: number } & Record<string, unknown>>(
-    config,
-    'PUT',
-    path,
-    input,
-  );
+  const raw = await evereeRequest<
+    { workedShiftId?: number | string; id?: number | string } & Record<string, unknown>
+  >(config, 'PUT', path, input);
   const returnedId =
-    typeof raw?.workedShiftId === 'number'
-      ? raw.workedShiftId
-      : typeof raw?.id === 'number'
-        ? raw.id
-        : workedShiftId;
+    parseWorkedShiftId(raw?.workedShiftId) || parseWorkedShiftId(raw?.id) || workedShiftId;
   return { workedShiftId: returnedId, raw };
+}
+
+/**
+ * One item from the worked-shifts LIST endpoint. Only the fields the
+ * recovery/backfill matchers read are typed; the wire object is much
+ * larger (nested worker, durations, payableDetails, …).
+ */
+export interface WorkedShiftListItem {
+  /** String on the wire — run through {@link parseWorkedShiftId}. */
+  workedShiftId?: number | string;
+  externalWorkerId?: string;
+  /** Everee's own worker id (uuid) — NOT the HRX uid. */
+  workerId?: string;
+  /** ISO-8601 with the shift's local offset, e.g. "2026-07-20T14:00:00-04:00" —
+   *  the leading 10 chars are the shift's local work date. */
+  shiftStartAt?: { effectivePunchAt?: string };
+  shiftEndAt?: { effectivePunchAt?: string };
+  note?: string;
+  [key: string]: unknown;
+}
+
+export interface ListWorkedShiftsResult {
+  items: WorkedShiftListItem[];
+  totalItems: number;
+  totalPages: number;
+  pageNumber: number;
+}
+
+/**
+ * GET the worked shifts for one worker (paged). Unlike `/payments`, this
+ * endpoint DOES honor the `external-worker-id` filter (verified in the
+ * 2026-08-13 Zaon Cox repair). Used to recover a shift id when a status
+ * doc recorded 0 (pre-parse-fix submissions) — match on local work date
+ * plus the note prefix.
+ */
+export async function listWorkedShifts(
+  config: EvereeEntityConfig,
+  params: { externalWorkerId: string; pageNumber?: number; pageSize?: number },
+): Promise<ListWorkedShiftsResult> {
+  const qs = new URLSearchParams({
+    'external-worker-id': params.externalWorkerId,
+    size: String(params.pageSize ?? 100),
+    page: String(params.pageNumber ?? 0),
+  });
+  const raw = await evereeRequest<Record<string, unknown>>(
+    config,
+    'GET',
+    `/integration/v1/labor/timesheet/worked-shifts?${qs.toString()}`,
+  );
+  return {
+    items: Array.isArray(raw?.items) ? (raw.items as WorkedShiftListItem[]) : [],
+    totalItems: Number(raw?.totalItems ?? 0),
+    totalPages: Number(raw?.totalPages ?? 0),
+    pageNumber: Number(raw?.pageNumber ?? 0),
+  };
 }
 
 /**

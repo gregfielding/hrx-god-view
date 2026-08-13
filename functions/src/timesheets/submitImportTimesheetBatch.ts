@@ -32,7 +32,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
-import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
+import { getEvereeConfigForEntity, type EvereeEntityConfig } from '../integrations/everee/evereeConfig';
 import { canManageEveree } from '../integrations/everee/evereeAccessGate';
 import {
   bulkCreatePayables,
@@ -44,6 +44,8 @@ import { ensureEvereeWorkLocation } from '../integrations/everee/evereeWorkLocat
 import {
   createWorkedShift,
   deleteWorkedShift,
+  listWorkedShifts,
+  parseWorkedShiftId,
   type CreateWorkedShiftInput,
 } from '../integrations/everee/evereeWorkedShifts';
 import { importEntryDocId, importExternalId, payableStatusDocId } from './importEntryKeys';
@@ -1548,6 +1550,42 @@ async function submitW2(args: PathArgs) {
 }
 
 /**
+ * Recover the Everee worked-shift id for an import row whose status doc
+ * recorded 0 — every pre-2026-08-13 submission did (Everee returns
+ * `workedShiftId` as a JSON string; the old parser only accepted numbers).
+ * Pages the worker's shifts and matches on local work date (the leading
+ * 10 chars of `shiftStartAt.effectivePunchAt` — the offset-rendered local
+ * date, which the noon-UTC synthetic windows also land on) plus the
+ * `Imported from <customer>` note stamped at submit time. Returns 0 unless
+ * the match is UNIQUE — a worker can also hold grid-path shifts on the
+ * same date, and deleting a guess would move real money.
+ */
+async function recoverImportWorkedShiftId(
+  cfg: EvereeEntityConfig,
+  args: { externalWorkerId: string; workDate: string; customer: string },
+): Promise<number> {
+  const { externalWorkerId, workDate, customer } = args;
+  if (!externalWorkerId || !workDate) return 0;
+  const notePrefix = `Imported from ${customer}`;
+  const matches: number[] = [];
+  for (let page = 0; page < 20; page += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await listWorkedShifts(cfg, { externalWorkerId, pageNumber: page });
+    for (const item of res.items) {
+      const id = parseWorkedShiftId(item.workedShiftId);
+      if (!id) continue;
+      if (item.externalWorkerId && item.externalWorkerId !== externalWorkerId) continue;
+      const localDate = String(item.shiftStartAt?.effectivePunchAt ?? '').slice(0, 10);
+      if (localDate !== workDate) continue;
+      if (customer && !String(item.note ?? '').startsWith(notePrefix)) continue;
+      matches.push(id);
+    }
+    if (res.pageNumber + 1 >= res.totalPages || res.items.length === 0) break;
+  }
+  return matches.length === 1 ? matches[0] : 0;
+}
+
+/**
  * Retract a previously-submitted import row. For a payable, deletes it in
  * Everee by externalId; for a worked shift, deletes by the stored
  * `workedShiftId` (with `correction-authorized` in case the period already
@@ -1587,8 +1625,19 @@ export const voidImportTimesheetPayable = onCall(
     const statusSnap = await statusRef.get();
     const data = statusSnap.data() || {};
 
+    let recoveredWorkedShiftId = 0;
     if (data.kind === 'worked_shift') {
-      const workedShiftId = Number(data.workedShiftId);
+      let workedShiftId = parseWorkedShiftId(data.workedShiftId);
+      if (!(workedShiftId > 0)) {
+        // Pre-parse-fix submissions recorded 0 — try to recover the real id
+        // from Everee before giving up (unique worker+date+note match only).
+        recoveredWorkedShiftId = await recoverImportWorkedShiftId(cfg, {
+          externalWorkerId: String(data.externalWorkerId || userId || ''),
+          workDate: String(data.workDate || workDate || ''),
+          customer: String(data.customer || customer || ''),
+        });
+        workedShiftId = recoveredWorkedShiftId;
+      }
       if (!(workedShiftId > 0)) {
         throw new HttpsError('failed-precondition', 'No Everee worked-shift id recorded for this row.');
       }
@@ -1600,6 +1649,8 @@ export const voidImportTimesheetPayable = onCall(
     await statusRef.set(
       {
         status: 'voided',
+        // Audit trail: record the id we actually deleted when the doc held 0.
+        ...(recoveredWorkedShiftId > 0 ? { workedShiftId: recoveredWorkedShiftId } : {}),
         voidedByUid: request.auth.uid,
         voidedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),

@@ -45,6 +45,7 @@ import {
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import {
   createWorkedShift,
+  parseWorkedShiftId,
   updateWorkedShift,
 } from '../integrations/everee/evereeWorkedShifts';
 
@@ -120,7 +121,10 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
       }
       const entry = entrySnap.data() as Record<string, unknown>;
       const evereeState = (entry.everee as Record<string, unknown>) ?? {};
-      const existingWorkedShiftId = numericOrUndef(evereeState.workedShiftId);
+      // Stored as a STRING (String(workedShiftId) at write time) — a
+      // number-only read here made every retry POST a brand-new shift
+      // instead of PUTting the existing one (2026-08-13).
+      const existingWorkedShiftId = parseWorkedShiftId(evereeState.workedShiftId) || undefined;
 
       // Build ComposeBatchInput from entry + payload
       const composeInput: ComposeBatchInput = {
