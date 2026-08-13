@@ -57,6 +57,7 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { Autocomplete } from '@react-google-maps/api';
+import { PLACES_ADDRESS_FIELDS_OPTIONS } from '../../utils/placesAutocompleteOptions';
 
 import { db, storage } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -1177,7 +1178,7 @@ const CustomerDetailsView: React.FC<CustomerDetailsViewProps> = ({
               />
             </Grid>
             <Grid item xs={12}>
-              <Autocomplete
+              <Autocomplete options={PLACES_ADDRESS_FIELDS_OPTIONS}
                 onLoad={(ref) => setAutocompleteRef(ref)}
                 onPlaceChanged={handlePlaceChanged}
               >

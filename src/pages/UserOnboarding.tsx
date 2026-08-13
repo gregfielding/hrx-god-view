@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from 'firebase/auth';
 import { Autocomplete } from '@react-google-maps/api';
+import { PLACES_ADDRESS_FIELDS_OPTIONS } from '../utils/placesAutocompleteOptions';
 
 import { geocodeAddress } from '../utils/geocodeAddress';
 import { auth, db } from '../firebase';
@@ -203,7 +204,7 @@ const UserOnboarding = () => {
           </>
         )}
 
-        <Autocomplete
+        <Autocomplete options={PLACES_ADDRESS_FIELDS_OPTIONS}
           onLoad={(ref) => (autocompleteRef.current = ref)}
           onPlaceChanged={handlePlaceChanged}
         >

@@ -26,6 +26,7 @@ import {
 } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { Autocomplete as GoogleMapsAutocomplete } from '@react-google-maps/api';
+import { PLACES_ADDRESS_FIELDS_OPTIONS } from '../utils/placesAutocompleteOptions';
 
 import { db } from '../firebase';
 import CustomersTableBlock from '../componentBlocks/CustomersTableBlock';
@@ -376,7 +377,7 @@ const CustomersTable: React.FC = () => {
                 />
               </Grid>
               <Grid item xs={12} sm={8}>
-                <GoogleMapsAutocomplete
+                <GoogleMapsAutocomplete options={PLACES_ADDRESS_FIELDS_OPTIONS}
                   onLoad={(ref) => (autocompleteRef.current = ref)}
                   onPlaceChanged={handlePlaceChanged}
                 >

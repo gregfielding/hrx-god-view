@@ -94,6 +94,7 @@ import {
   AccountBalance as AccountBalanceIcon,
 } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
+import { PLACES_ADDRESS_FIELDS_OPTIONS } from '../../utils/placesAutocompleteOptions';
 import { useChatGPT } from '../../contexts/ChatGPTContext';
 import LogActivityDialog from '../../components/LogActivityDialog';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
@@ -5157,7 +5158,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
           />
           <CardContent>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <GoogleAutocomplete
+              <GoogleAutocomplete options={PLACES_ADDRESS_FIELDS_OPTIONS}
                 onLoad={(ref) => (addressAutocompleteRef.current = ref)}
                 onPlaceChanged={handlePlaceChanged}
               >

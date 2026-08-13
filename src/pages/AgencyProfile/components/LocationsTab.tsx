@@ -32,6 +32,7 @@ import {
 import { collection, addDoc, getDocs, query, serverTimestamp, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
+import { PLACES_ADDRESS_FIELDS_OPTIONS } from '../../../utils/placesAutocompleteOptions';
 import { Delete as DeleteIcon, Edit as EditIcon, Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
 
 import { geocodeAddress } from '../../../utils/geocodeAddress';
@@ -753,7 +754,7 @@ const LocationsTab: React.FC<LocationsTabProps> = ({ tenantId }) => {
 
               {/* Address Information */}
               <Grid item xs={12}>
-                <GoogleAutocomplete
+                <GoogleAutocomplete options={PLACES_ADDRESS_FIELDS_OPTIONS}
                   onLoad={(ref) => (autocompleteRef.current = ref)}
                   onPlaceChanged={handlePlaceChanged}
                 >

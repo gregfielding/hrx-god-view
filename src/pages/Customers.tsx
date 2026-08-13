@@ -45,6 +45,7 @@ import {
   startAfter,
 } from 'firebase/firestore';
 import { Autocomplete } from '@react-google-maps/api';
+import { PLACES_ADDRESS_FIELDS_OPTIONS } from '../utils/placesAutocompleteOptions';
 
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -686,7 +687,7 @@ const Customers: React.FC = () => {
               />
             </Grid>
             <Grid item xs={12}>
-              <Autocomplete
+              <Autocomplete options={PLACES_ADDRESS_FIELDS_OPTIONS}
                 onLoad={(ref) => (autocompleteRef.current = ref)}
                 onPlaceChanged={handlePlaceChanged}
               >

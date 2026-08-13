@@ -29,6 +29,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import IconButton from '@mui/material/IconButton';
 import { Autocomplete } from '@react-google-maps/api';
+import { PLACES_ADDRESS_FIELDS_OPTIONS } from '../../../utils/placesAutocompleteOptions';
 
 import { geocodeAddress } from '../../../utils/geocodeAddress';
 import { db } from '../../../firebase';
@@ -226,7 +227,7 @@ const LocationsTab: React.FC<LocationsTabProps> = ({ tenantId }) => {
                 />
               </Grid>
               <Grid item xs={12} sm={8}>
-                <Autocomplete
+                <Autocomplete options={PLACES_ADDRESS_FIELDS_OPTIONS}
                   onLoad={(ref) => (autocompleteRef.current = ref)}
                   onPlaceChanged={handlePlaceChanged}
                 >
@@ -319,7 +320,7 @@ const LocationsTab: React.FC<LocationsTabProps> = ({ tenantId }) => {
                 </TableCell>
                 <TableCell>
                   {editId === loc.id ? (
-                    <Autocomplete
+                    <Autocomplete options={PLACES_ADDRESS_FIELDS_OPTIONS}
                       onLoad={(ref) => (editAutocompleteRef.current = ref)}
                       onPlaceChanged={handleEditPlaceChanged}
                     >

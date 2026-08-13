@@ -3,6 +3,7 @@ import { Box, Typography, TextField, Button, Grid, Snackbar, Alert } from '@mui/
 import { useNavigate } from 'react-router-dom';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Autocomplete } from '@react-google-maps/api';
+import { PLACES_ADDRESS_FIELDS_OPTIONS } from '../../utils/placesAutocompleteOptions';
 
 import { db } from '../../firebase';
 import { geocodeAddress } from '../../utils/geocodeAddress';
@@ -102,7 +103,7 @@ const AddCustomerForm = () => {
             />
           </Grid>
           <Grid item xs={12} sm={6}>
-            <Autocomplete
+            <Autocomplete options={PLACES_ADDRESS_FIELDS_OPTIONS}
               onLoad={(ref) => (autocompleteRef.current = ref)}
               onPlaceChanged={handlePlaceChanged}
             >

@@ -30,6 +30,7 @@ import {
 } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { Autocomplete } from '@react-google-maps/api';
+import { PLACES_ADDRESS_FIELDS_OPTIONS } from '../../utils/placesAutocompleteOptions';
 import { ArrowDropUp, ArrowDropDown } from '@mui/icons-material';
 
 import { geocodeAddress } from '../../utils/geocodeAddress';
@@ -279,7 +280,7 @@ const TenantCustomersTab: React.FC<TenantCustomersTabProps> = ({ tenantId }) => 
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <Autocomplete
+                <Autocomplete options={PLACES_ADDRESS_FIELDS_OPTIONS}
                   onLoad={(ref) => (autocompleteRef.current = ref)}
                   onPlaceChanged={handlePlaceChanged}
                 >

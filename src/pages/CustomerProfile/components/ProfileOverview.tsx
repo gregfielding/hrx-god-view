@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Box, TextField, Typography, Button, Snackbar, Alert, Grid, MenuItem } from '@mui/material';
 import { doc, onSnapshot, updateDoc, collection, getDocs, getDoc, serverTimestamp } from 'firebase/firestore';
 import { Autocomplete } from '@react-google-maps/api';
+import { PLACES_ADDRESS_FIELDS_OPTIONS } from '../../../utils/placesAutocompleteOptions';
 
 import { db } from '../../../firebase';
 import IndustrySelector from '../../../components/IndustrySelector';
@@ -231,7 +232,7 @@ const CustomerOverview: React.FC<Props> = ({ tenantId }) => {
             />
           </Grid>
           <Grid item xs={12}>
-            <Autocomplete
+            <Autocomplete options={PLACES_ADDRESS_FIELDS_OPTIONS}
               onLoad={(ref) => (autocompleteRef.current = ref)}
               onPlaceChanged={handlePlaceChanged}
             >
