@@ -64,3 +64,6 @@ functions/service-account-key.json
 .qa/
 .firebase/hosting.*.cache
 .claude/
+
+# Everee report exports dragged in for analysis (worker names + pay) — never commit.
+/*.xlsx
