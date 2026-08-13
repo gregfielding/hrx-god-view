@@ -441,6 +441,110 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
     logger.warn('sodexoReplies: bounce sweep failed', { e: String(e) });
   }
 
+  // Departure sweep (Greg 2026-08-13, "update our database and email the
+  // right contact"): auto-replies saying "X is no longer with the company —
+  // contact Y" carry a warm referral we were dropping (the scan above skips
+  // AUTO_REPLY_RE subjects). Retire the departed contact from BOTH campaigns
+  // and create the named replacement on the same company, verified (the
+  // address came from the employer's own auto-responder) so it fronts the
+  // re-engagement queue and gets a fresh touch-1 in the next batch.
+  // Idempotent: departedAt on the old contact + email dedupe on the new one.
+  try {
+    const DEPART_RE = /no longer (?:with|at|employed|works?|working|a part of)|has left the|have left the|is no longer employed|retired from/i;
+    const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+    const NAME_RE =
+      /(?:contact|forwarded to|reach(?: out)? to|please (?:e-?mail|contact)|refer(?:red)? to|direct(?:ed)? to)\s*:?\s+([A-Z][\w'.-]+(?: [A-Z][\w'.-]+){0,2})/;
+    const stripHtml = (s: string) =>
+      s.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+    const departList = await gmail.users.messages.list({
+      userId: 'me',
+      q: 'subject:("automatic reply" OR "automatic response" OR "auto-reply" OR "out of office") newer_than:2d',
+      maxResults: 100,
+    });
+    let departures = 0;
+    let replacements = 0;
+    for (const m of departList.data.messages ?? []) {
+      const full = await gmail.users.messages.get({ userId: 'me', id: m.id!, format: 'full' });
+      const fromRaw = full.data.payload?.headers?.find((h) => h.name?.toLowerCase() === 'from')?.value ?? '';
+      const fromAddr = (fromRaw.match(EMAIL_RE)?.[0] ?? '').toLowerCase();
+      const parts: string[] = [full.data.snippet ?? ''];
+      const walk = (p: any): void => {
+        if (p?.body?.data) parts.push(Buffer.from(p.body.data, 'base64').toString('utf8'));
+        (p?.parts ?? []).forEach(walk);
+      };
+      walk(full.data.payload);
+      const body = stripHtml(parts.join('\n')).slice(0, 4000);
+      if (!fromAddr || !DEPART_RE.test(body)) continue;
+
+      let oldSnap = (
+        await db.collection(`tenants/${tenantId}/crm_contacts`).where('email', '==', fromAddr).limit(1).get()
+      ).docs[0];
+      if (!oldSnap) {
+        oldSnap = (
+          await db.collection(`tenants/${tenantId}/crm_contacts`).where('altEmails', 'array-contains', fromAddr).limit(1).get()
+        ).docs[0];
+      }
+      if (!oldSnap || oldSnap.get('departedAt')) continue; // unknown sender or already handled
+
+      const oldName = `${oldSnap.get('firstName') ?? ''} ${oldSnap.get('lastName') ?? ''}`.trim() || fromAddr;
+      const cands = [...new Set((body.match(EMAIL_RE) ?? []).map((e) => e.toLowerCase()))].filter(
+        (e) => e !== fromAddr && !e.endsWith('@c1staffing.com') && !/no-?reply|unsubscribe|privacy|mailer|postmaster/.test(e),
+      );
+      const replEmail = cands[0] ?? '';
+      let replName = body.match(NAME_RE)?.[1]?.replace(/\s+(?:at|@).*$/, '').trim() ?? '';
+      if (/^(thank|thanks|please|hello|hi|regards|sincerely|best|kind)\b/i.test(replName)) replName = '';
+      const titleMatch = replName
+        ? body.match(new RegExp(replName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\(([^)]{3,60})\\)'))
+        : null;
+
+      departures += 1;
+      await oldSnap.ref.update({
+        departedAt: admin.firestore.FieldValue.serverTimestamp(),
+        departedNote: `Auto-reply: no longer with company${replEmail ? `; referred to ${replName || replEmail}` : ''}`,
+        'crmReengagement.optedOut': true,
+        'crmReengagement.optedOutReason': 'departed_auto_reply',
+        'sodexoOutreach.optedOut': true,
+        'sodexoOutreach.optedOutReason': 'departed_auto_reply',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      let created = false;
+      if (replEmail) {
+        const dupe = await db.collection(`tenants/${tenantId}/crm_contacts`).where('email', '==', replEmail).limit(1).get();
+        if (dupe.empty) {
+          const nameParts = replName.split(/\s+/).filter(Boolean);
+          await db.collection(`tenants/${tenantId}/crm_contacts`).add({
+            firstName: nameParts[0] ?? '',
+            lastName: nameParts.slice(1).join(' '),
+            email: replEmail,
+            ...(titleMatch?.[1] ? { title: titleMatch[1].trim() } : {}),
+            companyId: oldSnap.get('companyId') ?? null,
+            companyName: oldSnap.get('companyName') ?? null,
+            ...(oldSnap.get('accountId') ? { accountId: oldSnap.get('accountId') } : {}),
+            leadSource: 'Departure auto-reply',
+            sourceNote: `Named as replacement in ${oldName}'s departure auto-reply`,
+            verifiedEmail: true,
+            verifiedSource: 'auto_reply_referral',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdBy: 'departure_sweep_cron',
+          });
+          created = true;
+          replacements += 1;
+        }
+      }
+      digest.push(
+        `• ${oldName} has left ${oldSnap.get('companyName') ?? 'their company'} — retired from campaigns` +
+          (replEmail ? `; ${created ? 'created' : 'already had'} replacement ${replName || replEmail} (queued for fresh outreach)` : '; no replacement named'),
+      );
+    }
+    if (departures > 0) {
+      logger.info('sodexoReplies: departure sweep', { departures, replacements });
+    }
+  } catch (e) {
+    logger.warn('sodexoReplies: departure sweep failed', { e: String(e) });
+  }
+
   // Digest — self-send so Greg hears about new replies where he already lives.
   if (digest.length > 0) {
     try {
