@@ -619,6 +619,7 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
         userId: uid,
         evereeWorkerId,
         experienceType,
+        context: 'worker_page',
         returnUrl:
           typeof window !== 'undefined'
             ? `${window.location.origin}/c1/workers/payroll/${encodeURIComponent(evereeTenantId)}`

@@ -33,6 +33,7 @@ import {
 import { EmploymentOnboardingPathRowAction } from './EmploymentOnboardingPathRowAction';
 import ExternalOnboardingVerificationControls from './ExternalOnboardingVerificationControls';
 import EvereePayrollSetupEmbed from '../../../../components/everee/EvereePayrollSetupEmbed';
+import { shouldResumeEvereeEmbed } from '../../../../utils/everee/embedResume';
 import EvereeMyPayPanel from '../../../../components/everee/EvereeMyPayPanel';
 import type { ExternalOnboardingStepKey } from '../../../../types/externalOnboardingSteps';
 import EmploymentI9SupportingDocumentsSubsection from '../../../../components/i9SupportingDocuments/EmploymentI9SupportingDocumentsSubsection';
@@ -174,6 +175,7 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
   const [payrollBusy, setPayrollBusy] = useState(false);
   const [payrollErr, setPayrollErr] = useState<string | null>(null);
   const [evereeEmbedOpen, setEvereeEmbedOpen] = useState(false);
+  const [evereeEmbedAutoResumed, setEvereeEmbedAutoResumed] = useState(false);
   const [evereeMyPayOpen, setEvereeMyPayOpen] = useState(false);
 
   const { systems } = overview;
@@ -197,6 +199,25 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
     !entityOnboardingComplete &&
     evereePayrollEnabled &&
     Boolean(hiringEntityId && tenantId && profileUserId);
+
+  /**
+   * Auto-reopen the Everee embed after a page reload that interrupted it —
+   * on phones, the camera/file picker during I-9 doc upload routinely
+   * evicts the tab, and the worker used to land back here with the dialog
+   * closed ("back to the beginning" reports, 2026-08-13). The dialog
+   * leaves a sessionStorage marker while a session is live; a fresh marker
+   * on mount means the last exit wasn't intentional, so we drop the worker
+   * straight back in (the server reuses sessions minted <4min ago, which
+   * resumes the same Everee session).
+   */
+  useEffect(() => {
+    if (!showEvereeEmbedLaunch || evereeEmbedOpen) return;
+    if (shouldResumeEvereeEmbed(tenantId, hiringEntityId, profileUserId)) {
+      setEvereeEmbedAutoResumed(true);
+      setEvereeEmbedOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showEvereeEmbedLaunch, tenantId, hiringEntityId, profileUserId]);
   /**
    * "View my pay" is the peer of the onboarding embed — surfaces once the
    * worker's Everee onboarding is settled (mirrored onto the entity
@@ -756,12 +777,16 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
       {showEvereeEmbedLaunch ? (
         <EvereePayrollSetupEmbed
           open={evereeEmbedOpen}
-          onClose={() => setEvereeEmbedOpen(false)}
+          onClose={() => {
+            setEvereeEmbedOpen(false);
+            setEvereeEmbedAutoResumed(false);
+          }}
           tenantId={tenantId}
           entityId={hiringEntityId}
           userId={profileUserId}
           workerType={evereeWorkerType}
           onComplete={onRefresh}
+          sessionContext={evereeEmbedAutoResumed ? 'auto_resume' : 'open'}
         />
       ) : null}
       {showEvereeMyPay ? (

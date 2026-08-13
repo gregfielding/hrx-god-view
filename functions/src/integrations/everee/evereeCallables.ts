@@ -484,8 +484,15 @@ export const evereeUpdateWorkerAddress = onCall(async (request) => {
  * The cache is server-side only (linkage doc fields, see below) so it
  * works across devices, doesn't require client cookies, and never hands
  * out a pre-existing URL to a different user.
+ *
+ * Widened 60s → 4min (Aug 13, 2026 — I-9 upload reload reports): on
+ * phones, opening the camera/file picker for an I-9 doc routinely gets
+ * the tab evicted; the page reloads on return and re-requests a session.
+ * Handing back the SAME session resumes the worker where they were
+ * instead of restarting the widget. 4min is the ceiling the ~5min
+ * session lifetime allows while keeping EMBED_SESSION_MIN_REMAINING_MS.
  */
-const EMBED_SESSION_REUSE_WINDOW_MS = 60 * 1000; // 60s
+const EMBED_SESSION_REUSE_WINDOW_MS = 4 * 60 * 1000; // 4min
 /**
  * Minimum remaining lifetime on a cached URL before we'll reuse it. Everee's
  * embed sessions live ~5min today; we reuse only when the cached one still has
@@ -575,6 +582,15 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   await requireEvereeEnabledEntity(tenantId, entityId);
+  // Field diagnostics for the I-9 "widget restarts" reports: which surface
+  // asked for the session ('open' | 'auto_resume' | 'worker_page') and from
+  // what device. Stamped on the linkage doc + logged; createCount/reuseCount
+  // growth per worker shows restart frequency in the wild.
+  const sessionContext = typeof d?.context === 'string' ? d.context.slice(0, 40) : '';
+  const userAgent =
+    typeof request.rawRequest?.headers?.['user-agent'] === 'string'
+      ? String(request.rawRequest.headers['user-agent']).slice(0, 220)
+      : '';
   const experienceType = coerceEmbedExperienceType(d?.experienceType);
   const experienceVersion = coerceEmbedExperienceVersion(d?.experienceVersion);
   const requestedKey = buildExperienceCacheKey(
@@ -607,6 +623,8 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
       remainingMs: cached.expiresAtMs - nowMs,
       experienceCacheKey: cached.experienceCacheKey,
       reason: 'within_reuse_window',
+      context: sessionContext || undefined,
+      userAgent: userAgent || undefined,
     });
     // Best-effort reuse-counter bump for ops visibility — never block the
     // response on a counter write.
@@ -616,6 +634,8 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
           embedSessionCache: {
             lastReusedAtMs: nowMs,
             reuseCount: admin.firestore.FieldValue.increment(1),
+            ...(sessionContext ? { lastRequestContext: sessionContext } : {}),
+            ...(userAgent ? { lastRequestUserAgent: userAgent } : {}),
           },
         },
         { merge: true },
@@ -661,6 +681,8 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
             expiresAtMs,
             createdAtMs: nowMs,
             createCount: admin.firestore.FieldValue.increment(1),
+            ...(sessionContext ? { lastRequestContext: sessionContext } : {}),
+            ...(userAgent ? { lastRequestUserAgent: userAgent } : {}),
           },
         },
         { merge: true },

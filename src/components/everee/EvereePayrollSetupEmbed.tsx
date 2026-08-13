@@ -51,6 +51,7 @@ import {
   EVEREE_DEFAULT_HOST_HANDLER_NAME,
   registerEvereeHostBridge,
 } from '../../utils/everee/hostMessageBridge';
+import { clearEvereeEmbedMark, markEvereeEmbedOpen } from '../../utils/everee/embedResume';
 
 /** Same channel name used on the Flutter side — keeps event shape identical. */
 export const EVEREE_CHANNEL_NAME = 'evereeEmbed';
@@ -91,6 +92,11 @@ export interface EvereePayrollSetupEmbedProps {
   returnUrl?: string;
   /** Accessibility / copy override. Defaults to "Complete payroll setup". */
   title?: string;
+  /**
+   * Why this open happened ('open' user click | 'auto_resume' reopened after
+   * a page reload). Forwarded to the session callable for field diagnostics.
+   */
+  sessionContext?: string;
 }
 
 type Phase =
@@ -117,6 +123,7 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
   onComplete,
   returnUrl,
   title = 'Complete payroll setup',
+  sessionContext = 'open',
 }) => {
   const [phase, setPhase] = useState<Phase>({ state: 'idle' });
   const portRef = useRef<MessagePort | null>(null);
@@ -189,6 +196,7 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
       switch (evt.type) {
         case 'WORKER_ONBOARDING_COMPLETE':
           setPhase({ state: 'completing' });
+          clearEvereeEmbedMark(tenantId, entityId, userId);
           // Optimistic callback — webhook will settle authoritative state.
           try {
             onComplete?.();
@@ -202,6 +210,7 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
           }, 800);
           return;
         case 'DISMISS':
+          clearEvereeEmbedMark(tenantId, entityId, userId);
           teardownPort();
           onClose();
           return;
@@ -210,7 +219,7 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
           return;
       }
     },
-    [onClose, onComplete, teardownPort],
+    [onClose, onComplete, teardownPort, tenantId, entityId, userId],
   );
 
   /**
@@ -315,6 +324,10 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
         return;
       }
       setPhase({ state: 'creating' });
+      // Resume marker: survives a same-tab page reload (mobile file-picker
+      // tab eviction) so the parent can auto-reopen this dialog. Cleared on
+      // every intentional exit (close / dismiss / complete).
+      markEvereeEmbedOpen(tenantId, entityId, userId);
       try {
         const ensured = await evereeEnsureWorker({
           tenantId,
@@ -341,6 +354,7 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
           userId,
           evereeWorkerId,
           returnUrl,
+          context: sessionContext,
         });
         if (cancelled) return;
         const embedUrl = session.data?.embedUrl?.trim();
@@ -374,12 +388,13 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [open, tenantId, entityId, userId, workerType, prefill?.email, prefill?.firstName, prefill?.lastName, prefill?.phone, returnUrl, teardownPort]);
+  }, [open, tenantId, entityId, userId, workerType, prefill?.email, prefill?.firstName, prefill?.lastName, prefill?.phone, returnUrl, teardownPort, sessionContext]);
 
   const handleClose = useCallback(() => {
+    clearEvereeEmbedMark(tenantId, entityId, userId);
     teardownPort();
     onClose();
-  }, [onClose, teardownPort]);
+  }, [onClose, teardownPort, tenantId, entityId, userId]);
 
   return (
     <Dialog

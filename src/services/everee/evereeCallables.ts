@@ -67,6 +67,12 @@ export interface EvereeCreateOnboardingSessionRequest {
   experienceType?: EvereeEmbedExperienceType;
   /** Defaults per Everee's published table (`V2_0` for ONBOARDING, `V1_0` for the rest). */
   experienceVersion?: string;
+  /**
+   * Which surface asked and why ('open' | 'auto_resume' | 'worker_page') —
+   * field diagnostics for the I-9 widget-restart reports. Server stamps it
+   * on the linkage doc's embedSessionCache.
+   */
+  context?: string;
 }
 
 export interface EvereeCreateOnboardingSessionResult {
