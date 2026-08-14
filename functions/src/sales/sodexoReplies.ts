@@ -25,6 +25,7 @@ import { defineString } from 'firebase-functions/params';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { google, gmail_v1 } from 'googleapis';
+import { GENERIC_EMAIL_DOMAINS, normCompany } from './outreachSuppressions';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -39,6 +40,15 @@ const redirectUri = defineString('GOOGLE_REDIRECT_URI');
 const PRIMARY_TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
 const LEAD_SOURCE = 'Sodexo Campus Scrape (sodexomyway.com)';
 const AUTO_REPLY_RE = /^(automatic reply|auto(matic)?[- ]?reply|out of office)/i;
+// Hard opt-out phrasings (Greg 2026-08-14, "Do not contact me or anyone
+// affiliated with Matrix Bottling Group"): any of these in the fresh reply
+// text forces the unsubscribe path no matter how the AI classifies it — a
+// do-not-contact must NEVER get the auto-sent gracious close.
+const DNC_RE =
+  /\b(?:do not|don'?t|please stop|stop|never) (?:contact|e-?mail|message|call|reach)|remove (?:me|us) from|take (?:me|us) off|opt (?:me|us) out|no longer wish to (?:receive|hear)|do not solicit/i;
+// "…me or anyone at X" extends the opt-out to the whole company.
+const COMPANY_WIDE_RE =
+  /\b(?:anyone|any one|everyone|nobody|no one|all of us|our (?:company|team|organi[sz]ation|firm)|entire (?:company|team|organi[sz]ation)|colleagues?|affiliated with|associated with)\b/i;
 const PANEL_URL = 'https://hrxone.com/crm?tab=sodexo-campuses';
 
 const trim = (v: unknown): string => String(v ?? '').trim();
@@ -212,6 +222,63 @@ interface ScanResult {
   errors: number;
 }
 
+/**
+ * A reply asked us off the whole company ("me or anyone affiliated with X"):
+ * write durable suppression rows (domain + company name — both senders'
+ * eligibility checks them, covering contacts imported later) and retire
+ * every existing colleague from BOTH campaigns. Colleague = same non-generic
+ * email domain, or company/campus name matching the replier's.
+ */
+async function suppressCompanyWide(
+  tenantId: string,
+  contactsSnap: FirebaseFirestore.QuerySnapshot,
+  replier: { id: string; email: string; campus: string; name: string },
+  replyText: string,
+): Promise<{ label: string; swept: number }> {
+  const FV = admin.firestore.FieldValue;
+  const reason = `company-wide DNC reply from ${replier.email}: "${replyText.slice(0, 140).replace(/\s+/g, ' ').trim()}"`;
+  const domain = replier.email.toLowerCase().split('@')[1] ?? '';
+  const domainOk = Boolean(domain) && !GENERIC_EMAIL_DOMAINS.has(domain);
+  const company = normCompany(replier.campus);
+  const rows: Array<{ id: string; kind: 'domain' | 'company'; value: string }> = [];
+  if (domainOk) rows.push({ id: `domain__${domain}`, kind: 'domain', value: domain });
+  if (company.length >= 6) {
+    rows.push({ id: `company__${company.replace(/ /g, '_').slice(0, 80)}`, kind: 'company', value: company });
+  }
+  for (const r of rows) {
+    await db.doc(`tenants/${tenantId}/outreach_suppressions/${r.id}`).set(
+      {
+        tenantId,
+        kind: r.kind,
+        value: r.value,
+        reason,
+        sourceEmail: replier.email,
+        sourceContactId: replier.id,
+        createdAt: FV.serverTimestamp(),
+        createdBy: 'reply_desk_auto',
+      },
+      { merge: true },
+    );
+  }
+  let swept = 0;
+  for (const d of contactsSnap.docs) {
+    if (d.id === replier.id) continue;
+    const v = d.data() as Record<string, any>;
+    const email = trim(v.email).toLowerCase();
+    const dom = email.split('@')[1] ?? '';
+    const co = normCompany(trim(v.campusName) || trim(v.accountName) || trim(v.companyName));
+    const hit =
+      (domainOk && dom === domain) ||
+      (company.length >= 6 && co.length >= 6 && (co.includes(company) || company.includes(co)));
+    if (!hit) continue;
+    if (v.crmReengagement?.optedOut === true && v.sodexoOutreach?.optedOut === true) continue;
+    const stamp = { optedOut: true, optedOutAt: FV.serverTimestamp(), optOutReason: reason };
+    await d.ref.set({ crmReengagement: stamp, sodexoOutreach: stamp }, { merge: true });
+    swept += 1;
+  }
+  return { label: rows.map((r) => r.value).join(' + '), swept };
+}
+
 export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
   const result: ScanResult = { contactsScanned: 0, newReplies: 0, autoReplied: 0, autoUnsubscribed: 0, oooSkipped: 0, errors: 0 };
   const client = await gmailClientFor(tenantId);
@@ -297,7 +364,8 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
           logger.warn('sodexoReplies: classify failed — filing as other', { email: c.email, e: String(e) });
           return { classification: 'other' as const, summary: '', draftReply: '' };
         });
-        const isUnsub = ai.classification === 'unsubscribe' || /^\s*unsubscribe\b/i.test(body);
+        const isUnsub =
+          ai.classification === 'unsubscribe' || /^\s*unsubscribe\b/i.test(body) || DNC_RE.test(body);
         // Auto-send tier (Greg 2026-08-11 "flip it"): the not_interested
         // gracious close is the lowest-risk class — send it without review.
         // Interested/question/other stay behind Greg's click. A failed send
@@ -352,8 +420,9 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
         if (isUnsub) {
           contactPatch.optedOut = true;
           contactPatch.optedOutAt = admin.firestore.FieldValue.serverTimestamp();
-          contactPatch.optOutReason = 'replied "unsubscribe"';
+          contactPatch.optOutReason = 'reply asked not to be contacted';
           result.autoUnsubscribed += 1;
+          digest.push(`• ${c.name} (${c.campus}) — asked not to be contacted → opted out of all campaigns`);
         } else if (autoSentId) {
           result.autoReplied += 1;
           digest.push(`• ${c.name} (${c.campus}) — not interested → auto-replied with a gracious close`);
@@ -362,6 +431,27 @@ export async function scanRepliesCore(tenantId: string): Promise<ScanResult> {
           digest.push(`• ${c.name} (${c.campus}) — ${ai.classification}: ${ai.summary || subject} — NEEDS REVIEW`);
         }
         await c.ref.set({ [c.stateKey]: contactPatch }, { merge: true });
+        if (isUnsub) {
+          // Opt-outs are global, not per-campaign: stamp the OTHER campaign's
+          // namespace too so no future list migration can resume contact.
+          const otherKey = c.stateKey === 'sodexoOutreach' ? 'crmReengagement' : 'sodexoOutreach';
+          await c.ref.set(
+            {
+              [otherKey]: {
+                optedOut: true,
+                optedOutAt: admin.firestore.FieldValue.serverTimestamp(),
+                optOutReason: `mirrored from ${c.stateKey} opt-out`,
+              },
+            },
+            { merge: true },
+          );
+          if (COMPANY_WIDE_RE.test(body)) {
+            const sweep = await suppressCompanyWide(tenantId, snap, c, body);
+            digest.push(
+              `  ↳ company-wide ask — suppressed ${sweep.label || 'their company'} (${sweep.swept} other contact${sweep.swept === 1 ? '' : 's'} retired; future imports auto-blocked)`,
+            );
+          }
+        }
         // Affirmative replies become hot leads automatically (Greg 2026-08-11:
         // "anyone who responds in such an affirmative way needs to be saved and
         // managed as a hot lead"). interested/question = engaged; the contact

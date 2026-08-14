@@ -27,6 +27,7 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 
 import { ensureInternalStaff, gmailClientFor } from './sodexoReplies';
+import { isSuppressed, loadSuppressions } from './outreachSuppressions';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -113,6 +114,10 @@ interface Candidate {
  * Greg's denylist rule, returning per-touch eligible candidates.
  */
 async function eligibleCandidates(tenantId: string, touch: number): Promise<Candidate[]> {
+  // Do-not-contact suppression list (2026-08-14): domains + companies whose
+  // people asked never to be contacted — covers contacts imported later,
+  // which per-contact optedOut stamps can't.
+  const suppressions = await loadSuppressions(db, tenantId);
   const cos = await db.collection(`tenants/${tenantId}/crm_companies`).select('name', 'companyName').get();
   const compNameById = new Map<string, string>();
   cos.forEach((d) => compNameById.set(d.id, trim(d.data().name) || trim(d.data().companyName)));
@@ -140,6 +145,7 @@ async function eligibleCandidates(tenantId: string, touch: number): Promise<Cand
     seen.add(email);
     const companyName = trim(v.companyName) || compNameById.get(trim(v.companyId)) || '';
     if (companyName && DENY_COMPANIES.some((re) => re.test(companyName))) return;
+    if (isSuppressed(suppressions, email, [companyName, trim(v.accountName), trim(v.campusName)])) return;
     const re = (v.crmReengagement ?? {}) as Record<string, unknown>;
     if (re.optedOut === true || re.repliedAt) return;
     if (v.emailBounced === true) return; // dead address (bounce sweep) — no more sends until rescued

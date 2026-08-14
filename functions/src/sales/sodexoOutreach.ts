@@ -30,6 +30,7 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { google } from 'googleapis';
 import type { Response } from 'express';
+import { isSuppressed, loadSuppressions } from './outreachSuppressions';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -255,6 +256,9 @@ async function campusNamesByAccount(tenantId: string): Promise<Map<string, strin
 
 async function eligibleCandidates(tenantId: string, touch: number): Promise<Candidate[]> {
   const now = Date.now();
+  // Do-not-contact suppression list (2026-08-14): shared with the
+  // re-engagement campaign — covers contacts imported after the opt-out.
+  const suppressions = await loadSuppressions(db, tenantId);
   const campuses = await campusNamesByAccount(tenantId);
   const contacts = await db
     .collection(`tenants/${tenantId}/crm_contacts`)
@@ -269,6 +273,7 @@ async function eligibleCandidates(tenantId: string, touch: number): Promise<Cand
     const so = (v.sodexoOutreach as Record<string, unknown>) ?? {};
     if (so.optedOut === true || so.repliedAt) return;
     if (v.emailBounced === true) return; // dead address (bounce sweep) — no more sends until rescued
+    if (isSuppressed(suppressions, email, [campuses.get(trim(v.accountId)), trim(v.campusName), trim(v.accountName)])) return;
     const t1 = (so.touch1SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
     const t2 = (so.touch2SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
     const t3 = (so.touch3SentAt as admin.firestore.Timestamp | undefined)?.toMillis?.() ?? 0;
