@@ -1922,7 +1922,7 @@ export const createImportAssignments = onCall(
  * none → 'coverage_needed' (belongs on the carrier ask list).
  */
 export const getWcPlaceholderUsage = onCall(
-  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 120 },
+  { cors: true, region: 'us-central1', memory: '512MiB', timeoutSeconds: 120 },
   async (request) => {
     const tenantId = trim(request.data?.tenantId);
     if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
