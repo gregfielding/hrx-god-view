@@ -71,6 +71,55 @@ export const onEntityEmploymentI9Section2WriteUpdateReadiness = onDocumentWritte
       return;
     }
 
+    // ── I-9 complete ⇒ Active (Greg 2026-08-14, WorkBright cutover) ──
+    //
+    // Section 2 landing is the legal employability milestone, so it now
+    // drives the onboarding→active status transition — the yellow
+    // "Onboarding" chips (profile header, user/applicant tables, placement
+    // tiles) all fold from this doc's status/employmentState and flip
+    // green everywhere at once. Regardless of which writer stamped it:
+    // Everee mirror (WorkBright pipeline), reconcile cron, or a manual
+    // CSA mark.
+    //
+    // Status/display only: payroll submit gates and Everee payability are
+    // untouched (bank/W-4 keep their own chips). Only the onboarding→
+    // active transition — never resurrects inactive/terminated/blocked,
+    // never fires for DNR'd rows. Self-terminating: the re-fire from this
+    // write sees status 'active' and skips.
+    const s2At = afterData.i9Section2CompletedAt;
+    const legacyStatus = String(afterData.status ?? '').trim().toLowerCase();
+    const canonState = String(afterData.employmentState ?? '').trim().toLowerCase();
+    const hasTerminal =
+      (afterData.terminatedAt != null && afterData.terminatedAt !== '') ||
+      afterData.doNotReturn === true;
+    if (
+      s2At != null &&
+      s2At !== '' &&
+      !hasTerminal &&
+      (legacyStatus === 'onboarding' || canonState === 'onboarding')
+    ) {
+      try {
+        const patch: Record<string, unknown> = {
+          activatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          activationSource: 'i9_section2_complete',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        if (legacyStatus === 'onboarding') patch.status = 'active';
+        if (canonState === 'onboarding') patch.employmentState = 'active';
+        await event.data!.after.ref.update(patch);
+        logger.info('onEntityEmploymentI9Section2WriteUpdateReadiness: activated on I-9 complete', {
+          tenantId,
+          employmentId,
+        });
+      } catch (e) {
+        logger.warn('onEntityEmploymentI9Section2WriteUpdateReadiness: activation write failed', {
+          tenantId,
+          employmentId,
+          message: e instanceof Error ? e.message.slice(0, 240) : String(e),
+        });
+      }
+    }
+
     const plan = planEntityEmploymentI9Section2Update({
       before: beforeData,
       after: afterData,
