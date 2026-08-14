@@ -42,8 +42,15 @@ const classWriteback = httpsCallable(functions, 'runExpensifyClassWritebackNow')
 interface ClassSyncStats {
   expensesSeen: number;
   tagged: number;
+  matched: number;
   updated: number;
   alreadySet: number;
+  notesUpdated: number;
+  notesAlready: number;
+  receiptsAttached: number;
+  receiptsAlready: number;
+  receiptsFailed: number;
+  receiptsDeferred: number;
   unmatchedPurchase: number;
   unknownTags: string[];
   errors: number;
@@ -268,35 +275,40 @@ export default function ExpensifyCardExportCard() {
       <Divider sx={{ my: 2 }} />
 
       <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
-        Classes → QuickBooks
+        Expense details → QuickBooks
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-        Copies the class picked on each Expensify expense onto the matching QuickBooks
-        transaction. Runs automatically every morning; use the button after a classifying
-        session to sync right away. Only expenses that are on a report are visible — turn on
-        delayed submission in the Expensify workspace so card expenses land on one
-        automatically.
+        Pushes what&apos;s entered on each Expensify expense onto the matching QuickBooks
+        transaction: the class, the note (into the memo), and the receipt image (attached to
+        the transaction). Runs automatically every morning; use the button to sync everything
+        right away. Only expenses that are on a report are visible — delayed submission in the
+        Expensify workspace puts card expenses on one automatically.
       </Typography>
       <Stack direction="row" spacing={1.5} alignItems="center">
         <Button variant="outlined" onClick={onClassSync} disabled={classBusy}>
-          {classBusy ? 'Syncing…' : 'Sync classes to QuickBooks'}
+          {classBusy ? 'Syncing…' : 'Sync all to QuickBooks'}
         </Button>
         {classBusy && <CircularProgress size={18} />}
       </Stack>
       {classStats && (
         <Alert
-          severity={classStats.errors > 0 ? 'warning' : 'success'}
+          severity={classStats.errors > 0 || classStats.receiptsFailed > 0 ? 'warning' : 'success'}
           sx={{ mt: 1.5 }}
           onClose={() => setClassStats(null)}
         >
-          {classStats.updated} transaction{classStats.updated === 1 ? '' : 's'} classed in
-          QuickBooks; {classStats.alreadySet} already correct.{' '}
-          {classStats.tagged - classStats.updated - classStats.alreadySet > 0 &&
-            `${classStats.tagged - classStats.updated - classStats.alreadySet} classified expense(s) couldn't be matched or resolved. `}
+          Classes: {classStats.updated} updated, {classStats.alreadySet} already correct. Notes:{' '}
+          {classStats.notesUpdated ?? 0} written to memos, {classStats.notesAlready ?? 0} already
+          there. Receipts: {classStats.receiptsAttached ?? 0} attached,{' '}
+          {classStats.receiptsAlready ?? 0} previously attached
+          {(classStats.receiptsDeferred ?? 0) > 0 &&
+            `, ${classStats.receiptsDeferred} deferred to the next run`}
+          {(classStats.receiptsFailed ?? 0) > 0 && `, ${classStats.receiptsFailed} failed`}.{' '}
           {classStats.unknownTags.length > 0 &&
             `Unknown class name(s): ${classStats.unknownTags.join(', ')}. `}
-          ({classStats.expensesSeen} expense{classStats.expensesSeen === 1 ? '' : 's'} visible on
-          reports, {classStats.tagged} classified.)
+          {classStats.unmatchedPurchase > 0 &&
+            `${classStats.unmatchedPurchase} expense(s) had no matching QuickBooks transaction. `}
+          ({classStats.expensesSeen} expense{classStats.expensesSeen === 1 ? '' : 's'} on reports,{' '}
+          {classStats.tagged} classified.)
         </Alert>
       )}
     </Paper>

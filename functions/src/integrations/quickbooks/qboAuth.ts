@@ -318,6 +318,76 @@ export async function qboEntityUpdate(
   return json;
 }
 
+/** Upload a file and attach it to an entity (QBO Attachable, multipart
+ *  upload endpoint). ADDITIVE — uploading twice attaches the file twice;
+ *  callers must dedupe (the Expensify write-back keeps a ledger). */
+export async function qboUploadAttachment(
+  tenantId: string,
+  input: {
+    entityType: string; // e.g. 'Purchase'
+    entityId: string;
+    fileName: string;
+    contentType: string;
+    content: Buffer;
+  },
+): Promise<Record<string, unknown>> {
+  const { accessToken, realmId } = await getQboAccessToken(tenantId);
+  const url = `${API_BASE}/${realmId}/upload?minorversion=${MINOR_VERSION}`;
+  const boundary = `hrxqbo${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+  const metadata = JSON.stringify({
+    AttachableRef: [
+      { EntityRef: { type: input.entityType, value: input.entityId }, IncludeOnSend: false },
+    ],
+    FileName: input.fileName,
+    ContentType: input.contentType,
+  });
+  const safeName = input.fileName.replace(/["\r\n]/g, '');
+  const body = Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file_metadata_01"; filename="attachment.json"\r\n` +
+        `Content-Type: application/json\r\n\r\n${metadata}\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file_content_01"; filename="${safeName}"\r\n` +
+        `Content-Type: ${input.contentType}\r\n` +
+        `Content-Transfer-Encoding: binary\r\n\r\n`,
+    ),
+    input.content,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+    },
+    body,
+  });
+  const intuitTid = res.headers.get('intuit_tid') ?? 'n/a';
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    logger.error('[qbo] attachment upload failed', {
+      status: res.status,
+      intuitTid,
+      entityId: input.entityId,
+      fileName: input.fileName,
+    });
+    throw new Error(
+      `QBO upload ${res.status} (intuit_tid=${intuitTid}): ${JSON.stringify(json).slice(0, 500)}`,
+    );
+  }
+  // A 200 can still carry a per-file Fault inside AttachableResponse.
+  const first =
+    ((json.AttachableResponse as Array<Record<string, unknown>> | undefined) ?? [])[0] ?? {};
+  if (first.Fault) {
+    throw new Error(
+      `QBO upload fault (intuit_tid=${intuitTid}): ${JSON.stringify(first.Fault).slice(0, 500)}`,
+    );
+  }
+  return json;
+}
+
 /** Run a QBO query (SQL-ish) and return the parsed QueryResponse. */
 export async function qboQuery(tenantId: string, query: string): Promise<Record<string, unknown>> {
   const { accessToken, realmId } = await getQboAccessToken(tenantId);
