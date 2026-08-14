@@ -595,7 +595,10 @@ const WhosWorkingPage: React.FC = () => {
     const now = new Date();
     const thisSunday = new Date(now);
     thisSunday.setDate(now.getDate() - now.getDay());
-    for (let w = 11; w >= 0; w--) {
+    // w = 0 is the current week; w = -1 extends the line one week into the
+    // future (Greg 2026-08-14) so workers hired with a next-week start date
+    // push the right edge up as they're placed.
+    for (let w = 11; w >= -1; w--) {
       const start = new Date(thisSunday);
       start.setDate(thisSunday.getDate() - w * 7);
       const end = new Date(start);
@@ -604,11 +607,68 @@ const WhosWorkingPage: React.FC = () => {
         end.getDate(),
       ).padStart(2, '0')}`;
       out.push({
-        label: `${start.getMonth() + 1}/${start.getDate()}`,
+        label: `${start.getMonth() + 1}/${start.getDate()}${w === -1 ? ' (next)' : ''}`,
         value: ongoingFiltered.filter((r) => !r.startDate || r.startDate <= endIso).length,
       });
     }
     return out;
+  }, [ongoingFiltered]);
+
+  /** Projected pay for a Sun–Sat week from the visible career roster: each
+   *  worker contributes their scheduled weekdays that fall on/after their
+   *  start date × 8h × pay rate. Career assignments carry no daily-hours
+   *  field, so 8h/day is the estimate basis (stated on the cards). A worker
+   *  starting Friday counts 1 day this week and their full schedule next
+   *  week (Greg 2026-08-14). Workers missing a pay rate are counted in
+   *  worker-days but contribute $0 — surfaced so the gap is visible. */
+  const weekFinance = useMemo(() => {
+    const build = (offsetWeeks: number) => {
+      const now = new Date();
+      const start = new Date(now);
+      start.setDate(now.getDate() - now.getDay() + offsetWeeks * 7);
+      const dayIsos: string[] = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        dayIsos.push(
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+        );
+      }
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      let payDollars = 0;
+      let billDollars = 0;
+      let workerDays = 0;
+      let workers = 0;
+      let unpriced = 0;
+      for (const r of ongoingFiltered) {
+        // weeklyDays holds DOW indices '0'(Sun)..'6'(Sat) — the wire
+        // contract from getOngoingAssignments. No schedule → assume Mon–Fri.
+        const sched =
+          r.weeklyDays.length > 0 ? new Set(r.weeklyDays) : new Set(['1', '2', '3', '4', '5']);
+        let days = 0;
+        for (let i = 0; i < 7; i++) {
+          if (r.startDate && dayIsos[i] < r.startDate) continue;
+          if (!sched.has(String(i))) continue;
+          days += 1;
+        }
+        if (days === 0) continue;
+        workers += 1;
+        workerDays += days;
+        if (r.payRate && r.payRate > 0) payDollars += days * 8 * r.payRate;
+        else unpriced += 1;
+        if (r.billRate && r.billRate > 0) billDollars += days * 8 * r.billRate;
+      }
+      return {
+        label: `${start.getMonth() + 1}/${start.getDate()}–${end.getMonth() + 1}/${end.getDate()}`,
+        workers,
+        workerDays,
+        payDollars,
+        billDollars,
+        unpriced,
+      };
+    };
+    return { thisWeek: build(0), nextWeek: build(1) };
   }, [ongoingFiltered]);
 
   const loadOngoing = useCallback(async () => {
@@ -1220,9 +1280,44 @@ const WhosWorkingPage: React.FC = () => {
       {ongoing !== null && !ongoingLoading && ongoing.length > 0 && (
         <MetricChart
           title="Career workers"
-          caption="Weekly headcount of the workers listed below — follows the Account filter and Venuesmart toggle."
+          caption="Weekly headcount of the workers listed below, through next week — follows the Account filter and Venuesmart toggle. Next-week hires lift the right edge as they're placed."
           data={careerSeries}
         />
+      )}
+      {ongoing !== null && !ongoingLoading && ongoing.length > 0 && (
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mt: 2 }}>
+          {(
+            [
+              { title: 'This week', f: weekFinance.thisWeek },
+              { title: 'Next week', f: weekFinance.nextWeek },
+            ] as const
+          ).map(({ title, f }) => (
+            <Paper key={title} variant="outlined" sx={{ p: 2, flex: 1, minWidth: 0 }}>
+              <Typography variant="overline" color="text.secondary">
+                {title} · {f.label}
+              </Typography>
+              <Typography variant="h5" fontWeight={700}>
+                $
+                {f.payDollars.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                est. pay · {f.workers} worker{f.workers === 1 ? '' : 's'} · {f.workerDays} worker-day
+                {f.workerDays === 1 ? '' : 's'} @ 8h
+              </Typography>
+              {f.billDollars > 0 && (
+                <Typography variant="body2" color="text.secondary">
+                  est. bill ${f.billDollars.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </Typography>
+              )}
+              {f.unpriced > 0 && (
+                <Typography variant="caption" color="warning.main">
+                  {f.unpriced} worker{f.unpriced === 1 ? '' : 's'} missing a pay rate — not in the
+                  total
+                </Typography>
+              )}
+            </Paper>
+          ))}
+        </Stack>
       )}
       {ongoingLoading || ongoing === null ? (
         <Stack alignItems="center" sx={{ py: 6 }}>
