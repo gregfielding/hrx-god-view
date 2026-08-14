@@ -1904,3 +1904,193 @@ export const createImportAssignments = onCall(
     };
   },
 );
+
+/**
+ * getWcPlaceholderUsage — everywhere the 8040 placeholder WC code is in
+ * live use (Greg 2026-08-14): the working table of jobs that still need
+ * real carrier coverage while the InSource letter is out.
+ *
+ * Two sources, merged per (entity, state, job order):
+ *   - assignments carrying workersCompCode 8040 in a live status — the
+ *     durable "this job is running on the placeholder" signal, and
+ *   - timesheet entries from the last 60 days coded 8040 (top-level or
+ *     import sidecar) — the actual dollars flowing at the $2.35 stand-in.
+ *
+ * Each group is checked against the rate matrix for a real replacement
+ * (state+title row, else the entity's per-state '*' default, never 8040):
+ * found → 'replace_now' with the suggested code+rate (fix is on our side);
+ * none → 'coverage_needed' (belongs on the carrier ask list).
+ */
+export const getWcPlaceholderUsage = onCall(
+  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 120 },
+  async (request) => {
+    const tenantId = trim(request.data?.tenantId);
+    if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+    await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+
+    const LIVE_ASN = new Set(['active', 'confirmed', 'pending']);
+    const cutoff = new Date(Date.now() - 60 * 24 * 3600e3).toISOString().slice(0, 10);
+
+    interface Group {
+      key: string;
+      hiringEntityId: string;
+      state: string;
+      jobOrderId: string;
+      jobOrderName: string;
+      accountName: string;
+      worksiteName: string;
+      jobTitle: string;
+      workers: Set<string>;
+      liveAssignments: number;
+      entryCount: number;
+      recentGross: number;
+      lastUsed: string;
+    }
+    const groups = new Map<string, Group>();
+    const ensure = (
+      entityId: string,
+      state: string,
+      jobOrderId: string,
+      extras: Partial<Pick<Group, 'accountName' | 'worksiteName' | 'jobTitle'>>,
+    ): Group => {
+      const key = `${entityId}__${state || '??'}__${jobOrderId || 'no_jo'}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = {
+          key, hiringEntityId: entityId, state: state || '', jobOrderId: jobOrderId || '',
+          jobOrderName: '', accountName: '', worksiteName: '', jobTitle: '',
+          workers: new Set(), liveAssignments: 0, entryCount: 0, recentGross: 0, lastUsed: '',
+        };
+        groups.set(key, g);
+      }
+      if (extras.accountName && !g.accountName) g.accountName = extras.accountName;
+      if (extras.worksiteName && !g.worksiteName) g.worksiteName = extras.worksiteName;
+      if (extras.jobTitle && !g.jobTitle) g.jobTitle = extras.jobTitle;
+      return g;
+    };
+
+    const asnSnap = await db
+      .collection(`tenants/${tenantId}/assignments`)
+      .where('workersCompCode', '==', '8040')
+      .get();
+    asnSnap.forEach((d) => {
+      const v = d.data() as Record<string, any>;
+      if (!LIVE_ASN.has(String(v.status ?? '').toLowerCase())) return;
+      const state =
+        trim(v.worksiteState).toUpperCase() ||
+        trim((v.worksiteAddress as Record<string, unknown> | undefined)?.state as string).toUpperCase();
+      const g = ensure(trim(v.hiringEntityId), state, trim(v.jobOrderId), {
+        accountName: trim(v.accountName) || trim(v.companyName),
+        worksiteName: trim(v.worksiteName),
+        jobTitle: trim(v.jobTitle),
+      });
+      g.liveAssignments += 1;
+      if (v.userId) g.workers.add(String(v.userId));
+    });
+
+    // Entries: top-level stamp + import-sidecar-only stamps, deduped by id.
+    const seenEntries = new Set<string>();
+    const foldEntry = (d: FirebaseFirestore.QueryDocumentSnapshot) => {
+      if (seenEntries.has(d.id)) return;
+      seenEntries.add(d.id);
+      const v = d.data() as Record<string, any>;
+      const wd = trim(v.workDate);
+      if (!wd || wd < cutoff) return;
+      if (trim(v.status) === 'voided') return;
+      const imp = (v.import ?? {}) as Record<string, any>;
+      const state =
+        trim(v.workState).toUpperCase() ||
+        trim((imp.worksiteAddress as Record<string, unknown> | undefined)?.state as string).toUpperCase();
+      const g = ensure(trim(v.hiringEntityId), state, trim(v.jobOrderId), {
+        worksiteName: trim(imp.worksiteName),
+      });
+      g.entryCount += 1;
+      if (v.workerId) g.workers.add(String(v.workerId));
+      if (wd > g.lastUsed) g.lastUsed = wd;
+      const pay = num(v.payRate);
+      const hours =
+        num(v.totalRegularHours) + 1.5 * num(v.totalOTHours) + 2 * num(v.totalDoubleTimeHours);
+      const effHours = hours > 0 ? hours : num(v.actualHoursOverride);
+      if (pay > 0 && effHours > 0) g.recentGross += round2(pay * effHours);
+    };
+    (
+      await db.collection(`tenants/${tenantId}/timesheet_entries`).where('workersCompCode', '==', '8040').get()
+    ).forEach(foldEntry);
+    (
+      await db
+        .collection(`tenants/${tenantId}/timesheet_entries`)
+        .where('import.workersCompCode', '==', '8040')
+        .get()
+    ).forEach(foldEntry);
+
+    // Drop groups with no live footprint at all.
+    const active = [...groups.values()].filter((g) => g.liveAssignments > 0 || g.entryCount > 0);
+
+    // JO names for links.
+    const joIds = [...new Set(active.map((g) => g.jobOrderId).filter(Boolean))];
+    const joNames = new Map<string, { name: string; num: number | null; account: string }>();
+    for (const joId of joIds) {
+      const s = await db.doc(`tenants/${tenantId}/job_orders/${joId}`).get();
+      if (s.exists) {
+        joNames.set(joId, {
+          name: trim(s.get('jobOrderName')),
+          num: typeof s.get('jobOrderNumber') === 'number' ? s.get('jobOrderNumber') : null,
+          account: trim(s.get('accountName')) || trim(s.get('recruiterAccountName')),
+        });
+      }
+    }
+
+    // Replacement check per (entity, state, title) — matrix rows excluding 8040.
+    const matrixByEntity = new Map<string, Awaited<ReturnType<typeof loadWcMatrixForEntity>>>();
+    const rows = [];
+    for (const g of active) {
+      const jo = g.jobOrderId ? joNames.get(g.jobOrderId) : undefined;
+      let suggestion: { code: string; rate: number } | null = null;
+      if (g.state) {
+        const entityKey = g.hiringEntityId || '__none__';
+        if (!matrixByEntity.has(entityKey)) {
+          matrixByEntity.set(entityKey, await loadWcMatrixForEntity(tenantId, g.hiringEntityId));
+        }
+        const matrix = matrixByEntity.get(entityKey)!;
+        const cand =
+          (g.jobTitle ? matrix.byStateTitle.get(`${g.state}_${g.jobTitle.toLowerCase()}`) : undefined) ??
+          matrix.byStateDefault.get(g.state) ??
+          null;
+        if (cand && cand.code !== '8040') suggestion = cand;
+      }
+      rows.push({
+        hiringEntityId: g.hiringEntityId,
+        state: g.state,
+        jobOrderId: g.jobOrderId,
+        jobOrderName: jo?.name || g.worksiteName || '(no job order)',
+        jobOrderNumber: jo?.num ?? null,
+        accountName: jo?.account || g.accountName,
+        worksiteName: g.worksiteName,
+        jobTitle: g.jobTitle,
+        workers: g.workers.size,
+        liveAssignments: g.liveAssignments,
+        entryCount: g.entryCount,
+        recentGross: round2(g.recentGross),
+        lastUsed: g.lastUsed || null,
+        status: suggestion ? 'replace_now' : 'coverage_needed',
+        suggestion,
+      });
+    }
+    rows.sort((a, b) =>
+      a.status !== b.status
+        ? a.status === 'coverage_needed' ? -1 : 1
+        : b.recentGross - a.recentGross,
+    );
+    return {
+      rows,
+      totals: {
+        groups: rows.length,
+        workers: new Set(active.flatMap((g) => [...g.workers])).size,
+        recentGross: round2(rows.reduce((s, r) => s + r.recentGross, 0)),
+        coverageNeeded: rows.filter((r) => r.status === 'coverage_needed').length,
+        replaceNow: rows.filter((r) => r.status === 'replace_now').length,
+        sinceDate: cutoff,
+      },
+    };
+  },
+);
