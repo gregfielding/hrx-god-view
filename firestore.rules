@@ -497,6 +497,13 @@ service cloud.firestore {
           hasSecurityLevel(tenantId, 5)
         );
       }
+      // Insured worksite locations from the carrier's Sub Client History
+      // schedule (loaded server-side). Staff-readable for the WC Worksites
+      // tab; writes stay server/admin-only like the sibling WC collections.
+      match /workers_comp_policy_locations/{locationId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || hasSecurityLevel(tenantId, 5));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
       match /requirement_packages/{packageId} {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
