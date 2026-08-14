@@ -643,9 +643,13 @@ const WhosWorkingPage: React.FC = () => {
       let unpriced = 0;
       for (const r of ongoingFiltered) {
         // weeklyDays holds DOW indices '0'(Sun)..'6'(Sat) — the wire
-        // contract from getOngoingAssignments. No schedule → assume Mon–Fri.
+        // contract from getOngoingAssignments. Open-shift crews enter
+        // hours weekly (their weeklySchedule is a 1-day placeholder), so
+        // they estimate as Mon–Fri; no schedule also defaults Mon–Fri.
         const sched =
-          r.weeklyDays.length > 0 ? new Set(r.weeklyDays) : new Set(['1', '2', '3', '4', '5']);
+          !r.isOpenShift && r.weeklyDays.length > 0
+            ? new Set(r.weeklyDays)
+            : new Set(['1', '2', '3', '4', '5']);
         let days = 0;
         for (let i = 0; i < 7; i++) {
           if (r.startDate && dayIsos[i] < r.startDate) continue;

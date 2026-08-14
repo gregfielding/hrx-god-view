@@ -805,9 +805,19 @@ export const placementsCreateAssignments = onCall(
     // 7:49am with endDate stamped six weeks in the past). Rolling stays
     // endDate '' until "End open shift" stamps a real one.
     const openShiftMode = String(shift.shiftMode || 'single').toLowerCase();
+    // Career JOs are exempt from closed-range-at-birth even when the shift
+    // was auto-created (Christine Karl, 2026-08-14: Fieldglass career order
+    // auto-creates its open shift with shiftDate = the start date, but the
+    // placement is an ongoing standing role — stamping endDate=startDate
+    // hid her from the Career Assignments roster the day she was hired).
+    // The one-day heuristic exists for auto-created EVENT gigs only.
     const openResolvedEnd =
       toDateOnly(shift.endDate) ||
-      (shift.autoCreatedOpenShift === true && openShiftMode === 'single' ? shiftDate : '');
+      (shift.autoCreatedOpenShift === true &&
+      openShiftMode === 'single' &&
+      String(jobOrder.jobType || '') !== 'career'
+        ? shiftDate
+        : '');
     const openEndDate =
       openResolvedEnd && openStartDate && openResolvedEnd < openStartDate
         ? openStartDate
