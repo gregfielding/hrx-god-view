@@ -1439,9 +1439,20 @@ export const placementsCreateAssignments = onCall(
         const isExplicitSingleDate = !!(applyDate && /^\d{4}-\d{2}-\d{2}$/.test(applyDate));
         const isOngoingRecurringPlacement =
           !useBulkDates && !isExplicitSingleDate && shiftEnabledDayCount > 1;
+        // Open shifts placed through the OFFER path (JO Placements drag-to-
+        // hire) are continuous crew membership, same as the instant-assign
+        // branch above — the picked date is a START date, never a single
+        // working day (Tyjae/Denzell/Tony, PRAIRIE VIEW A&M 2026-08-14:
+        // the single-date default stamped endDate=startDate and hid them
+        // from the Career Assignments roster). The assignment's range
+        // follows the SHIFT's range: rolling shift → open-ended.
+        const isOpenShiftOfferPlacement =
+          String(shift.shiftType || '').toLowerCase() === 'open';
         const resolvedEndDate = isOngoingRecurringPlacement
           ? ''
-          : effectiveEndDate || effectiveStartDate || '';
+          : isOpenShiftOfferPlacement
+            ? toDateOnly(shift.endDate) || ''
+            : effectiveEndDate || effectiveStartDate || '';
         const assignmentData: any = {
           tenantId,
           jobOrderId,
