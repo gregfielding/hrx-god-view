@@ -210,7 +210,12 @@ const AssignmentDrawer: React.FC<{
     [family],
   );
   const primary = live[live.length - 1] ?? family[family.length - 1] ?? null;
-  const isOngoing = Boolean(primary?.isOpenShift || (primary && !primary.endDate && primary.weeklyDays.length > 0));
+  // An end date always wins — an ENDED open shift must not read "Ongoing —
+  // no end date" (Jacob Dreyer 2026-08-14: ended in this very panel, chip
+  // kept saying ongoing because isOpenShift alone short-circuited the check).
+  const isOngoing = Boolean(
+    primary && !primary.endDate && (primary.isOpenShift || primary.weeklyDays.length > 0),
+  );
   useEffect(() => {
     if (!primary) return;
     const r = primary.raw;
@@ -377,6 +382,8 @@ const AssignmentDrawer: React.FC<{
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ pt: 0.5 }}>
                 {isOngoing ? (
                   <Chip size="small" color="success" label="Ongoing — no end date" />
+                ) : primary?.endDate && /ended|completed/i.test(primary?.status ?? '') ? (
+                  <Chip size="small" label={`Ended — last day ${friendly(primary.endDate)}`} />
                 ) : null}
                 {/* Hide the raw status on ongoing rows when it's an
                     'ended'/'completed' left by the old stale sweep — the
