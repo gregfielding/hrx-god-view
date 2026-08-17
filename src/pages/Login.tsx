@@ -104,7 +104,10 @@ const Login = () => {
     setLocalLoading(true);
     setError('');
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      // Trim: iOS autocomplete appends a trailing space to emails, which
+      // Firebase reports as auth/invalid-credential (2026-08-17, two
+      // candidates locked out on mobile).
+      await signInWithEmailAndPassword(auth, email.trim(), password);
       // don't navigate here — wait for role to resolve in useEffect
       setLocalLoading(false);
     } catch (err: any) {

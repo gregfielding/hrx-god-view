@@ -344,7 +344,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
       // Execute reCAPTCHA verification
       await executeRecaptchaVerification('SIGNUP');
       // Create user account
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
       const user = userCredential.user;
 
       // Update user profile with display name
@@ -541,7 +541,9 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
       // Execute reCAPTCHA verification
       await executeRecaptchaVerification('LOGIN');
       
-      await signInWithEmailAndPassword(auth, email, password);
+      // Trim: iOS autocomplete appends a trailing space to emails →
+      // auth/invalid-credential on mobile.
+      await signInWithEmailAndPassword(auth, email.trim(), password);
       setSuccess(t.successWelcome);
       
       // Close dialog and refresh page state after a brief delay
