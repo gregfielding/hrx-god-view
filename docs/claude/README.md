@@ -78,6 +78,9 @@ Load the files relevant to the task at hand; don't read all of them.
 
 ## Reference
 
+- [team claude setup](team_claude_setup.md) — how a teammate gets a fully-context-loaded Claude (individual plans, repo-resident brain; no Team workspace needed)
+
+
 - [canonical docs](reference_canonical_docs.md) — Pointers to the load-bearing design docs in this repo — read these before touching the corresponding subsystems
 - [everee environments and submit](reference_everee_environments_and_submit.md) — "Everee sandbox vs prod token model, where creds live, and how the CSV importer submits (P4 = contractor payables)"
 - [scratch scripts workflow](reference_scratch_scripts_workflow.md) — Operational scripts (migrations, backfills, one-shot sends) live in functions/.scratch/, are gitignored, and run locally with npx ts-node — the directory's tsconfig.json already includes ../shared for cross-imports
