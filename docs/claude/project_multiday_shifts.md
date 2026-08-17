@@ -1,0 +1,17 @@
+# multiday shifts
+
+> "Multi-day gig shifts redesign — day-by-day apply/confirm/hire; P0/P1a/P1b/P2/P1c ALL shipped 2026-08-01 (P1c = one Placements card per day)"
+
+Greg's spec (2026-08-01): multi-day gig shifts must be day-by-day everywhere — workers apply/confirm per day, admins place per day ("Each day should be its own 'shift' in the back end placement screen"), with prompts on both sides offering the remaining coordinating days.
+
+**Architecture**: shift doc = template (`shiftMode:'multi'`, `dateSchedule{date:{startTime,endTime,workersNeeded}}`, `endDate`); assignments are per-day docs `${shiftId}__${userId}__${YYYY-MM-DD}` (legacy spanning `${shiftId}__${userId}` still exist for old hires); entry ids `${assignmentId}_${workDate}`; applications carry `applyDates[]` (util `getAppliedDays` in src/utils/applicationDays). `totalStaffRequested` on multi-day gigs = person-days summed over dateSchedule — matches per-day assignment fan-out in shiftFillAutomation (legacy spanning docs undercount; optional migration unbuilt).
+
+**Shipped 2026-08-01** (commits df002353, 557bfc54, 0d7fa945 + accept-intent fix):
+- P0a: day-scoped worker confirm/decline (ShiftSelector passes day; JobPostingDetail `openOfferConfirmationSheet(shiftId, date?)`, `findAssignmentIdForShift(shiftId, date?)`, day-keyed optimistic state).
+- P0b/P1a: PlacementsTab hires fan out per day; drag-drop opens day-picker prompt (`multiDayHirePrompt`, `chosenHireDatesByWorkerRef`, applied days pre-checked via `fetchAppliedDaysForWorker`).
+- P1b: worker "also apply for other days?" dialog in JobPostingDetail (`quickApplyToShift(shiftId, dates)`, one write, `applyDates` comma param; Wizard parses `applyDates` URL list). Dialog copy is English literals — i18n keys still owed.
+- P2 (functions, deployed): placementsApi derives per-day fan-out from dateSchedule when no applyDates given (gig, non-open, multi-day); swapScheduledAssignmentWorker preserves the day segment in the new id; SMS ACCEPT link fix — accept-intent handler resolves the day (doc startDate → id tail) so the day-scoped sheet opens. Offer SMS stays ONE message listing all days; link targets earliest day, remaining days confirmed via the per-day cards on the posting.
+
+- P1c (commit a705170c, hosting deployed): one Placements card per day of a multi-day gig shift (`visibleShiftCards` expands to `${shiftId}__${day}` entries; whole-shift cards for single-day/non-gig/drawer). New `expandedDay` accordion state day-scopes the expanded card's assignment maps + per-tile actions (cancel/confirm/revert hit that day's doc only); per-day fill counts + collapsed rosters under `${shiftId}__${day}` keys (staged placements mirror onto every day card). Drop on a day card opens the P1a picker with the dropped day checked+LOCKED ("dropped here" chip); `executeDelayedHire` passes `''` dayOverride when chosen dates exist so they beat an active Day filter. Click-to-Hire/bulk-accept/pool-offer inside a day card hire that day only and KEEP the staged placement. Verified by typecheck+build only (login gate blocks browser check) — Greg smoke test owed on JO X4Zav0bM6fMB18B6yDiA.
+
+**Remaining**: Cumulative-interview revisit running separately (chip task_fa01e82b). CLOSED 2026-08-01: i18n for the P1b dialog shipped (jobs.multiDay* keys, EN/ES); legacy spanning-doc migration NOT NEEDED — audit (functions/.scratch/audit-legacy-multiday-assignments.ts) found only 2 canceled legacy docs on one past March shift, 0 entries; all 1,790 other multi-day assignment docs already day-scoped.

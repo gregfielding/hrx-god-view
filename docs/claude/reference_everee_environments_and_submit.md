@@ -1,0 +1,11 @@
+# everee environments and submit
+
+> "Everee sandbox vs prod token model, where creds live, and how the CSV importer submits (P4 = contractor payables)"
+
+**Everee environment model** (`functions/src/integrations/everee/evereeConfig.ts`): ONE API host (`https://api.everee.com`) for both sandbox and prod — the split is enforced purely by the **per-tenant API token** `EVEREE_API_TOKEN_<evereeTenantId>`, not by hostname. `EVEREE_BASE_URL` can override globally (staging/dry-run); `EVEREE_ENABLED=true` is required at the process level for any call.
+
+**Creds** live in `functions/.env.hrx1-d3beb` (gitignored; loaded as env at deploy — no `defineSecret`). Keys present: `EVEREE_API_TOKEN_2320` (**sandbox** tenant), `EVEREE_API_TOKEN_3133` (C1 Select prod), `EVEREE_API_TOKEN_3138` (C1 Events prod), `EVEREE_WEBHOOK_SECRET_2320`, `EVEREE_ENABLED`. **Never print the values.** Sandbox infra still in place: HRX entity `tenants/{t}/entities/c1_sandbox_smoke` → Everee tenant 2320; smoke runner `functions/.scratch/invokeSlice6bSmoke.ts`. See [[feature_ts1_phase4_state]].
+
+**W-2 vs 1099 submit shape** (`payroll/composeTimesheetBatchPayloads.ts`): W-2 → worked-shifts (Timesheets API); **1099 → Payables, `CONTRACTOR` earning type** (`/api/v2/payables`, `bulkCreatePayables` for batches; `deletePayable` voids before a pay run). Payable wire: `amount` = gross, `payableModel: 'PRE_CALCULATED'`, `timestamp` epoch→ISO at wire, `verified: true` injected, `workLocationId` OPTIONAL (omit for 1099), `externalWorkerId` = HRX uid (not Everee UUID). Deterministic idempotency key `buildPayableExternalId` = `{tenant}::{assignmentId}::{workDate}::{kind}`.
+
+**CSV importer P4** (`functions/src/timesheets/submitImportTimesheetBatch.ts`, callable): Ready rows → CONTRACTOR payables (gross = hours × pay rate), `externalId` = `{tenant}::import-{customer}-{uid}::{workDate}::CONTRACTOR` (re-submit idempotent). `dryRun: true` returns composed payloads without POSTing (the UI previews before confirm). 1099 entities only for now (W-2 worked-shift import is a later slice). Permission-gated via `canManageEveree`. Audit doc at `tenants/{t}/timesheet_import_batches/{id}`. Client: green "Submit N Ready to Everee" button → preview dialog → confirm.
