@@ -25,6 +25,7 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TableSortLabel,
   TableRow,
   Dialog,
   DialogTitle,
@@ -153,6 +154,7 @@ import { getOrComputeJobScoreSummary } from '../utils/jobScore';
 import { getOrComputeJobScoreSummaryV1, computeJobScoreSummaryV1 } from '../utils/jobScoreV1';
 import { getRequirementPackV1 } from '../data/jobRequirementPacksV1';
 import { isExcludedFromPlacementsApplicantPool, normalizeApplicationStatus } from '../utils/applicationStatusNormalize';
+import { latLngFromCandidates } from '../utils/geoDistance';
 import {
   countRecruiterLifecycleBuckets,
   deriveRecruiterLifecycleBucket,
@@ -264,6 +266,8 @@ type ApplicantsTableSortKey =
   | 'interview'
   | 'jobScore'
   | 'category_avg'
+  | 'status'
+  | 'level'
   | PrescreenCategoryId;
 
 // ApplicantsTable Component
@@ -388,6 +392,16 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [loading, setLoading] = useState(true);
   const [actionMenuAnchor, setActionMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const [applicantsSortBy, setApplicantsSortBy] = useState<ApplicantsTableSortKey>(null);
+  // JO worksite coords for the "X.X miles away" line (radius blast
+  // self-backfills worksiteCoordinates onto JOs it has run for).
+  const applicantsWorksiteCoords = React.useMemo(
+    () =>
+      latLngFromCandidates(
+        (jobOrder as unknown as Record<string, unknown> | null)?.worksiteCoordinates,
+        ((jobOrder as unknown as Record<string, unknown> | null)?.worksiteAddress as Record<string, unknown> | undefined)?.coordinates,
+      ),
+    [jobOrder],
+  );
   const [applicantsSortDirection, setApplicantsSortDirection] = useState<'asc' | 'desc'>('desc');
   /** Min average (current→snapshot); null = no filter. */
   const [categoryFilterMinAvg, setCategoryFilterMinAvg] = useState<number | null>(null);
@@ -1029,12 +1043,42 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       });
       return data;
     }
+    if (applicantsSortBy === 'status' || applicantsSortBy === 'level') {
+      // Status sorts by the same label the cell displays (placement status
+      // wins over application status); Level sorts Candidates vs Applicants.
+      const statusLabelOf = (a: (typeof filteredByCategoryScores)[number]): string => {
+        const placementStatus = assignmentStatusByUserId.get(a.uid);
+        const isConfirmed = placementStatus && ['confirmed', 'active'].includes(placementStatus);
+        const isAssigned = placementStatus && ['proposed', 'accepted'].includes(placementStatus);
+        const isDeclined = placementStatus === 'declined';
+        const isCancelled = placementStatus === 'cancelled' || placementStatus === 'canceled';
+        const appStatus = (a.applicationStatus || 'submitted').toLowerCase();
+        return (
+          isConfirmed ? 'confirmed'
+          : isAssigned ? 'accepted'
+          : isDeclined ? 'declined'
+          : isCancelled && appStatus === 'submitted' ? 'submitted'
+          : isCancelled ? 'cancelled'
+          : appStatus
+        );
+      };
+      const data = [...filteredByCategoryScores];
+      data.sort((a, b) => {
+        const cmp =
+          applicantsSortBy === 'status'
+            ? statusLabelOf(a).localeCompare(statusLabelOf(b))
+            : Number(a.applicationData?.candidate === true) - Number(b.applicationData?.candidate === true);
+        return applicantsSortDirection === 'asc' ? cmp : -cmp;
+      });
+      return data;
+    }
     return filteredByCategoryScores;
   }, [
     filteredByCategoryScores,
     applicantsSortBy,
     applicantsSortDirection,
     categoryScoresCurrentByUserId,
+    assignmentStatusByUserId,
   ]);
 
   const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredByCategoryScores;
@@ -1923,11 +1967,43 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     Shift(s)
                   </TableCell>
                 ) : null}
-                <TableCell sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}>
-                  Status
+                <TableCell
+                  sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}
+                  sortDirection={applicantsSortBy === 'status' ? applicantsSortDirection : false}
+                >
+                  <TableSortLabel
+                    active={applicantsSortBy === 'status'}
+                    direction={applicantsSortBy === 'status' ? applicantsSortDirection : 'asc'}
+                    onClick={() => {
+                      if (applicantsSortBy === 'status') {
+                        setApplicantsSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+                      } else {
+                        setApplicantsSortBy('status');
+                        setApplicantsSortDirection('asc');
+                      }
+                    }}
+                  >
+                    Status
+                  </TableSortLabel>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}>
-                  Level
+                <TableCell
+                  sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}
+                  sortDirection={applicantsSortBy === 'level' ? applicantsSortDirection : false}
+                >
+                  <TableSortLabel
+                    active={applicantsSortBy === 'level'}
+                    direction={applicantsSortBy === 'level' ? applicantsSortDirection : 'asc'}
+                    onClick={() => {
+                      if (applicantsSortBy === 'level') {
+                        setApplicantsSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+                      } else {
+                        setApplicantsSortBy('level');
+                        setApplicantsSortDirection('desc');
+                      }
+                    }}
+                  >
+                    Level
+                  </TableSortLabel>
                 </TableCell>
                 <TableCell align="right" sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}>
                   Actions
@@ -1980,6 +2056,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     formatDate={formatUserTableDate}
                     isFavorite={isFavorite}
                     toggleFavorite={toggleFavorite}
+                    worksiteCoords={applicantsWorksiteCoords}
                   />
                   <TableCell>
                     <Typography variant="body2">

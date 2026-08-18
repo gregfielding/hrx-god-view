@@ -4,6 +4,9 @@ import type { ScoreSummary } from '../utils/scoreSummary';
  * Row shape for recruiter Users list and shared Applicants (Users-style) columns.
  */
 export interface RecruiterUser {
+  /** Raw geo-bearing shapes passed through for distance rendering. */
+  homeAddress?: unknown;
+  addressInfo?: unknown;
   id: string;
   firstName: string;
   lastName: string;

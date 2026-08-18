@@ -74,10 +74,13 @@ export interface ApplicantsUsersStyleTableBodyCellsProps {
   formatDate: (timestamp: unknown) => string;
   isFavorite: (itemId: string) => boolean;
   toggleFavorite: (itemId: string) => string[];
+  /** JO worksite coordinates — enables the "X.X miles away" line on the Person cell. */
+  worksiteCoords?: { lat: number; lng: number } | null;
 }
 
 /** Body cells matching recruiter Users table row (Person → Last activity). */
 export const ApplicantsUsersStyleTableBodyCells: React.FC<ApplicantsUsersStyleTableBodyCellsProps> = ({
+  worksiteCoords,
   user,
   maps,
   formatDate,
@@ -166,6 +169,7 @@ export const ApplicantsUsersStyleTableBodyCells: React.FC<ApplicantsUsersStyleTa
               groupTitleLookup={groupTitleLookup}
               recruiterNameByUid={recruiterNameByUid}
               formatDate={formatDate}
+              worksiteCoords={worksiteCoords}
             />
           </Box>
         </Box>
