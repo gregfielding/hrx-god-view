@@ -15,3 +15,21 @@ Duplicate HRX profiles ([[feedback_auth_uid_orphan_footgun]]) each provision the
 **How to apply:** clone the scratch script; verify with the worked-shifts GET that the live uid's shifts list under the good workerId and the retired id has 0.
 
 **I-9 embed reload hardening (same day, commit 04f6a949):** phone camera/file-picker tab eviction reloads the page mid-I-9-upload; embed minted a fresh one-time session per open → widget restarted at step 1. Fixed: sessionStorage resume marker + checklist auto-reopen (src/utils/everee/embedResume.ts), EMBED_SESSION_REUSE_WINDOW_MS 60s→4min (same session resumes on quick reload; ~5min session lifetime is the ceiling), session-create context+UA logged on linkage embedSessionCache. Nothing in HRX reacts to file uploads (no focus-refetch/reload); it's the OS-level reload the design amplified.
+
+## Contractor/AD_HOC variant (Carmella McHardie, 2026-08-17)
+
+Events 1099 version of the dual-profile jam: TWO HRX users (two emails,
+carmellamchardie76@gmail + mellaann76@gmail) each provisioned an Everee
+contractor; a manual AD_HOC payment ($270.08, KC FIFA) ERRORED on the
+un-onboarded dup ("Missing SSN/TIN" in Payments → Unpayable). Repair
+differs from the W-2/worked-shifts path — no shifts to delete, no
+identifier swap needed when the GOOD profile already owns the right uid:
+1. Pull the ERRORED payment's earningList (payments API), verify total.
+2. Re-issue via `createPayable` on the GOOD profile's externalWorkerId —
+   label prefixed `JO#<n>` so the wire-class report attributes it;
+   payCode CONTRACTOR; externalId `repair_<name>_<paymentId>_<i>`
+   (idempotent). Script: `functions/.scratch/fix-carmella-dual-everee.ts`.
+3. Mark dup linkage doc status `retired_duplicate` + reason.
+4. ☠️ Greg MUST delete the ERRORED payment in the Everee UI (manual
+   AD_HOC payments have no HRX externalId — not deletable via API). If
+   left and the dup ever completes onboarding, it retries → DOUBLE PAY.
