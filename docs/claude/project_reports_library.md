@@ -116,3 +116,35 @@ funding-date range = bank view). Verified vs July: 31 wires, $450,087.80,
 names to FQN with a NOT-IN-QBO flag — the auto-write step only needs a
 Purchase-update writer on top of these splits. Payroll roadmap #5/#6/#7
 ALL SHIPPED.
+
+## 2026-08-19 PM wave — all shipped
+
+| slug | Report | Level | Notes |
+|---|---|---|---|
+| wc-audit | WC Premium Audit | 6 | getWorkersCompMonthlyReport range mode (startDate/endDate ≤400d) + OT-excess (0.5x/1.0x premium portions), tips, reimbursements breakouts → auditable payroll + premium; by-month rollup; audit-package CSV |
+| (A/R upgrade) | DSO + payment speed | 7 | getQboDashboard includeDso — DSO = openAR/billed91×91 (family rollup), avg days-to-pay recent-vs-prior 91d halves = trend without snapshots |
+| i9-status | I-9 / Onboarding Status | 6 | includeI9Status — everee_workers mirror (i9SignedAt/employerI9SignedAt/documentsVerifiedByCompany/hasWorkbrightDocs); contractors excluded; E-Verify note |
+| aca-lookback | ACA Hours Lookback | 6 | includeAcaLookback — W-2 hours/worker/month, 130h FT equivalency, contractor entities excluded |
+| tax-liability | Tax & Sick-Leave Liability | 6 | tax view = register client-side (withheld = gross−net, employer = funding−gross by month); includeSickLeave = hours by state ×1/30 accrual basis |
+| qbo-classes | QBO Classes & Mapping | 7 | includeClassCatalog + savePayrollVenueMapping branches (below) |
+
+## qbo_class_mappings — the class↔HRX loop-closer
+
+`tenants/{t}/qbo_class_mappings/{classId}`: {classId, className, fqn,
+jobOrderId, jobOrderName, accountId, accountName, source manual|auto}.
+Written from /reports/qbo-classes; consulted as PASS 0 by the
+gross-margin/job-costing matcher (mapped classes never fuzzy-match).
+**Write API** (rides savePayrollVenueMapping, level 7):
+- `{action:'mapQboClass', classId, className, fqn?, jobOrderId?|accountId?, remove?}`
+- `{action:'createQboClass', name, parentClassId?}` → creates the Class
+  IN QBO (qboEntityCreate) and returns {classId, fqn}.
+☠️ These are the branches Mark's email-driven VenueSmart class automation
+should call — create the class, then map it to the JO it creates.
+
+**Auto-create design (agreed direction, not yet wired):** on job-order
+creation (FG orchestrator + manual JO create), auto-create QBO class
+`{parent=account class}:{joName}` if no mapping exists, write the
+mapping doc with source:'auto'. Idempotent via qbo_class_mappings check.
+First run of /reports/qbo-classes showed: 56 classes, 0 mapped, 45
+unmapped-with-activity — "National" carries $789k YTD expenses (the
+default class Expensify spend lands on when unclassed).
