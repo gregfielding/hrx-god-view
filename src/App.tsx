@@ -180,6 +180,8 @@ const RecruiterAccountDetails = lazy(() => import('./pages/RecruiterAccountDetai
 const AccountLocationDetail = lazy(() => import('./pages/AccountLocationDetail'));
 const GlobalInvoicingPage = lazy(() => import('./pages/GlobalInvoicingPage'));
 const PayrollCostsPage = lazy(() => import('./pages/PayrollCostsPage'));
+const ReportsIndexPage = lazy(() => import('./pages/reports/ReportsIndexPage'));
+const ArAgingReportPage = lazy(() => import('./pages/reports/ArAgingReportPage'));
 const FinancesBudgetingPage = lazy(() => import('./pages/FinancesBudgetingPage'));
 const SchedulingHealthPage = lazy(() => import('./pages/SchedulingHealthPage'));
 const WhosWorkingPage = lazy(() => import('./pages/WhosWorkingPage'));
@@ -799,18 +801,52 @@ function App() {
             </ProtectedRoute>
           }
         />
+        {/* Report library: /reports is the index, each report lives at
+            /reports/<slug> (registry: src/pages/reports/reportsRegistry.tsx). */}
         <Route
           path="reports"
           element={
             <ProtectedRoute requiredSecurityLevel="6">
               <RecruiterAccessGuard>
-                <PayrollCostsPage />
+                <ReportsIndexPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/payroll"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <PayrollCostsPage report="payroll" />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/workers-comp"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <PayrollCostsPage report="workers-comp" />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/accounts-receivable"
+          element={
+            <ProtectedRoute requiredSecurityLevel="7">
+              <RecruiterAccessGuard>
+                <GlobalInvoicingGuard>
+                  <ArAgingReportPage />
+                </GlobalInvoicingGuard>
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }
         />
         {/* Legacy URL — bookmarks/links keep working. */}
-        <Route path="payroll-costs" element={<Navigate to="/reports" replace />} />
+        <Route path="payroll-costs" element={<Navigate to="/reports/payroll" replace />} />
         <Route
           path="screenings-queue"
           element={

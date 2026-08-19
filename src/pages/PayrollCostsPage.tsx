@@ -10,6 +10,7 @@
  * Plain-English, pick-a-range, no config — per the recruiter-UX ethos.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Alert,
   Autocomplete,
@@ -40,6 +41,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import AssessmentOutlinedIcon from '@mui/icons-material/AssessmentOutlined';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
@@ -140,12 +142,22 @@ function csvCell(v: unknown): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-const PayrollCostsPage: React.FC = () => {
+interface PayrollCostsPageProps {
+  /**
+   * When set, the page renders as a single report in the /reports
+   * library (no tab strip, report-specific title, back link to the
+   * index). Unset keeps the legacy two-tab layout.
+   */
+  report?: 'payroll' | 'workers-comp';
+}
+
+const PayrollCostsPage: React.FC<PayrollCostsPageProps> = ({ report }) => {
   const { tenantId } = useAuth();
+  const navigate = useNavigate();
   const [entities, setEntities] = useState<Array<{ id: string; name: string }>>([]);
   const [entityId, setEntityId] = useState('');
   /** 0 = Payroll Report, 1 = Workers' Comp Report (Greg 2026-08-05: two tools, two tabs). */
-  const [tab, setTab] = useState(0);
+  const [tab, setTab] = useState(report === 'workers-comp' ? 1 : 0);
   const [startDate, setStartDate] = useState(monthStartIso());
   const [endDate, setEndDate] = useState(todayIso());
   const [loading, setLoading] = useState(false);
@@ -553,8 +565,19 @@ const PayrollCostsPage: React.FC = () => {
       <PageHeader
         title={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {report && (
+              <IconButton size="small" aria-label="Back to reports" onClick={() => navigate('/reports')}>
+                <ArrowBackIcon fontSize="small" />
+              </IconButton>
+            )}
             <AssessmentOutlinedIcon fontSize="small" />
-            <span>Reports</span>
+            <span>
+              {report === 'payroll'
+                ? 'Payroll Cost Report'
+                : report === 'workers-comp'
+                  ? "Workers' Comp Wage Report"
+                  : 'Reports'}
+            </span>
           </Box>
         }
       />
@@ -563,7 +586,8 @@ const PayrollCostsPage: React.FC = () => {
           date control (range vs month) — the side-by-side duplicate date
           fields read as one confusing form (Greg 2026-08-05). */}
       <Card sx={{ mb: 2 }}>
-        <CardContent sx={{ pb: 0 }}>
+        {/* pb 0 only when the tab strip sits under the picker. */}
+        <CardContent sx={{ pb: report ? undefined : 0 }}>
           <FormControl size="small" sx={{ minWidth: 220 }}>
             <InputLabel>Hiring entity</InputLabel>
             <Select value={entityId} label="Hiring entity" onChange={(e) => setEntityId(e.target.value)}>
@@ -575,10 +599,12 @@ const PayrollCostsPage: React.FC = () => {
               ))}
             </Select>
           </FormControl>
-          <Tabs value={tab} onChange={(_e, v) => setTab(v)} sx={{ mt: 1 }}>
-            <Tab label="Payroll Report" />
-            <Tab label="Workers' Comp Report" />
-          </Tabs>
+          {!report && (
+            <Tabs value={tab} onChange={(_e, v) => setTab(v)} sx={{ mt: 1 }}>
+              <Tab label="Payroll Report" />
+              <Tab label="Workers' Comp Report" />
+            </Tabs>
+          )}
         </CardContent>
       </Card>
 
