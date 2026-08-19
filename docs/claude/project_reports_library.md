@@ -33,6 +33,7 @@ Greg's directive (2026-08-19): centralize ALL reports on one index page.
 | workers-comp | Workers' Comp Wage Report | 6 | same callable, WC class-code grouping |
 | gross-margin | Gross Margin | 7 | getPayrollCostReport + includeBilling:true (live QBO invoices) — PAUSED for later adjustments (Greg 2026-08-19) |
 | job-costing | Job Costing | 7 | same callable + includeExpenses:true — per-JO P&L: billing + payroll + burden + QBO Purchase expenses (Everee-vendor wires EXCLUDED to avoid payroll double-count); entity→client→JO cascade; range cap now 366 days |
+| payroll-register | Payroll Register | 6 | same callable + includeEvereeRegister:true — live Everee /api/v2/payments (page/size paging + id dedupe), gross/net/funding per payment, pay-run rollup, per-companyFundingId wire register (each wire = one bank ACH pull); name fill users → everee_workers reverse linkage; covers roadmap #5+#6 |
 | accounts-receivable | A/R Aging | 7 | getQboDashboard (QBO AgedReceivables cache) |
 
 **Conventions (Greg 2026-08-19):** every report that can be entity-scoped
