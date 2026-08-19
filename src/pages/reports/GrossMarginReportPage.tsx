@@ -10,7 +10,7 @@
  * bookkeeper can tune it without re-querying.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -19,9 +19,13 @@ import {
   Card,
   CardContent,
   Chip,
+  FormControl,
   IconButton,
   InputAdornment,
+  InputLabel,
+  MenuItem,
   Paper,
+  Select,
   Stack,
   Table,
   TableBody,
@@ -37,8 +41,9 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { httpsCallable } from 'firebase/functions';
+import { collection, getDocs } from 'firebase/firestore';
 
-import { functions } from '../../firebase';
+import { db, functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import PageHeader from '../../components/PageHeader';
 
@@ -75,6 +80,7 @@ interface BillingData {
   totalBilled: number;
   unclassifiedBilled: number;
   totalPay: number;
+  entityFiltered?: boolean;
   byJobOrder: GmJoRow[];
   byAccount: GmAccountRow[];
 }
@@ -87,6 +93,8 @@ function csvCell(v: unknown): string {
 const GrossMarginReportPage: React.FC = () => {
   const { tenantId } = useAuth();
   const navigate = useNavigate();
+  const [entities, setEntities] = useState<Array<{ id: string; name: string }>>([]);
+  const [entityId, setEntityId] = useState('');
   const [startDate, setStartDate] = useState(monthStartIso());
   const [endDate, setEndDate] = useState(todayIso());
   /** Employer-burden estimate (taxes + WC) applied to pay, in percent. */
@@ -95,6 +103,19 @@ const GrossMarginReportPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [billing, setBilling] = useState<BillingData | null>(null);
   const [rangeLabel, setRangeLabel] = useState('');
+
+  useEffect(() => {
+    if (!tenantId) return;
+    getDocs(collection(db, 'tenants', tenantId, 'entities'))
+      .then((snap) =>
+        setEntities(
+          snap.docs
+            .map((d) => ({ id: d.id, name: String(d.data().name ?? d.id) }))
+            .filter((e) => !/sandbox/i.test(e.id) && !/sandbox/i.test(e.name)),
+        ),
+      )
+      .catch(() => setEntities([]));
+  }, [tenantId]);
 
   const burden = useMemo(() => {
     const n = Number(burdenPct);
@@ -107,7 +128,13 @@ const GrossMarginReportPage: React.FC = () => {
     setError(null);
     try {
       const fn = httpsCallable(functions, 'getPayrollCostReport', { timeout: 300000 });
-      const res = await fn({ tenantId, startDate, endDate, includeBilling: true });
+      const res = await fn({
+        tenantId,
+        startDate,
+        endDate,
+        includeBilling: true,
+        ...(entityId ? { hiringEntityId: entityId } : {}),
+      });
       const data = res.data as { billing: BillingData | null; billingError: string | null };
       if (!data.billing) {
         setError(data.billingError || 'QuickBooks billing data unavailable — is QuickBooks connected?');
@@ -203,6 +230,17 @@ const GrossMarginReportPage: React.FC = () => {
       <Card sx={{ mb: 2 }}>
         <CardContent>
           <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel>Hiring entity</InputLabel>
+              <Select value={entityId} label="Hiring entity" onChange={(e) => setEntityId(e.target.value)}>
+                <MenuItem value="">All entities</MenuItem>
+                {entities.map((e) => (
+                  <MenuItem key={e.id} value={e.id}>
+                    {e.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <TextField
               size="small"
               type="date"
@@ -277,6 +315,8 @@ const GrossMarginReportPage: React.FC = () => {
           </Box>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
             {rangeLabel} · {billing.invoiceCount} invoices
+            {billing.entityFiltered &&
+              ' · entity view: only invoices tied to this entity’s payroll (invoices carry no entity of their own)'}
             {billing.unclassifiedBilled > 0 &&
               ` · ${usd(billing.unclassifiedBilled)} billed without a class (counted in client totals, missing from job-order rows)`}
           </Typography>

@@ -750,6 +750,47 @@ export const getPayrollCostReport = onCall(
       try {
         const agg = await buildBillingAggregates(tenantId, startDate, endDate);
 
+        // Class ↔ job-order name matching, two passes. QBO class names
+        // drift from JO names ("Venue Smart:Lollapalooza" vs JO
+        // "Lollapalooza 2026", "MN Yacht Club" vs "Minnesota Yacht Club"),
+        // so after exact matching, fuzzy matching wins: substring
+        // containment (≥5 chars, findMappingInText precedent) OR
+        // token-subset either way ("fifa dallas" ⊆ "fifa fan festival
+        // dallas"), with abbreviation expansion — same philosophy as the
+        // wire-recon venue matcher. A class's account prefix ("Venue
+        // Smart:…") must be compatible with the pay group's account so
+        // same-named JOs under different clients can't cross-match.
+        const normName = (s: string): string =>
+          s
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .replace(/\b(20\d\d|llc|inc|national|account)\b/g, '')
+            .replace(/\bmn\b/g, 'minnesota')
+            .replace(/\bkc\b/g, 'kansas city')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const tokenSubset = (a: string, b: string): boolean => {
+          const ta = a.split(' ').filter(Boolean);
+          const tb = new Set(b.split(' ').filter(Boolean));
+          return ta.length > 0 && ta.every((t) => tb.has(t));
+        };
+        const classAcctPrefix = (key: string): string => {
+          const i = key.lastIndexOf(':');
+          return i > 0 ? normName(key.slice(0, i)) : '';
+        };
+        // Norms of every pay-side account — a bare account-named class
+        // ("Venue Smart", "Black Caviar") stays billed-only rather than
+        // glomming onto whichever of that client's JOs sorts first.
+        const accountNorms = new Set(
+          byJobOrder.map((g) => normName(g.accountName ?? '')).filter(Boolean),
+        );
+        const acctCompatible = (prefix: string, accountName: string | null): boolean => {
+          if (!prefix) return true;
+          const acct = normName(accountName ?? '');
+          if (!acct) return true;
+          return acct.includes(prefix) || prefix.includes(acct);
+        };
+
         const usedClassKeys = new Set<string>();
         const gmByJobOrder = byJobOrder.map((g) => {
           const nameKey = g.label.toLowerCase();
@@ -759,7 +800,11 @@ export const getPayrollCostReport = onCall(
           for (const [key, a] of agg.classAggs) {
             if (usedClassKeys.has(key)) continue;
             const lastSegment = key.split(':').pop()?.trim() ?? key;
-            if (key === fullKey || key === nameKey || lastSegment === nameKey) {
+            const exact =
+              key === fullKey ||
+              ((key === nameKey || lastSegment === nameKey) &&
+                acctCompatible(classAcctPrefix(key), g.accountName));
+            if (exact) {
               billed = round2(billed + a.billed);
               billedClasses.push(a.className);
               usedClassKeys.add(key);
@@ -775,19 +820,46 @@ export const getPayrollCostReport = onCall(
             billedClasses,
           };
         });
-        // Classes billed in range with no matching payroll group — real
-        // rows (margin is 100% pre-burden), not noise; often month-boundary.
+        // Pass 2: fuzzy — each unused class goes to the first (largest-pay,
+        // byJobOrder is pay-sorted) account-compatible group it matches.
         for (const [key, a] of agg.classAggs) {
           if (usedClassKeys.has(key)) continue;
-          gmByJobOrder.push({
-            label: a.className,
-            accountName: null,
-            attributed: false,
-            pay: 0,
-            hours: 0,
-            billed: a.billed,
-            billedClasses: [a.className],
+          const seg = normName(key.split(':').pop() ?? key);
+          if (!seg || accountNorms.has(seg)) continue;
+          const prefix = classAcctPrefix(key);
+          const hit = gmByJobOrder.find((g) => {
+            if (!acctCompatible(prefix, g.accountName)) return false;
+            const n = normName(g.label);
+            if (!n) return false;
+            const substringHit =
+              seg.length >= 5 && n.length >= 5 && (n.includes(seg) || seg.includes(n));
+            return substringHit || tokenSubset(seg, n) || tokenSubset(n, seg);
           });
+          if (hit) {
+            hit.billed = round2(hit.billed + a.billed);
+            hit.billedClasses.push(a.className);
+            usedClassKeys.add(key);
+          }
+        }
+        // Classes billed in range with no matching payroll group — real
+        // rows (margin is 100% pre-burden), not noise; often month-boundary.
+        // EXCEPT under an entity filter: invoices carry no HRX entity, so
+        // an unmatched class can't be proven to belong to this entity —
+        // showing it would leak the other entity's billing into the view.
+        const entityFiltered = Boolean(hiringEntityId);
+        if (!entityFiltered) {
+          for (const [key, a] of agg.classAggs) {
+            if (usedClassKeys.has(key)) continue;
+            gmByJobOrder.push({
+              label: a.className,
+              accountName: null,
+              attributed: false,
+              pay: 0,
+              hours: 0,
+              billed: a.billed,
+              billedClasses: [a.className],
+            });
+          }
         }
         gmByJobOrder.sort((x, y) => y.billed - x.billed || y.pay - x.pay);
 
@@ -796,6 +868,9 @@ export const getPayrollCostReport = onCall(
         const gmByAccount: Array<Record<string, unknown>> = [];
         for (const c of agg.customerAggs.values()) {
           const payG = c.accountId ? payByAccountId.get(c.accountId) : undefined;
+          // Entity view: only customers whose HRX account has payroll under
+          // this entity in range — same reasoning as the class rows above.
+          if (entityFiltered && !payG) continue;
           if (c.accountId) seenAccountIds.add(c.accountId);
           gmByAccount.push({
             accountId: c.accountId,
@@ -824,10 +899,18 @@ export const getPayrollCostReport = onCall(
         );
 
         billing = {
-          invoiceCount: agg.invoiceCount,
-          totalBilled: agg.totalBilled,
+          // Entity view: headline billed/invoice numbers narrow to the
+          // customers that matched this entity's payroll (invoices carry
+          // no HRX entity of their own).
+          invoiceCount: entityFiltered
+            ? gmByAccount.reduce((s, r) => s + ((r.invoiceCount as number) || 0), 0)
+            : agg.invoiceCount,
+          totalBilled: entityFiltered
+            ? round2(gmByAccount.reduce((s, r) => s + ((r.billed as number) || 0), 0))
+            : agg.totalBilled,
           unclassifiedBilled: agg.unclassifiedBilled,
           totalPay: grand,
+          entityFiltered,
           byJobOrder: gmByJobOrder,
           byAccount: gmByAccount,
         };
