@@ -230,6 +230,28 @@ async function buildBillingAggregates(
     );
     if (cid) acctByCustomerId.set(cid, { accountId: d.id, accountName: trim(d.data().name) || null });
   });
+  // QBO sub-customers inherit their nearest mapped ancestor's account
+  // (parent/sub-customer hierarchy — RS3=Proof, 2026-08-19). Reads the
+  // qbo_customers cache's parentCustomerId links.
+  const qboCustSnap = await db.collection(`tenants/${tenantId}/qbo_customers`).limit(2000).get();
+  const parentOf = new Map<string, string>();
+  qboCustSnap.forEach((d) => {
+    const c = d.data();
+    if (c.customerId && c.parentCustomerId) parentOf.set(String(c.customerId), String(c.parentCustomerId));
+  });
+  qboCustSnap.forEach((d) => {
+    const id = trim(d.data().customerId);
+    if (!id || acctByCustomerId.has(id)) return;
+    let ancestor = parentOf.get(id);
+    for (let hops = 0; ancestor && hops < 10; hops++) {
+      const hit = acctByCustomerId.get(ancestor);
+      if (hit) {
+        acctByCustomerId.set(id, hit);
+        return;
+      }
+      ancestor = parentOf.get(ancestor);
+    }
+  });
 
   const classAggs = new Map<string, BilledClassAgg>();
   const customerAggs = new Map<string, BilledCustomerAgg>();

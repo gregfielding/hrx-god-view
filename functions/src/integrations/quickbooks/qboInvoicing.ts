@@ -138,6 +138,10 @@ export async function runSyncQboCustomers(
         displayName: trim(c.DisplayName),
         fullyQualifiedName: trim(c.FullyQualifiedName) || trim(c.DisplayName),
         active: c.Active !== false,
+        // QBO sub-customer hierarchy (RS3=Proof audit 2026-08-19): a
+        // mapped parent's whole family must count as mapped everywhere.
+        isSubCustomer: c.Job === true,
+        parentCustomerId: trim((c.ParentRef as any)?.value) || null,
         balance: Number(c.Balance ?? 0),
         primaryEmailAddr: trim((c.PrimaryEmailAddr as any)?.Address) || null,
         primaryPhone: trim((c.PrimaryPhone as any)?.FreeFormNumber) || null,
@@ -165,6 +169,36 @@ export const syncQboCustomers = onCall({ cors: true, timeoutSeconds: 300 }, asyn
   await ensureInvoicingAccess(request.auth?.uid, request.auth?.token as any, tenantId, 6);
   return runSyncQboCustomers(tenantId);
 });
+
+/**
+ * A mapped customer's FAMILY: itself + all QBO sub-customers (any depth),
+ * from the qbo_customers cache's parentCustomerId links. QBO books often
+ * split one client into per-venue sub-customers ("RS3 Hospitality - Dell
+ * Diamond" under "RS3 Hospitality"); every read keyed on a mapped
+ * customerId must treat the whole family as that account (RS3=Proof,
+ * 2026-08-19).
+ */
+export async function resolveCustomerFamily(tenantId: string, customerId: string): Promise<string[]> {
+  const snap = await db.collection(`tenants/${tenantId}/qbo_customers`).limit(2000).get();
+  const childrenByParent = new Map<string, string[]>();
+  snap.forEach((d) => {
+    const c = d.data();
+    const parent = trim(c.parentCustomerId);
+    const id = trim(c.customerId);
+    if (parent && id) childrenByParent.set(parent, [...(childrenByParent.get(parent) ?? []), id]);
+  });
+  const family: string[] = [];
+  const queue = [customerId];
+  const seen = new Set<string>();
+  while (queue.length) {
+    const id = queue.shift()!;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    family.push(id);
+    queue.push(...(childrenByParent.get(id) ?? []));
+  }
+  return family;
+}
 
 /** Full cached directory — small at C1 scale; the client filters locally. */
 export const listQboCustomers = onCall({ cors: true }, async (request) => {
@@ -354,18 +388,28 @@ export async function runSyncQboAccountData(
   const logRef = db.collection(`${base}/syncLogs/items`).doc();
 
   try {
-    const [invoices, payments] = await Promise.all([
-      pagedQuery(
-        tenantId,
-        `SELECT * FROM Invoice WHERE CustomerRef = '${customerId}' ORDERBY TxnDate DESC`,
-        'Invoice',
-      ),
-      pagedQuery(
-        tenantId,
-        `SELECT * FROM Payment WHERE CustomerRef = '${customerId}' ORDERBY TxnDate DESC`,
-        'Payment',
-      ),
-    ]);
+    // Whole customer family — a mapped parent's sub-customers' invoices
+    // belong on this account's Invoicing tab too (RS3=Proof, 2026-08-19).
+    const family = await resolveCustomerFamily(tenantId, customerId);
+    const invoices: Array<Record<string, any>> = [];
+    const payments: Array<Record<string, any>> = [];
+    for (const famId of family) {
+      // eslint-disable-next-line no-await-in-loop
+      const [inv, pay] = await Promise.all([
+        pagedQuery(
+          tenantId,
+          `SELECT * FROM Invoice WHERE CustomerRef = '${famId}' ORDERBY TxnDate DESC`,
+          'Invoice',
+        ),
+        pagedQuery(
+          tenantId,
+          `SELECT * FROM Payment WHERE CustomerRef = '${famId}' ORDERBY TxnDate DESC`,
+          'Payment',
+        ),
+      ]);
+      invoices.push(...inv);
+      payments.push(...pay);
+    }
 
     let writer = db.batch();
     let pending = 0;
@@ -400,7 +444,8 @@ export async function runSyncQboAccountData(
           balance,
           status: invoiceStatus(inv, today),
           currencyRef: trim((inv.CurrencyRef as any)?.value) || null,
-          customerId,
+          // The invoice's OWN customer (may be a sub-customer of the mapped one).
+          customerId: trim((inv.CustomerRef as any)?.value) || customerId,
           customerName: trim((inv.CustomerRef as any)?.name) || null,
           emailStatus: trim(inv.EmailStatus) || null,
           printStatus: trim(inv.PrintStatus) || null,
@@ -430,7 +475,7 @@ export async function runSyncQboAccountData(
           txnDate: trim(p.TxnDate) || null,
           totalAmt: Number(p.TotalAmt ?? 0),
           unappliedAmt: Number(p.UnappliedAmt ?? 0),
-          customerId,
+          customerId: trim((p.CustomerRef as any)?.value) || customerId,
           paymentRefNum: trim(p.PaymentRefNum) || null,
           linkedInvoiceIds,
           syncedAt: FieldValue.serverTimestamp(),
@@ -446,6 +491,7 @@ export async function runSyncQboAccountData(
       {
         realmId,
         customerId,
+        familyCustomerIds: family,
         totalOpenBalance: Math.round(totalOpen * 100) / 100,
         current: Math.round(buckets.current * 100) / 100,
         days1to30: Math.round(buckets.days1to30 * 100) / 100,
@@ -668,9 +714,24 @@ export const getQboDashboard = onCall({ cors: true }, async (request) => {
     customerDisplayName: d.data().integrations?.quickbooks?.customerDisplayName ?? null,
   }));
   const mappedCustomerIds = new Set(mappedAccounts.map((a) => a.customerId).filter(Boolean));
+  // A sub-customer counts as mapped when any ancestor is mapped (QBO
+  // parent/sub-customer hierarchy — RS3=Proof, 2026-08-19).
+  const parentOf = new Map<string, string>();
+  customersSnap.docs.forEach((d) => {
+    const c = d.data();
+    if (c.customerId && c.parentCustomerId) parentOf.set(String(c.customerId), String(c.parentCustomerId));
+  });
+  const effectivelyMapped = (customerId: string): boolean => {
+    let id: string | undefined = customerId;
+    for (let hops = 0; id && hops < 10; hops++) {
+      if (mappedCustomerIds.has(id)) return true;
+      id = parentOf.get(id);
+    }
+    return false;
+  };
   const unmappedCustomersWithBalance = customersSnap.docs
     .map((d) => d.data())
-    .filter((c) => Number(c.balance ?? 0) > 0 && !mappedCustomerIds.has(c.customerId))
+    .filter((c) => Number(c.balance ?? 0) > 0 && !effectivelyMapped(String(c.customerId)))
     .map((c) => ({
       customerId: c.customerId,
       displayName: c.displayName,
