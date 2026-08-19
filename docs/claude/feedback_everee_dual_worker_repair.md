@@ -33,3 +33,11 @@ identifier swap needed when the GOOD profile already owns the right uid:
 4. ☠️ Greg MUST delete the ERRORED payment in the Everee UI (manual
    AD_HOC payments have no HRX externalId — not deletable via API). If
    left and the dup ever completes onboarding, it retries → DOUBLE PAY.
+5. ☠️ **Backdated payable timestamps never get swept** (Carmella,
+   2026-08-19): the repair payable was stamped with the real work date
+   (2026-07-05, 43 days back) and sat for 2 days with paymentStatus
+   (none) — Everee's ad-hoc contractor sweep only picks up recent
+   payables. Fix: `updatePayable` re-stamp to NOW (script
+   `.scratch/restamp-carmella-payable.ts`); keep the real work dates +
+   JO# tag in the LABEL so wire-class attribution still works. Rule for
+   future repairs: timestamp = now, work dates in the label.
