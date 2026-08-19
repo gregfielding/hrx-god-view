@@ -38,6 +38,22 @@ keep its README index current — that directory is the team's shared brain.
   `stripUndefinedDeep` — naive undefined-strippers corrupt timestamps.
 - **Functions memory**: 512MiB minimum (256MiB OOMs on cold start).
 
+## Git workflow (two-person team — Greg + Mark, both using Claude)
+
+- **Pull before you start**: run `git pull` at the beginning of any session
+  that will edit code, and before starting a new piece of work.
+- **Push after you commit**: an unpushed commit exists only on one laptop —
+  the teammate can't see it and a lost machine loses it.
+- **☠️ Never deploy from a stale or unpushed tree.** Hosting deploys ship
+  the WHOLE bundle: deploying from a checkout that's missing the other
+  person's pushed commits silently reverts their live features. Before any
+  `firebase deploy`: `git pull`, confirm `git log origin/main..main` is
+  empty or being pushed now, then build fresh and deploy.
+- Trunk-based on `main` with small, frequent commits is the default; use a
+  feature branch + PR for large or risky changes.
+- Announce functions deploys to each other (two simultaneous deploys of
+  the same function can race).
+
 ## Memory policy (for Claude sessions)
 
 Ops/dev/institutional knowledge → `docs/claude/` in this repo (shared).

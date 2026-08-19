@@ -40,7 +40,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import AssessmentOutlinedIcon from '@mui/icons-material/AssessmentOutlined';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
@@ -553,8 +553,8 @@ const PayrollCostsPage: React.FC = () => {
       <PageHeader
         title={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <ReceiptLongIcon fontSize="small" />
-            <span>Payroll Costs</span>
+            <AssessmentOutlinedIcon fontSize="small" />
+            <span>Reports</span>
           </Box>
         }
       />

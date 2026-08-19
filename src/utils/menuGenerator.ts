@@ -311,12 +311,12 @@ export async function generateMenuItems(
         icon: 'attach_money',
         accessRoles: ['tenant_7'],
       }]),
-      // Payroll Costs: dollars sent to Everee by job order / account /
-      // submission day (wire splits for the bookkeeper). Levels 6-7.
+      // Reports: payroll costs, workers' comp, and future reporting
+      // surfaces (renamed from Payroll Costs, Greg 2026-08-19). Levels 6-7.
       ...([{
-        text: 'Payroll Costs',
-        to: '/payroll-costs',
-        icon: 'receipt_long',
+        text: 'Reports',
+        to: '/reports',
+        icon: 'assessment',
         accessRoles: ['tenant_6', 'tenant_7'],
       }]),
       // Workers Comp (hidden from main sidebar — still under Settings → Operations → Workers Comp)

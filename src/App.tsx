@@ -800,7 +800,7 @@ function App() {
           }
         />
         <Route
-          path="payroll-costs"
+          path="reports"
           element={
             <ProtectedRoute requiredSecurityLevel="6">
               <RecruiterAccessGuard>
@@ -809,6 +809,8 @@ function App() {
             </ProtectedRoute>
           }
         />
+        {/* Legacy URL — bookmarks/links keep working. */}
+        <Route path="payroll-costs" element={<Navigate to="/reports" replace />} />
         <Route
           path="screenings-queue"
           element={
