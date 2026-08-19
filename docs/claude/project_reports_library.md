@@ -160,3 +160,8 @@ clients whose QBO customer isn't mapped to their HRX account(s) (e.g.
 CORT per-warehouse accounts) show pay-only float until mapped — the
 "(payments from unmapped customers)" row catches the collections side.
 Unbilled/WIP report = HELD by Greg for now.
+
+**Auto-create classes: ON HOLD (Greg 2026-08-19)** — do NOT wire the
+JO-creation hook yet. Greg + Mark will define per-client/job-order/
+worksite rules and exceptions first. The building blocks are live and
+waiting (createQboClass/mapQboClass branches on savePayrollVenueMapping).

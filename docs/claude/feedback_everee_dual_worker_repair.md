@@ -41,3 +41,9 @@ identifier swap needed when the GOOD profile already owns the right uid:
    `.scratch/restamp-carmella-payable.ts`); keep the real work dates +
    JO# tag in the LABEL so wire-class attribution still works. Rule for
    future repairs: timestamp = now, work dates in the label.
+6. RESOLVED (Carmella, 2026-08-19): Greg paid her manually in the Everee
+   UI — payment 26564058, $270.08, PAID/DEPOSITED same day on the GOOD
+   profile. The repair payable was deleted BEFORE the manual payment
+   (no-double-pay order of operations: delete payable first, then pay
+   manually; recreate via the idempotent script if the manual path
+   fails).
