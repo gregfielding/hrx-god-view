@@ -15,6 +15,7 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import CalculateOutlinedIcon from '@mui/icons-material/CalculateOutlined';
 import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
 import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
+import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 
 export type ReportCategory =
   | 'Payroll'
@@ -99,6 +100,15 @@ export const REPORTS: ReportDef[] = [
     category: 'Finance & receivables',
     minLevel: 7,
     icon: <TrendingUpIcon />,
+  },
+  {
+    slug: 'wc-audit',
+    title: 'WC Premium Audit',
+    description:
+      'Policy-period audit package: payroll by state × class code with OT-excess, tips, and per-diem breakouts → auditable payroll and premium, plus a by-month rollup. CSV = what the carrier auditor gets.',
+    category: "Workers' comp & insurance",
+    minLevel: 6,
+    icon: <FactCheckOutlinedIcon />,
   },
   {
     slug: 'accounts-receivable',

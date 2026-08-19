@@ -186,6 +186,7 @@ const GrossMarginReportPage = lazy(() => import('./pages/reports/GrossMarginRepo
 const JobCostingReportPage = lazy(() => import('./pages/reports/JobCostingReportPage'));
 const PayrollRegisterPage = lazy(() => import('./pages/reports/PayrollRegisterPage'));
 const PayrollJournalPage = lazy(() => import('./pages/reports/PayrollJournalPage'));
+const WcAuditReportPage = lazy(() => import('./pages/reports/WcAuditReportPage'));
 const FinancesBudgetingPage = lazy(() => import('./pages/FinancesBudgetingPage'));
 const SchedulingHealthPage = lazy(() => import('./pages/SchedulingHealthPage'));
 const WhosWorkingPage = lazy(() => import('./pages/WhosWorkingPage'));
@@ -833,6 +834,16 @@ function App() {
             <ProtectedRoute requiredSecurityLevel="6">
               <RecruiterAccessGuard>
                 <PayrollCostsPage report="workers-comp" />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/wc-audit"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <WcAuditReportPage />
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }

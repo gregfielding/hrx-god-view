@@ -1930,15 +1930,32 @@ export const getWorkersCompMonthlyReport = onCall(
     const tenantId = trim(request.data?.tenantId);
     const hiringEntityId = trim(request.data?.hiringEntityId);
     const month = trim(request.data?.month); // YYYY-MM
-    if (!tenantId || !hiringEntityId || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-      throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, month (YYYY-MM) are required.');
+    // Audit-package range mode (Greg 2026-08-19): startDate/endDate span a
+    // POLICY PERIOD (multi-month) instead of one month. Same math, plus
+    // OT-excess/tips/reimbursement breakouts and a by-month rollup.
+    const rangeStart = trim(request.data?.startDate);
+    const rangeEnd = trim(request.data?.endDate);
+    const rangeMode = /^\d{4}-\d{2}-\d{2}$/.test(rangeStart) && /^\d{4}-\d{2}-\d{2}$/.test(rangeEnd);
+    if (!tenantId || !hiringEntityId || (!rangeMode && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month))) {
+      throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, and month (YYYY-MM) or startDate+endDate are required.');
     }
     await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
 
-    const startDate = `${month}-01`;
-    const [y, m] = month.split('-').map(Number);
-    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
-    const endDate = `${month}-${String(lastDay).padStart(2, '0')}`;
+    let startDate: string;
+    let endDate: string;
+    if (rangeMode) {
+      const days = (Date.parse(rangeEnd) - Date.parse(rangeStart)) / 86400000;
+      if (days < 0 || days > 400) {
+        throw new HttpsError('invalid-argument', 'Audit range must be 0-400 days.');
+      }
+      startDate = rangeStart;
+      endDate = rangeEnd;
+    } else {
+      startDate = `${month}-01`;
+      const [y, m] = month.split('-').map(Number);
+      const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      endDate = `${month}-${String(lastDay).padStart(2, '0')}`;
+    }
 
     const entitySnap = await db.doc(`tenants/${tenantId}/entities/${hiringEntityId}`).get();
     const entityData = (entitySnap.data() ?? {}) as Record<string, unknown>;
@@ -1961,6 +1978,15 @@ export const getWorkersCompMonthlyReport = onCall(
       total: number;
       hours: number;
       state: string;
+      /** Audit breakouts: OT excess = premium HALF of OT (0.5x) + premium
+       *  DOUBLE of DT (1.0x) — the portion most carriers exclude from
+       *  auditable payroll. Contractor entities pay flat → 0. */
+      otExcess: number;
+      tips: number;
+      /** Untaxed per diem / expense reimbursements — NOT in `total`
+       *  (never part of gross); reported so the auditor sees them. */
+      reimbursements: number;
+      month: string;
     }
     const pickedEntries: PickedEntry[] = [];
     const assignmentIds = new Set<string>();
@@ -1982,6 +2008,13 @@ export const getWorkersCompMonthlyReport = onCall(
           : round2(reg * rate + ot * rate * 1.5 + dt * rate * 2);
       const total = round2(hourly + premiums + num(e.tips) + num(e.bonusAmount));
       if (total === 0) return;
+      const otExcess = isContractor
+        ? 0
+        : isImport
+          ? round2(ot * rate * 0.5)
+          : round2(ot * rate * 0.5 + dt * rate * 1.0);
+      const entryTips = round2(num(e.tips));
+      const entryReimb = round2(num(e.reimbursementAmount));
       const sidecarAddr = ((e.import ?? {}) as Record<string, unknown>).worksiteAddress as
         | Record<string, unknown>
         | undefined;
@@ -1990,7 +2023,16 @@ export const getWorkersCompMonthlyReport = onCall(
         trim((e.worksiteAddress as Record<string, unknown> | undefined)?.state).toUpperCase() ||
         trim(sidecarAddr?.state).toUpperCase() ||
         '';
-      pickedEntries.push({ e, total, hours: round2(reg + ot + dt), state });
+      pickedEntries.push({
+        e,
+        total,
+        hours: round2(reg + ot + dt),
+        state,
+        otExcess,
+        tips: entryTips,
+        reimbursements: entryReimb,
+        month: trim(e.workDate).slice(0, 7),
+      });
       // ALL assignments (2026-08-09) — the coverage report needs venue names
       // even when the entry already carries a code; the code-resolution chain
       // is unchanged (entry stamp still wins before the assignment is read).
@@ -2033,8 +2075,13 @@ export const getWorkersCompMonthlyReport = onCall(
       hours: number;
       entries: number;
       workers: Set<string>;
+      otExcess: number;
+      tips: number;
+      reimbursements: number;
     }
     const buckets = new Map<string, Bucket>();
+    /** Audit package: by-month rollup across the period. */
+    const monthTotals = new Map<string, { gross: number; otExcess: number; tips: number; reimbursements: number; hours: number }>();
     interface UnresolvedGroup {
       state: string;
       jobTitle: string;
@@ -2109,6 +2156,13 @@ export const getWorkersCompMonthlyReport = onCall(
       totalGross = round2(totalGross + p.total);
       entryCount += 1;
       const workerId = trim(e.workerId);
+      const mt = monthTotals.get(p.month) ?? { gross: 0, otExcess: 0, tips: 0, reimbursements: 0, hours: 0 };
+      mt.gross = round2(mt.gross + p.total);
+      mt.otExcess = round2(mt.otExcess + p.otExcess);
+      mt.tips = round2(mt.tips + p.tips);
+      mt.reimbursements = round2(mt.reimbursements + p.reimbursements);
+      mt.hours = round2(mt.hours + p.hours);
+      monthTotals.set(p.month, mt);
 
       // Venue identity — same fallback order as the payroll cost report.
       const sidecar = (e.import ?? {}) as Record<string, unknown>;
@@ -2185,12 +2239,15 @@ export const getWorkersCompMonthlyReport = onCall(
 
       const key = `${state}_${code}`;
       if (!buckets.has(key)) {
-        buckets.set(key, { state, code, gross: 0, hours: 0, entries: 0, workers: new Set() });
+        buckets.set(key, { state, code, gross: 0, hours: 0, entries: 0, workers: new Set(), otExcess: 0, tips: 0, reimbursements: 0 });
       }
       const b = buckets.get(key)!;
       b.gross = round2(b.gross + p.total);
       b.hours = round2(b.hours + p.hours);
       b.entries += 1;
+      b.otExcess = round2(b.otExcess + p.otExcess);
+      b.tips = round2(b.tips + p.tips);
+      b.reimbursements = round2(b.reimbursements + p.reimbursements);
       if (workerId) b.workers.add(workerId);
     }
 
@@ -2217,11 +2274,18 @@ export const getWorkersCompMonthlyReport = onCall(
     });
 
     let totalPremium = 0;
+    let totalPremiumAuditable = 0;
     const rows = Array.from(buckets.values())
       .map((b) => {
         const rate = matrix.rateByStateCode.get(`${b.state}_${b.code}`) ?? null;
         const premium = rate != null ? round2((b.gross * rate) / 100) : null;
         if (premium != null) totalPremium = round2(totalPremium + premium);
+        // Auditable payroll = gross minus OT excess minus tips — the
+        // remuneration basis most carriers use at audit. Reimbursements
+        // are already outside gross; reported alongside for the auditor.
+        const auditable = round2(b.gross - b.otExcess - b.tips);
+        const premiumAuditable = rate != null ? round2((auditable * rate) / 100) : null;
+        if (premiumAuditable != null) totalPremiumAuditable = round2(totalPremiumAuditable + premiumAuditable);
         return {
           state: b.state,
           code: b.code,
@@ -2231,6 +2295,11 @@ export const getWorkersCompMonthlyReport = onCall(
           entries: b.entries,
           workers: b.workers.size,
           premium,
+          otExcess: b.otExcess,
+          tips: b.tips,
+          reimbursements: b.reimbursements,
+          auditable,
+          premiumAuditable,
         };
       })
       .sort((a, b) => a.state.localeCompare(b.state) || a.code.localeCompare(b.code));
@@ -2326,13 +2395,27 @@ export const getWorkersCompMonthlyReport = onCall(
       stateCodeOptions[st].sort((a, b) => a.code.localeCompare(b.code));
     }
 
+    const byMonth = Array.from(monthTotals.entries())
+      .map(([m, t]) => ({ month: m, ...t, auditable: round2(t.gross - t.otExcess - t.tips) }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+    const totalOtExcess = round2(rows.reduce((s, r) => s + r.otExcess, 0));
+    const totalTips = round2(rows.reduce((s, r) => s + r.tips, 0));
+    const totalReimbursements = round2(rows.reduce((s, r) => s + r.reimbursements, 0));
+
     return {
-      month,
+      month: rangeMode ? null : month,
+      rangeMode,
       startDate,
       endDate,
       hiringEntityId,
       entityName,
       workerType: isContractor ? 'contractor' : 'employee',
+      byMonth,
+      totalOtExcess,
+      totalTips,
+      totalReimbursements,
+      totalAuditable: round2(totalGross - totalOtExcess - totalTips),
+      totalPremiumAuditable,
       rows,
       unresolved,
       unresolvedGross: round2(unresolved.reduce((s, u) => s + u.gross, 0)),

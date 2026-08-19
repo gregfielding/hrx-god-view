@@ -37,7 +37,7 @@ const ArAgingReportPage: React.FC = () => {
           </Typography>
         }
       />
-      <QboArDashboardCard />
+      <QboArDashboardCard includeDso />
     </Box>
   );
 };
