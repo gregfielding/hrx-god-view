@@ -23,6 +23,7 @@ import PeopleIcon from '@mui/icons-material/People';
 import AppsIcon from '@mui/icons-material/Apps';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import SettingsIcon from '@mui/icons-material/Settings';
+import ArticleIcon from '@mui/icons-material/Article';
 import ArchitectureIcon from '@mui/icons-material/Architecture';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import NotificationsIcon from '@mui/icons-material/Notifications';
@@ -1073,7 +1074,7 @@ const Layout: React.FC = function Layout() {
       'AI Settings': <AutoFixHighIcon />, 
       'User Groups': <Diversity3Icon />,
       'Departments': <BusinessIcon />,
-      'Reports': <SettingsIcon />,
+      'Reports': <ArticleIcon />,
       'Scheduling': <GroupWorkIcon />,
       'Performance': <SettingsIcon />,
       'Reviews': <SettingsIcon />,
