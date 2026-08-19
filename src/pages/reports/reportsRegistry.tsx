@@ -21,6 +21,7 @@ import EventAvailableOutlinedIcon from '@mui/icons-material/EventAvailableOutlin
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
+import WaterfallChartOutlinedIcon from '@mui/icons-material/WaterfallChartOutlined';
 
 export type ReportCategory =
   | 'Payroll'
@@ -116,6 +117,15 @@ export const REPORTS: ReportDef[] = [
     category: 'Finance & receivables',
     minLevel: 7,
     icon: <AccountTreeOutlinedIcon />,
+  },
+  {
+    slug: 'cash-flow',
+    title: 'Cash Requirements & Flow',
+    description:
+      'Next payroll’s cash need (approved-but-unsent entries + burden) and the per-client cash-flow gap — paid to workers vs billed vs collected, showing whose payroll C1 is floating.',
+    category: 'Forecast & budgeting',
+    minLevel: 7,
+    icon: <WaterfallChartOutlinedIcon />,
   },
   {
     slug: 'finances-budgeting',

@@ -274,6 +274,9 @@ interface BillingAggregates {
   unclassifiedBilled: number;
   classAggs: Map<string, BilledClassAgg>;
   customerAggs: Map<string, BilledCustomerAgg>;
+  /** customerId → HRX account (sub-customers resolved to their nearest
+   *  mapped ancestor) — reused by the cash-flow collections rollup. */
+  acctByCustomerId: Map<string, { accountId: string; accountName: string | null }>;
 }
 
 async function buildBillingAggregates(
@@ -390,7 +393,7 @@ async function buildBillingAggregates(
     }
   }
 
-  return { invoiceCount: invoices.length, totalBilled, unclassifiedBilled, classAggs, customerAggs };
+  return { invoiceCount: invoices.length, totalBilled, unclassifiedBilled, classAggs, customerAggs, acctByCustomerId };
 }
 
 /* -------------------------------------------------------------------------
@@ -2056,7 +2059,66 @@ export const getPayrollCostReport = onCall(
         const gmByAccount: AcctGmRow[] = [...rowsByAccount.values(), ...standaloneRows];
         gmByAccount.sort((x, y) => y.billed - x.billed || y.pay - x.pay);
 
+        // Cash-flow gap per client (Greg 2026-08-19): paid-to-workers vs
+        // billed vs COLLECTED in the range. Collections = QBO Payments,
+        // rolled to HRX accounts through the same customer map (with
+        // sub-customer hierarchy) the billing side used.
+        let cashFlowByClient: Array<Record<string, unknown>> | null = null;
+        if (request.data?.includeCashFlow === true) {
+          const payments: Array<Record<string, any>> = [];
+          const pageSize = 1000;
+          for (let page = 0; page < 20; page++) {
+            const start = page * pageSize + 1;
+            // eslint-disable-next-line no-await-in-loop
+            const resp = await qboQuery(
+              tenantId,
+              `SELECT * FROM Payment WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}' STARTPOSITION ${start} MAXRESULTS ${pageSize}`,
+            );
+            const items = (resp.Payment ?? []) as Array<Record<string, any>>;
+            payments.push(...items);
+            if (items.length < pageSize) break;
+          }
+          const collectedByAccount = new Map<string, number>();
+          let collectedUnmapped = 0;
+          for (const p of payments) {
+            const cid = trim((p.CustomerRef as Record<string, any> | undefined)?.value);
+            const amt = Number(p.TotalAmt ?? 0);
+            if (!amt) continue;
+            const acct = agg.acctByCustomerId.get(cid);
+            if (acct) {
+              collectedByAccount.set(acct.accountId, round2((collectedByAccount.get(acct.accountId) ?? 0) + amt));
+            } else {
+              collectedUnmapped = round2(collectedUnmapped + amt);
+            }
+          }
+          cashFlowByClient = gmByAccount
+            .map((r) => {
+              const collected = collectedByAccount.get((r.accountId as string) ?? '') ?? 0;
+              return {
+                accountId: r.accountId,
+                label: r.label,
+                customerName: r.customerName,
+                pay: r.pay,
+                billed: r.billed,
+                collected,
+                // Positive = cash C1 has floated this client in the range.
+                floatBeforeBurden: round2((r.pay as number) - collected),
+              };
+            })
+            .sort((x, y) => (y.floatBeforeBurden as number) - (x.floatBeforeBurden as number));
+          cashFlowByClient.push({
+            accountId: null,
+            label: '(payments from unmapped customers)',
+            customerName: null,
+            pay: 0,
+            billed: 0,
+            collected: collectedUnmapped,
+            floatBeforeBurden: round2(-collectedUnmapped),
+          });
+        }
+
         billing = {
+          cashFlowByClient,
           // Entity view: headline billed/invoice numbers narrow to the
           // customers that matched this entity's payroll (invoices carry
           // no HRX entity of their own).
@@ -2205,6 +2267,92 @@ export const getPayrollCostReport = onCall(
       }
     }
 
+    // Cash requirements (Greg 2026-08-19): payroll dollars APPROVED (or
+    // still draft) but not yet sent to Everee — the cash the next submit
+    // will pull, before it's pulled. Scans a fixed recent window
+    // (today−45 → today+7 work dates) independent of the report range.
+    let cashRequirements: Record<string, unknown> | null = null;
+    if (request.data?.includeCashFlow === true) {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const winStart = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+      const winEnd = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+      const entSnap2 = await db.collection(`tenants/${tenantId}/entities`).get();
+      const entityNames = new Map<string, string>();
+      const contractorSet = new Set<string>();
+      entSnap2.docs.forEach((d) => {
+        entityNames.set(d.id, trim(d.data().name) || d.id);
+        if (trim(d.data().workerType).toLowerCase() === 'contractor' || /events|workforce/i.test(d.id)) {
+          contractorSet.add(d.id);
+        }
+      });
+      const pendSnap = await db
+        .collection(`tenants/${tenantId}/timesheet_entries`)
+        .where('workDate', '>=', winStart)
+        .where('workDate', '<=', winEnd)
+        .get();
+      interface PendAgg {
+        entityId: string;
+        entityName: string;
+        approvedGross: number;
+        approvedEntries: number;
+        draftGross: number;
+        draftEntries: number;
+        workerSet: Set<string>;
+      }
+      const pend = new Map<string, PendAgg>();
+      pendSnap.forEach((d) => {
+        const e = d.data();
+        const status = trim(e.status);
+        if (status !== 'approved' && status !== 'draft') return;
+        const entityId = trim(e.hiringEntityId);
+        if (/sandbox/i.test(entityId)) return;
+        if (hiringEntityId && entityId !== hiringEntityId) return;
+        const isImport = trim(e.source) === 'csv_import';
+        const rate = num(e.payRate);
+        const reg = num(e.totalRegularHours);
+        const ot = num(e.totalOTHours);
+        const dt = num(e.totalDoubleTimeHours);
+        const premiums = isImport ? 0 : round2((num(e.mealBreakPenaltyHours) + num(e.restBreakPenaltyHours)) * rate);
+        const hourly = contractorSet.has(entityId)
+          ? round2((reg + ot + dt) * rate)
+          : isImport
+            ? round2(reg * rate + ot * rate * 1.5)
+            : round2(reg * rate + ot * rate * 1.5 + dt * rate * 2);
+        const total = round2(hourly + premiums + num(e.tips) + num(e.bonusAmount));
+        if (total === 0) return;
+        const g = pend.get(entityId) ?? {
+          entityId,
+          entityName: entityNames.get(entityId) ?? entityId,
+          approvedGross: 0,
+          approvedEntries: 0,
+          draftGross: 0,
+          draftEntries: 0,
+          workerSet: new Set<string>(),
+        };
+        if (status === 'approved') {
+          g.approvedGross = round2(g.approvedGross + total);
+          g.approvedEntries += 1;
+        } else {
+          g.draftGross = round2(g.draftGross + total);
+          g.draftEntries += 1;
+        }
+        const wid = trim(e.workerId);
+        if (wid) g.workerSet.add(wid);
+        pend.set(entityId, g);
+      });
+      const byEntity = Array.from(pend.values())
+        .map(({ workerSet, ...g }) => ({ ...g, workers: workerSet.size }))
+        .sort((a, b) => b.approvedGross - a.approvedGross);
+      cashRequirements = {
+        asOf: todayStr,
+        windowStart: winStart,
+        windowEnd: winEnd,
+        byEntity,
+        totalApprovedGross: round2(byEntity.reduce((s, g) => s + g.approvedGross, 0)),
+        totalDraftGross: round2(byEntity.reduce((s, g) => s + g.draftGross, 0)),
+      };
+    }
+
     // QBO class catalog + mappings (Greg 2026-08-19) — level 7 (books structure).
     let classCatalog: Record<string, unknown> | null = null;
     let classCatalogError: string | null = null;
@@ -2233,6 +2381,7 @@ export const getPayrollCostReport = onCall(
       i9StatusError,
       classCatalog,
       classCatalogError,
+      cashRequirements,
       totals: {
         gross: grand,
         entries: rows.length,
