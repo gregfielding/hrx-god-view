@@ -28,7 +28,8 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-const MAX_RANGE_DAYS = 92;
+/** 366 (was 92) — job costing needs job-to-date ranges (2026-08-19). */
+const MAX_RANGE_DAYS = 366;
 const MAX_ROWS = 12000;
 
 function trim(v: unknown): string {
@@ -174,6 +175,8 @@ interface BilledClassAgg {
   className: string;
   billed: number;
   lineCount: number;
+  /** Per-invoice-line refs for job-costing drill-down (capped). */
+  invoiceRefs: Array<{ docNumber: string | null; txnDate: string | null; amount: number; customerName: string | null }>;
 }
 
 interface BilledCustomerAgg {
@@ -298,15 +301,120 @@ async function buildBillingAggregates(
         continue;
       }
       const key = cls.toLowerCase();
-      const agg = classAggs.get(key) ?? { className: cls, billed: 0, lineCount: 0 };
+      const agg = classAggs.get(key) ?? { className: cls, billed: 0, lineCount: 0, invoiceRefs: [] };
       agg.billed = round2(agg.billed + amount);
       agg.lineCount += 1;
+      if (agg.invoiceRefs.length < 200) {
+        agg.invoiceRefs.push({
+          docNumber: trim(inv.DocNumber) || null,
+          txnDate: trim(inv.TxnDate) || null,
+          amount,
+          customerName: cname,
+        });
+      }
       classAggs.set(key, agg);
       cust.classKeys.add(key);
     }
   }
 
   return { invoiceCount: invoices.length, totalBilled, unclassifiedBilled, classAggs, customerAggs };
+}
+
+/* -------------------------------------------------------------------------
+ * Job-costing expenses (Greg 2026-08-19): QBO Purchase lines by class —
+ * the Expensify write-back (EXP-6/7) stamps card expenses with the same
+ * "Account:Job order" classes, so a JO's non-payroll costs live here.
+ * ☠️ Everee-vendor purchases are EXCLUDED: those are the payroll wires
+ * (and Everee service fees) — the wire class splits would double-count
+ * payroll that the report already carries from timesheet entries.
+ * ------------------------------------------------------------------------- */
+
+interface ExpenseClassAgg {
+  className: string;
+  total: number;
+  lineCount: number;
+  lines: Array<{ txnDate: string | null; vendor: string | null; memo: string | null; amount: number }>;
+}
+
+interface ExpenseAggregates {
+  purchaseCount: number;
+  totalExpenses: number;
+  /** Classed-line dollars skipped because the vendor is Everee (payroll wires). */
+  excludedEvereeTotal: number;
+  unclassifiedExpenses: number;
+  classAggs: Map<string, ExpenseClassAgg>;
+}
+
+async function buildExpenseAggregates(
+  tenantId: string,
+  startDate: string,
+  endDate: string,
+): Promise<ExpenseAggregates> {
+  const purchases: Array<Record<string, any>> = [];
+  const pageSize = 1000;
+  for (let page = 0; page < 20; page++) {
+    const start = page * pageSize + 1;
+    // eslint-disable-next-line no-await-in-loop
+    const resp = await qboQuery(
+      tenantId,
+      `SELECT * FROM Purchase WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}' STARTPOSITION ${start} MAXRESULTS ${pageSize}`,
+    );
+    const items = (resp.Purchase ?? []) as Array<Record<string, any>>;
+    purchases.push(...items);
+    if (items.length < pageSize) break;
+  }
+
+  const classAggs = new Map<string, ExpenseClassAgg>();
+  let totalExpenses = 0;
+  let excludedEvereeTotal = 0;
+  let unclassifiedExpenses = 0;
+
+  for (const p of purchases) {
+    const vendor = trim((p.EntityRef as Record<string, any> | undefined)?.name) || null;
+    const isEveree = /everee/i.test(vendor ?? '');
+    const sign = p.Credit === true ? -1 : 1;
+    const purchaseClass = trim((p.ClassRef as Record<string, any> | undefined)?.name);
+    const memo = trim(p.PrivateNote) || null;
+    const lines = Array.isArray(p.Line) ? (p.Line as Array<Record<string, any>>) : [];
+    for (const line of lines) {
+      const dt = trim(line.DetailType);
+      let lineClass = '';
+      if (dt === 'AccountBasedExpenseLineDetail') {
+        lineClass = trim((line.AccountBasedExpenseLineDetail as Record<string, any> | undefined)?.ClassRef?.name);
+      } else if (dt === 'ItemBasedExpenseLineDetail') {
+        lineClass = trim((line.ItemBasedExpenseLineDetail as Record<string, any> | undefined)?.ClassRef?.name);
+      } else {
+        continue;
+      }
+      const amount = sign * num(line.Amount);
+      if (!amount) continue;
+      const cls = lineClass || purchaseClass;
+      if (isEveree) {
+        excludedEvereeTotal = round2(excludedEvereeTotal + amount);
+        continue;
+      }
+      totalExpenses = round2(totalExpenses + amount);
+      if (!cls) {
+        unclassifiedExpenses = round2(unclassifiedExpenses + amount);
+        continue;
+      }
+      const key = cls.toLowerCase();
+      const agg = classAggs.get(key) ?? { className: cls, total: 0, lineCount: 0, lines: [] };
+      agg.total = round2(agg.total + amount);
+      agg.lineCount += 1;
+      if (agg.lines.length < 300) {
+        agg.lines.push({
+          txnDate: trim(p.TxnDate) || null,
+          vendor,
+          memo: trim(line.Description) || memo,
+          amount,
+        });
+      }
+      classAggs.set(key, agg);
+    }
+  }
+
+  return { purchaseCount: purchases.length, totalExpenses, excludedEvereeTotal, unclassifiedExpenses, classAggs };
 }
 
 interface ReportRow {
@@ -777,7 +885,11 @@ export const getPayrollCostReport = onCall(
       // Revenue across all clients = Global Invoicing bar (level 7).
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
       try {
-        const agg = await buildBillingAggregates(tenantId, startDate, endDate);
+        const wantExpenses = request.data?.includeExpenses === true;
+        const [agg, expAgg] = await Promise.all([
+          buildBillingAggregates(tenantId, startDate, endDate),
+          wantExpenses ? buildExpenseAggregates(tenantId, startDate, endDate) : Promise.resolve(null),
+        ]);
 
         // Class ↔ job-order name matching, two passes. QBO class names
         // drift from JO names ("Venue Smart:Lollapalooza" vs JO
@@ -855,8 +967,11 @@ export const getPayrollCostReport = onCall(
             attributed: g.attributed,
             pay: g.total,
             hours: g.hours,
+            workers: g.workers,
             billed,
             billedClasses,
+            expenses: 0,
+            expenseClasses: [] as string[],
           };
         });
         // Pass 2: fuzzy — each unused class goes to the first (largest-pay,
@@ -897,12 +1012,95 @@ export const getPayrollCostReport = onCall(
               attributed: false,
               pay: 0,
               hours: 0,
+              workers: 0,
               billed: a.billed,
               billedClasses: [a.className],
+              expenses: 0,
+              expenseClasses: [],
             });
           }
         }
+
+        // Expenses (job costing, Greg 2026-08-19): same matching shape —
+        // exact against every row (pay rows AND billed-only rows, so
+        // "Venue Smart:Bonnaroo" card spend lands next to its billing),
+        // then fuzzy, then expense-only rows (skipped under an entity
+        // filter for the same can't-prove-entity reason).
+        if (expAgg) {
+          const usedExpenseKeys = new Set<string>();
+          for (const row of gmByJobOrder) {
+            const nameKey = row.label.toLowerCase();
+            const fullKey = row.accountName ? `${row.accountName}:${row.label}`.toLowerCase() : null;
+            for (const [key, a] of expAgg.classAggs) {
+              if (usedExpenseKeys.has(key)) continue;
+              const lastSegment = key.split(':').pop()?.trim() ?? key;
+              const exact =
+                key === fullKey ||
+                key === nameKey ||
+                (lastSegment === nameKey && acctCompatible(classAcctPrefix(key), row.accountName));
+              if (exact) {
+                row.expenses = round2(row.expenses + a.total);
+                row.expenseClasses.push(a.className);
+                usedExpenseKeys.add(key);
+              }
+            }
+          }
+          for (const [key, a] of expAgg.classAggs) {
+            if (usedExpenseKeys.has(key)) continue;
+            const seg = normName(key.split(':').pop() ?? key);
+            if (!seg || accountNorms.has(seg.replace(/ /g, ''))) continue;
+            const prefix = classAcctPrefix(key);
+            const hit = gmByJobOrder.find((g) => {
+              if (!acctCompatible(prefix, g.accountName)) return false;
+              const n = normName(g.label);
+              if (!n) return false;
+              const substringHit =
+                seg.length >= 5 && n.length >= 5 && (n.includes(seg) || seg.includes(n));
+              return substringHit || tokenSubset(seg, n) || tokenSubset(n, seg);
+            });
+            if (hit) {
+              hit.expenses = round2(hit.expenses + a.total);
+              hit.expenseClasses.push(a.className);
+              usedExpenseKeys.add(key);
+            }
+          }
+          if (!entityFiltered) {
+            for (const [key, a] of expAgg.classAggs) {
+              if (usedExpenseKeys.has(key)) continue;
+              gmByJobOrder.push({
+                label: a.className,
+                accountId: null,
+                accountName: null,
+                attributed: false,
+                pay: 0,
+                hours: 0,
+                workers: 0,
+                billed: 0,
+                billedClasses: [],
+                expenses: a.total,
+                expenseClasses: [a.className],
+              });
+            }
+          }
+        }
         gmByJobOrder.sort((x, y) => y.billed - x.billed || y.pay - x.pay);
+
+        // Per-class drill-down detail (job costing): invoice refs and
+        // expense lines keyed by class DISPLAY name — rows carry
+        // billedClasses/expenseClasses to look these up.
+        const classDetail: Record<string, Record<string, unknown>> = {};
+        for (const a of agg.classAggs.values()) {
+          classDetail[a.className] = { className: a.className, billed: a.billed, invoiceRefs: a.invoiceRefs };
+        }
+        if (expAgg) {
+          for (const a of expAgg.classAggs.values()) {
+            classDetail[a.className] = {
+              ...(classDetail[a.className] ?? { className: a.className }),
+              expenses: a.total,
+              expenseLines: a.lines,
+            };
+          }
+        }
 
         // By-client join: seed one row per PAY account, then fold each QBO
         // customer's billing into the right row. A customer lands on (1) its
@@ -987,6 +1185,11 @@ export const getPayrollCostReport = onCall(
           unclassifiedBilled: agg.unclassifiedBilled,
           totalPay: grand,
           entityFiltered,
+          totalExpenses: expAgg?.totalExpenses ?? null,
+          expensePurchaseCount: expAgg?.purchaseCount ?? null,
+          unclassifiedExpenses: expAgg?.unclassifiedExpenses ?? null,
+          excludedEvereeTotal: expAgg?.excludedEvereeTotal ?? null,
+          classDetail,
           byJobOrder: gmByJobOrder,
           byAccount: gmByAccount,
         };

@@ -12,6 +12,7 @@ import PaymentsOutlinedIcon from '@mui/icons-material/PaymentsOutlined';
 import HealthAndSafetyOutlinedIcon from '@mui/icons-material/HealthAndSafetyOutlined';
 import RequestQuoteOutlinedIcon from '@mui/icons-material/RequestQuoteOutlined';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import CalculateOutlinedIcon from '@mui/icons-material/CalculateOutlined';
 
 export type ReportCategory =
   | 'Payroll'
@@ -60,6 +61,15 @@ export const REPORTS: ReportDef[] = [
     category: "Workers' comp & insurance",
     minLevel: 6,
     icon: <HealthAndSafetyOutlinedIcon />,
+  },
+  {
+    slug: 'job-costing',
+    title: 'Job Costing',
+    description:
+      'One job order’s complete P&L — billing, payroll, burden estimate, and Expensify/QBO expenses classed to the order. Entity → client → job order drill-down.',
+    category: 'Finance & receivables',
+    minLevel: 7,
+    icon: <CalculateOutlinedIcon />,
   },
   {
     slug: 'gross-margin',
