@@ -21,7 +21,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
-import { qboQuery } from '../integrations/quickbooks/qboAuth';
+import { qboQuery, qboEntityCreate } from '../integrations/quickbooks/qboAuth';
 import { evereeRequest } from '../integrations/everee/evereeHttp';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 
@@ -99,6 +99,77 @@ export const savePayrollVenueMapping = onCall(
   { region: 'us-central1', memory: '512MiB', timeoutSeconds: 60 },
   async (request) => {
     const tenantId = trim(request.data?.tenantId);
+    const action = trim(request.data?.action);
+
+    // ── QBO class mapping/creation branches (Greg 2026-08-19). Rides
+    //    this callable to stay under the Cloud Run service cap. Level 7
+    //    — these shape the books. Mark's email-driven VenueSmart class
+    //    automation calls the SAME branches. ──
+    if (action === 'mapQboClass' || action === 'createQboClass') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+
+      if (action === 'createQboClass') {
+        const name = trim(request.data?.name);
+        const parentClassId = trim(request.data?.parentClassId);
+        if (!name) throw new HttpsError('invalid-argument', 'name is required.');
+        const body: Record<string, unknown> = { Name: name };
+        if (parentClassId) body.ParentRef = { value: parentClassId };
+        const created = (await qboEntityCreate(tenantId, 'Class', body)) as Record<string, any>;
+        const cls = (created.Class ?? created) as Record<string, any>;
+        const classId = trim(cls.Id);
+        const fqn = trim(cls.FullyQualifiedName) || name;
+        return { ok: true, classId, name: trim(cls.Name) || name, fqn };
+      }
+
+      // mapQboClass — write (or remove) the authoritative class↔HRX link.
+      const classId = trim(request.data?.classId);
+      const className = trim(request.data?.className);
+      if (!classId || !className) throw new HttpsError('invalid-argument', 'classId and className are required.');
+      const ref = db.doc(`tenants/${tenantId}/qbo_class_mappings/${classId}`);
+      if (request.data?.remove === true) {
+        await ref.delete();
+        return { ok: true, removed: true, classId };
+      }
+      const jobOrderId = trim(request.data?.jobOrderId);
+      const accountId = trim(request.data?.accountId);
+      if (!jobOrderId && !accountId) {
+        throw new HttpsError('invalid-argument', 'jobOrderId or accountId is required to map.');
+      }
+      let jobOrderName: string | null = null;
+      let mappedAccountId: string | null = accountId || null;
+      let accountName: string | null = null;
+      if (jobOrderId) {
+        for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+          // eslint-disable-next-line no-await-in-loop
+          const s = await db.doc(`tenants/${tenantId}/${coll}/${jobOrderId}`).get();
+          if (s.exists) {
+            jobOrderName = trim(s.data()?.jobOrderName) || trim(s.data()?.title) || null;
+            if (!mappedAccountId) mappedAccountId = trim(s.data()?.recruiterAccountId) || null;
+            break;
+          }
+        }
+        if (!jobOrderName) throw new HttpsError('not-found', `Job order ${jobOrderId} not found.`);
+      }
+      if (mappedAccountId) {
+        const acct = await db.doc(`tenants/${tenantId}/accounts/${mappedAccountId}`).get();
+        accountName = acct.exists ? trim(acct.data()?.name) || null : null;
+      }
+      await ref.set({
+        classId,
+        className,
+        fqn: trim(request.data?.fqn) || className,
+        jobOrderId: jobOrderId || null,
+        jobOrderName,
+        accountId: mappedAccountId,
+        accountName,
+        source: trim(request.data?.source) || 'manual',
+        mappedBy: request.auth?.uid ?? null,
+        mappedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return { ok: true, classId, jobOrderName, accountId: mappedAccountId, accountName };
+    }
+
     const venueLabel = trim(request.data?.venueLabel);
     const jobOrderId = trim(request.data?.jobOrderId);
     if (!tenantId || !venueLabel) {
@@ -1148,6 +1219,104 @@ async function buildI9Status(
   };
 }
 
+/* -------------------------------------------------------------------------
+ * QBO Classes & Mapping (Greg 2026-08-19): the classes were created by
+ * hand in QBO and have no durable link to HRX data. The
+ * `tenants/{t}/qbo_class_mappings/{classId}` collection IS that link —
+ * written from the /reports/qbo-classes page (and by Mark's automation),
+ * consulted FIRST by the gross-margin/job-costing matcher. This builder
+ * returns the full class list + mapping status + usage (billed/expense
+ * dollars in range) + an auto-suggested match per unmapped class.
+ * ------------------------------------------------------------------------- */
+
+async function buildClassCatalog(
+  tenantId: string,
+  startDate: string,
+  endDate: string,
+): Promise<Record<string, unknown>> {
+  const [classRes, mapSnap, billing, expenses] = await Promise.all([
+    qboQuery(tenantId, 'SELECT * FROM Class WHERE Active IN (true, false) MAXRESULTS 1000'),
+    db.collection(`tenants/${tenantId}/qbo_class_mappings`).get(),
+    buildBillingAggregates(tenantId, startDate, endDate),
+    buildExpenseAggregates(tenantId, startDate, endDate),
+  ]);
+
+  const mappings = new Map<string, Record<string, unknown>>();
+  mapSnap.forEach((d) => mappings.set(d.id, d.data()));
+
+  // Suggestion candidates: JO names (scoped by account) + account names.
+  const joList: Array<{ id: string; name: string; accountId: string | null; accountName: string | null }> = [];
+  const acctNameById = new Map<string, string>();
+  const acctSnap = await db.collection(`tenants/${tenantId}/accounts`).get();
+  acctSnap.forEach((d) => acctNameById.set(d.id, trim(d.data().name)));
+  for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+    // eslint-disable-next-line no-await-in-loop
+    const snap = await db.collection(`tenants/${tenantId}/${coll}`).get().catch(() => null);
+    if (!snap) continue;
+    snap.forEach((d) => {
+      const j = d.data();
+      const name = trim(j.jobOrderName) || trim(j.title);
+      if (!name) return;
+      const accountId = trim(j.recruiterAccountId) || null;
+      joList.push({ id: d.id, name, accountId, accountName: accountId ? acctNameById.get(accountId) ?? null : null });
+    });
+  }
+  const norm = (s: string): string =>
+    s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(20\d\d|llc|inc|national|account)\b/g, '').replace(/\s+/g, ' ').trim();
+  const suggest = (className: string): { jobOrderId: string; jobOrderName: string; accountId: string | null; accountName: string | null } | null => {
+    const seg = norm(className.split(':').pop() ?? className);
+    if (seg.length < 4) return null;
+    let best: (typeof joList)[number] | null = null;
+    for (const jo of joList) {
+      const n = norm(jo.name);
+      if (!n) continue;
+      if (n === seg) return { jobOrderId: jo.id, jobOrderName: jo.name, accountId: jo.accountId, accountName: jo.accountName };
+      if (!best && seg.length >= 5 && n.length >= 5 && (n.includes(seg) || seg.includes(n))) best = jo;
+    }
+    return best ? { jobOrderId: best.id, jobOrderName: best.name, accountId: best.accountId, accountName: best.accountName } : null;
+  };
+
+  const classes = ((classRes.Class ?? []) as Array<Record<string, any>>).map((c) => {
+    const id = trim(c.Id);
+    const name = trim(c.Name);
+    const fqn = trim(c.FullyQualifiedName) || name;
+    const mapping = mappings.get(id) ?? null;
+    const billedAgg = billing.classAggs.get(fqn.toLowerCase()) ?? billing.classAggs.get(name.toLowerCase());
+    const expAgg = expenses.classAggs.get(fqn.toLowerCase()) ?? expenses.classAggs.get(name.toLowerCase());
+    return {
+      classId: id,
+      name,
+      fqn,
+      active: c.Active !== false,
+      parentClassId: trim((c.ParentRef as any)?.value) || null,
+      billedInRange: billedAgg?.billed ?? 0,
+      expensesInRange: expAgg?.total ?? 0,
+      mapping: mapping
+        ? {
+            jobOrderId: trim(mapping.jobOrderId) || null,
+            jobOrderName: trim(mapping.jobOrderName) || null,
+            accountId: trim(mapping.accountId) || null,
+            accountName: trim(mapping.accountName) || null,
+            source: trim(mapping.source) || 'manual',
+          }
+        : null,
+      suggestion: mapping ? null : suggest(fqn),
+    };
+  });
+  classes.sort((a, b) => (b.billedInRange + b.expensesInRange) - (a.billedInRange + a.expensesInRange) || a.fqn.localeCompare(b.fqn));
+
+  return {
+    rangeStart: startDate,
+    rangeEnd: endDate,
+    totals: {
+      classes: classes.length,
+      mapped: classes.filter((c) => c.mapping).length,
+      unmappedWithActivity: classes.filter((c) => !c.mapping && (c.billedInRange > 0 || c.expensesInRange > 0)).length,
+    },
+    classes,
+  };
+}
+
 export const getPayrollCostReport = onCall(
   { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
   async (request) => {
@@ -1627,6 +1796,23 @@ export const getPayrollCostReport = onCall(
         const usedClassKeys = new Set<string>();
         /** classKey → PAY-side accountId it matched (drives the by-client merge). */
         const matchedClassToAccount = new Map<string, string>();
+        // Pass 0 (Greg 2026-08-19): explicit qbo_class_mappings beat every
+        // heuristic — a mapped class's amounts land on its mapped job
+        // order/account row, period. Keyed by class DISPLAY name (lower).
+        const classMapSnap = await db.collection(`tenants/${tenantId}/qbo_class_mappings`).get().catch(() => null);
+        const mappedClassByName = new Map<string, { jobOrderName: string | null; accountId: string | null }>();
+        if (classMapSnap) {
+          classMapSnap.forEach((d) => {
+            const m = d.data();
+            const names = [trim(m.className), trim(m.fqn)].filter(Boolean);
+            for (const n of names) {
+              mappedClassByName.set(n.toLowerCase(), {
+                jobOrderName: trim(m.jobOrderName) || null,
+                accountId: trim(m.accountId) || null,
+              });
+            }
+          });
+        }
         const gmByJobOrder = byJobOrder.map((g) => {
           // ClassGroup key format: `${accountId}|jo-or-venue|name`.
           const payAccountId = g.key.split('|')[0] || null;
@@ -1637,10 +1823,17 @@ export const getPayrollCostReport = onCall(
           for (const [key, a] of agg.classAggs) {
             if (usedClassKeys.has(key)) continue;
             const lastSegment = key.split(':').pop()?.trim() ?? key;
+            const mapped = mappedClassByName.get(key);
+            const mappedHere =
+              mapped != null &&
+              ((mapped.jobOrderName != null && mapped.jobOrderName === g.label) ||
+                (mapped.jobOrderName == null && mapped.accountId != null && mapped.accountId === payAccountId));
             const exact =
-              key === fullKey ||
-              ((key === nameKey || lastSegment === nameKey) &&
-                acctCompatible(classAcctPrefix(key), g.accountName));
+              mappedHere ||
+              (mapped == null &&
+                (key === fullKey ||
+                  ((key === nameKey || lastSegment === nameKey) &&
+                    acctCompatible(classAcctPrefix(key), g.accountName))));
             if (exact) {
               billed = round2(billed + a.billed);
               billedClasses.push(a.className);
@@ -1666,6 +1859,9 @@ export const getPayrollCostReport = onCall(
         // byJobOrder is pay-sorted) account-compatible group it matches.
         for (const [key, a] of agg.classAggs) {
           if (usedClassKeys.has(key)) continue;
+          // Explicitly-mapped classes never fuzzy-match elsewhere — if
+          // their mapped row isn't in this range they stay billed-only.
+          if (mappedClassByName.has(key)) continue;
           const seg = normName(key.split(':').pop() ?? key);
           if (!seg || accountNorms.has(seg.replace(/ /g, ''))) continue;
           const prefix = classAcctPrefix(key);
@@ -2009,6 +2205,18 @@ export const getPayrollCostReport = onCall(
       }
     }
 
+    // QBO class catalog + mappings (Greg 2026-08-19) — level 7 (books structure).
+    let classCatalog: Record<string, unknown> | null = null;
+    let classCatalogError: string | null = null;
+    if (request.data?.includeClassCatalog === true) {
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      try {
+        classCatalog = await buildClassCatalog(tenantId, startDate, endDate);
+      } catch (err) {
+        classCatalogError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
     return {
       startDate,
       endDate,
@@ -2023,6 +2231,8 @@ export const getPayrollCostReport = onCall(
       sickLeave,
       i9Status,
       i9StatusError,
+      classCatalog,
+      classCatalogError,
       totals: {
         gross: grand,
         entries: rows.length,

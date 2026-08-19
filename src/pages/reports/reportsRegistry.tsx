@@ -19,6 +19,7 @@ import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
 import EventAvailableOutlinedIcon from '@mui/icons-material/EventAvailableOutlined';
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
+import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 
 export type ReportCategory =
   | 'Payroll'
@@ -103,6 +104,15 @@ export const REPORTS: ReportDef[] = [
     category: 'Finance & receivables',
     minLevel: 7,
     icon: <TrendingUpIcon />,
+  },
+  {
+    slug: 'qbo-classes',
+    title: 'QBO Classes & Mapping',
+    description:
+      'Every QuickBooks class with its billing/expense activity, mapped to HRX job orders and clients — the authoritative link the finance reports use. Add new classes straight into QBO.',
+    category: 'Finance & receivables',
+    minLevel: 7,
+    icon: <AccountTreeOutlinedIcon />,
   },
   {
     slug: 'wc-audit',
