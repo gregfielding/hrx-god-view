@@ -44,7 +44,13 @@ interface AgedRow {
 
 /** Defensive parse of QBO's AgedReceivables report shape:
  *  Columns.Column[].ColTitle for headers; Rows.Row[] with either
- *  ColData[] (customer rows) or Summary.ColData (total rows). */
+ *  ColData[] (customer rows), Summary.ColData (total rows), or a NESTED
+ *  section (Header + Rows + Summary) for a parent customer with QBO
+ *  sub-customers — rendered as one family-total row named after the
+ *  parent (e.g. "RS3 Hospitality"), matching how sub-customers roll up
+ *  to their mapped account everywhere else (RS3=Proof, 2026-08-19).
+ *  Before this, section rows were swallowed by the ^total heuristic and
+ *  the table's rows silently summed short of the grand total. */
 function parseAgedReport(report: Record<string, any> | null): {
   headers: string[];
   rows: AgedRow[];
@@ -57,6 +63,18 @@ function parseAgedReport(report: Record<string, any> | null): {
   const rows: AgedRow[] = [];
   let totals: number[] | null = null;
   for (const r of rawRows) {
+    if (Array.isArray(r.Rows?.Row)) {
+      const name = String(r.Header?.ColData?.[0]?.value ?? '');
+      const sums = Array.isArray(r.Summary?.ColData) ? r.Summary.ColData : null;
+      if (sums) {
+        rows.push({
+          name: name || String(sums[0]?.value ?? '').replace(/^total\s*/i, ''),
+          values: sums.slice(1).map((c: Record<string, any>) => Number(c.value ?? 0) || 0),
+          isTotal: false,
+        });
+      }
+      continue;
+    }
     const colData = Array.isArray(r.ColData)
       ? r.ColData
       : Array.isArray(r.Summary?.ColData)
@@ -69,6 +87,7 @@ function parseAgedReport(report: Record<string, any> | null): {
     if (isTotal) totals = values;
     else rows.push({ name, values, isTotal: false });
   }
+  rows.sort((a, b) => (b.values[b.values.length - 1] ?? 0) - (a.values[a.values.length - 1] ?? 0));
   return { headers, rows, totals };
 }
 
