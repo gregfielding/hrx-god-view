@@ -14,6 +14,7 @@ import RequestQuoteOutlinedIcon from '@mui/icons-material/RequestQuoteOutlined';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import CalculateOutlinedIcon from '@mui/icons-material/CalculateOutlined';
 import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
+import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
 
 export type ReportCategory =
   | 'Payroll'
@@ -71,6 +72,15 @@ export const REPORTS: ReportDef[] = [
     category: 'Payroll',
     minLevel: 6,
     icon: <ListAltOutlinedIcon />,
+  },
+  {
+    slug: 'payroll-journal',
+    title: 'Payroll Journal',
+    description:
+      'Every Everee funding wire split across QBO classes, to the penny — what the bookkeeper enters when classing each wire. The July wire-reconciliation as a standing report.',
+    category: 'Payroll',
+    minLevel: 6,
+    icon: <MenuBookOutlinedIcon />,
   },
   {
     slug: 'job-costing',

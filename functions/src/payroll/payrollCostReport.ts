@@ -672,6 +672,387 @@ async function buildEvereeRegister(
   };
 }
 
+/* -------------------------------------------------------------------------
+ * Payroll Journal by QBO class (Greg 2026-08-19): the July wire-recon
+ * engine (functions/.scratch/build-everee-wire-class-report.ts) as a
+ * standing report — every Everee funding wire in range split across QBO
+ * classes, exactly what the bookkeeper types when classing the wire.
+ * Resolution per earning line: Greg's payroll_class_overrides beat
+ * everything → JO#<n> note tag → note dates × entry index → venue-token
+ * resolver → pay-period fallback. Largest-remainder rounding so splits
+ * sum to each wire to the penny. Class names resolve against QBO's live
+ * Class list (FQN + exists flag) — the stepping stone to auto-writing
+ * the splits into QBO.
+ * ------------------------------------------------------------------------- */
+
+async function buildWireJournal(
+  tenantId: string,
+  startDate: string,
+  endDate: string,
+  hiringEntityId: string | null,
+): Promise<Record<string, unknown>> {
+  const money = (v: unknown): number => {
+    const o = v as { amount?: unknown } | null | undefined;
+    const n = Number((o && typeof o === 'object' ? o.amount : v) ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  // ── JO name maps ──
+  const joNameById = new Map<string, string>();
+  const joNameByNumber = new Map<string, string>();
+  for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+    const snap = await db.collection(`tenants/${tenantId}/${coll}`).get().catch(() => null);
+    if (!snap) continue;
+    snap.forEach((d) => {
+      const j = d.data();
+      const name = trim(j.jobOrderName) || trim(j.title);
+      if (!name) return;
+      if (!joNameById.has(d.id)) joNameById.set(d.id, name);
+      const num = trim(j.jobOrderNumber);
+      if (num && !joNameByNumber.has(num)) joNameByNumber.set(num, name);
+    });
+  }
+
+  // ── Entry index: uid|workDate → JO name. Work precedes funding, so
+  //    index a wide window behind the wire range. ──
+  const idxStart = new Date(Date.parse(startDate) - 60 * 86400000).toISOString().slice(0, 10);
+  const entriesSnap = await db
+    .collection(`tenants/${tenantId}/timesheet_entries`)
+    .where('workDate', '>=', idxStart)
+    .where('workDate', '<=', endDate)
+    .get();
+  const classByWorkerDate = new Map<string, string>();
+  const needAssignment: Array<{ key: string; assignmentId: string }> = [];
+  entriesSnap.forEach((d) => {
+    const e = d.data();
+    if (!['sent_to_everee', 'submitted', 'paid'].includes(trim(e.status))) return;
+    const uid = trim(e.workerId) || trim(e.userId);
+    const wd = trim(e.workDate);
+    if (!uid || !wd) return;
+    const key = `${uid}|${wd}`;
+    const joId = trim(e.jobOrderId);
+    if (joId && joNameById.has(joId)) classByWorkerDate.set(key, joNameById.get(joId)!);
+    else if (trim(e.assignmentId)) needAssignment.push({ key, assignmentId: trim(e.assignmentId) });
+  });
+  const asnIds = Array.from(new Set(needAssignment.map((n) => n.assignmentId)));
+  const joByAsn = new Map<string, string>();
+  for (let i = 0; i < asnIds.length; i += 100) {
+    // eslint-disable-next-line no-await-in-loop
+    const snaps = await db.getAll(...asnIds.slice(i, i + 100).map((id) => db.doc(`tenants/${tenantId}/assignments/${id}`)));
+    snaps.forEach((s) => {
+      if (!s.exists) return;
+      const joId = trim(s.data()?.jobOrderId);
+      if (joId && joNameById.has(joId)) joByAsn.set(s.id, joNameById.get(joId)!);
+    });
+  }
+  for (const n of needAssignment) {
+    if (!classByWorkerDate.has(n.key) && joByAsn.has(n.assignmentId)) {
+      classByWorkerDate.set(n.key, joByAsn.get(n.assignmentId)!);
+    }
+  }
+
+  // ── Venue-token resolver (unique ≥5-char tokens; STOP applies to note
+  //    tokens too — the "Contractor pay"→"Contra Costa" lesson). ──
+  const STOP = new Set(['2026', '2025', 'staffing', 'national', 'account', 'the', 'and', 'week', 'ending', 'hours', 'payment', 'contractor', 'people', 'referral', 'tips', 'plus', 'hourly', 'lead', 'crew', 'event', 'events', 'staff', 'festival', 'worker', 'associate', 'warehouse', 'loader', 'shift', 'payroll', 'select', 'c1', 'llc', 'venue', 'smart', 'venuesmart']);
+  const normText = (x: string): string => x.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const tokenOwner = new Map<string, { cls: string; pri: number } | null>();
+  const addTokens = (label: string, cls: string, pri: number): void => {
+    for (const t of normText(label).split(' ')) {
+      if (t.length < 5 || STOP.has(t)) continue;
+      const cur = tokenOwner.get(t);
+      if (cur === undefined) tokenOwner.set(t, { cls, pri });
+      else if (cur && cur.cls !== cls && cur.pri <= pri) tokenOwner.set(t, null);
+    }
+  };
+  joNameById.forEach((name) => addTokens(name, name, 2));
+  const acctSnap2 = await db.collection(`tenants/${tenantId}/accounts`).get().catch(() => null);
+  if (acctSnap2) {
+    acctSnap2.forEach((d) => {
+      const nm = trim(d.data().accountName) || trim(d.data().name);
+      if (nm) addTokens(nm, nm, 1);
+    });
+  }
+  const vmSnap = await db.collection(`tenants/${tenantId}/payroll_venue_mappings`).get().catch(() => null);
+  if (vmSnap) {
+    vmSnap.forEach((d) => {
+      const m = d.data();
+      const joName = joNameById.get(trim(m.jobOrderId));
+      if (joName && trim(m.venueLabel)) addTokens(trim(m.venueLabel), joName, 3);
+    });
+  }
+  const stemOwner = new Map<string, { cls: string; pri: number } | null>();
+  for (const [t, own] of tokenOwner) {
+    if (!own) continue;
+    const st = t.slice(0, 6);
+    const cur = stemOwner.get(st);
+    if (cur === undefined) stemOwner.set(st, own);
+    else if (cur && cur.cls !== own.cls) stemOwner.set(st, null);
+  }
+  const resolveVenueText = (note: string): string | null => {
+    let best: { cls: string; pri: number; len: number } | null = null;
+    for (const t of normText(note).split(' ')) {
+      if (t.length < 5 || STOP.has(t)) continue;
+      const own = tokenOwner.get(t) ?? stemOwner.get(t.slice(0, 6));
+      if (!own) continue;
+      if (!best || own.pri > best.pri || (own.pri === best.pri && t.length > best.len)) {
+        best = { cls: own.cls, pri: own.pri, len: t.length };
+      }
+    }
+    return best ? best.cls : null;
+  };
+
+  // ── Greg's persisted overrides (payroll_class_overrides) ──
+  const paymentOverrides = new Map<string, string>();
+  const workerOverrides = new Map<string, string>();
+  const ovSnap = await db.collection(`tenants/${tenantId}/payroll_class_overrides`).get().catch(() => null);
+  if (ovSnap) {
+    ovSnap.forEach((d) => {
+      const o = d.data();
+      const cls = trim(o.class);
+      if (!cls) return;
+      if (trim(o.kind) === 'payment' && trim(o.paymentId)) paymentOverrides.set(trim(o.paymentId), cls);
+      if (trim(o.kind) === 'worker' && trim(o.workerName)) {
+        workerOverrides.set(trim(o.workerName).toLowerCase().replace(/\s+/g, ' '), cls);
+      }
+    });
+  }
+
+  // ── Everee payments → funding wires with class shares ──
+  interface WireGroup {
+    key: string;
+    entityId: string;
+    entityName: string;
+    fundingDate: string;
+    total: number;
+    payments: number;
+    classGross: Map<string, number>;
+    unresolvedGross: number;
+  }
+  const groups = new Map<string, WireGroup>();
+  const entitiesSnap2 = await db.collection(`tenants/${tenantId}/entities`).get();
+  for (const entityDoc of entitiesSnap2.docs) {
+    const entityId = entityDoc.id;
+    const entityName = trim(entityDoc.data().name) || entityId;
+    if (/sandbox/i.test(entityId) || /sandbox/i.test(entityName)) continue;
+    if (hiringEntityId && entityId !== hiringEntityId) continue;
+    const config = await getEvereeConfigForEntity(tenantId, entityId);
+    if (!config) continue;
+
+    const seenIds = new Set<string>();
+    for (let page = 0; page < 40; page++) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = (await evereeRequest(
+        config,
+        'GET',
+        `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true`,
+      )) as Record<string, any>;
+      const items = (res.items ?? []) as Array<Record<string, any>>;
+      let fresh = 0;
+      for (const p of items) {
+        const id = trim(p.id);
+        if (!id || seenIds.has(id)) continue;
+        seenIds.add(id);
+        fresh += 1;
+        if (trim(p.status) !== 'PAID') continue;
+        const fundings = ((p.fundingList ?? []) as Array<Record<string, any>>).filter((f) => {
+          const fd = trim(f.fundingDate);
+          return fd >= startDate && fd <= endDate;
+        });
+        if (fundings.length === 0) continue;
+        const uid = trim(p.employee?.externalWorkerId);
+
+        const shares = new Map<string, number>();
+        let resolved = 0;
+        let unresolved = 0;
+        const addShare = (cls: string, amt: number): void => {
+          if (amt <= 0) return;
+          shares.set(cls, (shares.get(cls) ?? 0) + amt);
+          resolved += amt;
+        };
+        for (const el of (p.earningList ?? []) as Array<Record<string, any>>) {
+          const amt = money(el.currentPeriodAmount) || money(el.amounts?.amount);
+          if (amt <= 0) continue;
+          const note = trim(el.note);
+          const joTag = note.match(/JO#(\d+)/);
+          if (joTag && joNameByNumber.has(joTag[1])) {
+            addShare(joNameByNumber.get(joTag[1])!, amt);
+            continue;
+          }
+          const dates = note.match(/\d{4}-\d{2}-\d{2}/g) ?? [];
+          const classes = dates
+            .map((dt) => classByWorkerDate.get(`${uid}|${dt}`))
+            .filter((c): c is string => Boolean(c));
+          if (classes.length > 0) {
+            const per = amt / classes.length;
+            classes.forEach((c) => addShare(c, per));
+            continue;
+          }
+          const venueCls = resolveVenueText(note);
+          if (venueCls) addShare(venueCls, amt);
+          else unresolved += amt;
+        }
+        // Pay-period fallback (AD_HOC often has no period → ±10d window).
+        if (unresolved > 0) {
+          let ps = trim(p.payPeriodStartDate);
+          let pe = trim(p.payPeriodEndDate);
+          if (!ps || !pe) {
+            const anchor = trim(p.payDate) || trim(p.forDate);
+            if (anchor) {
+              const t0 = Date.parse(anchor);
+              ps = new Date(t0 - 10 * 86400000).toISOString().slice(0, 10);
+              pe = new Date(t0 + 2 * 86400000).toISOString().slice(0, 10);
+            }
+          }
+          const periodClasses = new Map<string, number>();
+          if (uid && ps && pe) {
+            for (const [key, cls] of classByWorkerDate) {
+              const [kUid, kDate] = key.split('|');
+              if (kUid === uid && kDate >= ps && kDate <= pe) {
+                periodClasses.set(cls, (periodClasses.get(cls) ?? 0) + 1);
+              }
+            }
+          }
+          if (periodClasses.size > 0) {
+            const totalN = Array.from(periodClasses.values()).reduce((s, n) => s + n, 0);
+            for (const [cls, n] of periodClasses) addShare(cls, (unresolved * n) / totalN);
+            unresolved = 0;
+          }
+        }
+        // Greg's explicit answer beats every heuristic.
+        const ov =
+          paymentOverrides.get(id) ??
+          workerOverrides.get(trim(p.payeeDisplayFullName).toLowerCase().replace(/\s+/g, ' '));
+        if (ov) {
+          shares.clear();
+          shares.set(ov, 1);
+          resolved = 1;
+          unresolved = 0;
+        }
+
+        for (const f of fundings) {
+          const key = `${entityId}__${trim(f.companyFundingId) || 'none'}`;
+          let g = groups.get(key);
+          if (!g) {
+            g = {
+              key,
+              entityId,
+              entityName,
+              fundingDate: trim(f.fundingDate),
+              total: 0,
+              payments: 0,
+              classGross: new Map(),
+              unresolvedGross: 0,
+            };
+            groups.set(key, g);
+          }
+          const fAmt = money(f.amount);
+          g.total = round2(g.total + fAmt);
+          g.payments += 1;
+          const denom = resolved + unresolved;
+          if (denom <= 0) g.unresolvedGross += fAmt;
+          else {
+            for (const [cls, sAmt] of shares) {
+              g.classGross.set(cls, (g.classGross.get(cls) ?? 0) + (fAmt * sAmt) / denom);
+            }
+            g.unresolvedGross += (fAmt * unresolved) / denom;
+          }
+        }
+      }
+      const totalPages = Number(res.totalPages ?? 1);
+      if (fresh === 0 || page >= totalPages - 1) break;
+    }
+  }
+
+  // ── QBO class resolution (leaf/FQN + exists flag) ──
+  let qboClasses: Array<{ leaf: string; fqn: string }> = [];
+  try {
+    const classRes = await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class WHERE Active = true MAXRESULTS 1000');
+    qboClasses = ((classRes.Class ?? []) as Array<Record<string, any>>).map((c) => ({
+      leaf: trim(c.Name).toLowerCase(),
+      fqn: trim(c.FullyQualifiedName) || trim(c.Name),
+    }));
+  } catch {
+    // QBO down/unconnected — journal still works, classes just unresolved.
+  }
+  const resolveClassFqn = (name: string): { fqn: string; exists: boolean } => {
+    const n = name.toLowerCase();
+    const exact = qboClasses.filter((c) => c.leaf === n || c.fqn.toLowerCase() === n);
+    if (exact.length >= 1) return { fqn: exact[0].fqn, exists: true };
+    const partial = qboClasses.filter((c) => c.leaf.includes(n) || n.includes(c.leaf));
+    if (partial.length === 1) return { fqn: partial[0].fqn, exists: true };
+    return { fqn: name, exists: false };
+  };
+
+  // ── Wires out, largest-remainder rounding so splits == wire total ──
+  const wires = Array.from(groups.values())
+    .sort((a, b) => b.fundingDate.localeCompare(a.fundingDate))
+    .map((g) => {
+      const rawSplits: Array<{ label: string; raw: number }> = Array.from(g.classGross.entries()).map(
+        ([label, raw]) => ({ label, raw }),
+      );
+      if (g.unresolvedGross > 0.005) rawSplits.push({ label: 'Unattributed', raw: g.unresolvedGross });
+      const floored = rawSplits.map((s) => ({ ...s, cents: Math.floor(s.raw * 100) }));
+      let remainder = Math.round(g.total * 100) - floored.reduce((s, x) => s + x.cents, 0);
+      const byFrac = [...floored].sort((a, b) => (b.raw * 100 - b.cents) - (a.raw * 100 - a.cents));
+      for (const s of byFrac) {
+        if (remainder <= 0) break;
+        s.cents += 1;
+        remainder -= 1;
+      }
+      const splits = floored
+        .map((s) => {
+          const q = resolveClassFqn(s.label);
+          return {
+            class: s.label,
+            qboClass: s.label === 'Unattributed' ? null : q.fqn,
+            qboClassExists: s.label === 'Unattributed' ? false : q.exists,
+            amount: s.cents / 100,
+            pct: g.total > 0 ? round2((s.cents / 100 / g.total) * 100) : 0,
+          };
+        })
+        .sort((a, b) => b.amount - a.amount);
+      return {
+        fundingId: g.key.split('__').pop(),
+        entityId: g.entityId,
+        entityName: g.entityName,
+        fundingDate: g.fundingDate,
+        amount: g.total,
+        payments: g.payments,
+        unattributed: round2(splits.find((s) => s.class === 'Unattributed')?.amount ?? 0),
+        splits,
+      };
+    });
+
+  const classTotals = new Map<string, number>();
+  for (const w of wires) {
+    for (const s of w.splits) classTotals.set(s.class, round2((classTotals.get(s.class) ?? 0) + s.amount));
+  }
+  const byClass = Array.from(classTotals.entries())
+    .map(([cls, amount]) => {
+      const q = resolveClassFqn(cls);
+      return {
+        class: cls,
+        qboClass: cls === 'Unattributed' ? null : q.fqn,
+        qboClassExists: cls === 'Unattributed' ? false : q.exists,
+        amount,
+      };
+    })
+    .sort((a, b) => b.amount - a.amount);
+
+  const totalWired = round2(wires.reduce((s, w) => s + w.amount, 0));
+  const totalUnattributed = round2(wires.reduce((s, w) => s + w.unattributed, 0));
+  return {
+    totals: {
+      wired: totalWired,
+      wires: wires.length,
+      unattributed: totalUnattributed,
+      attributedPct: totalWired > 0 ? round2(((totalWired - totalUnattributed) / totalWired) * 100) : 0,
+    },
+    wires,
+    byClass,
+  };
+}
+
 export const getPayrollCostReport = onCall(
   { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
   async (request) => {
@@ -1421,6 +1802,17 @@ export const getPayrollCostReport = onCall(
       }
     }
 
+    // Payroll journal by QBO class (Greg 2026-08-19) — wire class splits.
+    let wireJournal: Record<string, unknown> | null = null;
+    let wireJournalError: string | null = null;
+    if (request.data?.includeWireJournal === true) {
+      try {
+        wireJournal = await buildWireJournal(tenantId, startDate, endDate, hiringEntityId || null);
+      } catch (err) {
+        wireJournalError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
     return {
       startDate,
       endDate,
@@ -1429,6 +1821,8 @@ export const getPayrollCostReport = onCall(
       billingError,
       evereeRegister,
       evereeRegisterError,
+      wireJournal,
+      wireJournalError,
       totals: {
         gross: grand,
         entries: rows.length,
