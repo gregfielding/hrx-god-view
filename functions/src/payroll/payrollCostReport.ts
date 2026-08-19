@@ -1053,6 +1053,101 @@ export async function buildWireJournal(
   };
 }
 
+/* -------------------------------------------------------------------------
+ * I-9 / Onboarding Completion Status (Compliance reports, Greg
+ * 2026-08-19): reads the readiness mirror on everee_workers linkage
+ * docs (i9SignedAt = Section 1 / worker side, employerI9SignedAt or
+ * documentsVerifiedByCompany = Section 2 / employer side,
+ * hasWorkbrightDocs = WorkBright pipeline docs present). NOTE: E-Verify
+ * case status is NOT available — HRX E-Verify processing disabled
+ * 2026-06-30 and the web-services vendor connection is pending.
+ * ------------------------------------------------------------------------- */
+
+async function buildI9Status(
+  tenantId: string,
+  hiringEntityId: string | null,
+): Promise<Record<string, unknown>> {
+  const linkSnap = await db.collection(`tenants/${tenantId}/everee_workers`).get();
+  interface I9Row {
+    uid: string;
+    entityId: string;
+    workerName: string | null;
+    hasWorkbrightDocs: boolean;
+    i9SignedAt: string | null;
+    employerI9SignedAt: string | null;
+    documentsVerifiedByCompany: boolean;
+    onboardingStatus: string | null;
+    lifecycleStatus: string | null;
+    status: 'complete' | 'pending_employer' | 'pending_worker' | 'not_started';
+  }
+  const rows: I9Row[] = [];
+  linkSnap.forEach((d) => {
+    const [entityId, uid] = d.id.includes('__') ? [d.id.split('__')[0], d.id.split('__').slice(1).join('__')] : ['', d.id];
+    if (!uid) return;
+    if (/sandbox/i.test(entityId)) return;
+    if (hiringEntityId && entityId !== hiringEntityId) return;
+    const v = d.data();
+    if (trim(v.status) === 'retired_duplicate') return;
+    const m = (v.mirror ?? {}) as Record<string, any>;
+    if (m.i9Applicable === false) return; // contractors — no I-9
+    const tsIso = (x: unknown): string | null =>
+      x && typeof (x as any).toDate === 'function' ? (x as any).toDate().toISOString().slice(0, 10) : null;
+    const i9SignedAt = tsIso(m.i9SignedAt);
+    const employerI9SignedAt = tsIso(m.employerI9SignedAt);
+    const verified = m.documentsVerifiedByCompany === true;
+    const hasDocs = m.hasWorkbrightDocs === true;
+    let status: I9Row['status'];
+    if ((i9SignedAt || hasDocs) && (employerI9SignedAt || verified)) status = 'complete';
+    else if (i9SignedAt || hasDocs) status = 'pending_employer';
+    else if (trim(m.onboardingStatus) === 'IN_PROGRESS') status = 'pending_worker';
+    else status = 'not_started';
+    rows.push({
+      uid,
+      entityId,
+      workerName: null,
+      hasWorkbrightDocs: hasDocs,
+      i9SignedAt,
+      employerI9SignedAt,
+      documentsVerifiedByCompany: verified,
+      onboardingStatus: trim(m.onboardingStatus) || null,
+      lifecycleStatus: trim(m.lifecycleStatus) || null,
+      status,
+    });
+  });
+
+  const uids = Array.from(new Set(rows.map((r) => r.uid)));
+  const names = new Map<string, string>();
+  for (let i = 0; i < uids.length; i += 100) {
+    // eslint-disable-next-line no-await-in-loop
+    const snaps = await db.getAll(...uids.slice(i, i + 100).map((id) => db.doc(`users/${id}`)));
+    snaps.forEach((s) => {
+      if (!s.exists) return;
+      const u = s.data() as Record<string, unknown>;
+      const n = `${trim(u.firstName)} ${trim(u.lastName)}`.trim() || trim(u.displayName);
+      if (n) names.set(s.id, n);
+    });
+  }
+  rows.forEach((r) => {
+    r.workerName = names.get(r.uid) ?? null;
+  });
+  const order: Record<I9Row['status'], number> = { pending_employer: 0, pending_worker: 1, not_started: 2, complete: 3 };
+  rows.sort((a, b) => order[a.status] - order[b.status] || (a.workerName ?? '').localeCompare(b.workerName ?? ''));
+
+  const count = (s: I9Row['status']): number => rows.filter((r) => r.status === s).length;
+  return {
+    totals: {
+      workers: rows.length,
+      complete: count('complete'),
+      pendingEmployer: count('pending_employer'),
+      pendingWorker: count('pending_worker'),
+      notStarted: count('not_started'),
+    },
+    everifyNote:
+      'E-Verify case status unavailable: HRX E-Verify processing disabled 2026-06-30; web-services vendor connection pending.',
+    rows,
+  };
+}
+
 export const getPayrollCostReport = onCall(
   { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
   async (request) => {
@@ -1813,6 +1908,107 @@ export const getPayrollCostReport = onCall(
       }
     }
 
+    // Compliance reports (Greg 2026-08-19) — computed from the entry rows
+    // this callable already built for the range.
+    let acaLookback: Record<string, unknown> | null = null;
+    if (request.data?.includeAcaLookback === true) {
+      // ACA applies to W-2 employees only — skip contractor entities.
+      const entSnap = await db.collection(`tenants/${tenantId}/entities`).get();
+      const contractorEntities = new Set(
+        entSnap.docs
+          .filter(
+            (d) =>
+              trim(d.data().workerType).toLowerCase() === 'contractor' || /events|workforce/i.test(d.id),
+          )
+          .map((d) => d.id),
+      );
+      const monthsInRange = new Set<string>();
+      for (let t0 = Date.parse(startDate); t0 <= Date.parse(endDate); t0 += 86400000) {
+        monthsInRange.add(new Date(t0).toISOString().slice(0, 7));
+      }
+      const perWorker = new Map<string, { name: string | null; months: Map<string, number>; total: number }>();
+      for (const r of rows) {
+        if (r.entryId.startsWith('offcycle:')) continue;
+        if (contractorEntities.has(r.hiringEntityId)) continue;
+        if (!r.workerId || !r.hours) continue;
+        const m = r.workDate.slice(0, 7);
+        const w = perWorker.get(r.workerId) ?? { name: r.workerName, months: new Map(), total: 0 };
+        if (!w.name && r.workerName) w.name = r.workerName;
+        w.months.set(m, round2((w.months.get(m) ?? 0) + r.hours));
+        w.total = round2(w.total + r.hours);
+        perWorker.set(r.workerId, w);
+      }
+      const nMonths = Math.max(1, monthsInRange.size);
+      const acaRows = Array.from(perWorker.entries())
+        .map(([uid, w]) => {
+          const ftMonths = Array.from(w.months.values()).filter((h) => h >= 130).length;
+          const avgPerMonth = round2(w.total / nMonths);
+          return {
+            workerId: uid,
+            workerName: w.name,
+            totalHours: w.total,
+            activeMonths: w.months.size,
+            ftMonths,
+            avgPerMonth,
+            status: avgPerMonth >= 130 ? 'meets_ft' : avgPerMonth >= 110 ? 'near' : 'below',
+          };
+        })
+        .sort((a, b) => b.totalHours - a.totalHours)
+        .slice(0, 3000);
+      acaLookback = {
+        monthsMeasured: nMonths,
+        totals: {
+          workers: acaRows.length,
+          meetsFt: acaRows.filter((r) => r.status === 'meets_ft').length,
+          near: acaRows.filter((r) => r.status === 'near').length,
+        },
+        rows: acaRows,
+      };
+    }
+
+    let sickLeave: Record<string, unknown> | null = null;
+    if (request.data?.includeSickLeave === true) {
+      const byStateWorker = new Map<string, { state: string; workerId: string; name: string | null; hours: number }>();
+      for (const r of rows) {
+        if (r.entryId.startsWith('offcycle:')) continue;
+        const st = trim(r.workState ?? '');
+        if (!st || !r.workerId || !r.hours) continue;
+        const key = `${st}|${r.workerId}`;
+        const w = byStateWorker.get(key) ?? { state: st, workerId: r.workerId, name: r.workerName, hours: 0 };
+        if (!w.name && r.workerName) w.name = r.workerName;
+        w.hours = round2(w.hours + r.hours);
+        byStateWorker.set(key, w);
+      }
+      const byState = new Map<string, { state: string; workers: number; hours: number }>();
+      for (const w of byStateWorker.values()) {
+        const s = byState.get(w.state) ?? { state: w.state, workers: 0, hours: 0 };
+        s.workers += 1;
+        s.hours = round2(s.hours + w.hours);
+        byState.set(w.state, s);
+      }
+      sickLeave = {
+        // 1 hr accrued per 30 worked — the CA-style baseline. Caps and
+        // local ordinances vary; the report is the accrual BASIS.
+        byState: Array.from(byState.values())
+          .map((s) => ({ ...s, estAccruedHours: round2(s.hours / 30) }))
+          .sort((a, b) => b.hours - a.hours),
+        workers: Array.from(byStateWorker.values())
+          .map((w) => ({ ...w, estAccruedHours: round2(w.hours / 30) }))
+          .sort((a, b) => b.hours - a.hours)
+          .slice(0, 2000),
+      };
+    }
+
+    let i9Status: Record<string, unknown> | null = null;
+    let i9StatusError: string | null = null;
+    if (request.data?.includeI9Status === true) {
+      try {
+        i9Status = await buildI9Status(tenantId, hiringEntityId || null);
+      } catch (err) {
+        i9StatusError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
     return {
       startDate,
       endDate,
@@ -1823,6 +2019,10 @@ export const getPayrollCostReport = onCall(
       evereeRegisterError,
       wireJournal,
       wireJournalError,
+      acaLookback,
+      sickLeave,
+      i9Status,
+      i9StatusError,
       totals: {
         gross: grand,
         entries: rows.length,

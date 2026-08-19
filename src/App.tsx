@@ -187,6 +187,9 @@ const JobCostingReportPage = lazy(() => import('./pages/reports/JobCostingReport
 const PayrollRegisterPage = lazy(() => import('./pages/reports/PayrollRegisterPage'));
 const PayrollJournalPage = lazy(() => import('./pages/reports/PayrollJournalPage'));
 const WcAuditReportPage = lazy(() => import('./pages/reports/WcAuditReportPage'));
+const I9StatusReportPage = lazy(() => import('./pages/reports/I9StatusReportPage'));
+const AcaLookbackReportPage = lazy(() => import('./pages/reports/AcaLookbackReportPage'));
+const TaxSickLeaveReportPage = lazy(() => import('./pages/reports/TaxSickLeaveReportPage'));
 const FinancesBudgetingPage = lazy(() => import('./pages/FinancesBudgetingPage'));
 const SchedulingHealthPage = lazy(() => import('./pages/SchedulingHealthPage'));
 const WhosWorkingPage = lazy(() => import('./pages/WhosWorkingPage'));
@@ -838,6 +841,25 @@ function App() {
             </ProtectedRoute>
           }
         />
+        {['i9-status', 'aca-lookback', 'tax-liability'].map((slug) => (
+          <Route
+            key={slug}
+            path={`reports/${slug}`}
+            element={
+              <ProtectedRoute requiredSecurityLevel="6">
+                <RecruiterAccessGuard>
+                  {slug === 'i9-status' ? (
+                    <I9StatusReportPage />
+                  ) : slug === 'aca-lookback' ? (
+                    <AcaLookbackReportPage />
+                  ) : (
+                    <TaxSickLeaveReportPage />
+                  )}
+                </RecruiterAccessGuard>
+              </ProtectedRoute>
+            }
+          />
+        ))}
         <Route
           path="reports/wc-audit"
           element={

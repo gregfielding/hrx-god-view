@@ -16,6 +16,9 @@ import CalculateOutlinedIcon from '@mui/icons-material/CalculateOutlined';
 import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
 import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
+import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
+import EventAvailableOutlinedIcon from '@mui/icons-material/EventAvailableOutlined';
+import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
 
 export type ReportCategory =
   | 'Payroll'
@@ -120,6 +123,37 @@ export const REPORTS: ReportDef[] = [
     icon: <RequestQuoteOutlinedIcon />,
   },
 ];
+
+export const COMPLIANCE_REPORTS: ReportDef[] = [
+  {
+    slug: 'i9-status',
+    title: 'I-9 / Onboarding Status',
+    description:
+      "Every I-9-applicable worker's WorkBright/Everee onboarding state — Section 1, Section 2, and company verification. Staffing's #1 audit exposure.",
+    category: 'Compliance',
+    minLevel: 6,
+    icon: <BadgeOutlinedIcon />,
+  },
+  {
+    slug: 'aca-lookback',
+    title: 'ACA Hours Lookback',
+    description:
+      'Hours per W-2 worker per month over a measurement period — who averages ≥130 hrs/month (ACA full-time) and who is approaching. Variable-hour event staff are exactly this population.',
+    category: 'Compliance',
+    minLevel: 6,
+    icon: <EventAvailableOutlinedIcon />,
+  },
+  {
+    slug: 'tax-liability',
+    title: 'Tax & Sick-Leave Liability',
+    description:
+      'Verification views over Everee-held data: employee withholding + employer taxes by month, and sick-leave accrual basis (hours by state, 1:30 estimate).',
+    category: 'Compliance',
+    minLevel: 6,
+    icon: <AccountBalanceOutlinedIcon />,
+  },
+];
+REPORTS.push(...COMPLIANCE_REPORTS);
 
 export function reportsVisibleAtLevel(level: number): ReportDef[] {
   return REPORTS.filter((r) => level >= r.minLevel);
