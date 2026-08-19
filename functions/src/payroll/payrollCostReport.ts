@@ -774,19 +774,23 @@ export const getPayrollCostReport = onCall(
           const tb = new Set(b.split(' ').filter(Boolean));
           return ta.length > 0 && ta.every((t) => tb.has(t));
         };
+        // Account comparisons are SPACE-INSENSITIVE ("Venue Smart" class
+        // prefix vs "Venuesmart LLC National" account) — squash to one
+        // token before containment checks.
+        const squash = (s: string): string => normName(s).replace(/ /g, '');
         const classAcctPrefix = (key: string): string => {
           const i = key.lastIndexOf(':');
-          return i > 0 ? normName(key.slice(0, i)) : '';
+          return i > 0 ? squash(key.slice(0, i)) : '';
         };
-        // Norms of every pay-side account — a bare account-named class
-        // ("Venue Smart", "Black Caviar") stays billed-only rather than
-        // glomming onto whichever of that client's JOs sorts first.
+        // Squashed norms of every pay-side account — a bare account-named
+        // class ("Venue Smart", "Black Caviar") stays billed-only rather
+        // than glomming onto whichever of that client's JOs sorts first.
         const accountNorms = new Set(
-          byJobOrder.map((g) => normName(g.accountName ?? '')).filter(Boolean),
+          byJobOrder.map((g) => squash(g.accountName ?? '')).filter(Boolean),
         );
         const acctCompatible = (prefix: string, accountName: string | null): boolean => {
           if (!prefix) return true;
-          const acct = normName(accountName ?? '');
+          const acct = squash(accountName ?? '');
           if (!acct) return true;
           return acct.includes(prefix) || prefix.includes(acct);
         };
@@ -825,7 +829,7 @@ export const getPayrollCostReport = onCall(
         for (const [key, a] of agg.classAggs) {
           if (usedClassKeys.has(key)) continue;
           const seg = normName(key.split(':').pop() ?? key);
-          if (!seg || accountNorms.has(seg)) continue;
+          if (!seg || accountNorms.has(seg.replace(/ /g, ''))) continue;
           const prefix = classAcctPrefix(key);
           const hit = gmByJobOrder.find((g) => {
             if (!acctCompatible(prefix, g.accountName)) return false;

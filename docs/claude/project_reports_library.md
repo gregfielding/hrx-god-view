@@ -31,7 +31,26 @@ Greg's directive (2026-08-19): centralize ALL reports on one index page.
 |---|---|---|---|
 | payroll | Payroll Cost Report | 6 | getPayrollCostReport (timesheet_entries → Everee) |
 | workers-comp | Workers' Comp Wage Report | 6 | same callable, WC class-code grouping |
+| gross-margin | Gross Margin | 7 | getPayrollCostReport + includeBilling:true (live QBO invoices) |
 | accounts-receivable | A/R Aging | 7 | getQboDashboard (QBO AgedReceivables cache) |
+
+**Conventions (Greg 2026-08-19):** every report that can be entity-scoped
+gets a "Hiring entity" filter at the top (results below narrow to it).
+
+**Gross-margin mechanics:** bill side = live QBO invoice query (the
+per-account caches store headers only — no Line/ClassRef); per-class
+dollars come from pre-tax line amounts, per-customer from header totals.
+Class↔JO matching: exact (Account:Name) → fuzzy (substring ≥5 chars OR
+token-subset either way, MN/KC abbreviation expansion), with
+SPACE-INSENSITIVE account-prefix compatibility ("Venue Smart" class
+prefix vs "Venuesmart LLC National") so same-named JOs under different
+clients can't cross-match; bare account-named classes stay billed-only.
+Under an entity filter, unmatched billed-only classes and pay-less
+customers are EXCLUDED (invoices carry no HRX entity — showing them
+would leak the other entity's billing). Burden is a client-side
+adjustable % of pay (default 12). ☠️ Month-boundary: billed uses invoice
+TxnDate, pay uses workDate — big events (Lollapalooza) often invoice the
+month after the work, so single-month job rows can look wildly negative.
 
 ## Researched roadmap (2026-08-19 platform survey)
 
@@ -45,10 +64,8 @@ the industry's most-demanded and the ones only HRX can produce for C1.
 
 Priority list (⭐ = top-12 pick; "direct" = data already in HRX):
 
-1. ⭐ **Gross Margin by Client/Venue/JO** — bill (QBO invoices) minus pay
-   (Everee) minus burden per job order. THE staffing report (Bullhorn/
-   TempWorks/Avionté all ship it). Direct: join existing payroll-cost
-   report with QBO invoice spine on job order/customer.
+1. ⭐ **Gross Margin by Client/Venue/JO** — ✅ SHIPPED 2026-08-19 as
+   /reports/gross-margin (see mechanics above).
 2. ⭐ **Unbilled Revenue / WIP** — approved `timesheet_entries` hours not
    yet on a QBO invoice. Leakage detector. Direct.
 3. ⭐ **Payroll-Paid vs Invoiced (cash-flow gap)** — per client: paid to
