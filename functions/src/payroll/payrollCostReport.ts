@@ -685,7 +685,7 @@ async function buildEvereeRegister(
  * the splits into QBO.
  * ------------------------------------------------------------------------- */
 
-async function buildWireJournal(
+export async function buildWireJournal(
   tenantId: string,
   startDate: string,
   endDate: string,

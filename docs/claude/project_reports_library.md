@@ -107,3 +107,12 @@ free), EEO-1 (needs demographic capture), new-hire reporting
 verification. Skip unless circumstances change: certified payroll
 WH-347 (only for prevailing-wage work), minor work permits, NY
 spread-of-hours.
+
+**payroll-journal (live 2026-08-19):** same callable + includeWireJournal
+— the wire-recon engine ported server-side (overrides → JO# tags → entry
+index → venue tokens → period fallback; largest-remainder rounding;
+funding-date range = bank view). Verified vs July: 31 wires, $450,087.80,
+100% attributed, every wire's splits sum exact. QBO Class list resolves
+names to FQN with a NOT-IN-QBO flag — the auto-write step only needs a
+Purchase-update writer on top of these splits. Payroll roadmap #5/#6/#7
+ALL SHIPPED.
