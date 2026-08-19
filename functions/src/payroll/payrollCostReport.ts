@@ -22,6 +22,8 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
 import { qboQuery } from '../integrations/quickbooks/qboAuth';
+import { evereeRequest } from '../integrations/everee/evereeHttp';
+import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -458,6 +460,216 @@ interface GroupTotals {
   hours: number;
   total: number;
   pct: number;
+}
+
+/* -------------------------------------------------------------------------
+ * Payroll Register (Greg 2026-08-19): the settled truth from Everee's
+ * /api/v2/payments — one row per worker × pay run with gross, net, and
+ * the funding (employer cash) that grouped into each ACH wire. This is
+ * the audit surface HRX's own entry-based numbers reconcile against.
+ * ☠️ Real paging params are page/size (page-number/page-size silently
+ * ignored) — dedupe by id, stop at totalPages (see docs/claude).
+ * ------------------------------------------------------------------------- */
+
+interface RegisterRow {
+  entityId: string;
+  entityName: string;
+  paymentId: string;
+  payDate: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  workerUid: string;
+  workerName: string | null;
+  gross: number;
+  net: number;
+  funding: number;
+  status: string | null;
+  depositStatus: string | null;
+}
+
+async function buildEvereeRegister(
+  tenantId: string,
+  startDate: string,
+  endDate: string,
+  hiringEntityId: string | null,
+): Promise<Record<string, unknown>> {
+  const money = (v: unknown): number => {
+    const o = v as { amount?: unknown } | null | undefined;
+    const n = Number((o && typeof o === 'object' ? o.amount : v) ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const entitiesSnap = await db.collection(`tenants/${tenantId}/entities`).get();
+  const rows: RegisterRow[] = [];
+  interface Wire {
+    fundingId: string;
+    entityId: string;
+    entityName: string;
+    fundingDate: string | null;
+    amount: number;
+    payments: number;
+  }
+  const wireMap = new Map<string, Wire>();
+
+  for (const entityDoc of entitiesSnap.docs) {
+    const entityId = entityDoc.id;
+    const entityName = trim(entityDoc.data().name) || entityId;
+    if (/sandbox/i.test(entityId) || /sandbox/i.test(entityName)) continue;
+    if (hiringEntityId && entityId !== hiringEntityId) continue;
+    const config = await getEvereeConfigForEntity(tenantId, entityId);
+    if (!config) continue;
+
+    const seen = new Set<string>();
+    for (let page = 0; page < 40; page++) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = (await evereeRequest(
+        config,
+        'GET',
+        `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true`,
+      )) as Record<string, any>;
+      const items = (res.items ?? []) as Array<Record<string, any>>;
+      let fresh = 0;
+      for (const p of items) {
+        const id = trim(p.id);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        fresh += 1;
+        const payDate = trim(p.payDate) || trim(p.forDate) || null;
+        if (!payDate || payDate < startDate || payDate > endDate) continue;
+
+        const fundings = (p.fundingList ?? []) as Array<Record<string, any>>;
+        let funding = 0;
+        for (const f of fundings) {
+          const amt = money(f.amount);
+          funding = round2(funding + amt);
+          const fid = trim(f.companyFundingId);
+          if (!fid) continue;
+          const w = wireMap.get(fid) ?? {
+            fundingId: fid,
+            entityId,
+            entityName,
+            fundingDate: trim(f.fundingDate) || null,
+            amount: 0,
+            payments: 0,
+          };
+          w.amount = round2(w.amount + amt);
+          w.payments += 1;
+          wireMap.set(fid, w);
+        }
+
+        const emp = (p.employee ?? {}) as Record<string, any>;
+        const nameFromPayment =
+          `${trim(emp.firstName)} ${trim(emp.lastName)}`.trim() || trim(emp.displayName) || null;
+        rows.push({
+          entityId,
+          entityName,
+          paymentId: id,
+          payDate,
+          periodStart: trim(p.payPeriodStartDate) || null,
+          periodEnd: trim(p.payPeriodEndDate) || null,
+          workerUid: trim(emp.externalWorkerId),
+          workerName: nameFromPayment,
+          gross: money(p.grossEarnings),
+          net: money(p.netEarnings),
+          funding,
+          status: trim(p.status) || null,
+          depositStatus: trim(p.depositStatus) || null,
+        });
+      }
+      const totalPages = Number(res.totalPages ?? 1);
+      if (fresh === 0 || page >= totalPages - 1) break;
+    }
+  }
+
+  // Name fill: externalWorkerId is an HRX uid for most workers, an
+  // Everee UUID for the drifted waves — the everee_workers linkage docs
+  // reverse-map those (established two-key convention).
+  const unnamed = rows.filter((r) => !r.workerName && r.workerUid);
+  if (unnamed.length > 0) {
+    const linkSnap = await db.collection(`tenants/${tenantId}/everee_workers`).get();
+    const uidByEvereeId = new Map<string, string>();
+    linkSnap.forEach((d) => {
+      const v = d.data();
+      const evId = trim(v.evereeWorkerId);
+      const uid = d.id.includes('__') ? d.id.split('__').pop()! : trim(v.uid);
+      if (evId && uid) uidByEvereeId.set(evId, uid);
+    });
+    const uidOf = (key: string): string => uidByEvereeId.get(key) ?? key;
+    const uids = Array.from(new Set(unnamed.map((r) => uidOf(r.workerUid)))).filter(Boolean);
+    const names = new Map<string, string>();
+    for (let i = 0; i < uids.length; i += 100) {
+      const chunk = uids.slice(i, i + 100);
+      // eslint-disable-next-line no-await-in-loop
+      const snaps = await db.getAll(...chunk.map((id) => db.doc(`users/${id}`)));
+      snaps.forEach((s) => {
+        if (!s.exists) return;
+        const u = s.data() as Record<string, unknown>;
+        const n = `${trim(u.firstName)} ${trim(u.lastName)}`.trim() || trim(u.displayName);
+        if (n) names.set(s.id, n);
+      });
+    }
+    rows.forEach((r) => {
+      if (!r.workerName && r.workerUid) r.workerName = names.get(uidOf(r.workerUid)) ?? null;
+    });
+  }
+
+  rows.sort((a, b) => String(b.payDate).localeCompare(String(a.payDate)) || (a.workerName ?? '').localeCompare(b.workerName ?? ''));
+
+  // Pay-run rollup: (entity, pay date) — Everee funds per pay run, so
+  // this is the wire-shaped grouping the bookkeeper reconciles.
+  interface PayRun {
+    entityId: string;
+    entityName: string;
+    payDate: string | null;
+    payments: number;
+    workers: number;
+    gross: number;
+    net: number;
+    funding: number;
+  }
+  const runMap = new Map<string, PayRun & { workerSet: Set<string> }>();
+  for (const r of rows) {
+    const key = `${r.entityId}|${r.payDate}`;
+    const g = runMap.get(key) ?? {
+      entityId: r.entityId,
+      entityName: r.entityName,
+      payDate: r.payDate,
+      payments: 0,
+      workers: 0,
+      gross: 0,
+      net: 0,
+      funding: 0,
+      workerSet: new Set<string>(),
+    };
+    g.payments += 1;
+    g.gross = round2(g.gross + r.gross);
+    g.net = round2(g.net + r.net);
+    g.funding = round2(g.funding + r.funding);
+    if (r.workerUid) g.workerSet.add(r.workerUid);
+    runMap.set(key, g);
+  }
+  const byPayRun = Array.from(runMap.values())
+    .map(({ workerSet, ...g }) => ({ ...g, workers: workerSet.size }))
+    .sort((a, b) => String(b.payDate).localeCompare(String(a.payDate)));
+
+  const byWire = Array.from(wireMap.values()).sort((a, b) =>
+    String(b.fundingDate).localeCompare(String(a.fundingDate)),
+  );
+
+  const MAX_REGISTER_ROWS = 15000;
+  return {
+    totals: {
+      gross: round2(rows.reduce((s, r) => s + r.gross, 0)),
+      net: round2(rows.reduce((s, r) => s + r.net, 0)),
+      funding: round2(rows.reduce((s, r) => s + r.funding, 0)),
+      payments: rows.length,
+      workers: new Set(rows.map((r) => r.workerUid).filter(Boolean)).size,
+    },
+    truncated: rows.length > MAX_REGISTER_ROWS,
+    rows: rows.slice(0, MAX_REGISTER_ROWS),
+    byPayRun,
+    byWire,
+  };
 }
 
 export const getPayrollCostReport = onCall(
@@ -1198,12 +1410,25 @@ export const getPayrollCostReport = onCall(
       }
     }
 
+    // Everee payroll register (Greg 2026-08-19) — same books gate (6+).
+    let evereeRegister: Record<string, unknown> | null = null;
+    let evereeRegisterError: string | null = null;
+    if (request.data?.includeEvereeRegister === true) {
+      try {
+        evereeRegister = await buildEvereeRegister(tenantId, startDate, endDate, hiringEntityId || null);
+      } catch (err) {
+        evereeRegisterError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
     return {
       startDate,
       endDate,
       hiringEntityId: hiringEntityId || null,
       billing,
       billingError,
+      evereeRegister,
+      evereeRegisterError,
       totals: {
         gross: grand,
         entries: rows.length,

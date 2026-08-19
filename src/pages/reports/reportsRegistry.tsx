@@ -13,6 +13,7 @@ import HealthAndSafetyOutlinedIcon from '@mui/icons-material/HealthAndSafetyOutl
 import RequestQuoteOutlinedIcon from '@mui/icons-material/RequestQuoteOutlined';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import CalculateOutlinedIcon from '@mui/icons-material/CalculateOutlined';
+import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
 
 export type ReportCategory =
   | 'Payroll'
@@ -61,6 +62,15 @@ export const REPORTS: ReportDef[] = [
     category: "Workers' comp & insurance",
     minLevel: 6,
     icon: <HealthAndSafetyOutlinedIcon />,
+  },
+  {
+    slug: 'payroll-register',
+    title: 'Payroll Register',
+    description:
+      'Settled payroll from Everee — every payment (W-2 + 1099) with gross, net, and employer funding, rolled up by pay run and by funding wire (each wire = one bank ACH pull, to the penny).',
+    category: 'Payroll',
+    minLevel: 6,
+    icon: <ListAltOutlinedIcon />,
   },
   {
     slug: 'job-costing',

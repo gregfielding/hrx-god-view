@@ -184,6 +184,7 @@ const ReportsIndexPage = lazy(() => import('./pages/reports/ReportsIndexPage'));
 const ArAgingReportPage = lazy(() => import('./pages/reports/ArAgingReportPage'));
 const GrossMarginReportPage = lazy(() => import('./pages/reports/GrossMarginReportPage'));
 const JobCostingReportPage = lazy(() => import('./pages/reports/JobCostingReportPage'));
+const PayrollRegisterPage = lazy(() => import('./pages/reports/PayrollRegisterPage'));
 const FinancesBudgetingPage = lazy(() => import('./pages/FinancesBudgetingPage'));
 const SchedulingHealthPage = lazy(() => import('./pages/SchedulingHealthPage'));
 const WhosWorkingPage = lazy(() => import('./pages/WhosWorkingPage'));
@@ -831,6 +832,16 @@ function App() {
             <ProtectedRoute requiredSecurityLevel="6">
               <RecruiterAccessGuard>
                 <PayrollCostsPage report="workers-comp" />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/payroll-register"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <PayrollRegisterPage />
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }
