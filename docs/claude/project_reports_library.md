@@ -148,3 +148,15 @@ mapping doc with source:'auto'. Idempotent via qbo_class_mappings check.
 First run of /reports/qbo-classes showed: 56 classes, 0 mapped, 45
 unmapped-with-activity — "National" carries $789k YTD expenses (the
 default class Expensify spend lands on when unclassed).
+
+**cash-flow (live 2026-08-19):** /reports/cash-flow (Forecast &
+budgeting, L7) — includeCashFlow on getPayrollCostReport. Cash
+requirements = draft/approved entries not yet sent (work dates
+today−45→+7, contractor-flat math) per entity; cash-flow gap by client =
+gmByAccount pay/billed + QBO Payments in range rolled to accounts via
+the billing customer map (BillingAggregates now returns
+acctByCustomerId). Client float = pay×(1+burden) − collected. Note:
+clients whose QBO customer isn't mapped to their HRX account(s) (e.g.
+CORT per-warehouse accounts) show pay-only float until mapped — the
+"(payments from unmapped customers)" row catches the collections side.
+Unbilled/WIP report = HELD by Greg for now.
