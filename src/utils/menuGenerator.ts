@@ -297,13 +297,8 @@ export async function generateMenuItems(
         icon: 'how_to_reg',
         accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
       }]),
-      // Finances & Budgeting: internal team (security levels 5, 6, 7)
-      ...([{
-        text: 'Finances and Budgeting',
-        to: '/finances-budgeting',
-        icon: 'bar_chart',
-        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
-      }]),
+      // Finances & Budgeting moved into the report library
+      // (/reports/finances-budgeting, Greg 2026-08-19) — no sidebar item.
       // Global Invoicing (sidebar): security level 7 only – all accounts, reporting, create invoices
       ...([{
         text: 'Invoicing',

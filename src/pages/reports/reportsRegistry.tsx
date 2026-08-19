@@ -20,17 +20,20 @@ import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
 import EventAvailableOutlinedIcon from '@mui/icons-material/EventAvailableOutlined';
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
+import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
 
 export type ReportCategory =
   | 'Payroll'
   | "Workers' comp & insurance"
   | 'Finance & receivables'
+  | 'Forecast & budgeting'
   | 'Compliance';
 
 /** Render order for category sections on the index page. */
 export const REPORT_CATEGORY_ORDER: ReportCategory[] = [
   'Payroll',
   'Finance & receivables',
+  'Forecast & budgeting',
   "Workers' comp & insurance",
   'Compliance',
 ];
@@ -113,6 +116,15 @@ export const REPORTS: ReportDef[] = [
     category: 'Finance & receivables',
     minLevel: 7,
     icon: <AccountTreeOutlinedIcon />,
+  },
+  {
+    slug: 'finances-budgeting',
+    title: 'Finances & Budgeting',
+    description:
+      'Forecasting and budgeting workspace — moved into the report library from the old sidebar item (2026-08-19).',
+    category: 'Forecast & budgeting',
+    minLevel: 5,
+    icon: <InsightsOutlinedIcon />,
   },
   {
     slug: 'wc-audit',

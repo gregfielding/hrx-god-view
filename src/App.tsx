@@ -781,7 +781,7 @@ function App() {
         </Route>
         <Route path="my-accounts" element={<Navigate to="/accounts/my" replace />} />
         <Route
-          path="finances-budgeting"
+          path="reports/finances-budgeting"
           element={
             <ProtectedRoute requiredSecurityLevel="5">
               <RecruiterAccessGuard>
@@ -790,6 +790,8 @@ function App() {
             </ProtectedRoute>
           }
         />
+        {/* Legacy URL — moved into the report library (Greg 2026-08-19). */}
+        <Route path="finances-budgeting" element={<Navigate to="/reports/finances-budgeting" replace />} />
         <Route
           path="scheduling-health"
           element={
