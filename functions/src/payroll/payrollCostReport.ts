@@ -184,6 +184,11 @@ interface BilledCustomerAgg {
   billed: number;
   invoiceCount: number;
   openBalance: number;
+  /** Class keys billed on this customer's invoices — lets the by-client
+   *  join follow a class→JO match to the PAY-side account when the QBO
+   *  customer maps to a different HRX account (AEG Management Oakland →
+   *  "Oakland Arena" account, payroll under "Legends National Account"). */
+  classKeys: Set<string>;
 }
 
 interface BillingAggregates {
@@ -245,6 +250,7 @@ async function buildBillingAggregates(
       billed: 0,
       invoiceCount: 0,
       openBalance: 0,
+      classKeys: new Set<string>(),
     };
     cust.billed = round2(cust.billed + headerTotal);
     cust.invoiceCount += 1;
@@ -274,6 +280,7 @@ async function buildBillingAggregates(
       agg.billed = round2(agg.billed + amount);
       agg.lineCount += 1;
       classAggs.set(key, agg);
+      cust.classKeys.add(key);
     }
   }
 
@@ -796,7 +803,11 @@ export const getPayrollCostReport = onCall(
         };
 
         const usedClassKeys = new Set<string>();
+        /** classKey → PAY-side accountId it matched (drives the by-client merge). */
+        const matchedClassToAccount = new Map<string, string>();
         const gmByJobOrder = byJobOrder.map((g) => {
+          // ClassGroup key format: `${accountId}|jo-or-venue|name`.
+          const payAccountId = g.key.split('|')[0] || null;
           const nameKey = g.label.toLowerCase();
           const fullKey = g.accountName ? `${g.accountName}:${g.label}`.toLowerCase() : null;
           let billed = 0;
@@ -812,10 +823,12 @@ export const getPayrollCostReport = onCall(
               billed = round2(billed + a.billed);
               billedClasses.push(a.className);
               usedClassKeys.add(key);
+              if (payAccountId) matchedClassToAccount.set(key, payAccountId);
             }
           }
           return {
             label: g.label,
+            accountId: payAccountId,
             accountName: g.accountName,
             attributed: g.attributed,
             pay: g.total,
@@ -843,6 +856,7 @@ export const getPayrollCostReport = onCall(
             hit.billed = round2(hit.billed + a.billed);
             hit.billedClasses.push(a.className);
             usedClassKeys.add(key);
+            if (hit.accountId) matchedClassToAccount.set(key, hit.accountId);
           }
         }
         // Classes billed in range with no matching payroll group — real
@@ -856,6 +870,7 @@ export const getPayrollCostReport = onCall(
             if (usedClassKeys.has(key)) continue;
             gmByJobOrder.push({
               label: a.className,
+              accountId: null,
               accountName: null,
               attributed: false,
               pay: 0,
@@ -867,28 +882,25 @@ export const getPayrollCostReport = onCall(
         }
         gmByJobOrder.sort((x, y) => y.billed - x.billed || y.pay - x.pay);
 
-        const payByAccountId = new Map(byAccount.map((g) => [g.key, g]));
-        const seenAccountIds = new Set<string>();
-        const gmByAccount: Array<Record<string, unknown>> = [];
-        for (const c of agg.customerAggs.values()) {
-          const payG = c.accountId ? payByAccountId.get(c.accountId) : undefined;
-          // Entity view: only customers whose HRX account has payroll under
-          // this entity in range — same reasoning as the class rows above.
-          if (entityFiltered && !payG) continue;
-          if (c.accountId) seenAccountIds.add(c.accountId);
-          gmByAccount.push({
-            accountId: c.accountId,
-            label: payG?.label ?? c.accountName ?? c.customerName ?? 'Unknown customer',
-            customerName: c.customerName,
-            billed: c.billed,
-            invoiceCount: c.invoiceCount,
-            openBalance: c.openBalance,
-            pay: payG?.total ?? 0,
-          });
+        // By-client join: seed one row per PAY account, then fold each QBO
+        // customer's billing into the right row. A customer lands on (1) its
+        // mapped account when that account has payroll, else (2) the single
+        // pay account its billed classes matched in the by-JO join (this is
+        // what unifies AEG Management Oakland's billing with Legends
+        // National Account's payroll — Greg 2026-08-19), else (3) its own
+        // standalone billed-only row.
+        interface AcctGmRow {
+          accountId: string | null;
+          label: string;
+          customerName: string | null;
+          billed: number;
+          invoiceCount: number;
+          openBalance: number;
+          pay: number;
         }
+        const rowsByAccount = new Map<string, AcctGmRow>();
         for (const g of byAccount) {
-          if (seenAccountIds.has(g.key)) continue;
-          gmByAccount.push({
+          rowsByAccount.set(g.key, {
             accountId: g.key === 'unattributed' ? null : g.key,
             label: g.label,
             customerName: null,
@@ -898,9 +910,47 @@ export const getPayrollCostReport = onCall(
             pay: g.total,
           });
         }
-        gmByAccount.sort(
-          (x, y) => (y.billed as number) - (x.billed as number) || (y.pay as number) - (x.pay as number),
-        );
+        const standaloneRows: AcctGmRow[] = [];
+        for (const c of agg.customerAggs.values()) {
+          let targetId = c.accountId && rowsByAccount.has(c.accountId) ? c.accountId : null;
+          if (!targetId) {
+            const candidates = new Set(
+              Array.from(c.classKeys)
+                .map((k) => matchedClassToAccount.get(k))
+                .filter((id): id is string => Boolean(id)),
+            );
+            if (candidates.size === 1) {
+              const only = Array.from(candidates)[0];
+              if (rowsByAccount.has(only)) targetId = only;
+            }
+          }
+          if (targetId) {
+            const row = rowsByAccount.get(targetId)!;
+            row.billed = round2(row.billed + c.billed);
+            row.invoiceCount += c.invoiceCount;
+            row.openBalance = round2(row.openBalance + c.openBalance);
+            if (c.customerName) {
+              row.customerName = row.customerName
+                ? `${row.customerName}, ${c.customerName}`
+                : c.customerName;
+            }
+          } else {
+            // Entity view: a customer we can't tie to this entity's payroll
+            // is excluded (same reasoning as the class rows above).
+            if (entityFiltered) continue;
+            standaloneRows.push({
+              accountId: c.accountId,
+              label: c.accountName ?? c.customerName ?? 'Unknown customer',
+              customerName: c.customerName,
+              billed: c.billed,
+              invoiceCount: c.invoiceCount,
+              openBalance: c.openBalance,
+              pay: 0,
+            });
+          }
+        }
+        const gmByAccount: AcctGmRow[] = [...rowsByAccount.values(), ...standaloneRows];
+        gmByAccount.sort((x, y) => y.billed - x.billed || y.pay - x.pay);
 
         billing = {
           // Entity view: headline billed/invoice numbers narrow to the
