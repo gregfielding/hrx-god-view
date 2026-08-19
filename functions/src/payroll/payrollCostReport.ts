@@ -21,6 +21,8 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
+import { qboQuery } from '../integrations/quickbooks/qboAuth';
+
 if (!admin.apps.length) {
   admin.initializeApp();
 }
@@ -141,8 +143,12 @@ export const savePayrollVenueMapping = onCall(
   },
 );
 
-/** Books access: hrx staff, admin role, or securityLevel >= 6. Shared with offCyclePayments. */
-export async function ensureBooksAccess(uid: string | undefined, token: Record<string, unknown> | undefined, tenantId: string): Promise<void> {
+/**
+ * Books access: hrx staff, admin role, or securityLevel >= minLevel
+ * (default 6). Shared with offCyclePayments. Billing/gross-margin data
+ * (includeBilling) passes 7 — same bar as Global Invoicing.
+ */
+export async function ensureBooksAccess(uid: string | undefined, token: Record<string, unknown> | undefined, tenantId: string, minLevel = 6): Promise<void> {
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   if (token?.hrx === true) return;
   const data = ((await db.collection('users').doc(uid).get()).data() ?? {}) as Record<string, unknown>;
@@ -152,8 +158,126 @@ export async function ensureBooksAccess(uid: string | undefined, token: Record<s
     String((data.tenantIds as Record<string, Record<string, unknown>> | undefined)?.[tenantId]?.securityLevel ?? '0'),
     10,
   ) || 0;
-  if (role === 'admin' || role === 'super_admin' || level >= 6 || tenantLevel >= 6) return;
+  if (role === 'admin' || role === 'super_admin' || level >= minLevel || tenantLevel >= minLevel) return;
   throw new HttpsError('permission-denied', 'Payroll cost reporting requires admin access.');
+}
+
+/* -------------------------------------------------------------------------
+ * Gross-margin billing block (Greg 2026-08-19): QBO invoices for the same
+ * date range, aggregated by line-level class (class name = "Account:Job
+ * order", the same convention the byBatch labels use) and by customer.
+ * Queried live — the per-account invoice caches store headers only, no
+ * Line/ClassRef.
+ * ------------------------------------------------------------------------- */
+
+interface BilledClassAgg {
+  className: string;
+  billed: number;
+  lineCount: number;
+}
+
+interface BilledCustomerAgg {
+  customerId: string;
+  customerName: string | null;
+  accountId: string | null;
+  accountName: string | null;
+  billed: number;
+  invoiceCount: number;
+  openBalance: number;
+}
+
+interface BillingAggregates {
+  invoiceCount: number;
+  totalBilled: number;
+  /** Sales-line dollars with no class on line or invoice. */
+  unclassifiedBilled: number;
+  classAggs: Map<string, BilledClassAgg>;
+  customerAggs: Map<string, BilledCustomerAgg>;
+}
+
+async function buildBillingAggregates(
+  tenantId: string,
+  startDate: string,
+  endDate: string,
+): Promise<BillingAggregates> {
+  // Dates are regex-validated (YYYY-MM-DD) before this runs — safe to inline.
+  const invoices: Array<Record<string, any>> = [];
+  const pageSize = 1000;
+  for (let page = 0; page < 20; page++) {
+    const start = page * pageSize + 1;
+    // eslint-disable-next-line no-await-in-loop
+    const resp = await qboQuery(
+      tenantId,
+      `SELECT * FROM Invoice WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}' STARTPOSITION ${start} MAXRESULTS ${pageSize}`,
+    );
+    const items = (resp.Invoice ?? []) as Array<Record<string, any>>;
+    invoices.push(...items);
+    if (items.length < pageSize) break;
+  }
+
+  // HRX account ↔ QBO customer mapping (same field the invoicing sync uses).
+  const acctSnap = await db.collection(`tenants/${tenantId}/accounts`).get();
+  const acctByCustomerId = new Map<string, { accountId: string; accountName: string | null }>();
+  acctSnap.forEach((d) => {
+    const cid = trim(
+      ((d.data().integrations as Record<string, any> | undefined)?.quickbooks as Record<string, any> | undefined)
+        ?.customerId,
+    );
+    if (cid) acctByCustomerId.set(cid, { accountId: d.id, accountName: trim(d.data().name) || null });
+  });
+
+  const classAggs = new Map<string, BilledClassAgg>();
+  const customerAggs = new Map<string, BilledCustomerAgg>();
+  let totalBilled = 0;
+  let unclassifiedBilled = 0;
+
+  for (const inv of invoices) {
+    const cid = trim((inv.CustomerRef as Record<string, any> | undefined)?.value);
+    const cname = trim((inv.CustomerRef as Record<string, any> | undefined)?.name) || null;
+    const headerTotal = num(inv.TotalAmt);
+    totalBilled = round2(totalBilled + headerTotal);
+    const acct = acctByCustomerId.get(cid);
+    const cust = customerAggs.get(cid) ?? {
+      customerId: cid,
+      customerName: cname,
+      accountId: acct?.accountId ?? null,
+      accountName: acct?.accountName ?? null,
+      billed: 0,
+      invoiceCount: 0,
+      openBalance: 0,
+    };
+    cust.billed = round2(cust.billed + headerTotal);
+    cust.invoiceCount += 1;
+    cust.openBalance = round2(cust.openBalance + num(inv.Balance));
+    if (!cust.customerName && cname) cust.customerName = cname;
+    customerAggs.set(cid, cust);
+
+    // Line-level class attribution. Class can live on the sales line
+    // (per-line class tracking, C1's setting) or on the whole invoice.
+    // Line amounts are pre-tax — per-class dollars won't sum to header
+    // totals when invoices carry tax/discounts; customer totals stay
+    // header-based (authoritative).
+    const invClass = trim((inv.ClassRef as Record<string, any> | undefined)?.name);
+    const lines = Array.isArray(inv.Line) ? (inv.Line as Array<Record<string, any>>) : [];
+    for (const line of lines) {
+      if (trim(line.DetailType) !== 'SalesItemLineDetail') continue;
+      const amount = num(line.Amount);
+      if (!amount) continue;
+      const cls =
+        trim((line.SalesItemLineDetail as Record<string, any> | undefined)?.ClassRef?.name) || invClass;
+      if (!cls) {
+        unclassifiedBilled = round2(unclassifiedBilled + amount);
+        continue;
+      }
+      const key = cls.toLowerCase();
+      const agg = classAggs.get(key) ?? { className: cls, billed: 0, lineCount: 0 };
+      agg.billed = round2(agg.billed + amount);
+      agg.lineCount += 1;
+      classAggs.set(key, agg);
+    }
+  }
+
+  return { invoiceCount: invoices.length, totalBilled, unclassifiedBilled, classAggs, customerAggs };
 }
 
 interface ReportRow {
@@ -613,10 +737,111 @@ export const getPayrollCostReport = onCall(
       })
       .sort((x, y) => (x.dateRange.max < y.dateRange.max ? 1 : -1));
 
+    // Gross-margin billing join (Greg 2026-08-19). Pay side = the groups
+    // above; bill side = live QBO invoices in the SAME date range (TxnDate
+    // vs workDate — month-boundary timing can skew individual jobs, the UI
+    // says so). Class names match pay labels because both follow the
+    // "Account:Job order name" convention.
+    let billing: Record<string, unknown> | null = null;
+    let billingError: string | null = null;
+    if (request.data?.includeBilling === true) {
+      // Revenue across all clients = Global Invoicing bar (level 7).
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      try {
+        const agg = await buildBillingAggregates(tenantId, startDate, endDate);
+
+        const usedClassKeys = new Set<string>();
+        const gmByJobOrder = byJobOrder.map((g) => {
+          const nameKey = g.label.toLowerCase();
+          const fullKey = g.accountName ? `${g.accountName}:${g.label}`.toLowerCase() : null;
+          let billed = 0;
+          const billedClasses: string[] = [];
+          for (const [key, a] of agg.classAggs) {
+            if (usedClassKeys.has(key)) continue;
+            const lastSegment = key.split(':').pop()?.trim() ?? key;
+            if (key === fullKey || key === nameKey || lastSegment === nameKey) {
+              billed = round2(billed + a.billed);
+              billedClasses.push(a.className);
+              usedClassKeys.add(key);
+            }
+          }
+          return {
+            label: g.label,
+            accountName: g.accountName,
+            attributed: g.attributed,
+            pay: g.total,
+            hours: g.hours,
+            billed,
+            billedClasses,
+          };
+        });
+        // Classes billed in range with no matching payroll group — real
+        // rows (margin is 100% pre-burden), not noise; often month-boundary.
+        for (const [key, a] of agg.classAggs) {
+          if (usedClassKeys.has(key)) continue;
+          gmByJobOrder.push({
+            label: a.className,
+            accountName: null,
+            attributed: false,
+            pay: 0,
+            hours: 0,
+            billed: a.billed,
+            billedClasses: [a.className],
+          });
+        }
+        gmByJobOrder.sort((x, y) => y.billed - x.billed || y.pay - x.pay);
+
+        const payByAccountId = new Map(byAccount.map((g) => [g.key, g]));
+        const seenAccountIds = new Set<string>();
+        const gmByAccount: Array<Record<string, unknown>> = [];
+        for (const c of agg.customerAggs.values()) {
+          const payG = c.accountId ? payByAccountId.get(c.accountId) : undefined;
+          if (c.accountId) seenAccountIds.add(c.accountId);
+          gmByAccount.push({
+            accountId: c.accountId,
+            label: payG?.label ?? c.accountName ?? c.customerName ?? 'Unknown customer',
+            customerName: c.customerName,
+            billed: c.billed,
+            invoiceCount: c.invoiceCount,
+            openBalance: c.openBalance,
+            pay: payG?.total ?? 0,
+          });
+        }
+        for (const g of byAccount) {
+          if (seenAccountIds.has(g.key)) continue;
+          gmByAccount.push({
+            accountId: g.key === 'unattributed' ? null : g.key,
+            label: g.label,
+            customerName: null,
+            billed: 0,
+            invoiceCount: 0,
+            openBalance: 0,
+            pay: g.total,
+          });
+        }
+        gmByAccount.sort(
+          (x, y) => (y.billed as number) - (x.billed as number) || (y.pay as number) - (x.pay as number),
+        );
+
+        billing = {
+          invoiceCount: agg.invoiceCount,
+          totalBilled: agg.totalBilled,
+          unclassifiedBilled: agg.unclassifiedBilled,
+          totalPay: grand,
+          byJobOrder: gmByJobOrder,
+          byAccount: gmByAccount,
+        };
+      } catch (err) {
+        billingError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
     return {
       startDate,
       endDate,
       hiringEntityId: hiringEntityId || null,
+      billing,
+      billingError,
       totals: {
         gross: grand,
         entries: rows.length,

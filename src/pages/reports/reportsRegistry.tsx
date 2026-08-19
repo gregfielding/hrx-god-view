@@ -11,6 +11,7 @@ import React from 'react';
 import PaymentsOutlinedIcon from '@mui/icons-material/PaymentsOutlined';
 import HealthAndSafetyOutlinedIcon from '@mui/icons-material/HealthAndSafetyOutlined';
 import RequestQuoteOutlinedIcon from '@mui/icons-material/RequestQuoteOutlined';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 
 export type ReportCategory =
   | 'Payroll'
@@ -59,6 +60,15 @@ export const REPORTS: ReportDef[] = [
     category: "Workers' comp & insurance",
     minLevel: 6,
     icon: <HealthAndSafetyOutlinedIcon />,
+  },
+  {
+    slug: 'gross-margin',
+    title: 'Gross Margin',
+    description:
+      'Billed (QuickBooks invoices) vs payroll (Everee) by client and job order, with an adjustable employer-burden estimate — the pay/bill spread.',
+    category: 'Finance & receivables',
+    minLevel: 7,
+    icon: <TrendingUpIcon />,
   },
   {
     slug: 'accounts-receivable',
