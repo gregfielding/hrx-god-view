@@ -192,6 +192,15 @@ const AcaLookbackReportPage = lazy(() => import('./pages/reports/AcaLookbackRepo
 const TaxSickLeaveReportPage = lazy(() => import('./pages/reports/TaxSickLeaveReportPage'));
 const QboClassesPage = lazy(() => import('./pages/reports/QboClassesPage'));
 const CashFlowReportPage = lazy(() => import('./pages/reports/CashFlowReportPage'));
+const WcClassCodesReportPage = lazy(() =>
+  import('./pages/reports/WcLibraryReportPages').then((m) => ({ default: m.WcClassCodesReportPage })),
+);
+const WcWorksitesReportPage = lazy(() =>
+  import('./pages/reports/WcLibraryReportPages').then((m) => ({ default: m.WcWorksitesReportPage })),
+);
+const Wc8040ReportPage = lazy(() =>
+  import('./pages/reports/WcLibraryReportPages').then((m) => ({ default: m.Wc8040ReportPage })),
+);
 const FinancesBudgetingPage = lazy(() => import('./pages/FinancesBudgetingPage'));
 const SchedulingHealthPage = lazy(() => import('./pages/SchedulingHealthPage'));
 const WhosWorkingPage = lazy(() => import('./pages/WhosWorkingPage'));
@@ -859,6 +868,25 @@ function App() {
                   ) : (
                     <TaxSickLeaveReportPage />
                   )}
+                </RecruiterAccessGuard>
+              </ProtectedRoute>
+            }
+          />
+        ))}
+        {(
+          [
+            ['wc-class-codes', WcClassCodesReportPage],
+            ['wc-worksites', WcWorksitesReportPage],
+            ['wc-8040', Wc8040ReportPage],
+          ] as Array<[string, React.LazyExoticComponent<React.FC>]>
+        ).map(([slug, Page]) => (
+          <Route
+            key={slug}
+            path={`reports/${slug}`}
+            element={
+              <ProtectedRoute requiredSecurityLevel="6">
+                <RecruiterAccessGuard>
+                  <Page />
                 </RecruiterAccessGuard>
               </ProtectedRoute>
             }

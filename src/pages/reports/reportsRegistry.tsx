@@ -20,6 +20,9 @@ import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
 import EventAvailableOutlinedIcon from '@mui/icons-material/EventAvailableOutlined';
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
+import StyleOutlinedIcon from '@mui/icons-material/StyleOutlined';
+import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
+import PendingActionsOutlinedIcon from '@mui/icons-material/PendingActionsOutlined';
 import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
 import WaterfallChartOutlinedIcon from '@mui/icons-material/WaterfallChartOutlined';
 
@@ -144,6 +147,33 @@ export const REPORTS: ReportDef[] = [
     category: "Workers' comp & insurance",
     minLevel: 6,
     icon: <FactCheckOutlinedIcon />,
+  },
+  {
+    slug: 'wc-class-codes',
+    title: 'WC Class Codes',
+    description:
+      'The central class-code catalog — definitions, rates, review status, Sync to Everee, and Add Class Code. Moved from the Onboarding Library.',
+    category: "Workers' comp & insurance",
+    minLevel: 6,
+    icon: <StyleOutlinedIcon />,
+  },
+  {
+    slug: 'wc-worksites',
+    title: 'WC Worksites',
+    description:
+      'Every insured worksite on the carrier policy — locations, states, and coverage status. Moved from the Onboarding Library.',
+    category: "Workers' comp & insurance",
+    minLevel: 6,
+    icon: <PlaceOutlinedIcon />,
+  },
+  {
+    slug: 'wc-8040',
+    title: '8040 Placeholders',
+    description:
+      'Payroll still riding the 8040 placeholder class — the cleanup queue to reclassify before carrier reporting. Moved from the Onboarding Library.',
+    category: "Workers' comp & insurance",
+    minLevel: 6,
+    icon: <PendingActionsOutlinedIcon />,
   },
   {
     slug: 'accounts-receivable',
