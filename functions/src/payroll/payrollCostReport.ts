@@ -1176,6 +1176,17 @@ async function buildI9Status(
       .map((d) => d.id),
   );
   const linkSnap = await db.collection(`tenants/${tenantId}/everee_workers`).get();
+  // Section-2 truth: the reconciler stamps entity_employments.i9Section2CompletedAt
+  // (the readinessMirror block itself carries no documentsVerifiedByCompany).
+  const empSnap = await db.collection(`tenants/${tenantId}/entity_employments`).get();
+  const sec2ByKey = new Map<string, string>();
+  empSnap.forEach((d) => {
+    const v = d.data();
+    const ts = v.i9Section2CompletedAt as admin.firestore.Timestamp | undefined;
+    if (!ts?.toDate) return;
+    const key = `${trim(v.entityId ?? v.hiringEntityId)}|${trim(v.userId)}`;
+    sec2ByKey.set(key, ts.toDate().toISOString().slice(0, 10));
+  });
   interface I9Row {
     uid: string;
     entityId: string;
@@ -1208,8 +1219,8 @@ async function buildI9Status(
     const tsIso = (x: unknown): string | null =>
       x && typeof (x as any).toDate === 'function' ? (x as any).toDate().toISOString().slice(0, 10) : null;
     const i9SignedAt = tsIso(m.i9SignedAt);
-    const employerI9SignedAt = tsIso(m.employerI9SignedAt);
-    const verified = m.documentsVerifiedByCompany === true;
+    const employerI9SignedAt = tsIso(m.employerI9SignedAt) ?? sec2ByKey.get(`${entityId}|${uid}`) ?? null;
+    const verified = m.documentsVerifiedByCompany === true || Boolean(sec2ByKey.get(`${entityId}|${uid}`));
     const hasDocs = m.hasWorkbrightDocs === true;
     let status: I9Row['status'];
     if ((i9SignedAt || hasDocs) && (employerI9SignedAt || verified)) status = 'complete';
