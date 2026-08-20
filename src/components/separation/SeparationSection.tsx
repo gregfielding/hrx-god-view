@@ -40,6 +40,7 @@ import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'fire
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { db } from '../../firebase';
+import { openTerminationLetter } from './terminationLetter';
 
 interface SeparationRecord {
   entityId: string;
@@ -84,6 +85,10 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
   const [upcoming, setUpcoming] = useState<number>(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Termination-letter option (Greg 2026-08-20): workers request
+   *  separation letters for unemployment/SNAP eligibility. */
+  const [genLetter, setGenLetter] = useState(true);
+  const [worker, setWorker] = useState<{ name: string; address: string | null }>({ name: '', address: null });
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'users', userId), (snap) => {
@@ -91,6 +96,16 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
       const seps = (Array.isArray(u.separations) ? u.separations : []) as SeparationRecord[];
       setSeparations(seps.filter((s) => s?.status === 'active'));
       setRehireEligible(typeof u.rehireEligible === 'boolean' ? u.rehireEligible : null);
+      const name =
+        `${String(u.firstName ?? '').trim()} ${String(u.lastName ?? '').trim()}`.trim() ||
+        String(u.displayName ?? '').trim();
+      const ha = (u.homeAddress ?? u.addressInfo ?? {}) as Record<string, unknown>;
+      const street = String(ha.street ?? ha.streetAddress ?? ha.address ?? '').trim();
+      const cityLine = [String(ha.city ?? '').trim(), String(ha.state ?? '').trim(), String(ha.zip ?? ha.zipCode ?? '').trim()]
+        .filter(Boolean)
+        .join(', ');
+      const address = [street, cityLine].filter(Boolean).join('\n') || null;
+      setWorker({ name, address });
     });
     return unsub;
   }, [userId]);
@@ -192,6 +207,17 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
         rehireEligible: rehireOk,
         finalPayConfirmed,
       });
+      // Optional separation letter — generated AFTER the separation
+      // succeeds, from the same values (capture before close() resets).
+      if (genLetter && worker.name) {
+        openTerminationLetter({
+          workerName: worker.name,
+          workerAddress: worker.address,
+          entityName: emp.entityName,
+          lastDay,
+          separationType: sepType,
+        });
+      }
       close();
     } catch (e: any) {
       setError(String(e?.message || 'Separation failed.'));
@@ -217,9 +243,20 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
               SEPARATION_TYPES.find((t) => t.value === s.separationType)?.label,
               `Last day ${s.lastDay}`,
               s.separatedByName ? `by ${s.separatedByName}` : null,
+              'Click for a print-ready separation letter',
             ]
               .filter(Boolean)
               .join(' · ')}
+            onClick={() =>
+              worker.name &&
+              openTerminationLetter({
+                workerName: worker.name,
+                workerAddress: worker.address,
+                entityName: s.entityName || s.entityId,
+                lastDay: s.lastDay,
+                separationType: s.separationType,
+              })
+            }
             sx={{ height: 24, '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem' } }}
           />
         ))}
@@ -318,6 +355,12 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
                 <Checkbox checked={rehireOk} onChange={(e) => setRehireOk(e.target.checked)} />
               }
               label="Eligible for rehire"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox checked={genLetter} onChange={(e) => setGenLetter(e.target.checked)} />
+              }
+              label="Generate separation letter (opens print-ready — workers use these for unemployment/benefit eligibility)"
             />
             {upcoming > 0 && (
               <Alert severity="warning">
