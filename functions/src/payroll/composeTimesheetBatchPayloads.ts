@@ -167,10 +167,18 @@ export type ComposedBatchEntry =
  */
 export function composeBatchEntryPayloads(input: ComposeBatchInput): ComposedBatchEntry {
   if (input.workerKind === 'contractor') {
-    return {
-      kind: 'contractor',
-      payables: [composeContractorPayable(input)],
-    };
+    const payables = [composeContractorPayable(input)];
+    if (input.entry.tips > 0) {
+      payables.push(
+        makePayableForEntry(input, {
+          kind: 'TIPS',
+          earningType: 'TIPS',
+          amount: input.entry.tips,
+          label: 'Tips',
+        }),
+      );
+    }
+    return { kind: 'contractor', payables };
   }
   return {
     kind: 'w2',
@@ -319,13 +327,21 @@ export function composeW2AdditionalPayables(input: ComposeBatchInput): CreatePay
 // ─────────────────────────────────────────────────────────────────────
 
 /**
- * 1099 contractor entries route as a single payable carrying the
- * aggregate gross. Everee handles 1099 tax mechanics on its side; we
- * just submit the dollar amount we owe.
+ * 1099 contractor entries route as one payable carrying the hours-based
+ * gross. Everee handles 1099 tax mechanics on its side; we just submit
+ * the dollar amount we owe.
  *
  *   gross = (regularHours + flsaOT + nonFlsaOT + DT) × payRate
- *           + tips + bonus
+ *           + bonus
  *           + (mealPremiumHours + restPremiumHours) × payRate
+ *
+ * Tips are deliberately NOT folded in here — they ride as their own
+ * TIPS-earning-type payable (see `composeBatchEntryPayloads`) so a
+ * contractor's Everee payables/pay stub show tips as a distinct line
+ * next to the hours-worked pay, the same way W-2 tips already do via
+ * `composeW2AdditionalPayables` (Greg 2026-08-18 — Proof of the
+ * Pudding / C1 Events LLC tips were invisible, folded into "Contractor
+ * pay" with no TIPS line).
  *
  * Premiums are folded in to the gross for 1099 because CA §226.7
  * doesn't apply to contractors (§226.7 is a wages-and-hours law for
@@ -344,7 +360,7 @@ export function composeContractorPayable(input: ComposeBatchInput): CreatePayabl
     e.payRate;
   const premiumPay =
     (nonNegative(e.mealBreakPenaltyHours) + nonNegative(e.restBreakPenaltyHours)) * e.payRate;
-  const gross = hourlyPay + nonNegative(e.tips) + nonNegative(e.bonusAmount) + premiumPay;
+  const gross = hourlyPay + nonNegative(e.bonusAmount) + premiumPay;
 
   return {
     externalId: buildPayableExternalId({

@@ -216,7 +216,7 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
           }
         }
       } else {
-        // Contractor — one payable
+        // Contractor — CONTRACTOR payable + optional TIPS payable
         for (const p of composed.payables) {
           const r = await createPayable(config, p);
           payableExternalIds.push(r.externalId);

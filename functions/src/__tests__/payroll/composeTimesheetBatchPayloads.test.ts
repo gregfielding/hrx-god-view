@@ -344,7 +344,7 @@ describe('composeContractorPayable', () => {
     );
   });
 
-  it('gross = (reg+OT+DT) × rate + tips + bonus', () => {
+  it('gross = (reg+OT+DT) × rate + bonus — tips excluded (they ride as a separate TIPS payable)', () => {
     const out = composeContractorPayable(
       makeInput({
         workerKind: 'contractor',
@@ -359,8 +359,8 @@ describe('composeContractorPayable', () => {
         }),
       }),
     );
-    // (8 + 2 + 1) × 30 = 330, + 15 + 25 = 370
-    expect(out.amount.amount).to.equal('370.00');
+    // (8 + 2 + 1) × 30 = 330, + 25 bonus = 355 (tips NOT folded in)
+    expect(out.amount.amount).to.equal('355.00');
   });
 
   it('folds premium hours into the gross (defensive — §226.7 N/A for 1099)', () => {
@@ -414,6 +414,24 @@ describe('composeBatchEntryPayloads', () => {
     if (out.kind !== 'contractor') throw new Error('narrow');
     expect(out.payables).to.have.length(1);
     expect(out.payables[0].payCode).to.equal('CONTRACTOR');
+  });
+
+  it('1099 with tips → contractor payable + separate TIPS payable (Proof of the Pudding / C1 Events LLC)', () => {
+    const out = composeBatchEntryPayloads(
+      makeInput({
+        workerKind: 'contractor',
+        workersCompClassCode: undefined,
+        entry: makeEntry({ payRate: 20, totalRegularHours: 8, tips: 40 }),
+      }),
+    );
+    expect(out.kind).to.equal('contractor');
+    if (out.kind !== 'contractor') throw new Error('narrow');
+    expect(out.payables).to.have.length(2);
+    expect(out.payables[0].payCode).to.equal('CONTRACTOR');
+    expect(out.payables[0].amount.amount).to.equal('160.00'); // 8×20, no tips folded in
+    expect(out.payables[1].payCode).to.equal('TIPS');
+    expect(out.payables[1].amount.amount).to.equal('40.00');
+    expect(out.payables[1].label).to.equal('Tips');
   });
 
   it('1099 ignores worked-shift fields entirely', () => {
