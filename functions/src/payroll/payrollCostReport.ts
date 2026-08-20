@@ -1164,6 +1164,17 @@ async function buildI9Status(
   tenantId: string,
   hiringEntityId: string | null,
 ): Promise<Record<string, unknown>> {
+  // 1099 contractor entities never have I-9s — exclude them entirely
+  // (the per-doc i9Applicable flag is absent on never-reconciled docs,
+  // which made 3,652 Events contractors render as "not started").
+  const entSnap = await db.collection(`tenants/${tenantId}/entities`).get();
+  const contractorEntities = new Set(
+    entSnap.docs
+      .filter(
+        (d) => trim(d.data().workerType).toLowerCase() === 'contractor' || /events|workforce/i.test(d.id),
+      )
+      .map((d) => d.id),
+  );
   const linkSnap = await db.collection(`tenants/${tenantId}/everee_workers`).get();
   interface I9Row {
     uid: string;
@@ -1186,6 +1197,7 @@ async function buildI9Status(
     const [entityId, uid] = d.id.includes('__') ? [d.id.split('__')[0], d.id.split('__').slice(1).join('__')] : ['', d.id];
     if (!uid) return;
     if (/sandbox/i.test(entityId)) return;
+    if (contractorEntities.has(entityId)) return; // 1099 — no I-9
     if (hiringEntityId && entityId !== hiringEntityId) return;
     const v = d.data();
     if (trim(v.status) === 'retired_duplicate') return;
