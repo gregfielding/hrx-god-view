@@ -101,6 +101,29 @@ export const savePayrollVenueMapping = onCall(
     const tenantId = trim(request.data?.tenantId);
     const action = trim(request.data?.action);
 
+    // ── E-Verify date stamp (OnTrac attestations, Greg 2026-08-20):
+    //    one manual lookup in WorkBright per new hire, stored on the
+    //    users doc so attestations auto-fill forever after. Level 6. ──
+    if (action === 'setEverifyDate') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+      const workerId = trim(request.data?.workerId);
+      const date = trim(request.data?.date);
+      if (!workerId) throw new HttpsError('invalid-argument', 'workerId is required.');
+      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        throw new HttpsError('invalid-argument', 'date must be YYYY-MM-DD (or empty to clear).');
+      }
+      await db.doc(`users/${workerId}`).set(
+        {
+          everifyCompletedAt: date || admin.firestore.FieldValue.delete(),
+          everifySetBy: request.auth?.uid ?? null,
+          everifySetAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return { ok: true, workerId, date: date || null };
+    }
+
     // ── QBO class mapping/creation branches (Greg 2026-08-19). Rides
     //    this callable to stay under the Cloud Run service cap. Level 7
     //    — these shape the books. Mark's email-driven VenueSmart class
@@ -1153,6 +1176,10 @@ async function buildI9Status(
     onboardingStatus: string | null;
     lifecycleStatus: string | null;
     status: 'complete' | 'pending_employer' | 'pending_worker' | 'not_started';
+    /** Manually entered from WorkBright's E-Verify case list (OnTrac
+     *  attestations, Greg 2026-08-20) — one lookup per new hire, stored
+     *  on users/{uid}.everifyCompletedAt. */
+    everifyCompletedAt: string | null;
   }
   const rows: I9Row[] = [];
   linkSnap.forEach((d) => {
@@ -1186,11 +1213,13 @@ async function buildI9Status(
       onboardingStatus: trim(m.onboardingStatus) || null,
       lifecycleStatus: trim(m.lifecycleStatus) || null,
       status,
+      everifyCompletedAt: null,
     });
   });
 
   const uids = Array.from(new Set(rows.map((r) => r.uid)));
   const names = new Map<string, string>();
+  const everifyDates = new Map<string, string>();
   for (let i = 0; i < uids.length; i += 100) {
     // eslint-disable-next-line no-await-in-loop
     const snaps = await db.getAll(...uids.slice(i, i + 100).map((id) => db.doc(`users/${id}`)));
@@ -1199,10 +1228,13 @@ async function buildI9Status(
       const u = s.data() as Record<string, unknown>;
       const n = `${trim(u.firstName)} ${trim(u.lastName)}`.trim() || trim(u.displayName);
       if (n) names.set(s.id, n);
+      const ev = trim(u.everifyCompletedAt);
+      if (ev) everifyDates.set(s.id, ev);
     });
   }
   rows.forEach((r) => {
     r.workerName = names.get(r.uid) ?? null;
+    r.everifyCompletedAt = everifyDates.get(r.uid) ?? null;
   });
   const order: Record<I9Row['status'], number> = { pending_employer: 0, pending_worker: 1, not_started: 2, complete: 3 };
   rows.sort((a, b) => order[a.status] - order[b.status] || (a.workerName ?? '').localeCompare(b.workerName ?? ''));

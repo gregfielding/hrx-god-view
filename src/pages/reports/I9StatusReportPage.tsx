@@ -1,21 +1,26 @@
 /**
  * /reports/i9-status — I-9 / Onboarding Completion Status (Compliance,
- * Greg 2026-08-19). Source: the Everee readiness mirror on
- * everee_workers linkage docs (WorkBright I-9 pipeline). E-Verify case
- * status is NOT yet available (processing disabled 2026-06-30; vendor
- * web-services connection pending) — the report says so.
+ * Greg 2026-08-19) + OnTrac attestation generator (2026-08-20).
+ *
+ * Source: the Everee readiness mirror on everee_workers linkage docs
+ * (WorkBright I-9 pipeline). E-Verify case data never leaves WorkBright
+ * (vendor integration declined for now), so the per-worker E-Verify
+ * completion date is entered here ONCE per new hire (from WorkBright's
+ * E-Verify case list) and stored on users/{uid}.everifyCompletedAt —
+ * after that, Schedule 5 attestations auto-fill completely.
  */
 
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Alert, Box, Button, Card, CardContent, Chip, FormControl, IconButton, InputLabel,
-  MenuItem, Paper, Select, Stack, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Typography,
+  Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions, DialogContent,
+  DialogTitle, FormControl, IconButton, InputLabel, MenuItem, Paper, Select, Stack,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import PrintOutlinedIcon from '@mui/icons-material/PrintOutlined';
 import { httpsCallable } from 'firebase/functions';
 import { collection, getDocs } from 'firebase/firestore';
 
@@ -35,6 +40,7 @@ interface I9Row {
   documentsVerifiedByCompany: boolean;
   onboardingStatus: string | null;
   status: 'complete' | 'pending_employer' | 'pending_worker' | 'not_started';
+  everifyCompletedAt: string | null;
 }
 
 interface I9Data {
@@ -50,6 +56,66 @@ const STATUS_LABEL: Record<I9Row['status'], { label: string; color: 'success' | 
   not_started: { label: 'Not started', color: 'default' },
 };
 
+/** Opens a print-ready Schedule 5 attestation in a new window. */
+function openAttestation(input: {
+  workerName: string;
+  venue: string;
+  i9Date: string;
+  everifyDate: string;
+  drugScreen: 'none' | '8panel' | '9panel';
+  drugScreenDate: string;
+  bgcDate: string;
+}): void {
+  const esc = (s: string) => s.replace(/</g, '&lt;');
+  const check = (on: boolean) => (on ? '☒' : '☐');
+  const html = `
+<title>OnTrac Attestation — ${esc(input.workerName)}</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 12.5px; color: #000; max-width: 720px; margin: 40px auto; line-height: 1.45; }
+  h1 { font-size: 14px; text-align: center; margin-bottom: 4px; }
+  h2 { font-size: 12.5px; text-decoration: underline; margin: 18px 0 6px; }
+  .row { margin: 10px 0; }
+  .field { display: inline-block; border-bottom: 1px solid #000; min-width: 220px; padding: 0 6px; font-weight: bold; }
+  .sig { margin-top: 44px; display: flex; justify-content: space-between; gap: 40px; }
+  .sigline { border-top: 1px solid #000; width: 45%; padding-top: 4px; font-size: 11px; }
+  .indent { margin-left: 26px; }
+  @media print { body { margin: 24px; } }
+</style>
+<h1>SCHEDULE 5<br/>INDEED FLEX AGENCY ATTESTATION OF COMPLIANCE REQUIREMENTS ADHERENCE</h1>
+<p>This document is to be completed and submitted to Indeed Flex upon booking of an Agency worker to any OnTrac Shift/Assignment.</p>
+<div class="row">Agency Worker Name: <span class="field">${esc(input.workerName)}</span>
+  &nbsp;&nbsp;Agency: <span class="field">C1 Staffing, LLC</span></div>
+<div class="row">Venue of Assignment: <span class="field">${esc(input.venue)}</span></div>
+<h2>Form I-9 Compliance</h2>
+<p class="indent">The above-named worker has properly completed, in its entirety, the Form I-9. An employee of the
+Agency has examined the documentation presented by the above-named employee, (2) the above-listed documentation
+appears to be genuine and to relate to the employee named, and (3) to the best of my knowledge, the employee is
+authorized to work in the United States.</p>
+<div class="row">Date of Form I-9 Completion: <span class="field">${esc(input.i9Date)}</span>
+  &nbsp;&nbsp;Date Everify Completed: <span class="field">${esc(input.everifyDate)}</span></div>
+<h2>Drug Screening Compliance</h2>
+<p class="indent">${check(input.drugScreen === 'none')} The above-named worker is not being placed at a location with a drug screening requirement.<br/>
+${check(input.drugScreen !== 'none')} The above-named worker has successfully completed and met the drug screening requirement for
+the location assigned. Date of Drug Screen: <span class="field">${esc(input.drugScreen === 'none' ? 'N/A' : input.drugScreenDate)}</span><br/>
+<span class="indent">${check(input.drugScreen === '9panel')} 9 panel with reflex confirmation (includes ETOH, AMP, BAR, BZO, COC, PCP, THC, OPI, OXY)</span><br/>
+<span class="indent">${check(input.drugScreen === '8panel')} 8 panel with reflex confirmation (includes AMP, BAR, BZO, COC, PCP, THC, OPI, OXY)</span></p>
+<h2>Background Screening Compliance</h2>
+<p class="indent">The above-named worker has successfully completed and met the background screening requirements.
+The background screening included a Social Security Number Verification, a National Sex Offender Registry Search,
+a 7 Year National Criminal database search and a 7 year county felony and misdemeanor search. The results have been
+adjudicated according to the OnTrac matrix. Date of Background Screen Completion:
+<span class="field">${esc(input.bgcDate)}</span></p>
+<p style="margin-top:28px">By affixing my signature below, I hereby attest that this information is true, complete, and accurate.</p>
+<div class="sig"><div class="sigline">Authorized Signature</div><div class="sigline">Title</div></div>
+<div class="sig"><div class="sigline">Print Name</div><div class="sigline">Date</div></div>
+<script>window.print();</script>`;
+  const w = window.open('', '_blank', 'width=820,height=900');
+  if (w) {
+    w.document.write(html);
+    w.document.close();
+  }
+}
+
 const I9StatusReportPage: React.FC = () => {
   const { tenantId } = useAuth();
   const navigate = useNavigate();
@@ -58,6 +124,12 @@ const I9StatusReportPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<I9Data | null>(null);
+  const [savingUid, setSavingUid] = useState<string | null>(null);
+  const [attestFor, setAttestFor] = useState<I9Row | null>(null);
+  const [venue, setVenue] = useState(() => localStorage.getItem('ontrac_attest_venue') ?? '');
+  const [drugScreen, setDrugScreen] = useState<'none' | '8panel' | '9panel'>('none');
+  const [drugScreenDate, setDrugScreenDate] = useState('');
+  const [bgcDate, setBgcDate] = useState('');
 
   useEffect(() => {
     if (!tenantId) return;
@@ -92,11 +164,29 @@ const I9StatusReportPage: React.FC = () => {
     }
   };
 
+  const saveEverifyDate = async (row: I9Row, date: string): Promise<void> => {
+    if (!tenantId || date === (row.everifyCompletedAt ?? '')) return;
+    setSavingUid(row.uid);
+    try {
+      const fn = httpsCallable(functions, 'savePayrollVenueMapping');
+      await fn({ tenantId, action: 'setEverifyDate', workerId: row.uid, date });
+      setData((cur) =>
+        cur
+          ? { ...cur, rows: cur.rows.map((r) => (r.uid === row.uid ? { ...r, everifyCompletedAt: date || null } : r)) }
+          : cur,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingUid(null);
+    }
+  };
+
   const exportCsv = (): void => {
     if (!data) return;
-    const lines = ['Worker,Entity,Status,WorkBright docs,Section 1 signed,Section 2 signed,Verified by company,Onboarding status'];
+    const lines = ['Worker,Entity,Status,WorkBright docs,Section 1 signed,Section 2 signed,Verified by company,E-Verify completed,Onboarding status'];
     for (const r of data.rows) {
-      lines.push([r.workerName ?? r.uid, r.entityId, STATUS_LABEL[r.status].label, r.hasWorkbrightDocs ? 'yes' : '', r.i9SignedAt ?? '', r.employerI9SignedAt ?? '', r.documentsVerifiedByCompany ? 'yes' : '', r.onboardingStatus ?? ''].map((v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v))).join(','));
+      lines.push([r.workerName ?? r.uid, r.entityId, STATUS_LABEL[r.status].label, r.hasWorkbrightDocs ? 'yes' : '', r.i9SignedAt ?? '', r.employerI9SignedAt ?? '', r.documentsVerifiedByCompany ? 'yes' : '', r.everifyCompletedAt ?? '', r.onboardingStatus ?? ''].map((v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v))).join(','));
     }
     const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
@@ -139,8 +229,9 @@ const I9StatusReportPage: React.FC = () => {
             </Button>
           </Stack>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-            Every I-9-applicable worker&apos;s WorkBright/Everee onboarding state — Section 1 (worker),
-            Section 2 (employer), and company verification. Contractors (no I-9) are excluded.
+            Every I-9-applicable worker&apos;s WorkBright/Everee onboarding state. The E-Verify date is
+            entered once per new hire from WorkBright&apos;s E-Verify case list — after that, OnTrac
+            attestations (the printer icon) auto-fill completely.
           </Typography>
         </CardContent>
       </Card>
@@ -163,7 +254,6 @@ const I9StatusReportPage: React.FC = () => {
               </Paper>
             ))}
           </Box>
-          <Alert severity="info" sx={{ mb: 2 }}>{data.everifyNote}</Alert>
           <TableContainer component={Paper} variant="outlined">
             <Table size="small">
               <TableHead>
@@ -171,10 +261,10 @@ const I9StatusReportPage: React.FC = () => {
                   <TableCell sx={{ fontWeight: 600 }}>Worker</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>Entity</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Sec. 1 signed</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Sec. 2 signed</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Docs verified</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Onboarding</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>Sec. 1</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>Sec. 2</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>E-Verify completed</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>Attestation</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -186,9 +276,32 @@ const I9StatusReportPage: React.FC = () => {
                       <Chip size="small" variant="outlined" color={STATUS_LABEL[r.status].color} label={STATUS_LABEL[r.status].label} />
                     </TableCell>
                     <TableCell>{r.i9SignedAt ?? (r.hasWorkbrightDocs ? 'docs ✓' : '—')}</TableCell>
-                    <TableCell>{r.employerI9SignedAt ?? '—'}</TableCell>
-                    <TableCell>{r.documentsVerifiedByCompany ? 'yes' : '—'}</TableCell>
-                    <TableCell>{r.onboardingStatus ?? '—'}</TableCell>
+                    <TableCell>{r.employerI9SignedAt ?? (r.documentsVerifiedByCompany ? 'verified ✓' : '—')}</TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        type="date"
+                        defaultValue={r.everifyCompletedAt ?? ''}
+                        disabled={savingUid === r.uid}
+                        onBlur={(e) => void saveEverifyDate(r, e.target.value)}
+                        sx={{ width: 160 }}
+                        InputLabelProps={{ shrink: true }}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <IconButton
+                        size="small"
+                        title="Generate OnTrac attestation (Schedule 5)"
+                        onClick={() => {
+                          setAttestFor(r);
+                          setDrugScreen('none');
+                          setDrugScreenDate('');
+                          setBgcDate('');
+                        }}
+                      >
+                        <PrintOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -201,6 +314,61 @@ const I9StatusReportPage: React.FC = () => {
           Hit Load to pull the current I-9 status of every worker.
         </Typography>
       )}
+
+      {/* Attestation dialog */}
+      <Dialog open={Boolean(attestFor)} onClose={() => setAttestFor(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>OnTrac attestation — {attestFor?.workerName}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              size="small"
+              label="Venue of assignment (OnTrac facility)"
+              value={venue}
+              onChange={(e) => setVenue(e.target.value)}
+              placeholder="e.g. Chicago Sort Center (Hub) — Romeoville, IL"
+            />
+            <Stack direction="row" spacing={2}>
+              <TextField size="small" label="I-9 completion" value={attestFor?.i9SignedAt ?? '(missing)'} disabled sx={{ flex: 1 }} />
+              <TextField size="small" label="E-Verify completed" value={attestFor?.everifyCompletedAt ?? '(missing — enter on the row first)'} disabled sx={{ flex: 1 }} />
+            </Stack>
+            <FormControl size="small">
+              <InputLabel>Drug screen</InputLabel>
+              <Select value={drugScreen} label="Drug screen" onChange={(e) => setDrugScreen(e.target.value as never)}>
+                <MenuItem value="none">No drug-screen requirement at this location</MenuItem>
+                <MenuItem value="8panel">8 panel with reflex confirmation</MenuItem>
+                <MenuItem value="9panel">9 panel with reflex confirmation</MenuItem>
+              </Select>
+            </FormControl>
+            {drugScreen !== 'none' && (
+              <TextField size="small" type="date" label="Drug screen date" value={drugScreenDate} onChange={(e) => setDrugScreenDate(e.target.value)} InputLabelProps={{ shrink: true }} />
+            )}
+            <TextField size="small" type="date" label="Background screen completion date" value={bgcDate} onChange={(e) => setBgcDate(e.target.value)} InputLabelProps={{ shrink: true }} />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAttestFor(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={!venue.trim() || !attestFor?.i9SignedAt || !attestFor?.everifyCompletedAt || !bgcDate || (drugScreen !== 'none' && !drugScreenDate)}
+            onClick={() => {
+              if (!attestFor) return;
+              localStorage.setItem('ontrac_attest_venue', venue);
+              openAttestation({
+                workerName: attestFor.workerName ?? attestFor.uid,
+                venue: venue.trim(),
+                i9Date: attestFor.i9SignedAt ?? '',
+                everifyDate: attestFor.everifyCompletedAt ?? '',
+                drugScreen,
+                drugScreenDate,
+                bgcDate,
+              });
+              setAttestFor(null);
+            }}
+          >
+            Generate & print
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
