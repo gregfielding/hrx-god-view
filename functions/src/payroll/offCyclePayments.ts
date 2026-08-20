@@ -397,7 +397,10 @@ export const createOffCyclePayment = onCall(
           externalWorkerId: workerId,
           label: (attributionTag ? `${attributionTag} · Off-cycle: Per diem` : 'Off-cycle: Per diem').slice(0, 120),
           type: 'off_cycle_per_diem',
-          payCode: 'PER_DIEM',
+          // REIMBURSEMENT, not PER_DIEM (2026-08-20): Everee's PER_DIEM
+          // code withholds FICA; these are non-taxable accountable-plan
+          // per-diems/expenses.
+          payCode: 'REIMBURSEMENT',
           timestamp,
           amount: { amount: perDiemAmount.toFixed(2), currency: 'USD' },
           payableModel: 'PRE_CALCULATED',
