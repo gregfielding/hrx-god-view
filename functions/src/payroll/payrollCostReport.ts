@@ -1201,7 +1201,9 @@ async function buildI9Status(
     if (hiringEntityId && entityId !== hiringEntityId) return;
     const v = d.data();
     if (trim(v.status) === 'retired_duplicate') return;
-    const m = (v.mirror ?? {}) as Record<string, any>;
+    // The reconciler writes the snapshot as `readinessMirror` (older docs
+    // may carry `mirror`) — reading the wrong key made everyone "not started".
+    const m = (v.readinessMirror ?? v.mirror ?? {}) as Record<string, any>;
     if (m.i9Applicable === false) return; // contractors — no I-9
     const tsIso = (x: unknown): string | null =>
       x && typeof (x as any).toDate === 'function' ? (x as any).toDate().toISOString().slice(0, 10) : null;
