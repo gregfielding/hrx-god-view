@@ -45,6 +45,56 @@ cover (y/n) + Branch Contact + Email + Phone** per facility. Flex
 contacts: Hallie Hunt (Midwest, hallie.hunt@indeedflex.com) + regional
 PMs on the ownership-map tab.
 
+## Account build-out (EXECUTED 2026-08-20)
+
+Full Carrier-pattern build from the coverage sheet. CRM company
+`Trcil4aGEFfsYqeFz9s8` (OnTrac); national account **`BBvT5yZcWL5z4SNjWDUM`**
+named "OnTrac" (c1_select_llc, accountType national, markup 38,
+`defaults.eVerify.eVerifyRequired: true`).
+
+- **116 locations** under `crm_companies/{id}/locations` — name = sheet
+  Column C ("Akron"), geocoded coordinates, type Distribution Center,
+  plus reference fields `ontracDrugTest` / `ontracBackgroundCheck` /
+  `ontracClientPayRate`. Two pre-existing locations left alone: the
+  Apollo HQ record and Greg's manual "Las Vegas Facility" (redundant
+  with the sheet's "Las Vegas" — safe to delete, no child attached).
+- **116 child accounts** (`autoLoc_*`, parentAccountId=national) named
+  "OnTrac {Location}". Each carries: per-site Package Handler payRate +
+  billRate = pay×(1+markup/100); **25 children at 34% markup** (rate-card
+  zips, incl. NJ sites 08619/08085/08066/08810 whose sheet zips were
+  blank — resolved via geocoding); WC codes/rates from the matrix via
+  title synonyms (Package Handler→"Warehouse Associate" 8044/8015-CA/
+  2922-PA; Admin/Ops→8810 IL+TX; Hostler/Yard→6504-CA "Yard Driver");
+  positions in states with no matching matrix title left blank on
+  purpose (existing codes only — no 8040 placeholder auto-assign);
+  `orderDefaults.staffInstructions.credentials.text` = per-site
+  E-Verify/background/drug-panel line (cascades into JOs).
+- **Gig job orders OFF** (Greg 2026-08-20: not needed) but **116 auto
+  user groups created directly** (`auto_{childId}_package_handler`,
+  "OnTrac {Location} — Package Handler") via `ensureAutoUserGroup` —
+  normally groups only spawn inside the gig-JO path (AG.0).
+- National `orderDefaults.staffInstructions`: uniform/firstDay/other
+  text + 6 attachments (5 split safety PDFs + job descriptions).
+- Scratch scripts: `functions/.scratch/ontrac-build-{a,b,b2,c,d}-*.ts`
+  (idempotent, re-runnable), data in `ontrac-facilities.psv` +
+  `ontrac-geocache.json`.
+
+### Footguns hit (fixed, remember these)
+- **Ambiguous-multi-national skip**: a second (empty, UI-created)
+  national linked to the same company made
+  `autoChildAccountFromCompanyLocation` skip EVERY location — the
+  candidate filter checks `accountType==='national'` only, NOT the
+  auto-create toggle. Fixed by deleting the empty duplicate; children
+  for already-created locations were backfilled by importing
+  `tryCreateChildAccountForNationalParent` directly (Script B2).
+- Child names are `${parentName} ${locationName}` frozen at spawn —
+  rename the national BEFORE spawning (13 children needed rename).
+- Sheet zips: 11 rows blank / leading-zero-stripped (RANDOLPH 2368) —
+  four of them were 34%-rate-card NJ zips. Always backfill zips via
+  geocoding before markup logic.
+- Carrier national + all 23 children also had `eVerifyRequired` false/
+  unset — flipped true 2026-08-20 (Greg: "carrier requires e-verify").
+
 ## DECISION (Greg 2026-08-20): I-9 Section 2 = just-in-time
 563 of 770 Select workers lack employer Section 2 (visible on
 /reports/i9-status). Do NOT run a broad backlog sweep — complete
