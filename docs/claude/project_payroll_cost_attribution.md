@@ -63,5 +63,8 @@ finalize wait a full week. To pay them same-day:
 5. Payments land status=CALCULATED → someone must APPROVE on the Everee
    Payments page (10AM PT cutoff for same-day arrival).
 Scripts: functions/.scratch/expedite-stuck-shifts.ts (+ retry/stamp
-companions, 2026-08-20). Also ☠️ import per-diems paid via wage-class
-code get FICA-taxed ($50→$46.17) — reimbursement pay-code fix pending.
+companions, 2026-08-20). Also ☠️ Everee's PER_DIEM earning code is
+FICA-TAXED ($50→$46.17); FIXED 2026-08-20 — import extras + off-cycle
+per-diems now ship payCode REIMBURSEMENT (non-taxable). Historical
+PER_DIEM-coded earnings were shorted 7.65% (workers) + employer FICA
+match overpaid; remediation via Everee support or top-up payables.
