@@ -40,7 +40,7 @@ import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'fire
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { db } from '../../firebase';
-import { openTerminationLetter } from './terminationLetter';
+import { openTerminationLetter, SeparationLetterSigner } from './terminationLetter';
 
 interface SeparationRecord {
   entityId: string;
@@ -72,6 +72,27 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
   userId,
 }) => {
   const [separations, setSeparations] = useState<SeparationRecord[]>([]);
+  // Default letter signer (tenants/{T}.separationLetterSigner) — CEO signs
+  // every separation letter automatically (Greg 2026-08-21).
+  const [signer, setSigner] = useState<SeparationLetterSigner | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getDoc(doc(db, 'tenants', tenantId))
+      .then((snap) => {
+        const raw = snap.data()?.separationLetterSigner;
+        if (alive && raw && typeof raw.name === 'string' && raw.name.trim()) {
+          setSigner({
+            name: String(raw.name).trim(),
+            title: String(raw.title ?? '').trim(),
+            signatureImageUrl: typeof raw.signatureImageUrl === 'string' && raw.signatureImageUrl ? raw.signatureImageUrl : null,
+          });
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [tenantId]);
   const [rehireEligible, setRehireEligible] = useState<boolean | null>(null);
   const [open, setOpen] = useState(false);
   const [employments, setEmployments] = useState<EmploymentOption[] | null>(null);
@@ -216,6 +237,7 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
           entityName: emp.entityName,
           lastDay,
           separationType: sepType,
+          signer,
         });
       }
       close();
@@ -255,6 +277,7 @@ const SeparationSection: React.FC<{ tenantId: string; userId: string }> = ({
                 entityName: s.entityName || s.entityId,
                 lastDay: s.lastDay,
                 separationType: s.separationType,
+                signer,
               })
             }
             sx={{ height: 24, '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem' } }}

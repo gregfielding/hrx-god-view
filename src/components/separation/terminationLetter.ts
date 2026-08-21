@@ -18,6 +18,19 @@ export interface TerminationLetterInput {
   /** Optional — shown when known. */
   jobTitle?: string | null;
   startDate?: string | null;
+  /**
+   * Default signer (Greg 2026-08-21: CEO signs every letter so recruiters
+   * don't print/sign/scan). Loaded from tenants/{T}.separationLetterSigner.
+   * With a signatureImageUrl the letter prints with the signature image;
+   * without one it prints a typed "/s/ Name" conformed signature.
+   */
+  signer?: SeparationLetterSigner | null;
+}
+
+export interface SeparationLetterSigner {
+  name: string;
+  title: string;
+  signatureImageUrl?: string | null;
 }
 
 const TYPE_SENTENCE: Record<string, string> = {
@@ -55,8 +68,12 @@ export function openTerminationLetter(input: TerminationLetterInput): void {
   .addr { font-size: 11.5px; color: #333; }
   .date { margin: 22px 0; }
   .re { font-weight: bold; margin: 18px 0; }
-  .sig { margin-top: 56px; }
+  .sig { margin-top: 40px; }
   .sigline { border-top: 1px solid #000; width: 280px; padding-top: 4px; font-size: 11.5px; margin-top: 40px; }
+  .sigimg { display: block; height: 64px; max-width: 280px; object-fit: contain; object-position: left bottom; margin: 8px 0 -6px; }
+  .sigtyped { font-family: 'Snell Roundhand', 'Apple Chancery', 'Brush Script MT', cursive; font-size: 30px; line-height: 1; margin: 18px 0 2px; }
+  .signame { border-top: 1px solid #000; width: 280px; padding-top: 4px; font-size: 12.5px; }
+  .sigtitle { font-size: 11.5px; color: #333; }
   @media print { body { margin: 32px; } }
 </style>
 <div class="header">
@@ -68,18 +85,28 @@ ${input.workerAddress ? `<div>${esc(input.workerName)}<br/>${esc(input.workerAdd
 <div class="re">RE: Verification of Employment Separation — ${esc(input.workerName)}</div>
 <p>To Whom It May Concern:</p>
 <p>This letter confirms that ${esc(input.workerName)} ${employedClause}. The employee's last day of
-employment was ${fmt(input.lastDay)}, and ${esc(input.workerName)} has not been employed by, nor received
-wages from, C1 Staffing, LLC after that date.</p>
+employment was ${fmt(input.lastDay)}, and ${esc(input.workerName)} has not been employed by, nor earned
+wages for any work performed for, C1 Staffing, LLC after that date.</p>
 <p>${typeSentence}</p>
 <p>This letter is provided at the employee's request for verification purposes, including eligibility
 determinations by unemployment and public-benefit agencies. Please direct any verification inquiries to
 C1 Staffing, LLC at the address above.</p>
 <p>Sincerely,</p>
 <div class="sig">
-  <div class="sigline">Signature</div>
-  <div class="sigline">Print Name &amp; Title</div>
+${
+  input.signer?.name
+    ? `${
+        input.signer.signatureImageUrl
+          ? `<img class="sigimg" src="${esc(input.signer.signatureImageUrl)}" alt="Signature of ${esc(input.signer.name)}" />`
+          : `<div class="sigtyped">/s/ ${esc(input.signer.name)}</div>`
+      }
+  <div class="signame">${esc(input.signer.name)}</div>
+  <div class="sigtitle">${esc(input.signer.title || '')}</div>`
+    : `  <div class="sigline">Signature</div>
+  <div class="sigline">Print Name &amp; Title</div>`
+}
 </div>
-<script>window.print();</script>`;
+<script>window.addEventListener('load', function () { window.print(); });</script>`;
   const w = window.open('', '_blank', 'width=780,height=900');
   if (w) {
     w.document.write(html);
