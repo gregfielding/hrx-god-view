@@ -10,7 +10,7 @@ Load the files relevant to the task at hand; don't read all of them.
 
 ## Ongoing projects & system state
 
-- [ai provider openai](project_ai_provider_openai.md) — All AI-driven extraction/parsing/enrichment in this codebase uses OpenAI; the appAi.ts and resumeParser.ts files are the established patterns to mirror for new AI work
+- [ai provider openai](project_ai_provider_openai.md) — SUPERSEDED 2026-08-21 by [llm provider claude](project_llm_provider_claude.md): new AI work uses `getClaudeChat()` (utils/claudeChat.ts, claude-opus-5); Phase-2 files + embeddings still on OpenAI
 - [assignment backbone review](project_assignment_backbone_review.md) — "2026-07-23 full review — assignment is truth for pay/bill/schedule/identity/entity but WC code+rate and worksite street NEVER exist on assignments (no writer stamps, no consumer reads, 0/135 live docs); fix plan proposed"
 - [bgc compliance migration](project_bgc_compliance_migration.md) — Background-check compliance program — policy v1.1 + P0 kit + P1 (incl. webhook secret ENFORCED) + P2 cases + P2.5 + policy page + P3 notices ALL DEPLOYED 2026-07-14; P3 FULLY LIVE (first real send verified 2026-07-14); P4 intake needs dedicated compliance-Gmail connect; P5-P6 unbuilt
 - [carrier account buildout](project_carrier_account_buildout.md) — "Carrier national account — 23 Distribution Center child accounts created from coverage-map CSV 2026-07-08; markup 40, pay rates NOT yet applied"

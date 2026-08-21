@@ -1,3 +1,5 @@
+> **SUPERSEDED 2026-08-21** — the app is migrating to Claude. New AI work MUST use `getClaudeChat()` from `functions/src/utils/claudeChat.ts` (OpenAI-shaped call, `claude-opus-5` underneath). See [project_llm_provider_claude.md](project_llm_provider_claude.md) for the adapter, what's migrated, and what's still on OpenAI (Phase 2 + embeddings).
+
 # ai provider openai
 
 > All AI-driven extraction/parsing/enrichment in this codebase uses OpenAI; the appAi.ts and resumeParser.ts files are the established patterns to mirror for new AI work
