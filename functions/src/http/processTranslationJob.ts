@@ -58,7 +58,7 @@ export const processTranslationJob = onRequest(
   {
     cors: false,
     timeoutSeconds: 120,
-    memory: '256MiB',
+    memory: '512MiB', // 256MiB OOM'd on cold start (258MiB) after the 2026-08-21 Claude migration
     maxInstances: 10,
   },
   async (req, res) => {
