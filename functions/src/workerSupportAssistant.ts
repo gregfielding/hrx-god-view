@@ -163,7 +163,7 @@ export const workerSupportAssistant = onCall(
     cors: true,
     region: 'us-central1',
     timeoutSeconds: 45,
-    memory: '256MiB',
+    memory: '512MiB', // 256MiB OOM'd on cold start (267MiB) after the 2026-08-21 Claude migration
   },
   async (request): Promise<SupportResponse> => {
     if (!request.auth?.uid) {

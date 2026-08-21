@@ -54,18 +54,41 @@ Smoke test: `.scratch/claude-migration-smoke.ts` (FG extraction + posting
 copy on a synthetic detail page) — all fields extracted incl. hiring
 manager.
 
-## Phase 2 — TODO
+## Phase 2 — DONE + DEPLOYED 2026-08-21 (40 functions)
 
-Still on OpenAI (`new OpenAI(` in 13 files): appAi.ts, enhancedMainChat,
-devopsChat, codeAware, feedbackEngine, companyEnrichment,
-enhanceCompanyWithSerp, enhanceContactWithAI, discoverCompanyLocations,
-discoverCompanyUrls, extractCompanyInfoFromUrls, fetchCompanyNews,
-findSimilarCompanies, prospecting, simpleEnrichCompanyOnDemand,
-safeDealCoachAnalyzeCallable, dealCoach, workerSupportAssistant,
-calculateApplicantFitScore, gptGateway/openaiHelper. Same one-line swap
-pattern. **Embeddings stay on OpenAI** (utils/embeddings.ts, codeAware,
-vectorSettings) — Anthropic has no embeddings endpoint; move to Voyage
-if/when OpenAI is fully retired.
+Every remaining chat call site moved to the adapter (incl. 9 raw
+`fetch('https://api.openai.com/v1/chat/completions')` callers and the
+Responses-API call in workerSupportAssistant). Adapter extensions for
+this phase: OpenAI function `tools` → Claude tools with `tool_use` →
+`message.tool_calls` (+ `finish_reason: 'tool_calls'`), `tool_choice`
+auto/required/none/named, and `response_format: json_schema` → Claude
+structured outputs (`output_config.format`). `chatWithGPT` (in-app
+assistant) keeps its tool loop; its SSE branch (no browser consumer —
+the web app reads `data.reply`) now emits the full reply as ONE
+OpenAI-shaped delta event rather than token streaming.
+Modules: appAi, gptGateway, enhancedMainChat, dealCoach (4 sites),
+safeDealCoachAnalyzeCallable, calculateApplicantFitScore, devopsChat,
+workerSupportAssistant, prospecting, feedbackEngine, companyEnrichment,
+simpleEnrichCompanyOnDemand, enhanceContactWithAI, enhanceCompanyWithSerp,
+extractCompanyInfoFromUrls, discoverCompanyLocations, discoverCompanyUrls,
+fetchCompanyNews, findSimilarCompanies, utils/openaiHelper (→
+batchTagMotivationsWithAI).
+Deployed: chatWithGPT, enhancedChatWithGPT, app_ai_generateResponse,
+workerSupportAssistant, all 11 dealCoach* fns, enrichCompany{OnCreate,
+Weekly,Batch,OnDemand}, getEnrichmentStats, runProspecting,
+saveProspectingSearch, addProspectsToCRM, createCallList, the 6 deployed
+feedback* fns, enqueueApplicantScore, recalculateApplicantScore,
+findSimilarCompanies, fetchCompanyNews, discoverCompany{Locations,Urls},
+enhanceCompanyWithSerp, enhanceContactWithAI, extractCompanyInfoFromUrls,
+batchTagMotivationsWithAI. Not deployed (code only): devopsChat,
+saveFeedbackTemplate, listFeedbackTemplates.
+Smoke: `.scratch/claude-phase2-smoke.ts` (json_schema + tool_calls live).
+
+**Remaining on OpenAI: embeddings only** — `utils/embeddings.ts`,
+`codeAware.ts` (`/v1/embeddings`), `vectorSettings.ts`. Anthropic has no
+embeddings endpoint; move to Voyage if OpenAI is to be fully retired.
+`OPENAI_API_KEY` must therefore stay in the env file (and funded) for
+those paths only.
 
 ## Footguns
 
@@ -75,5 +98,9 @@ if/when OpenAI is fully retired.
   mode; Claude honors the injected JSON-only instruction, but the
   adapter still validates — a parse failure throws, and every caller
   already had try/catch + regex/fallback paths.
+- **Cold-start memory**: the Anthropic SDK adds ~10-20MiB to the bundle;
+  `workerSupportAssistant` at 256MiB OOM'd at 267MiB on first deploy
+  after migration → bumped to 512MiB. Audit any other 256MiB function
+  before deploying it with the adapter (CLAUDE.md already says 512 min).
 - Add a billing/429 alert (log-based) so a credit outage can't go quiet
   for days again — recommended to Greg 2026-08-21, not yet built.
