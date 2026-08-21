@@ -1,3 +1,4 @@
+import { createChatCompletion } from './utils/claudeChat';
 import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from './utils/logger';
@@ -137,28 +138,20 @@ export const enhancedChatWithGPT = onRequest({
     // Use enhanced user message if available
     const finalUserMessage = enhancedUserMessage || userMessage;
 
-    // Call OpenAI with enhanced context
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      res.status(500).json({ error: 'OpenAI API key not configured' });
+    // Claude-backed since 2026-08-21 (utils/claudeChat).
+    if (!process.env.ANTHROPIC_API_KEY) {
+      res.status(500).json({ error: 'LLM API key not configured' });
       return;
     }
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'gpt-5-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: finalUserMessage }
-        ],
-        temperature: 0.7,
-        max_completion_tokens: 1000
-      })
+    const data = await createChatCompletion({
+      model: 'claude-opus-5',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: finalUserMessage }
+      ],
+      max_completion_tokens: 1000
     });
-
-    const data = await response.json();
     const reply = data?.choices?.[0]?.message?.content || 'I apologize, but I encountered an issue processing your request.';
 
     // Log the enhanced interaction

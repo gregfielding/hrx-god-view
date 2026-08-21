@@ -1,5 +1,5 @@
 import { onCall } from 'firebase-functions/v2/https';
-import { OpenAI } from 'openai';
+import { getClaudeChat } from './utils/claudeChat';
 import * as admin from 'firebase-admin';
 
 interface NewsArticle {
@@ -250,14 +250,14 @@ export const fetchCompanyNews = onCall({
         let relevance = 0.5; // Base score
         
         // Check if OpenAI API key is available
-        const openaiApiKey = process.env.OPENAI_API_KEY;
+        const openaiApiKey = process.env.ANTHROPIC_API_KEY;
         if (!openaiApiKey) {
           console.log('OpenAI API key not configured, using basic processing');
           summary = article.description || article.content?.substring(0, 200) + '...' || 'No summary available';
           tags = ['Business', 'News'];
         } else {
           // Initialize OpenAI client
-          const openai = new OpenAI({ apiKey: openaiApiKey });
+          const openai = getClaudeChat();
           
           // Generate AI summary and tags
           const summaryPrompt = `Analyze this news article about ${companyName}. Create a concise summary (2-3 sentences) and identify relevant tags from this list: Expansion, Layoffs, Leadership, Legal, Regulatory, Partnership, Acquisition, Innovation, Awards, Community, Healthcare, Manufacturing, Technology, Retail, Finance, Education, Government, Non-profit.

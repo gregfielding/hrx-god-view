@@ -1,14 +1,9 @@
 import { onCall } from 'firebase-functions/v2/https';
 import { defineString } from 'firebase-functions/params';
-import { OpenAI } from 'openai';
-
+import { getClaudeChat } from './utils/claudeChat';
 // Define config parameters
 const serpApiKey = defineString('SERP_API_KEY');
-const openaiApiKey = defineString('OPENAI_API_KEY');
-
-const openai = new OpenAI({
-  apiKey: openaiApiKey.value() || '',
-});
+const openai = getClaudeChat();
 
 export const enhanceCompanyWithSerp = onCall({
   cors: true,
@@ -30,7 +25,7 @@ export const enhanceCompanyWithSerp = onCall({
     Object.assign(enhancedData, serpData);
 
     // Strategy 2: AI processing of SERP results
-    if (openaiApiKey.value()) {
+    if (process.env.ANTHROPIC_API_KEY) {
       const aiEnhancedData = await processWithAI(companyName, serpData);
       Object.assign(enhancedData, aiEnhancedData);
     }

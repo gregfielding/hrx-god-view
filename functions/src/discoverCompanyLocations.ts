@@ -1,10 +1,8 @@
 import { onCall } from 'firebase-functions/v2/https';
-import { OpenAI } from 'openai';
+import { getClaudeChat } from './utils/claudeChat';
 import * as admin from 'firebase-admin';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || '',
-});
+const openai = getClaudeChat();
 
 export const discoverCompanyLocations = onCall(async (request) => {
   try {
@@ -17,7 +15,7 @@ export const discoverCompanyLocations = onCall(async (request) => {
     console.log(`Discovering locations for company: ${companyName}`);
 
     // Check if we have OpenAI API key
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.ANTHROPIC_API_KEY) {
       console.log('OpenAI API key not configured, returning basic location suggestions');
       return {
         locations: generateBasicLocations(companyName, headquartersCity, industry)

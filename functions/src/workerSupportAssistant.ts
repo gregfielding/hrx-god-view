@@ -1,7 +1,6 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
-import OpenAI from 'openai';
-import { getOpenAIKey } from './utils/secrets';
+import { getClaudeChat } from './utils/claudeChat';
 
 type SupportTopic =
   | 'shift_cancellation'
@@ -180,8 +179,7 @@ export const workerSupportAssistant = onCall(
       throw new HttpsError('invalid-argument', 'Question is too long.');
     }
 
-    const apiKey = await getOpenAIKey(tenantId);
-    if (!apiKey) {
+    if (!process.env.ANTHROPIC_API_KEY) {
       throw new HttpsError('failed-precondition', 'Support assistant is not configured.');
     }
 
@@ -208,19 +206,21 @@ export const workerSupportAssistant = onCall(
       '["Contact recruiter","Open inbox","View assignments","Open profile"]',
     ].join('\n\n');
 
-    const openai = new OpenAI({ apiKey });
+    // Claude-backed since 2026-08-21 (was OpenAI Responses API) — utils/claudeChat.
+    const openai = getClaudeChat();
 
     try {
-      const completion = await openai.responses.create({
-        model: 'gpt-5-mini',
-        input: [
+      const completion = await openai.chat.completions.create({
+        model: 'claude-opus-5',
+        messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        max_output_tokens: 400,
+        response_format: { type: 'json_object' },
+        max_completion_tokens: 400,
       });
 
-      const text = (completion.output_text || '').trim();
+      const text = (completion.choices?.[0]?.message?.content || '').trim();
       if (!text) {
         logger.warn('workerSupportAssistant.empty_response', {
           uid: request.auth.uid,

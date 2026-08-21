@@ -1,6 +1,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { embedText } from './codeAware';
+import { createChatCompletion } from './utils/claudeChat';
 import { logger } from './utils/logger';
 import { withIdempotency } from './middleware/aiGuard';
 import { updateLocationAssociation as _ignore } from './updateLocationAssociation';
@@ -10,7 +11,7 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 
-const MODEL = 'gpt-5';
+const MODEL = 'claude-opus-5'; // model is chosen in utils/claudeChat; kept for payload-shape compat
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0; let na = 0; let nb = 0;
@@ -185,9 +186,9 @@ export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, t
       tool_choice: wantSSE ? 'none' : (toolMode ? 'auto' : 'auto')
     } as any;
 
-    // Use OpenAI-compatible endpoint if key present
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
+    // Claude-backed since 2026-08-21 — the OpenAI-shaped payload goes
+    // through utils/claudeChat (tools → Claude tools, tool_use → tool_calls).
+    if (!process.env.ANTHROPIC_API_KEY) {
       // For local testing, fallback simple echo
       const reply = messages?.slice().reverse().find((m: any) => m.role === 'user')?.content || 'Hello!';
       await persistAssistantMessage(tenantId, threadId, userId, reply);
@@ -196,21 +197,10 @@ export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, t
       return;
     }
 
-    const r = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
+    const data = await createChatCompletion(payload);
 
-    if (!r.ok) {
-      const text = await r.text();
-      throw new Error(`Provider error ${r.status}: ${text}`);
-    }
-
-    // SSE streaming path
+    // SSE path — kept for contract compatibility (no browser client uses it
+    // today): the full reply is emitted as one OpenAI-shaped delta event.
     if (wantSSE) {
       res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
       res.set('Content-Type', 'text/event-stream');
@@ -218,43 +208,12 @@ export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, t
       res.set('Connection', 'keep-alive');
       // @ts-ignore - Express typings
       res.flushHeaders?.();
-
-      const reader = r.body?.getReader();
-      const decoder = new TextDecoder();
-      let fullText = '';
-      if (!reader) {
-        res.write(`event: error\n`);
-        res.write(`data: Failed to read provider stream\n\n`);
-        res.end();
-        return;
-      }
+      const fullText = data?.choices?.[0]?.message?.content ?? '';
       try {
-        let buffered = '';
-        // Notify client stream opened
         res.write(`event: open\n`);
         res.write(`data: ok\n\n`);
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          buffered += chunk;
-          // Forward raw provider SSE for immediate UX
-          res.write(chunk);
-          // Accumulate assistant text by parsing data lines
-          const parts = buffered.split('\n\n');
-          buffered = parts.pop() || '';
-          for (const part of parts) {
-            const line = part.trim();
-            if (!line.startsWith('data:')) continue;
-            const dataStr = line.replace(/^data:\s?/, '').trim();
-            if (dataStr === '[DONE]') continue;
-            try {
-              const obj = JSON.parse(dataStr);
-              const delta = obj?.choices?.[0]?.delta?.content;
-              if (typeof delta === 'string') fullText += delta;
-            } catch {}
-          }
-        }
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: fullText } }] })}\n\n`);
+        res.write(`data: [DONE]\n\n`);
       } catch (streamErr) {
         res.write(`event: error\n`);
         res.write(`data: ${String(streamErr)}\n\n`);
@@ -269,7 +228,6 @@ export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, t
       return;
     }
 
-    const data = await r.json();
     const choice = data?.choices?.[0];
     const toolCalls = choice?.message?.tool_calls || [];
 
@@ -658,19 +616,13 @@ async function executeSummarizeEmailThread(raw: any, session: { tenantId: string
     return `From: ${e.from}\nTo: ${(e.to || []).join(', ')}\nSubject: ${e.subject}\nDate: ${e.timestamp?.toDate?.() ? e.timestamp.toDate().toISOString() : e.timestamp}\nDirection: ${e.direction}\nBody: ${text.slice(0, 800)}`;
   });
 
-  const apiKey = process.env.OPENAI_API_KEY;
   let summary = '';
-  if (apiKey) {
+  if (process.env.ANTHROPIC_API_KEY) {
     const prompt = `Summarize the following email conversation succinctly with key decisions, open questions, next steps, and overall sentiment. Provide a bullet list of action items if present.\n\n${chunks.join('\n\n---\n\n')}`;
-    const r = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, messages: [{ role: 'system', content: 'You are a helpful assistant.' }, { role: 'user', content: prompt }], stream: false })
-    });
-    if (r.ok) {
-      const data = await r.json();
+    try {
+      const data = await createChatCompletion({ model: MODEL, messages: [{ role: 'system', content: 'You are a helpful assistant.' }, { role: 'user', content: prompt }] });
       summary = data?.choices?.[0]?.message?.content || '';
-    }
+    } catch {}
   }
   if (!summary) {
     summary = `Conversation with ${emails.length} messages. Latest subject: ${emails[0]?.subject || ''}.`;

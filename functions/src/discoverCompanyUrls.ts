@@ -1,14 +1,9 @@
 import { onCall } from 'firebase-functions/v2/https';
 import { defineString } from 'firebase-functions/params';
-import { OpenAI } from 'openai';
-
+import { getClaudeChat } from './utils/claudeChat';
 // Define config parameters
 const serpApiKey = defineString('SERP_API_KEY');
-const openaiApiKey = defineString('OPENAI_API_KEY');
-
-const openai = new OpenAI({
-  apiKey: openaiApiKey.value() || '',
-});
+const openai = getClaudeChat();
 
 export const discoverCompanyUrls = onCall({
   maxInstances: 5,
@@ -24,7 +19,7 @@ export const discoverCompanyUrls = onCall({
     console.log(`Discovering URLs for company: ${companyName}`);
 
     // Check if we have OpenAI API key for enhanced discovery
-    const hasOpenAI = !!process.env.OPENAI_API_KEY;
+    const hasOpenAI = !!process.env.ANTHROPIC_API_KEY;
 
     // Use multiple strategies to find URLs
     const results = {
