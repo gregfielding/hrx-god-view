@@ -2,7 +2,7 @@
  * Batch EN→ES translation via OpenAI. Preserves placeholders; respects glossary and doNotTranslate.
  */
 
-import type OpenAI from 'openai';
+import type { ChatClientLike } from '../utils/claudeChat';
 import type { TranslationSettings } from './types';
 
 export interface TranslateBatchItem {
@@ -14,7 +14,7 @@ export interface TranslateBatchResult {
   items: Array<{ key: string; translated: string }>;
 }
 
-const DEFAULT_MODEL = 'gpt-4o-mini';
+const DEFAULT_MODEL = 'claude-opus-5'; // model is chosen by utils/claudeChat; kept for call-shape compat
 
 function buildSystemPrompt(): string {
   return [
@@ -27,7 +27,7 @@ function buildSystemPrompt(): string {
 }
 
 export async function translateBatchEnToEs(params: {
-  client: OpenAI;
+  client: ChatClientLike;
   items: TranslateBatchItem[];
   settings: TranslationSettings;
   model?: string;
@@ -56,7 +56,7 @@ export async function translateBatchEnToEs(params: {
   try {
     json = JSON.parse(text) as { items?: Array<{ key?: string; translated?: string }> };
   } catch {
-    throw new Error(`OpenAI returned invalid JSON: ${text.slice(0, 200)}`);
+    throw new Error(`LLM returned invalid JSON: ${text.slice(0, 200)}`);
   }
 
   if (!json.items || !Array.isArray(json.items)) {

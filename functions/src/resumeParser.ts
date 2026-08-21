@@ -8,7 +8,7 @@ import { getOrCreateFirebaseDownloadReadUrl } from './utils/firebaseStorageDownl
 import { logger } from './utils/logger';
 import { maybeEmitResumeUploadedCategoryScore } from './categoryScoreEvolution/activityCategoryScoreEmit';
 import nlp from 'compromise';
-import OpenAI from 'openai';
+import { getClaudeChat, type ChatClientLike } from './utils/claudeChat';
 import { z } from 'zod';
 
 // Ensure default app exists (emulators + cold starts)
@@ -793,13 +793,9 @@ async function applyConfidenceBasedMerge(parsedData: any, acceptedChanges: any):
 async function parseResumeCore(fileUrl: string, fileName: string, fileSize: number, userId: string): Promise<any> {
   const startTime = Date.now();
 
-  // Get OpenAI API key from environment variables
-  const openaiApiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY;
-  if (!openaiApiKey) {
-    throw new Error('OpenAI API key is not set in environment variables.');
-  }
-  const OpenAI = (await import('openai')).default;
-  const openai = new OpenAI({ apiKey: openaiApiKey });
+  // Claude-backed since 2026-08-21 (same chat.completions call shape —
+  // see utils/claudeChat). Throws if ANTHROPIC_API_KEY is unset.
+  const openai = getClaudeChat();
 
   try {
     // Get user info
@@ -1347,7 +1343,7 @@ async function parseWord(buffer: Buffer): Promise<string> {
 /**
  * Extract structured data from resume text using AI and NLP
  */
-async function extractResumeData(text: string, fileName: string, openai: OpenAI): Promise<ParsedResume['parsedData']> {
+async function extractResumeData(text: string, fileName: string, openai: ChatClientLike): Promise<ParsedResume['parsedData']> {
   // Clean and preprocess text
   const cleanedText = preprocessText(text);
   
@@ -1394,7 +1390,7 @@ function preprocessText(text: string): string {
 /**
  * Extract information using OpenAI
  */
-async function extractWithAI(text: string, openai: OpenAI) {
+async function extractWithAI(text: string, openai: ChatClientLike) {
   const prompt = `
 Extract structured information from this resume. Return a JSON object with the following structure:
 
@@ -1769,7 +1765,7 @@ function mergeExtractions(aiExtraction: any, nlpExtraction: any) {
 /**
  * Generate AI analysis of the resume
  */
-async function generateAIAnalysis(parsedData: any, originalText: string, openai: OpenAI): Promise<AIAnalysis> {
+async function generateAIAnalysis(parsedData: any, originalText: string, openai: ChatClientLike): Promise<AIAnalysis> {
   const prompt = `
 Analyze this resume and provide insights. Return a JSON object with:
 
@@ -1876,7 +1872,7 @@ function calculateConfidence(parsedData: any): number {
 /**
  * Generate an enhanced bio from resume summary using AI
  */
-async function generateEnhancedBio(summary: string, name: string, openai: OpenAI): Promise<string> {
+async function generateEnhancedBio(summary: string, name: string, openai: ChatClientLike): Promise<string> {
   const prompt = `
 Transform this resume summary/objective into an engaging, professional bio for a user profile. The bio should be:
 

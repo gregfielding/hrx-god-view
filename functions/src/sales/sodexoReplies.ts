@@ -19,6 +19,7 @@
  * turn threads keep working — a new message after Greg's reply is picked up
  * as a fresh review card.
  */
+import { getClaudeChat } from '../utils/claudeChat';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineString } from 'firebase-functions/params';
@@ -120,10 +121,8 @@ async function classifyAndDraft(input: {
   subject: string;
   campaign: 'sodexo' | 'reengagement';
 }): Promise<Classified> {
-  const apiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY unset');
-  const OpenAI = (await import('openai')).default;
-  const openai = new OpenAI({ apiKey });
+  // Claude-backed since 2026-08-21 (same chat.completions shape — utils/claudeChat).
+  const openai = getClaudeChat();
   const prompt = [
     input.campaign === 'sodexo'
       ? `A Sodexo campus-dining manager replied to Greg Fielding's cold outreach about fall staffing coverage. Classify the reply and draft Greg's response.`

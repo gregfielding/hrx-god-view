@@ -870,13 +870,12 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 
-const { OpenAI } = require('openai');
+// Claude-backed LLM client (2026-08-21) — OpenAI-shaped chat.completions adapter.
+import { getClaudeChat } from './utils/claudeChat';
 
 const db = admin.firestore();
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || '',
-});
+const openai = getClaudeChat();
 
 
 export const analyzeAITraining = onCall(async (request) => {
@@ -2572,31 +2571,17 @@ function buildSystemPrompt(settings: any, customerContext: any) {
   return prompt;
 }
 
-// Helper function to call OpenAI
+// Helper function to call the LLM (Claude-backed since 2026-08-21; was a raw OpenAI fetch)
 async function callOpenAI(systemPrompt: string, userMessage: string) {
-  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-  const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
-  
-  const payload = {
-    model: 'gpt-5',
+  const data = await getClaudeChat().chat.completions.create({
+    model: 'claude-opus-5',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_completion_tokens: 500,
-    temperature: 0.7
-  };
-
-  const response = await fetch(OPENAI_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_API_KEY}`
-    },
-    body: JSON.stringify(payload)
+    max_completion_tokens: 500
   });
 
-  const data = await response.json();
   const content = data.choices?.[0]?.message?.content || 'No response from AI.';
   
   // Simple confidence scoring based on response length and content
@@ -3463,9 +3448,7 @@ async function analyzeLowSatisfaction(conversationId: string, customerId: string
     };
     
     // Generate AI-powered improvement suggestions
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
+    const openai = getClaudeChat();
     
     const prompt = `Analyze this low-satisfaction conversation and suggest improvements:
 
@@ -4867,9 +4850,7 @@ async function getRecipientsByFilter(tenantId: string, filter: any) {
 
 async function handleAIBroadcastReply(reply: string, broadcast: any, workerId: string) {
   try {
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
+    const openai = getClaudeChat();
     
     const prompt = `You are an HR assistant responding to a worker's reply to a company broadcast.
 
@@ -4926,9 +4907,7 @@ Respond with JSON:
 async function analyzeReplySentiments(replies: any[]) {
   if (replies.length === 0) return { positive: 0, neutral: 0, negative: 0 };
   
-  const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-  });
+  const openai = getClaudeChat();
   
   const sentiments = { positive: 0, neutral: 0, negative: 0 };
   

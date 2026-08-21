@@ -19,6 +19,7 @@
  * Shares the salesOutreachMailbox grant via gmailClientFor().
  */
 
+import { getClaudeChat } from '../utils/claudeChat';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
@@ -109,10 +110,8 @@ interface Classified {
 }
 
 async function classifyInboxMessage(input: { from: string; subject: string; body: string }): Promise<Classified> {
-  const apiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY unset');
-  const OpenAI = (await import('openai')).default;
-  const openai = new OpenAI({ apiKey });
+  // Claude-backed since 2026-08-21 (same chat.completions shape — utils/claudeChat).
+  const openai = getClaudeChat();
   const prompt = [
     `Triage one email from Greg Fielding's inbox (CEO of C1 Staffing, a national hourly staffing agency). Classify and, when a reply is needed, draft it.`,
     ``,

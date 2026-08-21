@@ -25,7 +25,8 @@
  * just overwrites with the same content.
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
+import { getClaudeChat } from '../../../utils/claudeChat';
 
 import type { IndeedFlexEvent, IndeedFlexEventType } from '../../../shared/indeedFlex/types';
 
@@ -45,7 +46,8 @@ export interface OpenAILike {
 let cached: OpenAILike | null = null;
 export function defaultOpenAI(): OpenAILike {
   if (cached) return cached;
-  cached = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' }) as OpenAILike;
+  // Claude-backed (2026-08-21) — same chat.completions shape, see utils/claudeChat.
+  cached = getClaudeChat() as unknown as OpenAILike;
   return cached;
 }
 

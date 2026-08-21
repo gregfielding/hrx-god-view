@@ -5,7 +5,7 @@
 
 import { onRequest } from 'firebase-functions/v2/https';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import OpenAI from 'openai';
+import { getClaudeChat } from '../utils/claudeChat';
 
 import {
   computeHash,
@@ -21,7 +21,6 @@ import {
 } from '../translation';
 import type { TranslationTaskPayload } from '../translation';
 import type { UnknownTaxonomyTermEntry } from '../translation/logs';
-import { getOpenAIKey } from '../utils/secrets';
 
 function getNested(obj: Record<string, unknown>, path: string): unknown {
   const parts = path.split('.');
@@ -184,13 +183,11 @@ export const processTranslationJob = onRequest(
       }
 
       if (work.length > 0) {
-        let apiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY;
-        if (!apiKey) apiKey = await getOpenAIKey(tenantId);
-        if (!apiKey) {
-          res.status(500).send('OPENAI_API_KEY not configured');
+        if (!process.env.ANTHROPIC_API_KEY) {
+          res.status(500).send('ANTHROPIC_API_KEY not configured');
           return;
         }
-        const client = new OpenAI({ apiKey });
+        const client = getClaudeChat(); // Claude-backed since 2026-08-21
         const result = await translateBatchEnToEs({
           client,
           items: work.map((w) => ({ key: w.key, text: w.text })),
