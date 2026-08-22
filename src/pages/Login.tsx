@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { sendPasswordReset } from '../services/sendPasswordResetCallable';
-import { Box, Button, TextField, Typography, Paper, Alert, CircularProgress, Link as MuiLink } from '@mui/material';
+import { A, langToggleStyle } from './authMinimalStyles';
 
 import { auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -37,6 +37,7 @@ const Login = () => {
         forgotEnterEmail: 'Ingresa tu correo electrónico arriba primero, luego haz clic en "¿Olvidaste tu contraseña?".',
         forgotSent: 'Te enviamos un enlace para restablecer tu contraseña. Revisa tu correo.',
         forgotError: 'No se pudo enviar el enlace de restablecimiento. Verifica el correo electrónico e inténtalo de nuevo.',
+        phoneLogin: 'Iniciar sesión con tu celular',
       }
     : {
         title: 'Platform Login',
@@ -50,6 +51,7 @@ const Login = () => {
         forgotEnterEmail: 'Enter your email above first, then tap "Forgot password?".',
         forgotSent: "We've sent you a password reset link. Check your email.",
         forgotError: "Couldn't send reset link. Double-check the email and try again.",
+        phoneLogin: 'Sign in with your phone instead',
       };
 
   // Redirect once fully authenticated and role is loaded
@@ -151,109 +153,76 @@ const Login = () => {
     setLanguage(guestLanguage);
   }, [guestLanguage]);
 
+  const busy = localLoading || loading;
+  const primaryStyle = { ...A.button, ...(busy ? A.buttonDisabled : {}) };
+
   return (
-    <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
-      <Paper elevation={3} sx={{ p: 4, width: 400 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end', mb: 1 }}>
-          <Typography variant="caption" color="text.secondary">
-            {copy.language}
-          </Typography>
-          <Button
-            size="small"
-            variant={guestLanguage === 'en' ? 'contained' : 'outlined'}
-            onClick={() => setGuestLanguage('en')}
-          >
-            EN
-          </Button>
-          <Button
-            size="small"
-            variant={guestLanguage === 'es' ? 'contained' : 'outlined'}
-            onClick={() => setGuestLanguage('es')}
-          >
-            ES
-          </Button>
-        </Box>
-        <Typography variant="h5" gutterBottom>
-          {copy.title}
-        </Typography>
+    <div style={A.page}>
+      <div style={A.top}>
+        <button type="button" style={langToggleStyle(guestLanguage === 'en')} onClick={() => setGuestLanguage('en')}>EN</button>
+        <span style={{ color: '#ccc', margin: '0 8px' }}>|</span>
+        <button type="button" style={langToggleStyle(guestLanguage === 'es')} onClick={() => setGuestLanguage('es')}>ES</button>
+      </div>
 
-        {successMessage && (
-          <Alert severity="success" sx={{ mb: 2 }}>
-            {successMessage}
-          </Alert>
-        )}
-
-        {error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
-          </Alert>
-        )}
+      <main style={A.main}>
+        <h1 style={A.h1}>{copy.title}</h1>
 
         <form onSubmit={handleLogin}>
-          <TextField
-            label={copy.email}
-            type="email"
-            name="email"
-            autoComplete="email"
-            fullWidth
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            margin="normal"
-          />
-          <TextField
-            label={copy.password}
-            type="password"
-            name="password"
-            autoComplete="current-password"
-            fullWidth
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            margin="normal"
-          />
+          <div style={A.field}>
+            <label style={A.label} htmlFor="login-email">{copy.email}</label>
+            <input
+              id="login-email"
+              style={A.input}
+              type="email"
+              name="email"
+              autoComplete="email"
+              inputMode="email"
+              autoCapitalize="none"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div style={A.field}>
+            <label style={A.label} htmlFor="login-password">{copy.password}</label>
+            <input
+              id="login-password"
+              style={A.input}
+              type="password"
+              name="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
 
-          <Button
-            type="submit"
-            variant="contained"
-            color="primary"
-            fullWidth
-            sx={{ mt: 2 }}
-            disabled={localLoading || loading}
-          >
-            {localLoading || loading ? <CircularProgress size={24} /> : copy.submit}
-          </Button>
+          <button type="submit" style={primaryStyle} disabled={busy}>
+            {busy ? '…' : copy.submit}
+          </button>
 
-          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
-            <MuiLink
-              component="button"
-              type="button"
-              variant="body2"
-              underline="hover"
-              onClick={handleForgotPassword}
-              disabled={localLoading || loading}
-              sx={{ cursor: 'pointer' }}
-            >
+          {successMessage && <p style={A.success}>{successMessage}</p>}
+          {error && <p style={A.error}>{error}</p>}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, marginTop: 28 }}>
+            <button type="button" style={A.linkBtn} onClick={handleForgotPassword} disabled={busy}>
               {copy.forgotPassword}
-            </MuiLink>
-            <Box sx={{ textAlign: 'right' }}>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                {copy.firstTimePrompt}
-              </Typography>
-              <MuiLink
-                component="button"
-                type="button"
-                variant="body2"
-                underline="hover"
-                onClick={handleForgotPassword}
-                disabled={localLoading || loading}
-                sx={{ cursor: 'pointer' }}
-              >
+            </button>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 12, color: '#777', marginBottom: 2 }}>{copy.firstTimePrompt}</div>
+              <button type="button" style={A.linkBtn} onClick={handleForgotPassword} disabled={busy}>
                 {copy.firstTimeAction}
-              </MuiLink>
-            </Box>
-          </Box>
+              </button>
+            </div>
+          </div>
         </form>
-      </Paper>
-    </Box>
+      </main>
+
+      <footer style={A.footer}>
+        <img src="/C1.png" alt="C1 Staffing" style={A.logo} />
+        <button type="button" style={A.quietLink} onClick={() => navigate('/login/phone')}>
+          {copy.phoneLogin}
+        </button>
+      </footer>
+    </div>
   );
 };
 

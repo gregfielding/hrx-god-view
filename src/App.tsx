@@ -24,6 +24,8 @@ const ChatGPT = lazy(() => import('./pages/TenantViews/ChatGPT'));
 const UserProfile = lazy(() => import('./pages/UserProfile'));
 const UserReadinessPage = lazy(() => import('./pages/UserReadinessPage'));
 const Login = lazy(() => import('./pages/Login'));
+// Phone (OTP) sign-in — alternate login layout under test (Greg 2026-08-21).
+const PhoneLoginPage = lazy(() => import('./pages/PhoneLoginPage'));
 const UserOnboarding = lazy(() => import('./pages/UserOnboarding'));
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { canAccessAccountInvoicingTab, canAccessGlobalInvoicing } from './utils/invoicingAccessControl';
@@ -559,6 +561,7 @@ function App() {
   const routes = (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/login/phone" element={<PhoneLoginPage />} />
       <Route path="/crm/public" element={<PublicCRMView />} />
       <Route path="/setup-password" element={<SetupPassword />} />
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
