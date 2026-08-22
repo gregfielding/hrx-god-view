@@ -83,7 +83,7 @@ import { buildCanonicalHomeAddressFromWizardPersonal } from '../../utils/buildCa
 import { isApplyHomeAddressValid } from '../../utils/applyHomeAddressValid';
 import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroupAutoAdd';
 import { isValidUsPhone10, normalizeUsPhoneDigits } from '../../utils/usPhoneValidation';
-import { normalizeLast4SsnDigits, isEmptyOrValidLast4Ssn } from '../../utils/last4Ssn';
+import { normalizeLast4SsnDigits } from '../../utils/last4Ssn';
 import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 import { mergeResolvedHiringInterview } from '../../utils/mergeResolvedHiringInterview';
 import {
@@ -1632,11 +1632,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           setSaving(false);
           return;
         }
-        if (!isEmptyOrValidLast4Ssn(formData?.personal?.last4SSN)) {
-          alert(t('apply.last4SsnInvalid'));
-          setSaving(false);
-          return;
-        }
+        // Last-4 SSN is no longer asked at sign-up (Greg 2026-08-21) — it is
+        // mirrored from Everee after payroll onboarding (evereeReconcileWorker).
         // Address is part of account creation now — no account exists
         // without a verified, geocoded home address (Greg 2026-08-07).
         if (!isApplyHomeAddressValid(formDataRef.current?.personal || formData?.personal || {})) {

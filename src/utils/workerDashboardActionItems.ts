@@ -371,24 +371,10 @@ function buildWorkerProfileStackItems(input: BuildWorkerDashboardActionItemsInpu
 
   const candidates: InternalCandidate[] = [];
 
-  if (!workerHasTaxIdentityLast4(userDoc)) {
-    candidates.push({
-      id: 'add_tax_identity_last4',
-      category: 'important',
-      _tier: 'important',
-      titleKey: 'dashboard.actionItems.taxLast4Title',
-      descriptionKey: 'dashboard.actionItems.taxLast4Description',
-      sortOrder: 30,
-      primaryLabelKey: 'dashboard.actionItems.taxLast4Primary',
-      primaryKind: 'navigate',
-      href: WORKER_PERSONAL_DETAILS_HREF,
-      sourceReason: 'Important: last 4 SSN/ITIN missing',
-      qaEvaluatedFields: {
-        last4SSN: userDoc ? normalizeLast4SsnDigits(userDoc.last4SSN) : '',
-        hasLast4: false,
-      },
-    });
-  }
+  // 'add_tax_identity_last4' retired 2026-08-21 (Greg): workers are no longer
+  // asked for the last 4 of their SSN — it is mirrored from Everee after
+  // payroll onboarding (evereeReconcileWorker). Id kept in the union/score
+  // table so persisted snapshots still type-check.
 
   if (!isWorkerHomeAddressComplete(userDoc)) {
     candidates.push({

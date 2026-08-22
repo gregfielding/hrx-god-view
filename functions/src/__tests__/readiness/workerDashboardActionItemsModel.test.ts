@@ -82,13 +82,17 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
     it('uses the contract score table from the types module', () => {
       const out = buildWorkerDashboardActionItemsSnapshot(
         input({
-          userDoc: { ...VALID_USER_BASE, last4SSN: '' },
+          userDoc: { ...VALID_USER_BASE, last4SSN: '', addressInfo: {} },
         }),
       );
-      const last4 = out.items.find((i) => i.id === 'add_tax_identity_last4');
-      expect(last4, 'add_tax_identity_last4 should appear when last4 missing').to.exist;
-      expect(last4!.priorityScore).to.equal(
-        WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES.add_tax_identity_last4,
+      // 'add_tax_identity_last4' was retired 2026-08-21 — last-4 is mirrored
+      // from Everee, never asked of the worker — so it must NOT appear even
+      // when the user doc lacks it. Use the address item to check the table.
+      expect(out.items.find((i) => i.id === 'add_tax_identity_last4')).to.not.exist;
+      const addr = out.items.find((i) => i.id === 'confirm_home_address');
+      expect(addr, 'confirm_home_address should appear when address missing').to.exist;
+      expect(addr!.priorityScore).to.equal(
+        WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES.confirm_home_address,
       );
     });
 
