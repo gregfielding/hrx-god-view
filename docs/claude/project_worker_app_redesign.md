@@ -52,9 +52,27 @@ native list of paid shifts + totals + fast-pay + tax docs (never partner-branded
 - Support page exists (`workers/support.tsx`) but commented out of nav — needed as the front door
   for the payroll help-desk plans.
 
+## P0 SHIPPED 2026-08-23 (commit 21b2bca2, 7 fns + hosting deployed)
+
+- `WorkerBottomTabs` (Home · Find Shifts · Schedule · Earnings · Profile) — the ONE worker nav;
+  `WorkerNav` sidebar unmounted, `WorkerAppBar` rewritten slim (C1 mark + bell→inbox, badge 9+,
+  first-login language dialog kept), dashboard quick buttons removed.
+- Work-only action feed enforced at the SERVER snapshot choke point
+  (`workerDashboardActionItemsModel.ts` `PROFILE_NAG_IDS` filter) + mirrored in the legacy client
+  builder; 27 tests updated to the new contract. Native (Flutter) apps read the same snapshot.
+- `/c1/workers/earnings` (+`/:tenantId`) live; `/payroll*` redirects preserved. Both logins land
+  workers on Home. Notifications page marks all read on open.
+- Profile page already had Language / Reset password / Log out rows — avatar menu removal lost nothing.
+- i18n gotcha: root `i18n/locales/*.json` edited AND copied to `public/` for the running dev server
+  (prebuild copies on build — see [[feedback_i18n_source_of_truth]]).
+
+**Native apps note (Greg 2026-08-23):** Flutter app exists at `~/Projects/hrxone_app` (firebase_core/
+auth/storage wired). Build server-first so it ports: phone OTP = callables + custom token (no web
+reCAPTCHA dependency), action-items = server snapshot, notifications via callables. Keep new worker
+logic OUT of React components.
+
 ## Sequence
-- **P0 (subtraction)**: bottom tab bar + kill other navs; action-items filter; land on Home;
-  notifications popover deleted + mark-read + badge cap; `/earnings` route rename.
+- **P0 — DONE (above).**
 - **P1**: theme pass; native Earnings v1; profile reorg (+Settings/Support/Logout); delete legacy
   action-items path + shims.
 - **P2**: native payroll onboarding (complete-record API); reliability/badges; bundle split.
