@@ -282,12 +282,17 @@ function UsersRedirect() {
   return <Navigate to={`/users/${uid}`} replace />;
 }
 
-/** For /c1/users/:uid: workers (securityLevel null or 0–4) go to My Account; higher levels see UserProfile. */
+/** For any /users/:uid surface: workers (securityLevel null or 0–4) go to My
+ * Account; ONLY resolved staff (5+) see the internal UserProfile. Waits for
+ * auth to finish loading — the context's placeholder securityLevel briefly
+ * reads as staff, which leaked the admin view (activity log, scoring) to a
+ * worker on 2026-08-23. Unknown = worker, always. */
 function C1UserProfileOrRedirect() {
-  const { user, securityLevel } = useAuth();
+  const { user, securityLevel, loading } = useAuth();
+  if (loading) return <div />;
   const level = securityLevel != null ? Number.parseInt(String(securityLevel), 10) : 0;
-  const isWorker = Number.isNaN(level) || level <= 4;
-  if (user && isWorker) {
+  const isStaff = !Number.isNaN(level) && level >= 5;
+  if (user && !isStaff) {
     return <Navigate to="/c1/workers/profile" replace />;
   }
   return <UserProfile />;
@@ -625,7 +630,11 @@ function App() {
           <Route path="applications" element={<Navigate to="/c1/workers/applications" replace />} />
           <Route path="assignments" element={<MyAssignments />} />
           <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
-          <Route path="users/:uid/readiness" element={<UserReadinessPage />} />
+          <Route path="users/:uid/readiness" element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <UserReadinessPage />
+            </ProtectedRoute>
+          } />
           <Route path="users/:uid" element={<C1UserProfileOrRedirect />} />
         </Route>
         <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
@@ -692,8 +701,12 @@ function App() {
             <TenantUsers />
           </ProtectedRoute>
         } />
-        <Route path="users/:uid/readiness" element={<UserReadinessPage />} />
-        <Route path="users/:uid" element={<UserProfile />} />
+        <Route path="users/:uid/readiness" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <UserReadinessPage />
+          </ProtectedRoute>
+        } />
+        <Route path="users/:uid" element={<C1UserProfileOrRedirect />} />
         <Route path="users/:uid/onboarding" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <UserOnboarding />

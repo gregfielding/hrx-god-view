@@ -71,8 +71,8 @@ const Login = () => {
           if (deepLink) {
             navigate(deepLink, { replace: true });
           } else {
-            const tenantSlug = activeTenant?.slug || 'c1';
-            navigate(`/${tenantSlug}/users/${user.uid}`, { replace: true });
+            // My Account view — not /users/:uid (that's the internal profile).
+            navigate('/c1/workers/profile', { replace: true });
           }
         } else {
           navigate('/', { replace: true });

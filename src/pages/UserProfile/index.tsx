@@ -162,6 +162,14 @@ const UserProfilePage = () => {
   const [searchParams] = useSearchParams();
   const shouldAutoOpenHomeAddress = searchParams.get('editHomeAddress') === '1';
   const navigate = useNavigate();
+  // Internal-only surface (activity log, scoring, admin panels). Workers who
+  // reach this URL directly are sent to their own My Account view — the
+  // 2026-08-23 phone-login test showed a worker session rendering this page.
+  const viewerLevelNum = Number.parseInt(String(securityLevel ?? ''), 10);
+  const viewerIsStaff = !Number.isNaN(viewerLevelNum) && viewerLevelNum >= 5;
+  useEffect(() => {
+    if (user && !viewerIsStaff) navigate('/c1/workers/profile', { replace: true });
+  }, [user, viewerIsStaff, navigate]);
   const location = useLocation();
   const { isFavorite, toggleFavorite } = useFavorites('users');
 

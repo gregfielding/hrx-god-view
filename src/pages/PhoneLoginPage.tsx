@@ -117,7 +117,9 @@ const PhoneLoginPage: React.FC = () => {
         await setDoc(doc(db, 'users', u.uid), { preferredLanguage: lang, updatedAt: serverTimestamp() }, { merge: true }).catch(() => undefined);
       }
       const level = parseInt(String(snap.get('securityLevel') ?? snap.get('tenantIds')?.BCiP2bQ9CgVOCTfV6MhD?.securityLevel ?? '0'), 10);
-      navigate(level >= 5 ? '/' : `/c1/users/${u.uid}`, { replace: true });
+      // Workers land on THEIR OWN My Account view — never the internal
+      // /users/:uid admin profile (activity log & scoring leaked there 8/23).
+      navigate(level >= 5 ? '/' : '/c1/workers/profile', { replace: true });
     });
     return unsub;
   }, [navigate, lang]);
