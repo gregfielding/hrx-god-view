@@ -20,7 +20,7 @@
     "dashboard": "Panel",
     "home": "Inicio",
     "inbox": "Bandeja de entrada",
-    "myAssignments": "Mi horario",
+    "myAssignments": "Horario",
     "myApplications": "Mis solicitudes",
     "jobsBoard": "Bolsa de trabajo",
     "jobReadiness": "Preparación laboral",
@@ -32,7 +32,7 @@
     "noNotifications": "Sin notificaciones",
     "unread": "sin leer",
     "accountMenu": "Menú de cuenta",
-    "myAccount": "Mi cuenta",
+    "myAccount": "Perfil",
     "myProfile": "Mi cuenta",
     "screening": "Verificaciones",
     "settings": "Ajustes",
@@ -46,10 +46,10 @@
     "espanol": "Español",
     "englishEn": "Inglés (EN)",
     "espanolEs": "Español (ES)",
-    "findWork": "Bolsa de trabajo",
+    "findWork": "Buscar turnos",
     "viewApplications": "Ver solicitudes",
     "prescreen": "Preselección",
-    "payroll": "Nómina"
+    "payroll": "Pagos"
   },
   "workerAccount": {
     "sectionProfile": "Perfil",

@@ -653,8 +653,24 @@ function buildProfileItems(input: WorkerDashboardActionItemsModelInput): Interna
     });
   }
 
-  return out;
+  return out.filter((i) => !PROFILE_NAG_IDS.has(i.id));
 }
+
+// ── Work-only feed (Greg 2026-08-23, worker-app redesign P0) ──
+// The Home feed carries ONLY work: applications, assignments, pay, and
+// compliance that blocks a booked shift. Profile-completeness nags moved to
+// the Profile page's completeness meter. Native apps read the same snapshot,
+// so this rule is enforced here (server) and mirrored in the legacy client
+// builder until that path is deleted.
+const PROFILE_NAG_IDS = new Set([
+  'confirm_date_of_birth',
+  'verify_phone_number',
+  'confirm_home_address',
+  'add_profile_photo',
+  'add_emergency_contact',
+  're_enable_sms_notifications',
+  'sms_opt_in',
+]);
 
 const TIER_ORDER: Record<WorkerDashboardProfileTierOrder, number> = {
   important: 0,
@@ -675,7 +691,9 @@ export function buildWorkerDashboardActionItemsSnapshot(
 ): WorkerDashboardActionItemsSnapshotPayload {
   const profileItems = buildProfileItems(input);
   const jobItems = buildJobItems(input);
-  const all: InternalItem[] = [...jobItems, ...profileItems];
+  // Work-only feed choke point (see PROFILE_NAG_IDS above) — covers every
+  // builder branch, including the phone-gate early return.
+  const all: InternalItem[] = [...jobItems, ...profileItems].filter((i) => !PROFILE_NAG_IDS.has(i.id));
 
   all.sort((a, b) => {
     const scoreDiff = b.priorityScore - a.priorityScore;

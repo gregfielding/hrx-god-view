@@ -1,3 +1,19 @@
+
+// ── Work-only feed (Greg 2026-08-23, worker-app redesign P0) ──
+// The Home feed carries ONLY work: applications, assignments, pay, and
+// compliance that blocks a booked shift. Profile-completeness nags moved to
+// the Profile page's completeness meter. Native apps read the same snapshot,
+// so this rule is enforced here (server) and mirrored in the legacy client
+// builder until that path is deleted.
+const PROFILE_NAG_IDS = new Set([
+  'confirm_date_of_birth',
+  'verify_phone_number',
+  'confirm_home_address',
+  'add_profile_photo',
+  'add_emergency_contact',
+  're_enable_sms_notifications',
+  'sms_opt_in',
+]);
 /**
  * Worker home dashboard — Profile + job-requirement action items (architecture PDF + production addendum).
  * Profile Section 1 gates; assignment confirmation is never blocked by profile gates.
@@ -129,8 +145,9 @@ function mergeByGlobalPriority(
   profileItems: WorkerDashboardActionItem[]
 ): WorkerDashboardActionItem[] {
   const all = [...jobItems, ...profileItems];
-  all.sort((a, b) => globalPriorityScore(b) - globalPriorityScore(a));
-  return all.slice(0, MAX_VISIBLE_ACTION_ITEMS);
+  const workOnly = all.filter((i) => !PROFILE_NAG_IDS.has(i.id));
+  workOnly.sort((a, b) => globalPriorityScore(b) - globalPriorityScore(a));
+  return workOnly.slice(0, MAX_VISIBLE_ACTION_ITEMS);
 }
 
 function orderProfileCandidatesFull(candidatesInDocOrder: InternalCandidate[]): WorkerDashboardActionItem[] {

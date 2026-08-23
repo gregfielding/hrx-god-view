@@ -119,7 +119,7 @@ const PhoneLoginPage: React.FC = () => {
       const level = parseInt(String(snap.get('securityLevel') ?? snap.get('tenantIds')?.BCiP2bQ9CgVOCTfV6MhD?.securityLevel ?? '0'), 10);
       // Workers land on THEIR OWN My Account view — never the internal
       // /users/:uid admin profile (activity log & scoring leaked there 8/23).
-      navigate(level >= 5 ? '/' : '/c1/workers/profile', { replace: true });
+      navigate(level >= 5 ? '/' : '/c1/workers/dashboard', { replace: true });
     });
     return unsub;
   }, [navigate, lang]);

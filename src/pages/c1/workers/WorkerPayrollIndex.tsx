@@ -230,7 +230,7 @@ const WorkerPayrollIndex: React.FC = () => {
 
   useEffect(() => {
     if (landing.kind === 'redirect') {
-      navigate(`/c1/workers/payroll/${encodeURIComponent(landing.evereeTenantId)}`, { replace: true });
+      navigate(`/c1/workers/earnings/${encodeURIComponent(landing.evereeTenantId)}`, { replace: true });
     }
   }, [landing, navigate]);
 
@@ -297,7 +297,7 @@ const WorkerPayrollIndex: React.FC = () => {
             return (
               <Card key={tid} variant="outlined">
                 <CardActionArea
-                  onClick={() => navigate(`/c1/workers/payroll/${encodeURIComponent(tid)}`)}
+                  onClick={() => navigate(`/c1/workers/earnings/${encodeURIComponent(tid)}`)}
                   sx={{ p: 2, alignItems: 'flex-start' }}
                 >
                   <Typography variant="subtitle1" fontWeight={600}>

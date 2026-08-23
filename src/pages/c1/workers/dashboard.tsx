@@ -20,7 +20,6 @@ import { useNavigate } from 'react-router-dom';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
-import WorkerQuickNav from '../../../components/worker/WorkerQuickNav';
 import WorkerDashboardActionItems from '../../../components/worker/home/WorkerDashboardActionItems';
 import type { UpcomingShift } from '../../../components/worker/dashboard/WorkerDashboardHero';
 import { buildWorkerDashboardActionItems } from '../../../utils/workerDashboardActionItems';
@@ -464,7 +463,6 @@ const WorkerDashboard: React.FC = () => {
 
         {showBottomNav ? (
           <Box sx={{ pt: 1 }}>
-            <WorkerQuickNav />
           </Box>
         ) : null}
       </Stack>

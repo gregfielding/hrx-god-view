@@ -71,8 +71,8 @@ const Login = () => {
           if (deepLink) {
             navigate(deepLink, { replace: true });
           } else {
-            // My Account view — not /users/:uid (that's the internal profile).
-            navigate('/c1/workers/profile', { replace: true });
+            // Home (P0 2026-08-23) — next shift + work-only action items.
+            navigate('/c1/workers/dashboard', { replace: true });
           }
         } else {
           navigate('/', { replace: true });

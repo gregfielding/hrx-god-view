@@ -298,6 +298,12 @@ function C1UserProfileOrRedirect() {
   return <UserProfile />;
 }
 
+
+/** /c1/workers/payroll/:id → /c1/workers/earnings/:id (P0 rename 2026-08-23). */
+function WorkerPayrollLegacyRedirect() {
+  const { evereeTenantId } = useParams();
+  return <Navigate to={`/c1/workers/earnings/${evereeTenantId ?? ''}`} replace />;
+}
 function UsersHubIndexRedirect() {
   return <Navigate to={getUsersIndexRedirectPath()} replace />;
 }
@@ -619,8 +625,11 @@ function App() {
               honors that on successful auth (existing logic, ../pages/Login.tsx
               line 49-57). Workers and staff (level 5+) handled by WorkerRoute.
             */}
-            <Route path="payroll" element={<WorkerRoute><WorkerPayrollIndex /></WorkerRoute>} />
-            <Route path="payroll/:evereeTenantId" element={<WorkerRoute><WorkerPayrollEvereeTenant /></WorkerRoute>} />
+            {/* Earnings (P0 rename 2026-08-23) — old /payroll deep links redirect. */}
+            <Route path="earnings" element={<WorkerRoute><WorkerPayrollIndex /></WorkerRoute>} />
+            <Route path="earnings/:evereeTenantId" element={<WorkerRoute><WorkerPayrollEvereeTenant /></WorkerRoute>} />
+            <Route path="payroll" element={<Navigate to="/c1/workers/earnings" replace />} />
+            <Route path="payroll/:evereeTenantId" element={<WorkerPayrollLegacyRedirect />} />
             <Route path="inbox" element={<Navigate to="/c1/workers/notifications" replace />} />
             <Route path="inbox/:conversationId" element={<Navigate to="/c1/workers/notifications" replace />} />
           </Route>

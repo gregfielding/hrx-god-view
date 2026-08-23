@@ -64,6 +64,19 @@ const C1WorkerNotifications: React.FC = () => {
     }
   };
 
+  // Opening the inbox clears the badge (P0 2026-08-23, benchmark behavior):
+  // once the list has loaded, everything on it counts as seen. Runs once per
+  // visit; item rows still highlight unread until this pass completes.
+  const autoMarkedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!uid || loading || autoMarkedRef.current) return;
+    if (notifications.some((n) => !n.readAt)) {
+      autoMarkedRef.current = true;
+      void handleMarkAllRead();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid, loading, notifications.length]);
+
   const handleClick = async (n: (typeof notifications)[0]) => {
     if (!n.readAt) await handleMarkRead(n.id);
     const url = n.deepLink ? n.deepLink : await getNotificationUrlAsync(n, uid);
