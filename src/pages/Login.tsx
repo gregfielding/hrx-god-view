@@ -34,7 +34,7 @@ const Login = () => {
         forgotPassword: '¿Olvidaste tu contraseña?',
         firstTimePrompt: '¿Primera vez?',
         firstTimeAction: 'Configura tu cuenta',
-        forgotEnterEmail: 'Ingresa tu correo electrónico arriba primero, luego haz clic en "¿Olvidaste tu contraseña?".',
+        forgotEnterEmail: 'Escribe tu correo electrónico aquí y te enviaremos un enlace.',
         forgotSent: 'Te enviamos un enlace para restablecer tu contraseña. Revisa tu correo.',
         forgotError: 'No se pudo enviar el enlace de restablecimiento. Verifica el correo electrónico e inténtalo de nuevo.',
         phoneLogin: 'Iniciar sesión con tu celular',
@@ -48,7 +48,7 @@ const Login = () => {
         forgotPassword: 'Forgot password?',
         firstTimePrompt: 'First time here?',
         firstTimeAction: 'Set up your account',
-        forgotEnterEmail: 'Enter your email above first, then tap "Forgot password?".',
+        forgotEnterEmail: 'Type your email here and we’ll send you a link.',
         forgotSent: "We've sent you a password reset link. Check your email.",
         forgotError: "Couldn't send reset link. Double-check the email and try again.",
         phoneLogin: 'Sign in with your phone instead',
@@ -128,11 +128,17 @@ const Login = () => {
    * account, so triggering Forgot password by email just regenerates a fresh
    * setup-password oobCode.
    */
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
+  const [hint, setHint] = useState('');
+
   const handleForgotPassword = async () => {
     setError('');
     setSuccessMessage('');
+    setHint('');
     if (!email || !email.includes('@')) {
-      setError(copy.forgotEnterEmail);
+      // Not an error — they just haven't typed their email yet. Point at the field.
+      setHint(copy.forgotEnterEmail);
+      emailInputRef.current?.focus();
       return;
     }
     setLocalLoading(true);
@@ -170,8 +176,10 @@ const Login = () => {
         <form onSubmit={handleLogin}>
           <div style={A.field}>
             <label style={A.label} htmlFor="login-email">{copy.email}</label>
+            {hint && <p style={{ ...A.hint, margin: '0 0 8px', color: '#111' }}>{hint}</p>}
             <input
               id="login-email"
+              ref={emailInputRef}
               style={A.input}
               type="email"
               name="email"

@@ -99,7 +99,7 @@ const PhoneLoginPage: React.FC = () => {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [choice, setChoice] = useState<{ selectionToken: string; candidates: Array<{ uid: string; firstName: string; lastInitial: string }> } | null>(null);
+  const [choice, setChoice] = useState<{ selectionToken: string; candidates: Array<{ uid: string; firstName: string; lastInitial: string; email?: string }> } | null>(null);
   const redirectedRef = useRef(false);
   const fns = useMemo(() => getFunctions(), []);
 
@@ -139,7 +139,7 @@ const PhoneLoginPage: React.FC = () => {
       return; // onAuthStateChanged redirects
     }
     if (res.status === 'choose') {
-      setChoice({ selectionToken: String(res.selectionToken), candidates: (res.candidates as Array<{ uid: string; firstName: string; lastInitial: string }>) ?? [] });
+      setChoice({ selectionToken: String(res.selectionToken), candidates: (res.candidates as Array<{ uid: string; firstName: string; lastInitial: string; email?: string }>) ?? [] });
       setStep('choose');
       return;
     }
@@ -294,7 +294,8 @@ const PhoneLoginPage: React.FC = () => {
                   style={{ ...S.button, background: '#fff', color: '#111', border: '1.5px solid #111', textAlign: 'left', padding: '14px 16px', ...(busy ? S.buttonDisabled : {}) }}
                   onClick={() => void pickAccount(c.uid)}
                 >
-                  {c.firstName} {c.lastInitial}.
+                  <span style={{ display: 'block', fontSize: 16, fontWeight: 600 }}>{c.firstName} {c.lastInitial}.</span>
+                  {c.email ? <span style={{ display: 'block', fontSize: 13, color: '#666', fontWeight: 400, marginTop: 2 }}>{c.email}</span> : null}
                 </button>
               ))}
             </div>

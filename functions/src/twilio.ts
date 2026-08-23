@@ -190,7 +190,7 @@ const phoneVariants = (e164: string): string[] => {
   const ten = e164.replace(/\D/g, '').slice(-10);
   return [e164, ten, `1${ten}`, `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`, `${ten.slice(0, 3)}-${ten.slice(3, 6)}-${ten.slice(6)}`, `${ten.slice(0, 3)}.${ten.slice(3, 6)}.${ten.slice(6)}`];
 };
-type PhoneAccount = { uid: string; firstName: string; lastName: string; securityLevel: number; evereeComplete: boolean; lastPaidAt: number; updatedAt: number };
+type PhoneAccount = { uid: string; firstName: string; lastName: string; email: string; securityLevel: number; evereeComplete: boolean; lastPaidAt: number; updatedAt: number };
 
 async function findAccountsByPhone(phoneE164: string): Promise<PhoneAccount[]> {
   const variants = phoneVariants(phoneE164);
@@ -209,7 +209,7 @@ async function findAccountsByPhone(phoneE164: string): Promise<PhoneAccount[]> {
     const paid = await db.collection(`tenants/${TENANT_C1}/timesheet_entries`).where('workerId', '==', d.id).orderBy('workDate', 'desc').limit(1).get().catch(() => null);
     const lastPaidAt = paid && !paid.empty ? Date.parse(String(paid.docs[0].get('workDate') || '')) || 0 : 0;
     const updatedAt = u.updatedAt?.toMillis?.() ?? u.createdAt?.toMillis?.() ?? 0;
-    out.push({ uid: d.id, firstName: String(u.firstName ?? ''), lastName: String(u.lastName ?? ''), securityLevel: lvl, evereeComplete, lastPaidAt, updatedAt });
+    out.push({ uid: d.id, firstName: String(u.firstName ?? ''), lastName: String(u.lastName ?? ''), email: String(u.email ?? ''), securityLevel: lvl, evereeComplete, lastPaidAt, updatedAt });
   }
   return out;
 }
@@ -308,7 +308,7 @@ async function resolvePhoneSignIn(
   return {
     status: 'choose',
     selectionToken,
-    candidates: survivors.map((a) => ({ uid: a.uid, firstName: a.firstName, lastInitial: a.lastName.slice(0, 1).toUpperCase() })),
+    candidates: survivors.map((a) => ({ uid: a.uid, firstName: a.firstName, lastInitial: a.lastName.slice(0, 1).toUpperCase(), email: a.email })),
   };
 }
 
