@@ -1,6 +1,7 @@
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
+import * as crypto from 'crypto';
 import twilio from 'twilio';
 import cors from 'cors';
 
@@ -164,6 +165,153 @@ export const sendOtp = onCall(
   }
 });
 
+
+// ─────────────────────────────────────────────────────────────────────
+// Phone sign-in (Greg 2026-08-21 — phone number is the worker's identity)
+//
+// `checkOtp({ signIn: true })` turns a Twilio-Verify-approved code into a
+// Firebase custom token for the EXISTING account(s) on that phone. No
+// reCAPTCHA, no Firebase phone provider, no password. Rules (see
+// docs/claude/project_phone_auth.md):
+//   - one account on the phone                → sign in as it
+//   - several accounts, same person (dupes)   → sign in as the SURVIVOR
+//       (Everee-complete + most recent pay wins; the worker never picks)
+//   - several accounts, different people      → return a picker; the
+//       second call carries `selectionToken` + `pick`
+//   - no account                              → { status: 'no_account' }
+// Staff (securityLevel ≥ 5) are only phone-eligible when their Auth user
+// already carries that phoneNumber (explicit opt-in — SMS OTP alone is
+// too weak for admin accounts by default).
+// ─────────────────────────────────────────────────────────────────────
+const TENANT_C1 = 'BCiP2bQ9CgVOCTfV6MhD';
+const normName = (v: unknown): string =>
+  String(v ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z]/g, '');
+const phoneVariants = (e164: string): string[] => {
+  const ten = e164.replace(/\D/g, '').slice(-10);
+  return [e164, ten, `1${ten}`, `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`, `${ten.slice(0, 3)}-${ten.slice(3, 6)}-${ten.slice(6)}`, `${ten.slice(0, 3)}.${ten.slice(3, 6)}.${ten.slice(6)}`];
+};
+type PhoneAccount = { uid: string; firstName: string; lastName: string; securityLevel: number; evereeComplete: boolean; lastPaidAt: number; updatedAt: number };
+
+async function findAccountsByPhone(phoneE164: string): Promise<PhoneAccount[]> {
+  const variants = phoneVariants(phoneE164);
+  const found = new Map<string, admin.firestore.DocumentSnapshot>();
+  for (const field of ['phoneE164', 'phone', 'phoneNumber']) {
+    const snap = await db.collection('users').where(field, 'in', variants).limit(20).get();
+    snap.forEach((d) => found.set(d.id, d));
+  }
+  const out: PhoneAccount[] = [];
+  for (const d of found.values()) {
+    const u = d.data() as Record<string, any>;
+    if (u.accountStatus === 'merged' || u.mergedInto) continue;
+    const lvl = Number(u.tenantIds?.[TENANT_C1]?.securityLevel ?? u.securityLevel ?? 0) || 0;
+    const links = await db.collection(`tenants/${TENANT_C1}/everee_workers`).where('userId', '==', d.id).get();
+    const evereeComplete = links.docs.some((l) => l.get('status') === 'onboarding_complete');
+    const paid = await db.collection(`tenants/${TENANT_C1}/timesheet_entries`).where('workerId', '==', d.id).orderBy('workDate', 'desc').limit(1).get().catch(() => null);
+    const lastPaidAt = paid && !paid.empty ? Date.parse(String(paid.docs[0].get('workDate') || '')) || 0 : 0;
+    const updatedAt = u.updatedAt?.toMillis?.() ?? u.createdAt?.toMillis?.() ?? 0;
+    out.push({ uid: d.id, firstName: String(u.firstName ?? ''), lastName: String(u.lastName ?? ''), securityLevel: lvl, evereeComplete, lastPaidAt, updatedAt });
+  }
+  return out;
+}
+
+/** Same person = first AND last name agree on their first 3 letters (accent/case-insensitive). */
+function samePerson(a: PhoneAccount, b: PhoneAccount): boolean {
+  const fa = normName(a.firstName), fb = normName(b.firstName), la = normName(a.lastName), lb = normName(b.lastName);
+  return fa.length >= 2 && la.length >= 2 && fa.slice(0, 3) === fb.slice(0, 3) && la.slice(0, 3) === lb.slice(0, 3);
+}
+/** Survivor = Everee-complete first, then most recent pay, then most recently updated. */
+function pickSurvivor(accs: PhoneAccount[]): PhoneAccount {
+  return accs.slice().sort((a, b) => Number(b.evereeComplete) - Number(a.evereeComplete) || b.lastPaidAt - a.lastPaidAt || b.updatedAt - a.updatedAt)[0];
+}
+
+async function staffPhoneOptedIn(uid: string, phoneE164: string): Promise<boolean> {
+  try {
+    const u = await admin.auth().getUser(uid);
+    return u.phoneNumber === phoneE164;
+  } catch {
+    return false;
+  }
+}
+
+async function mintPhoneSignIn(acc: PhoneAccount, phoneE164: string, meta: { cluster: string[]; mode: string; ip: string }): Promise<{ status: 'signed_in'; token: string; uid: string }> {
+  const token = await admin.auth().createCustomToken(acc.uid, { phoneSignIn: true });
+  await db.collection('phone_signin_audit').add({
+    uid: acc.uid,
+    phoneE164,
+    mode: meta.mode,
+    cluster: meta.cluster,
+    ip: meta.ip,
+    at: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await db.doc(`users/${acc.uid}`).set(
+    { phoneE164, phoneVerified: true, lastPhoneSignInAt: admin.firestore.FieldValue.serverTimestamp() },
+    { merge: true },
+  );
+  return { status: 'signed_in', token, uid: acc.uid };
+}
+
+/**
+ * Sign-in resolution after Twilio approved the code (or a valid selection
+ * token proves an earlier approval). Returns one of:
+ *   { status: 'signed_in', token, uid } | { status: 'choose', selectionToken, candidates }
+ *   | { status: 'no_account' }
+ */
+async function resolvePhoneSignIn(
+  phoneE164: string,
+  opts: { selectionToken?: string; pick?: string; ip: string },
+): Promise<Record<string, unknown>> {
+  // Second leg of the household picker: prove the earlier approval via the selection token.
+  if (opts.selectionToken && opts.pick) {
+    const ref = db.doc(`phone_signin_pending/${opts.selectionToken}`);
+    const snap = await ref.get();
+    const data = snap.data() as { phoneE164?: string; candidates?: string[]; expiresAt?: number } | undefined;
+    if (!snap.exists || data?.phoneE164 !== phoneE164 || !(data?.candidates ?? []).includes(opts.pick) || (data?.expiresAt ?? 0) < Date.now()) {
+      throw new HttpsError('permission-denied', 'That selection expired. Start over.');
+    }
+    await ref.delete();
+    const accs = await findAccountsByPhone(phoneE164);
+    const acc = accs.find((a) => a.uid === opts.pick);
+    if (!acc) throw new HttpsError('not-found', 'Account not found.');
+    return mintPhoneSignIn(acc, phoneE164, { cluster: accs.map((a) => a.uid), mode: 'picked', ip: opts.ip });
+  }
+
+  let accs = await findAccountsByPhone(phoneE164);
+  // Staff: only when explicitly opted in (Auth user already carries the phone).
+  const filtered: PhoneAccount[] = [];
+  for (const a of accs) {
+    if (a.securityLevel >= 5 && !(await staffPhoneOptedIn(a.uid, phoneE164))) continue;
+    filtered.push(a);
+  }
+  accs = filtered;
+  if (accs.length === 0) return { status: 'no_account' };
+  if (accs.length === 1) return mintPhoneSignIn(accs[0], phoneE164, { cluster: [accs[0].uid], mode: 'single', ip: opts.ip });
+
+  // Cluster same-person duplicates; each cluster collapses to its survivor.
+  const clusters: PhoneAccount[][] = [];
+  for (const a of accs) {
+    const c = clusters.find((cl) => samePerson(cl[0], a));
+    if (c) c.push(a);
+    else clusters.push([a]);
+  }
+  const survivors = clusters.map(pickSurvivor);
+  if (survivors.length === 1) {
+    return mintPhoneSignIn(survivors[0], phoneE164, { cluster: accs.map((a) => a.uid), mode: 'survivor', ip: opts.ip });
+  }
+  // Different people on one phone (household): let them pick. Never disable anyone.
+  const selectionToken = crypto.randomBytes(24).toString('hex');
+  await db.doc(`phone_signin_pending/${selectionToken}`).set({
+    phoneE164,
+    candidates: survivors.map((a) => a.uid),
+    expiresAt: Date.now() + 5 * 60 * 1000,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return {
+    status: 'choose',
+    selectionToken,
+    candidates: survivors.map((a) => ({ uid: a.uid, firstName: a.firstName, lastInitial: a.lastName.slice(0, 1).toUpperCase() })),
+  };
+}
+
 /**
  * Verify OTP code via Twilio Verify
  */
@@ -180,12 +328,20 @@ export const checkOtp = onCall(
   //   throw new HttpsError('unauthenticated', 'Must be signed in to verify phone');
   // }
 
-  const { phoneE164, code } = request.data as { phoneE164: string; code: string };
+  const { phoneE164, code, signIn, selectionToken, pick } = request.data as {
+    phoneE164: string; code?: string; signIn?: boolean; selectionToken?: string; pick?: string;
+  };
   const uid = request.auth?.uid; // Get uid from request auth if available
+  const callerIp = String(request.rawRequest?.headers?.['x-forwarded-for'] ?? request.rawRequest?.ip ?? '').split(',')[0].trim();
 
   // Validate inputs
   if (!phoneE164 || !/^\+[1-9]\d{7,14}$/.test(phoneE164)) {
     throw new HttpsError('invalid-argument', 'Invalid phone number format');
+  }
+
+  // Household picker second leg: the selection token proves the earlier approval — no new code needed.
+  if (signIn === true && selectionToken && pick) {
+    return resolvePhoneSignIn(phoneE164, { selectionToken, pick, ip: callerIp });
   }
 
   if (!code || !/^\d{6}$/.test(code)) {
@@ -205,6 +361,11 @@ export const checkOtp = onCall(
 
     if (verificationCheck.status !== 'approved') {
       throw new HttpsError('permission-denied', 'Invalid verification code. Please try again.');
+    }
+
+    // Phone SIGN-IN mode: turn the approved code into a session for the existing account.
+    if (signIn === true) {
+      return resolvePhoneSignIn(phoneE164, { ip: callerIp });
     }
 
     // Update user profile with verified phone
