@@ -231,7 +231,7 @@ const WorkerAssignmentsCalendar: React.FC<WorkerAssignmentsCalendarProps> = ({ a
 
   if (assignments.length === 0) {
     return (
-      <Paper variant="outlined" sx={{ p: 3, borderRadius: 2 }}>
+      <Paper variant="outlined" sx={{ p: 3, }}>
         <Typography variant="body1" color="text.secondary">
           {t('assignments.calendarEmpty')}
         </Typography>
@@ -278,7 +278,7 @@ const WorkerAssignmentsCalendar: React.FC<WorkerAssignmentsCalendarProps> = ({ a
 
       {view === 'day' ? (
         // ── Day agenda ──────────────────────────────────────────────
-        <Paper variant="outlined" sx={{ borderRadius: 2, p: 2 }}>
+        <Paper variant="outlined" sx={{  p: 2 }}>
           {dayItemsForCursor.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
               {t('assignments.calendarNoShiftsDay')}
@@ -293,7 +293,7 @@ const WorkerAssignmentsCalendar: React.FC<WorkerAssignmentsCalendarProps> = ({ a
         </Paper>
       ) : (
         // ── Month / Week grid ───────────────────────────────────────
-        <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+        <Paper variant="outlined" sx={{  overflow: 'hidden' }}>
           <Box
             sx={{
               display: 'grid',

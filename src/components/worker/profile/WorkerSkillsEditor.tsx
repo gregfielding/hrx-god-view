@@ -251,7 +251,7 @@ const WorkerSkillsEditor: React.FC<Props> = ({ uid }) => {
   } as const;
 
   return (
-    <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+    <Card variant="outlined" sx={{ borderColor: 'divider' }}>
       <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
         {saveError ? (
           <Alert severity="error" sx={{ mb: 2 }}>

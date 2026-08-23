@@ -167,7 +167,7 @@ const WorkerDocuments: React.FC = () => {
         </Stack>
 
         {/* v3: Header — Compliance % only when checklist exists; else "Not started" */}
-        <Card variant="outlined" sx={{ borderRadius: 2, boxShadow: 'none', overflow: 'visible' }}>
+        <Card variant="outlined" sx={{  boxShadow: 'none', overflow: 'visible' }}>
           <CardContent sx={{ py: 2, px: 2 }}>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
               <Typography variant="body2" color="text.secondary">
@@ -287,7 +287,7 @@ const WorkerDocuments: React.FC = () => {
             />
             {/* Screening orders (from admin): show what was ordered + results when present */}
             {(credentials.backgroundCheckOrders.length > 0 || credentials.drugScreeningOrders.length > 0 || credentials.additionalScreeningOrders.length > 0 || credentials.eVerifyOrders.length > 0) && (
-              <Card variant="outlined" sx={{ borderRadius: 2, boxShadow: 'none' }}>
+              <Card variant="outlined" sx={{  boxShadow: 'none' }}>
                 <CardContent>
                   <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
                     {t('documents.screeningOrders')}
@@ -345,7 +345,7 @@ const WorkerDocuments: React.FC = () => {
             ) : (
               <Stack spacing={1.5}>
                 {assignmentFiles.map((file, idx) => (
-                  <Card key={idx} variant="outlined" sx={{ borderRadius: 2, boxShadow: 'none' }}>
+                  <Card key={idx} variant="outlined" sx={{  boxShadow: 'none' }}>
                     <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
                       <Stack direction="row" alignItems="center" spacing={1.5} flexWrap="wrap">
                         <FileIcon sx={{ color: 'action.active', fontSize: 22 }} />

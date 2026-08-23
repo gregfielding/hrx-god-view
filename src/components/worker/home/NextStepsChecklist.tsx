@@ -60,7 +60,7 @@ const NextStepsChecklist: React.FC<NextStepsChecklistProps> = ({ items, onSelect
                   sx={{
                     border: '1px solid',
                     borderColor: item.status === 'complete' ? 'success.light' : 'divider',
-                    borderRadius: 2,
+                    
                     p: 1.25,
                     cursor: 'pointer',
                     transition: 'background-color 120ms ease, border-color 120ms ease, transform 120ms ease',

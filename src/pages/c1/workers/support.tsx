@@ -140,7 +140,7 @@ const C1WorkerSupport: React.FC = () => {
       </Typography>
 
       {/* 1. Ask a question — AI support */}
-      <Card variant="outlined" sx={{ mb: 2, borderRadius: 2 }}>
+      <Card variant="outlined" sx={{ mb: 2, }}>
         <CardContent sx={{ pt: 2, pb: 2 }}>
           <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>
             {t('support.askQuestion')}
@@ -273,7 +273,7 @@ const C1WorkerSupport: React.FC = () => {
       </List>
 
       {/* 3. Escalation — Contact recruiter */}
-      <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'primary.main' }}>
+      <Card variant="outlined" sx={{  borderColor: 'primary.main' }}>
         <CardContent sx={{ pt: 2, pb: 2 }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
             <Typography variant="body2" color="text.secondary">

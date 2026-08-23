@@ -23,7 +23,7 @@ const WorkerAssignmentsEmptyState: React.FC<WorkerAssignmentsEmptyStateProps> = 
       <Card
         variant="outlined"
         sx={{
-          borderRadius: 2,
+          
           borderColor: 'divider',
           boxShadow: 'none',
         }}
@@ -49,7 +49,7 @@ const WorkerAssignmentsEmptyState: React.FC<WorkerAssignmentsEmptyStateProps> = 
     <Card
       variant="outlined"
       sx={{
-        borderRadius: 2,
+        
         borderColor: 'divider',
         boxShadow: 'none',
       }}

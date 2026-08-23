@@ -586,13 +586,13 @@ const MyEmploymentDetailPage: React.FC = () => {
         {!showWorkerEmploymentHub && !pathLoading && workerBuckets && (
           <>
             {pathRelationshipHistorical ? (
-              <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
+              <Alert severity="info" variant="outlined" sx={{ }}>
                 {t('workerEmploymentDetail.historicalPathAlertShort')}
               </Alert>
             ) : null}
 
             <Stack id="worker-employment-bridge-stack" spacing={2}>
-              <Card id="worker-employment-bridge-identity" variant="outlined" sx={{ borderRadius: 2 }}>
+              <Card id="worker-employment-bridge-identity" variant="outlined" sx={{ }}>
                 <CardContent>
                   <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
                     {t('workerEmploymentDetail.bridgeSectionIdentity')}
@@ -623,7 +623,7 @@ const MyEmploymentDetailPage: React.FC = () => {
                 </CardContent>
               </Card>
 
-              <Card variant="outlined" sx={{ borderRadius: 2 }}>
+              <Card variant="outlined" sx={{ }}>
                 <CardContent>
                   <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
                     {t('workerEmploymentDetail.bridgeSectionPayroll')}
@@ -654,7 +654,7 @@ const MyEmploymentDetailPage: React.FC = () => {
                 </CardContent>
               </Card>
 
-              <Card variant="outlined" sx={{ borderRadius: 2 }}>
+              <Card variant="outlined" sx={{ }}>
                 <CardContent>
                   <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
                     {t('workerEmploymentDetail.bridgeSectionScreening')}

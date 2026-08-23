@@ -84,7 +84,7 @@ const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({
             py: 1,
             bgcolor: statusButtonOverride?.backgroundColor ?? contrast,
             color: statusButtonOverride?.color ?? '#fff',
-            borderRadius: 2,
+            
             fontSize: '0.875rem',
             textTransform: 'none',
             fontWeight: 600,

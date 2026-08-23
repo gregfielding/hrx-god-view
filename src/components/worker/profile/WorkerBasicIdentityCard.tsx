@@ -321,7 +321,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
 
   return (
     <>
-      <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+      <Card variant="outlined" sx={{ borderColor: 'divider' }}>
         <CardContent sx={{ py: 3, px: 3 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
             <Box sx={{ position: 'relative' }}>

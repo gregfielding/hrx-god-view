@@ -389,7 +389,7 @@ const WorkerDashboard: React.FC = () => {
   const showBottomNav = dashboardActionItems.length > 0;
 
   return (
-    <Box sx={{ maxWidth: 720, mx: 'auto', px: { xs: 2, sm: 3 }, pb: 4 }}>
+    <Box sx={{ maxWidth: 720, mx: 'auto', pb: 4 }}>
       <Stack spacing={{ xs: 3, sm: 3.5 }} sx={{ pt: { xs: 2, sm: 2.5 } }}>
         {user?.uid ? (
           <WorkerDashboardActionItems
@@ -405,7 +405,7 @@ const WorkerDashboard: React.FC = () => {
             <Typography
               variant="h5"
               component="h2"
-              sx={{ fontWeight: 700, letterSpacing: -0.02, mb: 1.5 }}
+              sx={{ mb: 1.5 }}
             >
               {t('dashboard.upcomingAssignments.title')}
             </Typography>
@@ -414,7 +414,7 @@ const WorkerDashboard: React.FC = () => {
               sx={{
                 border: '1px solid',
                 borderColor: 'divider',
-                borderRadius: 2,
+                
                 bgcolor: 'background.paper',
                 overflow: 'hidden',
               }}

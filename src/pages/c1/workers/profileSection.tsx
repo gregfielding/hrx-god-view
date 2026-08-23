@@ -451,7 +451,7 @@ const WorkerProfileSection: React.FC = () => {
           {t('profile.backToProfile')}
         </Button>
 
-        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+        <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent>
             <Typography variant="h5" sx={{ fontWeight: 700 }}>
               {t(sectionMeta.titleKey)}
@@ -510,7 +510,7 @@ const WorkerProfileSection: React.FC = () => {
         )}
 
         {activeSection === 'preferences' && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent>
               <Stack spacing={2}>
                 <Box>
@@ -557,7 +557,7 @@ const WorkerProfileSection: React.FC = () => {
         )}
 
         {activeSection === 'bio' && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent>
               <BioStep
                 value={{
@@ -609,7 +609,7 @@ const WorkerProfileSection: React.FC = () => {
         )}
 
         {activeSection === 'languages' && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent>
               <Stack spacing={1.5}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
@@ -637,7 +637,7 @@ const WorkerProfileSection: React.FC = () => {
         )}
 
         {activeSection === 'app-language' && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent>
               <Stack spacing={2}>
                 <Box>
@@ -696,7 +696,7 @@ const WorkerProfileSection: React.FC = () => {
         )}
 
         {activeSection === 'reset-password' && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent>
               <Stack spacing={1.5}>
                 <Typography variant="body2" color="text.secondary">

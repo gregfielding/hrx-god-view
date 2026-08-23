@@ -181,7 +181,7 @@ const ImprovementTaskCard: React.FC<ImprovementTaskCardProps> = ({
               displayEmpty
               sx={{
                 bgcolor: 'white',
-                borderRadius: 2,
+                
                 '& .MuiSelect-select': { py: 1.25 },
               }}
             >

@@ -30,7 +30,7 @@ const C1WorkerLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) 
   return (
     <ThemeProvider theme={workerTheme}>
       <WorkerToastProvider>
-        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', bgcolor: '#F7F9FC' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', bgcolor: 'background.default' }}>
           <WorkerAppBar />
           <Box sx={{ display: 'flex', flex: 1, minHeight: 0 }}>
             <Container

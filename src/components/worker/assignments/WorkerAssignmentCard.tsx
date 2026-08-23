@@ -209,7 +209,7 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
       variant="outlined"
       onClick={handleCardClick}
       sx={{
-        borderRadius: 2,
+        
         borderColor: 'divider',
         boxShadow: 'none',
         cursor: 'pointer',

@@ -199,7 +199,7 @@ const WorkerScreeningPage: React.FC = () => {
           </Alert>
         ) : null}
 
-        <Card variant="outlined" sx={{ borderRadius: 2 }}>
+        <Card variant="outlined" sx={{ }}>
           <CardContent>
             <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
               Identity verification
@@ -211,7 +211,7 @@ const WorkerScreeningPage: React.FC = () => {
           </CardContent>
         </Card>
 
-        <Card variant="outlined" sx={{ borderRadius: 2 }}>
+        <Card variant="outlined" sx={{ }}>
           <CardContent>
             <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
               Background screening orders
@@ -251,7 +251,7 @@ const WorkerScreeningPage: React.FC = () => {
           </CardContent>
         </Card>
 
-        <Card variant="outlined" sx={{ borderRadius: 2 }}>
+        <Card variant="outlined" sx={{ }}>
           <CardContent>
             <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
               Drug screen & clinic steps
@@ -269,7 +269,7 @@ const WorkerScreeningPage: React.FC = () => {
           </CardContent>
         </Card>
 
-        <Card variant="outlined" sx={{ borderRadius: 2 }}>
+        <Card variant="outlined" sx={{ }}>
           <CardContent>
             <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
               E-Verify (work authorization)
@@ -297,7 +297,7 @@ const WorkerScreeningPage: React.FC = () => {
         </Card>
 
         {screeningComplianceItems.length > 0 ? (
-          <Card variant="outlined" sx={{ borderRadius: 2 }}>
+          <Card variant="outlined" sx={{ }}>
             <CardContent>
               <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
                 Assigned screening tasks

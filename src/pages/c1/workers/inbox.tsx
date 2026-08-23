@@ -282,7 +282,7 @@ const C1WorkerInbox: React.FC = () => {
                   sx={{
                     maxWidth: '80%',
                     p: 1.5,
-                    borderRadius: 2,
+                    
                     bgcolor: isMe ? 'primary.main' : 'action.hover',
                     color: isMe ? 'primary.contrastText' : 'text.primary',
                   }}

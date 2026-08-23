@@ -115,7 +115,7 @@ const WorkerAppBar: React.FC = () => {
         onClose={() => {}}
         maxWidth="xs"
         fullWidth
-        PaperProps={{ sx: { borderRadius: 2 } }}
+        PaperProps={{ sx: { } }}
       >
         <DialogTitle sx={{ textAlign: 'center', pb: 0 }}>{t('nav.selectYourLanguage')}</DialogTitle>
         <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', pt: 0.5, px: 3 }}>

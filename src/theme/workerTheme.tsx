@@ -26,14 +26,33 @@ export const workerDesignTokens = {
 export function getWorkerTheme() {
   return createTheme(getBaseTheme(), {
     palette: {
+      text: {
+        // Ink, not slate (P1 theme pass — phone-login language).
+        primary: '#16181A',
+        secondary: '#6B6B6B',
+      },
       background: {
-        default: '#F7F9FC',
+        // Warm near-white (P1 theme pass 2026-08-23, phone-login language) —
+        // the old #F7F9FC read blue and made every card float on a tint.
+        default: '#FAFAF8',
         paper: '#FFFFFF',
       },
     },
     typography: {
+      // System stack (phone-login language) — no webfont download, native feel.
       fontFamily:
-        '"Inter", "SF Pro Text", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif',
+        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      h5: { fontWeight: 650, letterSpacing: '-0.01em', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      h6: { fontWeight: 650, letterSpacing: '-0.01em', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      h1: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      h2: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      h3: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      h4: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      subtitle1: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif', color: '#16181A' },
+      subtitle2: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif', color: '#16181A' },
+      body2: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      caption: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      overline: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
       body1: {
         fontSize: 16,
         fontWeight: 400,
@@ -58,12 +77,27 @@ export function getWorkerTheme() {
       MuiCard: {
         styleOverrides: {
           root: {
-            transition: `box-shadow 120ms ${motionEasing}, border-color 120ms ${motionEasing}, transform 150ms ${motionEasing}`,
+            // Phone-login language: hairline border, no shadow, quieter radius.
+            borderRadius: t.radius.md,
+            border: '1px solid #E9E9E5',
+            boxShadow: 'none',
+            transition: `border-color 120ms ${motionEasing}, transform 150ms ${motionEasing}`,
+            '&:hover': { boxShadow: 'none' },
             '&:active': { transform: 'scale(0.985)' },
             '&.worker-hero-card': {
               borderRadius: t.radius.lg,
-              padding: 36,
+              padding: 24,
             },
+          },
+        },
+      },
+      MuiCardContent: {
+        styleOverrides: {
+          root: {
+            // Uniform card inset (the old mix of 18–24px + a 0px last-child
+            // from the base theme made every page's cards inset differently).
+            padding: 16,
+            '&:last-child': { paddingBottom: 16 },
           },
         },
       },
@@ -78,6 +112,12 @@ export function getWorkerTheme() {
       },
       MuiButton: {
         styleOverrides: {
+          containedPrimary: {
+            // Phone-login language: the one solid button is ink, not blue.
+            backgroundColor: '#111111',
+            color: '#FFFFFF',
+            '&:hover': { backgroundColor: '#000000' },
+          },
           root: {
             fontSize: 15,
             minHeight: 44,
@@ -158,8 +198,11 @@ export function getWorkerTheme() {
       MuiAppBar: {
         styleOverrides: {
           root: {
-            boxShadow: t.shadow.card,
-            borderBottom: '1px solid rgba(0,0,0,0.06)',
+            // Flat, full-width hairline bar (the base MuiPaper radius was
+            // rounding it into a floating card).
+            borderRadius: 0,
+            boxShadow: 'none',
+            borderBottom: '1px solid #E9E9E5',
           },
         },
       },

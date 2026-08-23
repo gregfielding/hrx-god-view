@@ -39,7 +39,7 @@ const WorkerDashboardQuickActions: React.FC = () => {
             fontWeight: 600,
             px: 2,
             py: 1.25,
-            borderRadius: 2,
+            
             border: '1px solid',
             borderColor: 'divider',
             bgcolor: 'background.paper',

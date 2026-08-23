@@ -224,15 +224,16 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
       onClick={onClick}
       disabled={disabled}
       sx={{
+        // P1 theme pass 2026-08-23: quiet ink affordance instead of the blue
+        // filled square — the card itself is the tap target visually.
         width: 40,
         height: 40,
         flexShrink: 0,
-        border: outlined ? '1px solid' : 'none',
-        borderColor: 'primary.main',
-        bgcolor: outlined ? 'transparent' : 'primary.main',
-        color: outlined ? 'primary.main' : '#fff',
-        '&:hover': { bgcolor: outlined ? 'action.hover' : 'primary.dark' },
-        '&.Mui-disabled': { bgcolor: outlined ? 'transparent' : 'action.disabledBackground' },
+        border: 'none',
+        bgcolor: 'transparent',
+        color: '#111',
+        '&:hover': { bgcolor: 'action.hover' },
+        '&.Mui-disabled': { color: 'action.disabled' },
       }}
     >
       <ArrowForwardIcon fontSize="small" />
@@ -254,7 +255,7 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
       <Stack id="worker-dashboard-action-items-region" spacing={2}>
         {sectionHeading}
         <Card variant="outlined" id="worker-dashboard-action-items-empty" sx={{ bgcolor: 'background.paper', boxShadow: 'none' }}>
-          <CardContent sx={{ py: 2.25, px: 2.25, '&:last-child': { pb: 2.25 } }}>
+          <CardContent>
             <Stack spacing={1.75} alignItems="flex-start">
               <Typography variant="h6" sx={{ fontWeight: 700 }}>
                 {t('dashboard.actionItems.caughtUpTitle')}
@@ -298,7 +299,7 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
       data-priority-category={item.category}
       data-action-id={item.id}
       sx={{
-        borderRadius: 2,
+        
         alignItems: 'flex-start',
         bgcolor: 'background.paper',
         border: '1px solid',

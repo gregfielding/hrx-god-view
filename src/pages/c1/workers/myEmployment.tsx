@@ -95,7 +95,7 @@ const MyEmploymentPage: React.FC = () => {
                   key={rec.id}
                   variant="outlined"
                   sx={{
-                    borderRadius: 2,
+                    
                     borderColor: 'divider',
                     boxShadow: 'none',
                     cursor: 'pointer',

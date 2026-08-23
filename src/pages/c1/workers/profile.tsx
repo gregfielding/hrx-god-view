@@ -150,7 +150,7 @@ const WorkerProfile: React.FC = () => {
 
   if (!uid) {
     return (
-      <Container maxWidth="md" sx={{ py: 2 }}>
+      <Container maxWidth="md" disableGutters sx={{ py: 2 }}>
         <Stack spacing={2}>
           <Typography variant="body2" color="text.secondary">
             {t('profile.signInToComplete')}
@@ -164,13 +164,13 @@ const WorkerProfile: React.FC = () => {
   }
 
   return (
-    <Container maxWidth="md" sx={{ py: 2 }}>
+    <Container maxWidth="md" disableGutters sx={{ py: 2 }}>
       <Stack spacing={2}>
         <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
           {t('nav.myAccount')}
         </Typography>
 
-        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+        <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'flex-start', sm: 'center' }}>
               <Avatar src={resolvedProfilePhoto || undefined} sx={{ width: 64, height: 64 }} />
@@ -197,7 +197,7 @@ const WorkerProfile: React.FC = () => {
           </CardContent>
         </Card>
 
-        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+        <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent sx={{ p: 0 }}>
             <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionProfile')}</Typography>
             <Divider />
@@ -213,7 +213,7 @@ const WorkerProfile: React.FC = () => {
           </CardContent>
         </Card>
 
-        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+        <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent sx={{ p: 0 }}>
             <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionWorkProfile')}</Typography>
             <Divider />
@@ -290,7 +290,7 @@ const WorkerProfile: React.FC = () => {
         </Card>
 
         {/* Employment block temporarily hidden while we clean up the worker view.
-        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+        <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent sx={{ p: 0 }}>
             <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionEmployment')}</Typography>
             <Divider />
@@ -385,7 +385,7 @@ const WorkerProfile: React.FC = () => {
 
         {/* Pre-employment checks block temporarily hidden while we clean up the worker view.
         {tenantId ? (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent sx={{ p: 0 }}>
               <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>
                 {t('workerAccount.sectionPreEmploymentChecks')}
@@ -408,7 +408,7 @@ const WorkerProfile: React.FC = () => {
         ) : null}
         */}
 
-        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+        <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent sx={{ p: 0 }}>
             <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionAccountSettings')}</Typography>
             <Divider />
