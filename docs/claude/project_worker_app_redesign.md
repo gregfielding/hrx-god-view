@@ -136,5 +136,5 @@ logic OUT of React components.
   Delete (`deleteUserCompletely` callable: recursive Firestore delete + Auth delete; level 6+).
   Rules: HRX may update only `status/processedBy/processedAt/note`; requests otherwise
   client-immutable; no client delete. Verified end-to-end in prod (dismiss flow) 2026-08-23.
-  There is still NO push notification when a request lands — support must check the tab.
+  Pending requests now surface in Greg's morning brief (inboxMorningBriefCron → buildDeletionRequestsSection, 2026-08-24) — section appears only when the queue is non-empty, with a HAS PAYROLL retain warning per row.
 
