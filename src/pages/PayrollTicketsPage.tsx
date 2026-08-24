@@ -111,6 +111,8 @@ const PayrollTicketsPage: React.FC = () => {
   const [selected, setSelected] = useState<Ticket | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [privateDiagnosis, setPrivateDiagnosis] = useState<PrivateDiagnosis | null>(null);
+  const [auditEntries, setAuditEntries] = useState<Array<Record<string, unknown>>>([]);
+  const [actionNote, setActionNote] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -198,6 +200,23 @@ const PayrollTicketsPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id]);
 
+  // Action audit trail (staff-only subcollection).
+  useEffect(() => {
+    if (!selected) {
+      setAuditEntries([]);
+      return;
+    }
+    return onSnapshot(
+      doc(db, 'payroll_tickets', selected.id, 'private', 'audit'),
+      (snap) => {
+        const entries = (snap.get('entries') as Array<Record<string, unknown>> | undefined) ?? [];
+        setAuditEntries(entries.slice(-5).reverse());
+      },
+      () => setAuditEntries([]),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
+
   // Keep the drawer's ticket fresh as snapshots arrive (status chips etc.).
   useEffect(() => {
     if (!selected) return;
@@ -231,6 +250,12 @@ const PayrollTicketsPage: React.FC = () => {
     } finally {
       setBusy(false);
     }
+  };
+
+  const runTicketAction = async (payload: Record<string, unknown>, doneNote: string) => {
+    setActionNote(null);
+    await callAction(payload);
+    setActionNote(doneNote);
   };
 
   const sendReply = async () => {
@@ -406,6 +431,76 @@ const PayrollTicketsPage: React.FC = () => {
                 })}
               </Paper>
             )}
+
+            {/* Slice 2 — one-click approved actions (safe, non-money-moving). */}
+            <Paper variant="outlined" sx={{ p: 1.5 }}>
+              <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 1 }}>
+                ACTIONS
+              </Typography>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={busy}
+                  onClick={() =>
+                    void runTicketAction(
+                      { action: 'payroll_action_send_link', ticketId: selected.id, kind: 'onboarding' },
+                      'Onboarding link sent (SMS + in-app).',
+                    )
+                  }
+                >
+                  Send onboarding link
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={busy}
+                  onClick={() =>
+                    void runTicketAction(
+                      { action: 'payroll_action_send_link', ticketId: selected.id, kind: 'bank_update' },
+                      'Bank-update link sent (SMS + in-app).',
+                    )
+                  }
+                >
+                  Send bank-update link
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={busy}
+                  onClick={() =>
+                    void runTicketAction(
+                      { action: 'payroll_action_refresh_everee', ticketId: selected.id },
+                      'Everee refreshed — diagnosis updated below.',
+                    )
+                  }
+                >
+                  Refresh Everee + re-diagnose
+                </Button>
+              </Stack>
+              {actionNote && (
+                <Alert severity="success" sx={{ mt: 1 }} onClose={() => setActionNote(null)}>
+                  {actionNote}
+                </Alert>
+              )}
+              {auditEntries.length > 0 && (
+                <Stack spacing={0.25} sx={{ mt: 1 }}>
+                  {auditEntries.map((e, i) => (
+                    <Typography key={i} variant="caption" color="text.secondary">
+                      {String(e.action)} — {String(e.byName || e.byUid || '')}
+                      {(() => {
+                        const at = e.at as { toDate?: () => Date } | undefined;
+                        try {
+                          return at?.toDate ? ` · ${at.toDate().toLocaleString()}` : '';
+                        } catch {
+                          return '';
+                        }
+                      })()}
+                    </Typography>
+                  ))}
+                </Stack>
+              )}
+            </Paper>
 
             <Divider />
 

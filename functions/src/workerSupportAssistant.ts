@@ -5,6 +5,8 @@ import {
   createPayrollTicket,
   replyPayrollTicket,
   setPayrollTicketStatus,
+  sendPayrollLinkAction,
+  refreshEvereeAction,
   TicketForbiddenError,
   TicketNotFoundError,
   TicketRateLimitedError,
@@ -217,6 +219,31 @@ export const workerSupportAssistant = onCall(
       if (text.length > 2000) throw new HttpsError('invalid-argument', 'Message is too long.');
       try {
         return await replyPayrollTicket({ actorUid: request.auth.uid, ticketId, text });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_action_send_link') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const kind = String(request.data?.kind || '').trim();
+      if (!ticketId || !['onboarding', 'bank_update'].includes(kind)) {
+        throw new HttpsError('invalid-argument', 'ticketId and a valid kind are required.');
+      }
+      try {
+        return await sendPayrollLinkAction({
+          actorUid: request.auth.uid,
+          ticketId,
+          kind: kind as 'onboarding' | 'bank_update',
+        });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_action_refresh_everee') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      if (!ticketId) throw new HttpsError('invalid-argument', 'ticketId is required.');
+      try {
+        return await refreshEvereeAction({ actorUid: request.auth.uid, ticketId });
       } catch (e) {
         throw toTicketHttpsError(e);
       }

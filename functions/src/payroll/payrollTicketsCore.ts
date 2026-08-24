@@ -25,6 +25,7 @@ import {
   TWILIO_AUTH_TOKEN,
   TWILIO_MESSAGING_PHONE_NUMBER,
 } from '../messaging/twilioSecrets';
+import { reconcileWorkerInternal } from '../integrations/everee/evereeReconcileWorker';
 
 /** Typed errors so the callable can map to proper HttpsError codes. */
 export class TicketNotFoundError extends Error {}
@@ -447,5 +448,247 @@ async function sendUrgentTicketAlert(input: {
   } catch (e) {
     logger.warn('payrollTickets: urgent alert failed', { ticketId: input.ticketId, error: String(e) });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Slice 2 — one-click staff-approved actions (Greg approved 2026-08-24).
+// Safe, non-money-moving only: send the worker their payroll link, or
+// refresh the Everee mirror and re-run the diagnosis. Every action writes an
+// audit entry to private/audit (staff-only) and, when worker-visible, a
+// system message into the thread in the worker's language. Money-moving
+// actions (payments, backpay, rate fixes) are deliberately NOT here.
+// ---------------------------------------------------------------------------
+
+interface TicketActionContext {
+  ref: FirebaseFirestore.DocumentReference;
+  ticket: Record<string, unknown>;
+  actorUid: string;
+  actorName: string;
+}
+
+async function loadTicketForStaffAction(actorUid: string, ticketId: string): Promise<TicketActionContext> {
+  if (!(await isStaff(actorUid))) throw new TicketForbiddenError('Not allowed.');
+  const ref = db.collection('payroll_tickets').doc(ticketId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new TicketNotFoundError('Ticket not found.');
+  const actorSnap = await db.collection('users').doc(actorUid).get();
+  const a = (actorSnap.data() ?? {}) as Record<string, unknown>;
+  const actorName = `${trim(a.firstName)} ${trim(a.lastName)}`.trim() || actorUid;
+  return { ref, ticket: snap.data() as Record<string, unknown>, actorUid, actorName };
+}
+
+async function appendAudit(
+  ctx: TicketActionContext,
+  action: string,
+  detail: Record<string, unknown>,
+): Promise<void> {
+  await ctx.ref.collection('private').doc('audit').set(
+    {
+      entries: admin.firestore.FieldValue.arrayUnion({
+        at: admin.firestore.Timestamp.now(),
+        action,
+        byUid: ctx.actorUid,
+        byName: ctx.actorName,
+        ...detail,
+      }),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: admin.firestore.Timestamp.now(),
+    },
+    { merge: true },
+  );
+}
+
+async function appendSystemThreadMessage(ctx: TicketActionContext, text: string): Promise<void> {
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await ctx.ref.collection('messages').add({ at: now, by: 'system', text, createdAt: now });
+  await ctx.ref.update({ updatedAt: now });
+}
+
+/** Prod (non-sandbox) Everee linkages for the ticket's worker. */
+async function loadProdLinkages(
+  tenantId: string,
+  uid: string,
+): Promise<Array<{ entityId: string; evereeTenantId: string; evereeWorkerId: string; complete: boolean }>> {
+  const snap = await db
+    .collection(`tenants/${tenantId}/everee_workers`)
+    .where('firebaseUid', '==', uid)
+    .get();
+  const out: Array<{ entityId: string; evereeTenantId: string; evereeWorkerId: string; complete: boolean }> = [];
+  for (const d of snap.docs) {
+    const x = d.data() as Record<string, unknown>;
+    if (x.smokeData === true || String(x.evereeTenantId ?? '') === '2320') continue;
+    const m = (x.readinessMirror ?? {}) as Record<string, unknown>;
+    out.push({
+      entityId: trim(x.entityId) || d.id.split('__')[0],
+      evereeTenantId: trim(x.evereeTenantId),
+      evereeWorkerId: trim(x.evereeWorkerId),
+      complete:
+        String(x.status || '').toLowerCase() === 'onboarding_complete' ||
+        m.onboardingComplete === true ||
+        String(m.onboardingStatus || '').toUpperCase() === 'COMPLETE',
+    });
+  }
+  return out;
+}
+
+function workerSms(to: string, body: string): Promise<unknown> {
+  const from = TWILIO_MESSAGING_PHONE_NUMBER.value() || process.env.TWILIO_MESSAGING_PHONE_NUMBER;
+  if (!from) throw new Error('No messaging number configured.');
+  const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
+  const normalized = to.startsWith('+') ? to : `+1${to.replace(/\D/g, '')}`;
+  return client.messages.create({ to: normalized, from, body });
+}
+
+/**
+ * Send the worker their payroll link (SMS + in-app), for finishing
+ * onboarding or updating bank info. Both land on our in-app Everee embed —
+ * /c1/workers/earnings/{evereeTenantId} serves onboarding OR the worker
+ * portal depending on their state.
+ */
+export async function sendPayrollLinkAction(input: {
+  actorUid: string;
+  ticketId: string;
+  kind: 'onboarding' | 'bank_update';
+}): Promise<{ ok: true; sentSms: boolean; entityId: string }> {
+  const ctx = await loadTicketForStaffAction(input.actorUid, input.ticketId);
+  const uid = String(ctx.ticket.uid);
+  const tenantId = String(ctx.ticket.tenantId);
+  const es = trim(ctx.ticket.preferredLanguage) === 'es';
+
+  const linkages = await loadProdLinkages(tenantId, uid);
+  if (!linkages.length) throw new Error('Worker has no production payroll linkage.');
+  const target =
+    input.kind === 'onboarding'
+      ? linkages.find((l) => !l.complete) ?? linkages[0]
+      : linkages.find((l) => l.complete) ?? linkages[0];
+  const path = `/c1/workers/earnings/${encodeURIComponent(target.evereeTenantId)}`;
+  const url = `https://hrxone.com${path}`;
+
+  const smsBody =
+    input.kind === 'onboarding'
+      ? es
+        ? `C1 Staffing: termina tu configuración de nómina aquí: ${url}`
+        : `C1 Staffing: finish your payroll setup here: ${url}`
+      : es
+        ? `C1 Staffing: actualiza tu cuenta bancaria para depósito directo aquí: ${url}`
+        : `C1 Staffing: update your bank account for direct deposit here: ${url}`;
+
+  let sentSms = false;
+  const phone = trim(ctx.ticket.workerPhone);
+  if (phone) {
+    try {
+      await workerSms(phone, smsBody);
+      sentSms = true;
+    } catch (e) {
+      logger.warn('payrollTickets: action SMS failed', { ticketId: input.ticketId, error: String(e) });
+    }
+  }
+  try {
+    await sendNotificationAndPush({
+      uid,
+      tenantId,
+      title: es ? 'Tu enlace de nómina' : 'Your payroll link',
+      body:
+        input.kind === 'onboarding'
+          ? es
+            ? 'Toca para terminar tu configuración de nómina.'
+            : 'Tap to finish your payroll setup.'
+          : es
+            ? 'Toca para actualizar tu cuenta bancaria.'
+            : 'Tap to update your bank account.',
+      type: 'support',
+      category: 'system',
+      deepLink: path,
+      source: 'automation',
+    });
+  } catch (e) {
+    logger.warn('payrollTickets: action notification failed', { ticketId: input.ticketId, error: String(e) });
+  }
+
+  await appendSystemThreadMessage(
+    ctx,
+    input.kind === 'onboarding'
+      ? es
+        ? 'Te enviamos un enlace por mensaje de texto para terminar tu configuración de nómina.'
+        : 'We sent you a text with a link to finish your payroll setup.'
+      : es
+        ? 'Te enviamos un enlace por mensaje de texto para actualizar tu cuenta bancaria.'
+        : 'We sent you a text with a link to update your bank account.',
+  );
+  await appendAudit(ctx, `send_link_${input.kind}`, { entityId: target.entityId, sentSms });
+  logger.info('payrollTickets: link action', {
+    ticketId: input.ticketId,
+    kind: input.kind,
+    entityId: target.entityId,
+    sentSms,
+  });
+  return { ok: true, sentSms, entityId: target.entityId };
+}
+
+/**
+ * Refresh the worker's Everee mirror (all prod linkages) and re-run the
+ * diagnosis on fresh data. The console's diagnosis panel updates live.
+ */
+export async function refreshEvereeAction(input: {
+  actorUid: string;
+  ticketId: string;
+}): Promise<{ ok: true; refreshed: number; category: string | null; severity: string | null }> {
+  const ctx = await loadTicketForStaffAction(input.actorUid, input.ticketId);
+  const uid = String(ctx.ticket.uid);
+  const tenantId = String(ctx.ticket.tenantId);
+
+  const linkages = await loadProdLinkages(tenantId, uid);
+  let refreshed = 0;
+  for (const l of linkages) {
+    if (!l.entityId || !l.evereeWorkerId) continue;
+    try {
+      const res = await reconcileWorkerInternal({
+        tenantId,
+        entityId: l.entityId,
+        userId: uid,
+        evereeWorkerId: l.evereeWorkerId,
+        syncSource: 'manual',
+      });
+      if (res.ok) refreshed += 1;
+    } catch (e) {
+      logger.warn('payrollTickets: reconcile failed', { ticketId: input.ticketId, entityId: l.entityId, error: String(e) });
+    }
+  }
+
+  // Re-diagnose against the refreshed mirror using the worker's first message.
+  const firstMsg = await ctx.ref.collection('messages').orderBy('createdAt', 'asc').limit(1).get();
+  const ticketText = trim(firstMsg.docs[0]?.get('text')) || trim(ctx.ticket.subject);
+  const diagnosis = await runPayrollTicketDiagnosis({ tenantId, uid, ticketText });
+  if (diagnosis) {
+    await ctx.ref.update({
+      diagnosis: {
+        category: diagnosis.category,
+        severity: diagnosis.severity,
+        confidence: diagnosis.confidence,
+        generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await ctx.ref.collection('private').doc('diagnosis').set(
+      {
+        ...diagnosis,
+        generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        refreshedBy: ctx.actorUid,
+      },
+      { merge: true },
+    );
+  }
+  await appendAudit(ctx, 'refresh_everee', {
+    refreshed,
+    newCategory: diagnosis?.category ?? null,
+    newSeverity: diagnosis?.severity ?? null,
+  });
+  logger.info('payrollTickets: refresh action', { ticketId: input.ticketId, refreshed });
+  return {
+    ok: true,
+    refreshed,
+    category: diagnosis?.category ?? null,
+    severity: diagnosis?.severity ?? null,
+  };
 }
 
