@@ -83,9 +83,30 @@ Callable actions (staff-only, drawer ACTIONS row):
 - Everee tokens are env vars (all functions have them); Twilio secrets
   already bound to workerSupportAssistant.
 
+## Earnings v1 + payment truth (SHIPPED 2026-08-24)
+
+- Worker Earnings tab shows **Recent pay** natively: `evereeGetPayHistory`
+  (existing callable; `canSelfOrManageEveree` already allows self-access)
+  per employer, merged/sorted, amount + date + employer + status chip
+  (PAID/processing/issue), EN/ES. Section hidden when the worker has no
+  payments (correct empty behavior — verified on Greg's worker account,
+  which has ZERO Everee payments). `useEvereeEntityInfos` now carries
+  `entityId`.
+- Diagnosis context gains **"Recent Everee payments (settled truth)"**
+  (`getPayHistory` per prod linkage) + a prompt rule: no payment on record
+  → say plainly none was issued (unsubmitted hours), never speculate about
+  returned deposits; payment exists → cite date/amount/status. Verified:
+  the live direct-deposit ticket's diagnosis flipped from "check whether
+  the deposit was returned" to "NO payments on record — Grant Park
+  7/30–8/02 hours were never submitted."
+- ☠️ Scratch-testing diagnosis: load `functions/.env.hrx1-d3beb` via
+  dotenv or ANTHROPIC_API_KEY is missing and runPayrollTicketDiagnosis
+  silently returns null (looks like a stale doc).
+
 ## Roadmap (agreed sequence)
 
-2. **Earnings v1** — native payment history from Everee API (deflection).
+2. ~~Earnings v1~~ SHIPPED (above). v2: statement detail / PDF via
+   evereeGetPayStatement; per-employer "view all".
 3. ~~Approved actions~~ SHIPPED (above). Future action candidates:
    flag-timesheet-for-correction + approver nudge; auto-execute safe
    actions at ticket creation once trusted.
