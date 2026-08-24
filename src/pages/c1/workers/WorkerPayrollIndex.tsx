@@ -315,6 +315,14 @@ const WorkerPayrollIndex: React.FC = () => {
           })}
         </Stack>
       )}
+      {/* Payroll help desk entry (Slice 1, 2026-08-24). */}
+      <Button
+        variant="text"
+        onClick={() => navigate('/c1/workers/payroll-help')}
+        sx={{ mt: 3, px: 0 }}
+      >
+        {t('payrollHelp.entryTitle')} →
+      </Button>
     </Box>
   );
 };

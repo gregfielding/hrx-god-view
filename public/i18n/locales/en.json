@@ -1939,5 +1939,24 @@
   },
   "earnings": {
     "chooseEmployer": "Choose your employer to open payroll onboarding or your pay portal."
+  },
+  "payrollHelp": {
+    "title": "Payroll help",
+    "subtitle": "Problem with your pay, direct deposit, or payroll setup? Tell us what happened and our team will get on it.",
+    "newTicketHeading": "What's going on?",
+    "newTicketPlaceholder": "Example: I worked Saturday but my pay looks short…",
+    "myRequests": "My requests",
+    "statusOpen": "Open",
+    "statusReplied": "New reply",
+    "statusResolved": "Resolved",
+    "you": "You",
+    "supportTeam": "C1 Payroll team",
+    "replyPlaceholder": "Write a reply…",
+    "send": "Send",
+    "sending": "Sending…",
+    "sendError": "Couldn't send — please try again.",
+    "loadingThread": "Loading conversation…",
+    "entryTitle": "Payroll help",
+    "entrySubtitle": "Pay, direct deposit, or setup issues"
   }
 }

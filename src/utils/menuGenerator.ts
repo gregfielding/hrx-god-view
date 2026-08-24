@@ -306,6 +306,14 @@ export async function generateMenuItems(
         icon: 'attach_money',
         accessRoles: ['tenant_7'],
       }]),
+      // Payroll help desk — worker payroll tickets + AI diagnosis
+      // (Slice 1, Greg 2026-08-24). Recruiters see their workers' issues.
+      ...([{
+        text: 'Payroll Help Desk',
+        to: '/payroll-tickets',
+        icon: 'support_agent',
+        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
+      }]),
       // Reports: payroll costs, workers' comp, and future reporting
       // surfaces (renamed from Payroll Costs, Greg 2026-08-19). Levels 6-7.
       ...([{

@@ -1939,5 +1939,24 @@
   },
   "earnings": {
     "chooseEmployer": "Elige tu empleador para abrir tu registro de nómina o tu portal de pagos."
+  },
+  "payrollHelp": {
+    "title": "Ayuda con la nómina",
+    "subtitle": "¿Problema con tu pago, depósito directo o configuración de nómina? Cuéntanos qué pasó y nuestro equipo lo atenderá.",
+    "newTicketHeading": "¿Qué está pasando?",
+    "newTicketPlaceholder": "Ejemplo: Trabajé el sábado pero mi pago se ve incompleto…",
+    "myRequests": "Mis solicitudes",
+    "statusOpen": "Abierto",
+    "statusReplied": "Nueva respuesta",
+    "statusResolved": "Resuelto",
+    "you": "Tú",
+    "supportTeam": "Equipo de nómina C1",
+    "replyPlaceholder": "Escribe una respuesta…",
+    "send": "Enviar",
+    "sending": "Enviando…",
+    "sendError": "No se pudo enviar — inténtalo de nuevo.",
+    "loadingThread": "Cargando conversación…",
+    "entryTitle": "Ayuda con la nómina",
+    "entrySubtitle": "Problemas de pago, depósito directo o configuración"
   }
 }

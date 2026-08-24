@@ -5,6 +5,27 @@ service cloud.firestore {
     // Account deletion REQUESTS (worker Profile → About & Legal, 2026-08-23).
     // Workers create exactly one request for themselves; immutable from the
     // client after creation (support processes it server-side / manually).
+    // Payroll help desk (2026-08-24): tickets are written ONLY through the
+    // workerSupportAssistant callable (admin SDK) — clients read, never write.
+    // Workers see their own tickets; staff (HRX or level 5+ on the ticket's
+    // tenant) see the queue.
+    match /payroll_tickets/{ticketId} {
+      allow read: if request.auth != null && (
+        resource.data.uid == request.auth.uid ||
+        isHRX() ||
+        hasSecurityLevel(resource.data.tenantId, 5)
+      );
+      allow create, update, delete: if false;
+      match /messages/{messageId} {
+        allow read: if request.auth != null && (
+          get(/databases/$(database)/documents/payroll_tickets/$(ticketId)).data.uid == request.auth.uid ||
+          isHRX() ||
+          hasSecurityLevel(get(/databases/$(database)/documents/payroll_tickets/$(ticketId)).data.tenantId, 5)
+        );
+        allow create, update, delete: if false;
+      }
+    }
+
     match /account_deletion_requests/{uid} {
       allow create: if request.auth != null && request.auth.uid == uid;
       allow read: if request.auth != null && (request.auth.uid == uid || isHRX());

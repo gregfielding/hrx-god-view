@@ -13,6 +13,7 @@ import {
   InputAdornment,
   List,
   ListItemButton,
+  ListItemText,
   TextField,
   Typography,
   CircularProgress,
@@ -20,6 +21,7 @@ import {
   Stack,
   Chip,
 } from '@mui/material';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import SendIcon from '@mui/icons-material/Send';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -270,6 +272,21 @@ const C1WorkerSupport: React.FC = () => {
           </ListItemButton>
         ))}
       </List>
+
+      {/* 2.5 Payroll help desk (Slice 1, 2026-08-24) */}
+      <Card variant="outlined" sx={{ mb: 2 }}>
+        <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+          <List disablePadding>
+            <ListItemButton onClick={() => navigate('/c1/workers/payroll-help')}>
+              <ListItemText
+                primary={t('payrollHelp.entryTitle')}
+                secondary={t('payrollHelp.entrySubtitle')}
+              />
+              <ChevronRightIcon color="action" />
+            </ListItemButton>
+          </List>
+        </CardContent>
+      </Card>
 
       {/* 3. Escalation — Contact recruiter */}
       <Card variant="outlined">

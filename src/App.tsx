@@ -126,6 +126,8 @@ const C1WorkerNotifications = lazy(() => import('./pages/c1/workers/notification
 const WorkerPayrollIndex = lazy(() => import('./pages/c1/workers/WorkerPayrollIndex'));
 const WorkerPayrollEvereeTenant = lazy(() => import('./pages/c1/workers/WorkerPayrollEvereeTenant'));
 const WorkerAiPrescreenPage = lazy(() => import('./pages/c1/workers/WorkerAiPrescreenPage'));
+const C1WorkerPayrollHelp = lazy(() => import('./pages/c1/workers/payrollHelp'));
+const PayrollTicketsPage = lazy(() => import('./pages/PayrollTicketsPage'));
 import OnboardingProfileForm from './components/OnboardingProfileForm';
 import OnboardingCompleteScreen from './components/OnboardingCompleteScreen';
 const Help = lazy(() => import('./pages/Help'));
@@ -619,6 +621,8 @@ function App() {
             <Route path="job-readiness" element={<Navigate to="/c1/workers/dashboard#home-readiness-summary" replace />} />
             <Route path="documents" element={<C1WorkerDocuments />} />
             <Route path="support" element={<WorkerSupport />} />
+            <Route path="payroll-help" element={<C1WorkerPayrollHelp />} />
+            <Route path="payroll-help/:ticketId" element={<C1WorkerPayrollHelp />} />
             <Route path="settings" element={<Navigate to="/c1/workers/profile/app-language" replace />} />
             <Route path="notifications" element={<C1WorkerNotifications />} />
             {/*
@@ -856,6 +860,16 @@ function App() {
         />
         {/* Report library: /reports is the index, each report lives at
             /reports/<slug> (registry: src/pages/reports/reportsRegistry.tsx). */}
+        <Route
+          path="payroll-tickets"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <PayrollTicketsPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="reports"
           element={

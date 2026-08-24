@@ -1,6 +1,12 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { getClaudeChat } from './utils/claudeChat';
+import {
+  createPayrollTicket,
+  replyPayrollTicket,
+  setPayrollTicketStatus,
+  type PayrollTicketStatus,
+} from './payroll/payrollTicketsCore';
 
 type SupportTopic =
   | 'shift_cancellation'
@@ -162,12 +168,47 @@ export const workerSupportAssistant = onCall(
   {
     cors: true,
     region: 'us-central1',
-    timeoutSeconds: 45,
+    // 120s: payroll-ticket creation runs the Claude diagnosis inline
+    // (Cloud Run cap — this callable hosts the help-desk actions too).
+    timeoutSeconds: 120,
     memory: '512MiB', // 256MiB OOM'd on cold start (267MiB) after the 2026-08-21 Claude migration
   },
-  async (request): Promise<SupportResponse> => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async (request): Promise<any> => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
+    }
+
+    // Payroll help-desk actions (Slice 1, 2026-08-24) share this callable —
+    // the project is AT the Cloud Run function cap, so no new functions.
+    const action = String((request.data as Record<string, unknown> | undefined)?.action || '').trim();
+    if (action === 'payroll_create_ticket') {
+      const tenantId = String(request.data?.tenantId || '').trim();
+      const text = String(request.data?.text || '').trim();
+      if (!tenantId || !text) throw new HttpsError('invalid-argument', 'tenantId and text are required.');
+      if (text.length > 2000) throw new HttpsError('invalid-argument', 'Message is too long.');
+      return await createPayrollTicket({ uid: request.auth.uid, tenantId, text, channel: 'app' });
+    }
+    if (action === 'payroll_reply') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const text = String(request.data?.text || '').trim();
+      if (!ticketId || !text) throw new HttpsError('invalid-argument', 'ticketId and text are required.');
+      if (text.length > 2000) throw new HttpsError('invalid-argument', 'Message is too long.');
+      try {
+        return await replyPayrollTicket({ actorUid: request.auth.uid, ticketId, text });
+      } catch (e) {
+        throw new HttpsError('permission-denied', e instanceof Error ? e.message : String(e));
+      }
+    }
+    if (action === 'payroll_set_status') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const status = String(request.data?.status || '').trim() as PayrollTicketStatus;
+      if (!ticketId || !status) throw new HttpsError('invalid-argument', 'ticketId and status are required.');
+      try {
+        return await setPayrollTicketStatus({ actorUid: request.auth.uid, ticketId, status });
+      } catch (e) {
+        throw new HttpsError('permission-denied', e instanceof Error ? e.message : String(e));
+      }
     }
 
     const { question, tenantId } = (request.data || {}) as SupportRequest;
