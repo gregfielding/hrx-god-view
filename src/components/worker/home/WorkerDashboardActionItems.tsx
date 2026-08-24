@@ -244,7 +244,7 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
     <Typography
       variant="h5"
       component="h1"
-      sx={{ fontWeight: 700, letterSpacing: -0.02, mb: 0 }}
+      sx={{ mb: 0 }}
     >
       {t('dashboard.actionItems.sectionTitle')}
     </Typography>
@@ -257,7 +257,7 @@ const WorkerDashboardActionItems: React.FC<WorkerDashboardActionItemsProps> = ({
         <Card variant="outlined" id="worker-dashboard-action-items-empty" sx={{ bgcolor: 'background.paper', boxShadow: 'none' }}>
           <CardContent>
             <Stack spacing={1.75} alignItems="flex-start">
-              <Typography variant="h6" sx={{ fontWeight: 700 }}>
+              <Typography variant="h6">
                 {t('dashboard.actionItems.caughtUpTitle')}
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.65, maxWidth: '40ch' }}>

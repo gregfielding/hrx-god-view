@@ -1913,5 +1913,8 @@
       "manual_override": "Un reclutador te pidió que vuelvas a subir tu foto. Por favor, toma una nueva foto clara.",
       "verification_error": "No pudimos revisar tu foto en este momento. Por favor, intenta subirla de nuevo en un momento."
     }
+  },
+  "earnings": {
+    "chooseEmployer": "Elige tu empleador para abrir tu registro de nómina o tu portal de pagos."
   }
 }

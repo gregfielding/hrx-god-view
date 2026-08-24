@@ -47,7 +47,7 @@ const C1WorkerLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) 
                 // Clear the fixed bottom tab bar (56px + iOS safe area).
                 pb: 'calc(80px + env(safe-area-inset-bottom))',
                 overflow: 'auto',
-                maxWidth: { sm: 880 },
+                maxWidth: { sm: 720 },
                 borderRadius: 0,
                 /** Keep main (incl. page transition transforms) below WorkerNav drawer stacking (z-index). */
                 position: 'relative',

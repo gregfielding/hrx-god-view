@@ -10,6 +10,7 @@
  * `everee_workers/{entityId}__{uid}` (worker-readable). Stale `evereeWorkerIds` entries with no such hire are hidden.
  */
 
+import { t } from '../../../i18n';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   collection,
@@ -264,9 +265,9 @@ const WorkerPayrollIndex: React.FC = () => {
 
   if (landing.kind === 'empty') {
     return (
-      <Box sx={{ p: 3, maxWidth: 560 }}>
-        <Typography variant="h6" gutterBottom>
-          Payroll
+      <Box sx={{ maxWidth: 560 }}>
+        <Typography variant="h5" component="h1" gutterBottom>
+          {t('nav.payroll')}
         </Typography>
         <Typography variant="body2" color="text.secondary" paragraph>
           No payroll account yet — contact your recruiter if you were expecting access.
@@ -279,12 +280,12 @@ const WorkerPayrollIndex: React.FC = () => {
   }
 
   return (
-    <Box sx={{ p: 3, maxWidth: 720 }}>
-      <Typography variant="h6" gutterBottom>
-        Payroll
+    <Box>
+      <Typography variant="h5" component="h1">
+        {t('nav.payroll')}
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Choose your employer to open payroll onboarding or your portal.
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>
+        {t('earnings.chooseEmployer')}
       </Typography>
       {labelsLoading ? (
         <CircularProgress size={28} />

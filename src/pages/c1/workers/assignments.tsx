@@ -511,8 +511,8 @@ const WorkerAssignments: React.FC = () => {
   }, [user?.uid, tenantId, refreshKey]);
 
   return (
-    <Box sx={{ maxWidth: 'lg', mx: 'auto' }}>
-      <Stack spacing={4} sx={{ py: 2 }}>
+    <Box>
+      <Stack spacing={3}>
         <SmsWarningBanner />
         {/* Header row: title/subtitle on the left, the view switcher
             (icon button group) right-justified on the same top row. */}
@@ -526,7 +526,7 @@ const WorkerAssignments: React.FC = () => {
           }}
         >
           <Box>
-            <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
+            <Typography variant="h5" component="h1">
               {t('assignments.title')}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>

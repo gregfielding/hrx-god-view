@@ -54,11 +54,13 @@ export function getWorkerTheme() {
       caption: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
       overline: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
       body1: {
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
         fontSize: 16,
         fontWeight: 400,
         lineHeight: 1.5,
       },
       button: {
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
         textTransform: 'none' as const,
         fontWeight: 600,
         fontSize: 15,

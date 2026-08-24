@@ -150,8 +150,8 @@ const WorkerProfile: React.FC = () => {
 
   if (!uid) {
     return (
-      <Container maxWidth="md" disableGutters sx={{ py: 2 }}>
-        <Stack spacing={2}>
+      <Box>
+        <Stack spacing={3}>
           <Typography variant="body2" color="text.secondary">
             {t('profile.signInToComplete')}
           </Typography>
@@ -159,14 +159,14 @@ const WorkerProfile: React.FC = () => {
             {t('common.signIn')}
           </Button>
         </Stack>
-      </Container>
+      </Box>
     );
   }
 
   return (
-    <Container maxWidth="md" disableGutters sx={{ py: 2 }}>
+    <Box>
       <Stack spacing={2}>
-        <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
+        <Typography variant="h5" component="h1">
           {t('nav.myAccount')}
         </Typography>
 
@@ -440,7 +440,7 @@ const WorkerProfile: React.FC = () => {
           </CardContent>
         </Card>
       </Stack>
-    </Container>
+    </Box>
   );
 };
 

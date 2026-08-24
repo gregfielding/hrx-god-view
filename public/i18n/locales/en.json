@@ -1913,5 +1913,8 @@
       "manual_override": "A recruiter asked you to reupload your photo. Please take a new, clear headshot.",
       "verification_error": "We couldn't check your photo right now. Please try uploading again in a moment."
     }
+  },
+  "earnings": {
+    "chooseEmployer": "Choose your employer to open payroll onboarding or your pay portal."
   }
 }
