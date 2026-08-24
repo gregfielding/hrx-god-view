@@ -38,8 +38,33 @@ and clearer onboarding status preempt most "where's my money" tickets.
 - **Staff UI**: `/payroll-tickets` ("Payroll Help Desk" sidebar item, levels
   5–7) — status tabs, drawer with diagnosis panel + "Use this reply" (EN/ES)
   + reply/resolve.
-- Test ticket from Greg's worker account left in the queue (waiting_worker)
-  as a live example.
+- Test tickets from Greg's worker account left in the queue as live examples.
+
+## Hardening pass (audit, SHIPPED 2026-08-24 later)
+
+- Timesheet context reads **`workDate`** (the real field — `date` doesn't
+  exist) + `totalDoubleTimeHours`; worker Profile stats DT field fixed too.
+- `payroll_create_ticket` validates tenant membership (`isTenantMemberData`)
+  and caps active tickets at 3/worker (resource-exhausted with a friendly
+  message).
+- **Diagnosis split**: main doc keeps only category/severity/confidence
+  (worker-readable, drives queue chips); staff-facing summary + unsent
+  draft replies live in `payroll_tickets/{id}/private/diagnosis` —
+  rules: staff-only read. Console falls back to legacy main-doc detail.
+- **Urgent alerting**: severity=urgent → SMS to
+  `app_config/payroll_help_desk.urgentAlertPhones` (seeded with Greg;
+  Twilio secrets bound to workerSupportAssistant). Verified delivered to
+  Greg's phone 2026-08-24. Open tickets also in the morning brief
+  (`buildPayrollTicketsSection`).
+- Staff replies notify in the worker's language; staff reply on a resolved
+  ticket no longer reopens it; typed errors (not-found / permission-denied /
+  resource-exhausted).
+- **Admin↔account connection**: Open-profile button in the ticket drawer;
+  `OpenPayrollTicketChip` ("N payroll tickets", warning) in the profile
+  header — mounted in BOTH header variants (index.tsx compact +
+  RecruiterUserProfileTableHeader, which is what /users/:uid actually
+  renders).
+- Mocha: `src/__tests__/payroll/payrollTicketsCore.test.ts` (pure helpers).
 
 ## Roadmap (agreed sequence)
 
