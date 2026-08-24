@@ -87,3 +87,35 @@ logic OUT of React components.
 - **P2**: native payroll onboarding (complete-record API); reliability/badges; bundle split.
 
 **Awaiting Greg**: approve 5-tab structure + P0 list; naming ("Jobs Board" vs "Find Shifts").
+
+## 2026-08-23 (later) — sub-page sweep, card padding root cause, action-items scope fix
+
+- **Card padding root cause**: the base (admin) theme pads every `MuiCard` 24px; workerTheme
+  deep-merges on top of it, so worker cards silently stacked 24 (Card) + 16 (CardContent) = 40px
+  insets. workerTheme now sets `MuiCard.root.padding: 0` — **CardContent's 16px is the only card
+  inset on worker surfaces**. Don't re-add padding on Card.
+- **`WorkerPageHeader`** (`src/components/worker/WorkerPageHeader.tsx`) is the canonical sub-page
+  header: back IconButton (44px target) + h5 + optional body2 description + optional right `action`
+  slot. Used on every screen one level below the 5 tabs (profile sections/experience/about,
+  documents, support, notifications, my-employment + detail, screening, applications, assignment
+  details, Everee earnings embed, job detail arrow). Top-level tabs keep plain h5, no back.
+- Buttons: worker outlined = 1.5px border; `size="small"` = 36px. Chips = 26px (small 22px) —
+  metadata, not buttons. Jobs board: search Paper p:2, card grid spacing 2, no extra px (layout
+  owns gutters).
+- **Action items scope (Greg)**: only payroll setup (started, not completed), background checks
+  (current + actionable), interview requests, and supporting docs for an upcoming assignment.
+  Implementation: `deriveWorkerComplianceSignals` (client `workerComplianceActionDerivers.ts` +
+  server mirror `workerDashboardActionItemsLoadContext.ts`) ignores background-check records
+  untouched for 30+ days (`WORKER_COMPLIANCE_RECENCY_DAYS`); records without readable timestamps
+  stay current. `background_check_issue_requires_action` NEVER deep-links to AccuSource (an errored
+  order has nothing for the worker there; the old code even borrowed the portal link from a
+  DIFFERENT record). Portal deep-link only on awaiting_applicant, and the R.10 expiry sweep's
+  `expired: true` hides that item entirely.
+- **Payroll item gating** (dashboard.tsx legacy builder — the LIVE pipeline; V2 flag
+  `REACT_APP_WORKER_DASHBOARD_ACTION_ITEMS_V2` is OFF): completion truth on `everee_workers` docs
+  lives in `status: 'onboarding_complete'`, `readinessMirror.onboardingStatus/onboardingComplete`,
+  `apiObservedOnboardingCompleteAt` — top-level `onboardingComplete`/`onboardingStatus` DO NOT
+  EXIST on these docs. Sandbox tenant 2320 and `smokeData: true` linkages are skipped.
+  ⚠️ V2 parity gap: the server snapshot model has NO `complete_payroll_setup` item — port it
+  before flipping the flag or the nudge disappears.
+
