@@ -72,6 +72,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../../firebase';
+import PasteRosterDialog from './PasteRosterDialog';
 import { p } from '../../data/firestorePaths';
 import { getCalendarDayLocal } from '../../utils/dateUtils';
 import { normalizeAssignmentStatus } from '../../utils/assignmentStatusNormalize';
@@ -292,6 +293,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
    * previously-saved JO Detail filter prefs.
    */
   const [selectedShiftId, setSelectedShiftId] = useState<string>(persistedFilters.shiftId);
+  /** Paste Roster (spreadsheet bridge, 2026-08-24) — dialog open state. */
+  const [pasteRosterOpen, setPasteRosterOpen] = useState(false);
   // In drawer mode (`lockedShiftId`) the worker pool is always
   // scoped to a specific shift, so default the Workforce filter to
   // "Shift Applicants" rather than rehydrating from the JO Detail
@@ -4603,6 +4606,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               </Select>
             </FormControl>
           )}
+          {showContent && shifts.length > 0 && (
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={!safeSelectedShiftId}
+              onClick={() => setPasteRosterOpen(true)}
+              sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              Paste roster
+            </Button>
+          )}
           {/* Day picker — JO-wide (2026-05-23). Shows whenever the JO
               spans more than one calendar day, whether that's from a
               single multi-day shift OR from many single-day shifts on
@@ -5849,6 +5863,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             setSelectedAssignmentWorkerIds(new Set());
             setBulkDrawerOpen(false);
           }}
+        />
+
+        {/* Paste Roster — spreadsheet bridge (2026-08-24). Assignments land
+            via placementsCreateAssignments, so the tab's live listeners pick
+            them up with no explicit refresh. */}
+        <PasteRosterDialog
+          open={pasteRosterOpen}
+          onClose={() => setPasteRosterOpen(false)}
+          tenantId={tenantId}
+          jobOrderId={jobOrderId}
+          shift={shifts.find((sh) => sh.id === safeSelectedShiftId) ?? null}
+          hiringEntityId={placementHiringEntityId ?? (jobOrder as { hiringEntityId?: string | null } | null)?.hiringEntityId ?? null}
+          customerAccount={
+            (jobOrder as { companyName?: string | null } | null)?.companyName ?? hiringEntityName ?? null
+          }
         />
       </Box>
   );
