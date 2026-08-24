@@ -39,6 +39,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import FavoriteButton from '../../../components/FavoriteButton';
+import OpenPayrollTicketChip from '../../../components/payroll/OpenPayrollTicketChip';
 import { PhoneVerifiedInlineCheck } from '../../../components/PhoneVerifiedInlineCheck';
 import UserTableIndeedFlexBadge from '../../../components/tables/UserTableIndeedFlexBadge';
 import UserTableFieldglassBadge from '../../../components/tables/UserTableFieldglassBadge';
@@ -542,6 +543,9 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                     }}
                   />
                 )}
+              {canViewAdminContent && uid && tenantIdForUserGroups && (
+                <OpenPayrollTicketChip uid={uid} tenantId={tenantIdForUserGroups} />
+              )}
             </Stack>
           </Box>
 
