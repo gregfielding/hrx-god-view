@@ -95,6 +95,10 @@ export interface WorkerDashboardActionItemsModelInput {
   /** Pre-derived TempWorks signals. `undefined` when not required. */
   tempworks?: WorkerDashboardTempworksSignals;
 
+  /** Everee payroll-onboarding state (V2 parity port, 2026-08-24).
+   *  `undefined` on old snapshots — treated as not-incomplete. */
+  payroll?: { incomplete: boolean; evereeTenantId: string | null };
+
   /** Pre-derived background / drug / E-Verify flags. */
   compliance: WorkerDashboardComplianceSignals;
 
@@ -483,6 +487,25 @@ function buildJobItems(input: WorkerDashboardActionItemsModelInput): InternalIte
         ? 'TempWorks submitted — recruiter verification pending'
         : 'TempWorks not started',
       qaEvaluatedFields: { submitted, hasUrl: Boolean(onboardingUrl) },
+    });
+  }
+
+  // Everee payroll onboarding incomplete — workers can apply/work without
+  // finishing it, so this is a non-blocking "important" nudge. Deep-links
+  // to that employer's embed when the Everee tenant id is known.
+  if (input.payroll?.incomplete) {
+    const evTid = input.payroll.evereeTenantId;
+    out.push({
+      id: 'complete_payroll_setup',
+      category: 'important',
+      titleKey: 'dashboard.actionItems.payrollSetupTitle',
+      descriptionKey: 'dashboard.actionItems.payrollSetupDescription',
+      primaryLabelKey: 'dashboard.actionItems.payrollSetupPrimary',
+      primaryKind: 'navigate',
+      href: evTid ? `/c1/workers/earnings/${evTid}` : '/c1/workers/earnings',
+      priorityScore: scoreForId('complete_payroll_setup'),
+      sourceReason: 'Everee payroll onboarding incomplete',
+      qaEvaluatedFields: { evereeTenantId: evTid ?? null },
     });
   }
 

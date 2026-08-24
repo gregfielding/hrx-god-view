@@ -80,11 +80,13 @@ export async function loadWorkerDashboardActionItemsContext(
     backgroundChecks,
     everifyCases,
     prescreen,
+    payroll,
   ] = await Promise.all([
     loadPendingAssignments(db, tenantId, uid),
     loadBackgroundChecks(db, tenantId, uid),
     loadEverifyCases(db, tenantId, uid),
     loadPrescreenSignals(db, tenantId, uid),
+    loadPayrollOnboardingSignal(db, tenantId, uid),
   ]);
 
   const compliance = deriveWorkerComplianceSignals(backgroundChecks, everifyCases);
@@ -95,6 +97,7 @@ export async function loadWorkerDashboardActionItemsContext(
     pendingAssignments,
     tempworks,
     compliance,
+    payroll,
     prescreen: prescreen.signals,
     authAvatarUrl: options?.authAvatarUrl ?? null,
     tenantId,
@@ -226,6 +229,54 @@ async function loadEverifyCases(
     });
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Everee payroll-onboarding signal — V2 parity port of the legacy client
+// builder (2026-08-24). Completion truth lives on `status` and
+// `readinessMirror` (top-level onboardingComplete/onboardingStatus don't
+// exist on everee_workers docs); sandbox tenant 2320 and smokeData
+// linkages never nag a production worker.
+// ---------------------------------------------------------------------------
+
+export interface WorkerDashboardPayrollSignal {
+  incomplete: boolean;
+  evereeTenantId: string | null;
+}
+
+export async function loadPayrollOnboardingSignal(
+  db: admin.firestore.Firestore,
+  tenantId: string,
+  uid: string,
+): Promise<WorkerDashboardPayrollSignal> {
+  try {
+    const snap = await db
+      .collection(`tenants/${tenantId}/everee_workers`)
+      .where('firebaseUid', '==', uid)
+      .get();
+    for (const d of snap.docs) {
+      const x = d.data() as Record<string, unknown>;
+      if (x.smokeData === true) continue;
+      const tid = String(x.evereeTenantId ?? '');
+      if (!tid || tid === '2320') continue;
+      const mirror = (x.readinessMirror ?? null) as Record<string, unknown> | null;
+      const complete =
+        x.onboardingComplete === true ||
+        String(x.onboardingStatus || '').toUpperCase() === 'COMPLETE' ||
+        String(x.status || '').toLowerCase() === 'onboarding_complete' ||
+        mirror?.onboardingComplete === true ||
+        String(mirror?.onboardingStatus || '').toUpperCase() === 'COMPLETE' ||
+        Boolean(x.apiObservedOnboardingCompleteAt);
+      if (!complete) return { incomplete: true, evereeTenantId: tid };
+    }
+  } catch (err) {
+    logger.warn('workerDashboardActionItemsV1: everee_workers query failed', {
+      tenantId,
+      uid,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return { incomplete: false, evereeTenantId: null };
 }
 
 // ---------------------------------------------------------------------------

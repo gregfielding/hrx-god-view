@@ -2768,18 +2768,19 @@ const JobPostingDetail: React.FC = () => {
     return JSON.parse(JSON.stringify(schema));
   };
 
-  const cardPadding = isMobile ? 1.5 : 2.5;
+  // Canon (2026-08-24): theme radius (12px) and a uniform 16px inset —
+  // the old borderRadius:3 resolved to 36px pills and doubled padding.
+  const cardPadding = 2;
   const cardBaseSx = {
     width: '100%',
     maxWidth: '100%',
     boxSizing: 'border-box',
     p: cardPadding,
-    borderRadius: 3,
     overflow: 'hidden',
   } as const;
 
   return (
-    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 0, pt: 2, px: { xs: 2, sm: 3 }, pb: showStickyApply ? 10 : 0 }}>
+    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 0, pt: 1, pb: showStickyApply ? 10 : 0 }}>
       {/* Google Jobs Structured Data */}
       <Helmet>
         <title>
@@ -2911,7 +2912,7 @@ const JobPostingDetail: React.FC = () => {
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 2 }}>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1, mb: 1 }}>
-              <Typography component="h1" variant={isMobile ? 'h5' : 'h4'} sx={{ fontWeight: 700, fontSize: isMobile ? '1.35rem' : '1.5rem' }}>
+              <Typography component="h1" variant="h5">
                 {getJobPostingDisplayText(posting, 'postTitle', displayLanguage) || posting.postTitle}
               </Typography>
               <Tooltip title={t('jobs.copyLink')}>
@@ -2943,7 +2944,7 @@ const JobPostingDetail: React.FC = () => {
                 sx={{
                   fontWeight: 800,
                   color: 'success.dark',
-                  fontSize: isMobile ? '1.5rem' : '1.75rem',
+                  fontSize: '1.25rem',
                   letterSpacing: '-0.02em',
                   mb: 1.5,
                   lineHeight: 1.2,
@@ -3135,8 +3136,6 @@ const JobPostingDetail: React.FC = () => {
                     sx={{
                       minWidth: isMobile ? 150 : 200,
                       py: isMobile ? 1 : 1.5,
-                      fontSize: isMobile ? '0.9rem' : '1.1rem',
-                      fontWeight: 'bold',
                       backgroundColor: statusButtonProps.backgroundColor,
                       color: statusButtonProps.color,
                       '&:hover': {
@@ -3230,7 +3229,7 @@ const JobPostingDetail: React.FC = () => {
             return (
               <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
                 <CardContent sx={{ p: 0 }}>
-                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+                  <Typography variant="subtitle1" gutterBottom>
                     {t('jobs.aboutThisJob')}
                   </Typography>
                   <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
@@ -3256,7 +3255,7 @@ const JobPostingDetail: React.FC = () => {
           {posting.jobType === 'career' && careerOpenShifts.length > 1 ? (
             <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+                <Typography variant="subtitle1" gutterBottom>
                   {t('jobs.availableShifts')}
                 </Typography>
                 <RadioGroup
@@ -3287,7 +3286,7 @@ const JobPostingDetail: React.FC = () => {
           ) : posting.jobType === 'career' && careerWeeklyScheduleSummary ? (
             <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+                <Typography variant="subtitle1" gutterBottom>
                   {t('jobs.weeklySchedule')}
                 </Typography>
                 <Typography variant="body1" sx={{ lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
@@ -3301,7 +3300,7 @@ const JobPostingDetail: React.FC = () => {
           {(posting.worksiteAddress?.street || posting.worksiteAddress?.city || posting.worksiteAddress?.state) && (
             <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+                <Typography variant="subtitle1" gutterBottom>
                   {t('jobs.location')}
                 </Typography>
                 {(() => {
@@ -3374,7 +3373,7 @@ const JobPostingDetail: React.FC = () => {
             <>
               <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
                 <CardContent>
-                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                  <Typography variant="subtitle1" sx={{ mb: 1.5 }}>
                     {t('assignment.assignmentInfo')}
                   </Typography>
                   <Grid container spacing={3}>
@@ -3484,7 +3483,7 @@ const JobPostingDetail: React.FC = () => {
               </Card>
               <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
                 <CardContent>
-                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                  <Typography variant="subtitle1" sx={{ mb: 1.5 }}>
                     {t('assignment.mySchedule')}
                   </Typography>
                   <Stack spacing={2}>
@@ -3681,7 +3680,7 @@ const JobPostingDetail: React.FC = () => {
             return (
               <Card sx={{ ...cardBaseSx }} elevation={2}>
                 <CardContent>
-                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
+                  <Typography variant="subtitle1" gutterBottom>
                     {t('jobs.requirements')}
                   </Typography>
 
@@ -3743,7 +3742,7 @@ const JobPostingDetail: React.FC = () => {
               elevation={2}
             >
               <CardContent sx={{ p: 0 }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
+                <Typography variant="subtitle1" gutterBottom>
                   {statusButtonProps?.label === 'confirmed_special'
                     ? t('jobs.youveBeenHired')
                     : (statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode)
@@ -3827,8 +3826,6 @@ const JobPostingDetail: React.FC = () => {
                       startIcon={assignmentDecisionLoading ? <CircularProgress size={20} color="inherit" /> : null}
                       sx={{
                         py: 1.5,
-                        fontSize: '1.1rem',
-                        fontWeight: 'bold',
                       }}
                     >
                       {assignmentDecisionLoading ? t('jobs.accepting') : t('jobs.acceptOfferCta')}
@@ -3856,8 +3853,6 @@ const JobPostingDetail: React.FC = () => {
                         fullWidth
                         sx={{
                           py: 1.5,
-                          fontSize: '1.1rem',
-                          fontWeight: 'bold',
                         }}
                       >
                         {t('assignment.viewAssignment')}
