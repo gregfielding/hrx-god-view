@@ -1613,7 +1613,7 @@ const PublicJobsBoard: React.FC = () => {
       )}
 
       {/* Search and Filters */}
-      <Paper elevation={1} sx={{ p: 3, mb: 4 }}>
+      <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
         <Grid container spacing={2} alignItems="center">
           <Grid item xs={12} md={6}>
             <TextField
@@ -1761,8 +1761,10 @@ const PublicJobsBoard: React.FC = () => {
           </Box>
         )}
 
-        <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
-          {(searchTerm || jobTypeFilter !== 'all' || showFavoritesOnly || sortBy !== 'newest') && (
+        {/* Only render the row when the button shows — an empty flex Box still
+            added its mt inside the padded Paper. */}
+        {(searchTerm || jobTypeFilter !== 'all' || showFavoritesOnly || sortBy !== 'newest') && (
+          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
             <Button
               variant="text"
               size="small"
@@ -1775,8 +1777,8 @@ const PublicJobsBoard: React.FC = () => {
             >
               {t('jobs.clearFilters')}
             </Button>
-          )}
-        </Box>
+          </Box>
+        )}
       </Paper>
 
       {filteredJobs.length === 0 ? (
@@ -1784,7 +1786,7 @@ const PublicJobsBoard: React.FC = () => {
           {t('jobs.noJobsFound')}
         </Alert>
       ) : (
-        <Grid container spacing={3} sx={{ px: 2, pb: 2 }}>
+        <Grid container spacing={2} sx={{ pb: 2 /* no px — the layout owns the page gutters */ }}>
           {filteredJobs.map((job) => (
             <Grid item xs={12} md={6} key={`${job.tenantId}-${job.id}`}>
               {(() => {

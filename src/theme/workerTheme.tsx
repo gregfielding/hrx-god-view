@@ -82,6 +82,10 @@ export function getWorkerTheme() {
             // Phone-login language: hairline border, no shadow, quieter radius.
             borderRadius: t.radius.md,
             border: '1px solid #E9E9E5',
+            // The base (admin) theme pads every Card 24px; on worker screens that
+            // stacked with CardContent's 16px into 40px insets. CardContent alone
+            // owns the padding here.
+            padding: 0,
             boxShadow: 'none',
             transition: `border-color 120ms ${motionEasing}, transform 150ms ${motionEasing}`,
             '&:hover': { boxShadow: 'none' },

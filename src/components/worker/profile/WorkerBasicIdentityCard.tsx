@@ -182,10 +182,8 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
           homeLng: homeLng ?? null,
         });
       }
-      if (updates.last4SSN !== undefined) {
-        const d = normalizeLast4SsnDigits(updates.last4SSN);
-        if (d.length === 4) payload.last4SSN = d;
-        else if (d.length === 0) payload.last4SSN = null;
+      if (false && updates.last4SSN !== undefined) {
+        // last4SSN is mirrored from Everee (2026-08-21) — never written here.
       }
       await updateDoc(userRef, payload);
     },
@@ -359,7 +357,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-            <PersonIcon color="primary" fontSize="small" />
+            <PersonIcon fontSize="small" sx={{ color: 'text.secondary' }} />
             <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
               {t('profile.basicIdentity')}
             </Typography>
@@ -417,23 +415,6 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
                 onChange={handleChange('dateOfBirth')}
                 onBlur={() => persist({ dateOfBirth: form.dateOfBirth })}
                 InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                size="small"
-                label={t('apply.last4Ssn')}
-                helperText={t('apply.last4SsnHelper')}
-                inputMode="numeric"
-                autoComplete="off"
-                value={form.last4SSN}
-                onChange={handleLast4SsnChange}
-                onBlur={() => {
-                  const d = normalizeLast4SsnDigits(formRef.current.last4SSN);
-                  if (d.length === 4 || d.length === 0) void persist({ last4SSN: d });
-                }}
-                inputProps={{ maxLength: 4, inputMode: 'numeric' as const }}
               />
             </Grid>
           </Grid>

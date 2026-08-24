@@ -435,30 +435,41 @@ const WorkerProfileSection: React.FC = () => {
 
   if (!SECTION_META[activeSection]) {
     return (
-      <Container maxWidth="md" sx={{ py: 2 }}>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/c1/workers/profile')} sx={{ mb: 2 }}>
-          {t('profile.backToProfile')}
-        </Button>
-        <Alert severity="warning">{t('profile.sectionUnavailable')}</Alert>
-      </Container>
+      <Box>
+        <Stack spacing={3}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <ArrowBackIcon
+              sx={{ cursor: 'pointer', color: 'text.secondary' }}
+              onClick={() => navigate('/c1/workers/profile')}
+            />
+            <Typography variant="h5" component="h1">
+              {t('profile.backToProfile')}
+            </Typography>
+          </Stack>
+          <Alert severity="warning">{t('profile.sectionUnavailable')}</Alert>
+        </Stack>
+      </Box>
     );
   }
 
   return (
-    <Container maxWidth="md" sx={{ py: 2 }}>
-      <Stack spacing={2}>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/c1/workers/profile')} sx={{ alignSelf: 'flex-start' }}>
-          {t('profile.backToProfile')}
-        </Button>
-
-        <Card variant="outlined" sx={{ borderColor: 'divider' }}>
-          <CardContent>
-            <Typography variant="h5" sx={{ fontWeight: 700 }}>
+    <Box>
+      <Stack spacing={3}>
+        {/* Canon page header (worker-app redesign): ink back arrow + h5 title
+            + body2 subtitle, OUTSIDE any card — matches the 5 main screens. */}
+        <Box>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <ArrowBackIcon
+              sx={{ cursor: 'pointer', color: 'text.secondary' }}
+              onClick={() => navigate('/c1/workers/profile')}
+            />
+            <Typography variant="h5" component="h1">
               {t(sectionMeta.titleKey)}
             </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              {activeSection === 'skills' ? t('profile.workerSkillsPageHelper') : t(sectionMeta.descriptionKey)}
-            </Typography>
+          </Stack>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, ml: 4 }}>
+            {activeSection === 'skills' ? t('profile.workerSkillsPageHelper') : t(sectionMeta.descriptionKey)}
+          </Typography>
             {activeSection === 'skills' ? (
               <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                 {skillsCount === 0
@@ -484,8 +495,7 @@ const WorkerProfileSection: React.FC = () => {
                 </Button>
               </Stack>
             ) : null}
-          </CardContent>
-        </Card>
+        </Box>
 
         {saveMessage ? <Alert severity="success">{saveMessage}</Alert> : null}
         {saveError ? <Alert severity="error">{saveError}</Alert> : null}
@@ -731,7 +741,7 @@ const WorkerProfileSection: React.FC = () => {
         needDOB={false}
         needPhone
       />
-    </Container>
+    </Box>
   );
 };
 
