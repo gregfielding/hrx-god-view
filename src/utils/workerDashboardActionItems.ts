@@ -240,7 +240,6 @@ function buildWorkerJobRequirementActionItems(signals: WorkerDashboardJobSignals
     });
   }
   if (c.backgroundIssueAction) {
-    const portal = c.applicantPortalLink;
     out.push({
       id: 'background_check_issue_requires_action',
       category: 'blocking',
@@ -248,8 +247,11 @@ function buildWorkerJobRequirementActionItems(signals: WorkerDashboardJobSignals
       descriptionKey: 'dashboard.actionItems.backgroundIssueDescription',
       sortOrder: 17,
       primaryLabelKey: 'dashboard.actionItems.backgroundIssuePrimary',
-      primaryKind: portal ? 'external_open' : 'navigate',
-      href: portal || '/c1/workers/profile',
+      // Always in-app: an errored order has nothing for the worker to do on
+      // AccuSource's site, and `applicantPortalLink` may belong to a
+      // DIFFERENT check record (it's harvested from awaiting_applicant rows).
+      primaryKind: 'navigate',
+      href: '/c1/workers/profile',
       sourceReason: 'Background check error — review issue',
       qaEvaluatedFields: {},
     });

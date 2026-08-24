@@ -220,9 +220,21 @@ const WorkerDashboard: React.FC = () => {
           );
           for (const d of ewSnap.docs) {
             const x = d.data() as Record<string, unknown>;
+            // Sandbox/smoke linkages (Everee tenant 2320, smoke-test docs)
+            // must never nag a production worker.
+            if (x.smokeData === true) continue;
+            if (String(x.evereeTenantId ?? '') === '2320') continue;
+            // Completion truth lives on `status` and `readinessMirror` —
+            // top-level onboardingComplete/onboardingStatus don't exist on
+            // these docs (kept below for forward-compat).
+            const mirror = (x.readinessMirror ?? null) as Record<string, unknown> | null;
             const complete =
               x.onboardingComplete === true ||
-              String(x.onboardingStatus || '').toUpperCase() === 'COMPLETE';
+              String(x.onboardingStatus || '').toUpperCase() === 'COMPLETE' ||
+              String(x.status || '').toLowerCase() === 'onboarding_complete' ||
+              mirror?.onboardingComplete === true ||
+              String(mirror?.onboardingStatus || '').toUpperCase() === 'COMPLETE' ||
+              Boolean(x.apiObservedOnboardingCompleteAt);
             if (complete) continue;
             payrollOnboardingIncomplete = true;
             // Capture the Everee tenant id so the action item can deep-link

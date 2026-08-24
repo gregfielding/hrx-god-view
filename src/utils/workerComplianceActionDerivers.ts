@@ -8,6 +8,43 @@ import { shouldShowApplicantPortalCta, resolveApplicantPortalUrl } from './backg
 
 const EVERIFY_WORKER_ACTION_STATUSES = new Set(['tnc', 'further_action_required']);
 
+/**
+ * A background check only drives worker-facing action items while it's
+ * current. Months-old error/awaiting records are ops debris (superseded
+ * orders, dead AccuSource links) — recruiters have their own queue for
+ * those (Greg, 2026-08-23).
+ */
+export const WORKER_COMPLIANCE_RECENCY_DAYS = 30;
+
+function tsToMillis(v: unknown): number | null {
+  if (!v) return null;
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === 'string') {
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : null;
+  }
+  const o = v as { toDate?: () => Date; seconds?: number; _seconds?: number };
+  if (typeof o.toDate === 'function') {
+    try {
+      return o.toDate().getTime();
+    } catch {
+      return null;
+    }
+  }
+  if (typeof o.seconds === 'number') return o.seconds * 1000;
+  if (typeof o._seconds === 'number') return o._seconds * 1000;
+  return null;
+}
+
+/** True unless the record provably went untouched for the recency window —
+ *  records without readable timestamps stay current (never hide a live check
+ *  on a parsing gap). */
+function isRecordCurrent(rec: Record<string, unknown>, nowMs: number): boolean {
+  const last = tsToMillis(rec.updatedAt) ?? tsToMillis(rec.createdAt);
+  if (last == null) return true;
+  return nowMs - last <= WORKER_COMPLIANCE_RECENCY_DAYS * 24 * 60 * 60 * 1000;
+}
+
 function serviceLineLooksDrug(name: unknown): boolean {
   const n = String(name || '').toLowerCase();
   return (
@@ -73,17 +110,16 @@ export function deriveWorkerComplianceSignals(
     if (EVERIFY_WORKER_ACTION_STATUSES.has(st)) everifyWorkerAction = true;
   }
 
+  const nowMs = Date.now();
   for (const c of backgroundChecks) {
+    if (!isRecordCurrent(c, nowMs)) continue;
     const hrx = String(c.hrxStatus || '').toLowerCase();
     if (hrx === 'error') {
       backgroundIssueAction = true;
-      // If AccuSource still has a NON-EXPIRED applicant setup URL on this
-      // record, keep it so the "Review issue" CTA can deep-link to the
-      // portal; an expired link falls back to the profile page.
-      if (c.expired !== true) {
-        const link = resolveApplicantPortalUrl(c as unknown as BackgroundCheckRecord);
-        if (link) applicantPortalLink = link;
-      }
+      // No portal deep-link for error records: an errored order has nothing
+      // for the worker to do on AccuSource's site (and the old cross-record
+      // link harvest dumped workers on myaccusourcedirect.com's login page).
+      // The "Review issue" CTA stays in-app.
       continue;
     }
 

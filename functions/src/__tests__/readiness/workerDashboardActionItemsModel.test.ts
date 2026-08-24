@@ -80,19 +80,20 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
     });
 
     it('uses the contract score table from the types module', () => {
+      // Work-only feed (2026-08-23): profile nags never appear — verify the
+      // score table via a work item and the nags' absence.
       const out = buildWorkerDashboardActionItemsSnapshot(
         input({
           userDoc: { ...VALID_USER_BASE, last4SSN: '', addressInfo: {} },
+          pendingAssignments: [{ assignmentId: 'a-score', startAtMs: Date.UTC(2026, 5, 2) }],
         }),
       );
-      // 'add_tax_identity_last4' was retired 2026-08-21 — last-4 is mirrored
-      // from Everee, never asked of the worker — so it must NOT appear even
-      // when the user doc lacks it. Use the address item to check the table.
-      expect(out.items.find((i) => i.id === 'add_tax_identity_last4')).to.not.exist;
-      const addr = out.items.find((i) => i.id === 'confirm_home_address');
-      expect(addr, 'confirm_home_address should appear when address missing').to.exist;
-      expect(addr!.priorityScore).to.equal(
-        WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES.confirm_home_address,
+      expect(out.items.find((i) => i.id === 'confirm_home_address')).to.not.exist;
+      expect(out.items.find((i) => i.id === 'add_profile_photo')).to.not.exist;
+      const conf = out.items.find((i) => i.id === 'assignment_confirmation_required');
+      expect(conf, 'assignment confirmation should appear').to.exist;
+      expect(conf!.priorityScore).to.equal(
+        WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES.assignment_confirmation_required,
       );
     });
 
@@ -146,10 +147,9 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
           },
         }),
       );
-      expect(ids(out.items)).to.deep.equal(['confirm_date_of_birth']);
-      const item = out.items[0];
-      expect(item.qaEvaluatedFields.gate).to.equal('dob');
-      expect(item.qaEvaluatedFields.reason).to.equal('missing');
+      // Work-only feed (2026-08-23): the DOB gate is a Profile concern — the
+      // Home feed stays empty when only profile items would fire.
+      expect(ids(out.items)).to.deep.equal([]);
     });
 
     it('under-18 DOB swaps the i18n keys to the under-18 variants', () => {
@@ -168,9 +168,8 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
       const out = buildWorkerDashboardActionItemsSnapshot(
         input({ userDoc: { ...VALID_USER_BASE, dob } }),
       );
-      expect(ids(out.items)).to.deep.equal(['confirm_date_of_birth']);
-      expect(out.items[0].titleKey).to.equal('dashboard.actionItems.dobUnder18Title');
-      expect(out.items[0].qaEvaluatedFields.reason).to.equal('under18');
+      // Work-only feed (2026-08-23): DOB variants no longer surface on Home.
+      expect(ids(out.items)).to.deep.equal([]);
     });
   });
 
@@ -186,10 +185,8 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
           },
         }),
       );
-      expect(ids(out.items)).to.deep.equal(['verify_phone_number']);
-      expect(out.items[0].titleKey).to.equal('dashboard.actionItems.verifyPhoneTitleAdd');
-      // No `?verify=phone` query because there's nothing to verify yet.
-      expect(out.items[0].href).to.equal('/c1/workers/profile/personal-details');
+      // Work-only feed (2026-08-23): phone nags live on Profile now.
+      expect(ids(out.items)).to.deep.equal([]);
     });
 
     it('valid 10-digit phone but unverified → verify variant + ?verify=phone href', () => {
@@ -203,11 +200,8 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
           },
         }),
       );
-      expect(ids(out.items)).to.deep.equal(['verify_phone_number']);
-      expect(out.items[0].titleKey).to.equal('dashboard.actionItems.verifyPhoneTitleVerify');
-      expect(out.items[0].href).to.equal(
-        '/c1/workers/profile/personal-details?verify=phone',
-      );
+      // Work-only feed (2026-08-23): phone verification is a Profile concern.
+      expect(ids(out.items)).to.deep.equal([]);
     });
   });
 
@@ -228,7 +222,8 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
       );
       const list = ids(out.items);
       expect(list[0]).to.equal('assignment_confirmation_required');
-      expect(list).to.include('add_profile_photo');
+      // Work-only feed (2026-08-23): the photo nag lives on the Profile page now.
+      expect(list).to.not.include('add_profile_photo');
       // Earliest start wins.
       expect(out.items[0].qaEvaluatedFields.assignmentId).to.equal('a-early');
     });
@@ -261,11 +256,9 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
         }),
       );
       const list = ids(out.items);
-      // Drug schedule (700) > verify_phone_number (640).
-      expect(list[0]).to.equal('drug_screen_schedule_required');
-      expect(list).to.include('verify_phone_number');
-      expect(list).to.not.include('add_tax_identity_last4');
-      expect(list).to.not.include('confirm_home_address');
+      // Work-only feed (2026-08-23): the compliance item stands alone — the
+      // phone nag (and every profile item) moved to Profile.
+      expect(list).to.deep.equal(['drug_screen_schedule_required']);
     });
 
     it('reschedule trumps schedule (only the higher-severity card emits)', () => {
@@ -384,33 +377,24 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
 
     it('emits exactly 2 items: assignment_confirmation_required (920) above verify_phone_number (640)', () => {
       const out = buildWorkerDashboardActionItemsSnapshot(productionShapeInput());
-      expect(ids(out.items)).to.deep.equal([
-        'assignment_confirmation_required',
-        'verify_phone_number',
-      ]);
+      // Work-only feed (2026-08-23): the phone nag no longer rides along.
+      expect(ids(out.items)).to.deep.equal(['assignment_confirmation_required']);
       expect(out.items[0].priorityScore).to.equal(
         WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES.assignment_confirmation_required,
-      );
-      expect(out.items[1].priorityScore).to.equal(
-        WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES.verify_phone_number,
       );
     });
 
     it('phone-gate item carries the contract sourceReason ("suppress other profile items only")', () => {
       const out = buildWorkerDashboardActionItemsSnapshot(productionShapeInput());
-      const phone = out.items.find((i) => i.id === 'verify_phone_number');
-      expect(phone, 'verify_phone_number must be present').to.exist;
-      // Contract §1 rule 2 — phrasing is part of the diagnostic contract.
-      expect(phone!.sourceReason).to.equal(
-        'Rule 2 (Phone gate): suppress other profile items only',
-      );
-      expect(phone!.qaEvaluatedFields.gate).to.equal('phone');
+      // Work-only feed (2026-08-23): the phone-gate item itself is filtered.
+      expect(out.items.find((i) => i.id === 'verify_phone_number')).to.not.exist;
     });
 
     it('does NOT leak any other profile items even though every profile field is missing', () => {
       const out = buildWorkerDashboardActionItemsSnapshot(productionShapeInput());
       const list = ids(out.items);
-      // Profile slice (§1): suppressed except verify_phone_number.
+      // Work-only feed (2026-08-23): NO profile items at all.
+      expect(list).to.not.include('verify_phone_number');
       expect(list).to.not.include('add_tax_identity_last4');
       expect(list).to.not.include('confirm_home_address');
       expect(list).to.not.include('add_profile_photo');
@@ -440,9 +424,8 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
         }),
       );
       const list = ids(out.items);
-      expect(list[0]).to.equal('background_check_issue_requires_action');
-      expect(list).to.include('verify_phone_number');
-      expect(list).to.not.include('add_tax_identity_last4');
+      // Work-only feed (2026-08-23): compliance stands alone.
+      expect(list).to.deep.equal(['background_check_issue_requires_action']);
     });
   });
 
@@ -484,7 +467,8 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
           userDoc: { ...VALID_USER_BASE, smsBlockedSystem: true },
         }),
       );
-      expect(ids(out.items)).to.include('re_enable_sms_notifications');
+      // Work-only feed (2026-08-23): SMS re-enable moved off Home.
+      expect(ids(out.items)).to.not.include('re_enable_sms_notifications');
     });
 
     it('emits sms_opt_in when smsOptIn !== true and not blocked', () => {
@@ -493,7 +477,8 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
           userDoc: { ...VALID_USER_BASE, smsOptIn: false },
         }),
       );
-      expect(ids(out.items)).to.include('sms_opt_in');
+      // Work-only feed (2026-08-23): SMS opt-in moved off Home.
+      expect(ids(out.items)).to.not.include('sms_opt_in');
     });
 
     it('hides SMS card entirely when system is unavailable', () => {
