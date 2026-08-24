@@ -108,7 +108,7 @@ export function formatTimesheetLine(x: Record<string, unknown>): string {
   );
 }
 
-async function gatherWorkerPayrollContext(tenantId: string, uid: string): Promise<string> {
+export async function gatherWorkerPayrollContext(tenantId: string, uid: string): Promise<string> {
   const parts: string[] = [];
 
   const userSnap = await db.collection('users').doc(uid).get();
@@ -226,6 +226,7 @@ export async function runPayrollTicketDiagnosis(input: {
     '- The summary is for staff: name the likely root cause and point at the evidence (e.g. "onboarding stopped before direct deposit; 2 timesheets still in draft").',
     '- The suggested replies are for the worker: warm, plain-language, 2-4 sentences, no jargon, no promises of specific amounts or dates you cannot verify.',
     '- NEVER invent pay amounts, dates, or policy. If the state does not explain the complaint, say what staff should check.',
+    "- 'Recent Everee payments' is the settled truth. If NO payment exists for the period the worker is asking about, the root cause is that no payment was ever issued (hours not submitted/processed) — say that plainly. Never speculate about returned or misdirected deposits for payments that do not exist. Conversely, if a payment DOES exist, cite its date, amount, and status.",
     `- category must be one of: ${CATEGORIES.join(', ')}.`,
     '- severity: urgent = worker says they were not paid or money is wrong; normal = setup/onboarding friction; low = general question.',
     'Return strict JSON only: {"category":string,"severity":"low"|"normal"|"urgent","summary":string,"suggestedReplyEn":string,"suggestedReplyEs":string,"confidence":number}',
