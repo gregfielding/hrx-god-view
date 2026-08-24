@@ -130,6 +130,33 @@ export function getWorkerTheme() {
             transition: `transform 150ms ${motionEasing}, box-shadow 120ms ${motionEasing}`,
             '&:active': { transform: 'scale(0.98)' },
           },
+          // Base theme uses a 2px outline — too heavy against hairline cards.
+          outlined: {
+            borderWidth: 1.5,
+            '&:hover': { borderWidth: 1.5 },
+          },
+          // Compact rows (inline actions, dialogs): keep a real tap target
+          // but drop the visual weight.
+          sizeSmall: {
+            fontSize: 14,
+            minHeight: 36,
+            padding: '4px 12px',
+          },
+        },
+      },
+      MuiChip: {
+        styleOverrides: {
+          // Chips are metadata, not buttons — one size down from the base
+          // theme so they never compete with row text.
+          root: {
+            height: 26,
+            fontSize: 12,
+            fontWeight: 600,
+          },
+          sizeSmall: {
+            height: 22,
+            fontSize: 11,
+          },
         },
       },
       MuiIconButton: {

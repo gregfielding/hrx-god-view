@@ -23,6 +23,7 @@ import {
 } from '../../../hooks/useWorkerNotifications';
 import { markNotificationReadCallable } from '../../../api/workerNotificationsApi';
 import WorkerNotificationListItem from '../../../components/worker/WorkerNotificationListItem';
+import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
 import { useT } from '../../../i18n';
 
 const C1WorkerNotifications: React.FC = () => {
@@ -87,9 +88,7 @@ const C1WorkerNotifications: React.FC = () => {
 
   return (
     <>
-      <Typography variant="h5" sx={{ mb: 2 }}>
-        {t('nav.notifications')}
-      </Typography>
+      <WorkerPageHeader title={t('nav.notifications')} backTo="/c1/workers/dashboard" />
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2, alignItems: 'center' }}>
         <Chip
           label={t('notifications.filterAll')}

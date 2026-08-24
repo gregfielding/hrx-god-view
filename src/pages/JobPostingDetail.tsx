@@ -2812,13 +2812,14 @@ const JobPostingDetail: React.FC = () => {
 
       {/* Top row: Back to Jobs Board + Language picker + Sign In or Create Account (when guest) */}
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 3 }}>
-        <Button
-          startIcon={<ArrowBackIcon />}
+        <IconButton
           onClick={() => navigate('/c1/jobs-board')}
-          size={isMobile ? 'small' : 'medium'}
+          aria-label={t('jobs.backToJobsBoard')}
+          edge="start"
+          sx={{ color: 'text.secondary' }}
         >
-          {t('jobs.backToJobsBoard')}
-        </Button>
+          <ArrowBackIcon />
+        </IconButton>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           {!user && (
             <>

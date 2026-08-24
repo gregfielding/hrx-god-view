@@ -26,7 +26,7 @@ import {
   Typography,
 } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -65,15 +65,7 @@ const ProfileAboutLegal: React.FC = () => {
   return (
     <Box>
       <Stack spacing={3}>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <ArrowBackIcon
-            sx={{ cursor: 'pointer', color: 'text.secondary' }}
-            onClick={() => navigate('/c1/workers/profile')}
-          />
-          <Typography variant="h5" component="h1">
-            {t('profile.sectionAboutTitle')}
-          </Typography>
-        </Stack>
+        <WorkerPageHeader title={t('profile.sectionAboutTitle')} backTo="/c1/workers/profile" />
 
         <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>

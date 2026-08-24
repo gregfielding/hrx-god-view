@@ -41,6 +41,7 @@ import type { ClaimsRole } from '../contexts/AuthContext';
 import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage';
 import { useT } from '../i18n';
 import SmsWarningBanner from '../components/worker/SmsWarningBanner';
+import WorkerPageHeader from '../components/worker/WorkerPageHeader';
 import { getShiftDisplayText } from '../utils/shiftI18n';
 import { normalizeClockInUrl } from '../utils/urlUtils';
 import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
@@ -1357,7 +1358,7 @@ const AssignmentDetails: React.FC = () => {
   }
 
   return (
-    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
+    <Box sx={{ maxWidth: 1200, mx: 'auto', p: { xs: 0, md: 3 } }}>
       <Box sx={{ mb: 2 }}>
         <SmsWarningBanner />
       </Box>
@@ -1383,9 +1384,14 @@ const AssignmentDetails: React.FC = () => {
       )}
       {/* Header */}
       <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 3 }} flexWrap="wrap" useFlexGap>
-        <Typography variant="h4" sx={{ flexGrow: 1, fontWeight: 700 }}>
-          {t('assignment.detailsTitle')}
-        </Typography>
+        <Box sx={{ flexGrow: 1 }}>
+          {/* Shared with recruiter hub links: only pin the back target on the
+              worker surface; elsewhere fall back to history back. */}
+          <WorkerPageHeader
+            title={t('assignment.detailsTitle')}
+            backTo={location.pathname.includes('/workers/') ? '/c1/workers/assignments' : undefined}
+          />
+        </Box>
         {/* Status chip removed — it surfaced the raw assignment status
             (e.g. "Pending") which confused confirmed workers. The worker
             reaches this page from a confirmed/offered shift; the status
@@ -1398,7 +1404,6 @@ const AssignmentDetails: React.FC = () => {
         >
           {t('assignment.addToCalendar')}
         </Button>
-        <UniversalBackButton tooltip={t('common.back')} />
       </Stack>
 
       {/* Main content: full-width stack; My Recruiter appended at bottom only when assigned */}
@@ -1409,7 +1414,7 @@ const AssignmentDetails: React.FC = () => {
           </Alert>
         )}
         {/* Assignment Info (combined): two columns, company/worksite/address looked up when needed */}
-        <Card elevation={0} sx={{ borderRadius: 0 }}>
+        <Card elevation={0}>
           <CardContent sx={{ pt: 1, px: 1 }}>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
               {t('assignment.assignmentInfo')}
@@ -1555,7 +1560,7 @@ const AssignmentDetails: React.FC = () => {
           const clockUrl = scheduleShift?.clockInUrl?.trim() || '';
           if (!sDesc && !clockUrl) return null;
           return (
-            <Card elevation={0} sx={{ borderRadius: 0 }}>
+            <Card elevation={0}>
               <CardContent sx={{ pt: 1, px: 1 }}>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                   Shift details
@@ -1669,7 +1674,7 @@ const AssignmentDetails: React.FC = () => {
               const text = s.getText();
               const files = s.getFiles();
               return (
-                <Card key={s.key} elevation={0} sx={{ borderRadius: 0 }}>
+                <Card key={s.key} elevation={0}>
                   <CardContent sx={{ pt: 1, px: 1 }}>
                     <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                       {s.title}
@@ -1706,7 +1711,7 @@ const AssignmentDetails: React.FC = () => {
 
         {/* Notes */}
         {assignment.notes && (
-          <Card elevation={0} sx={{ borderRadius: 0 }}>
+          <Card elevation={0}>
             <CardContent sx={{ pt: 1, px: 1 }}>
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                 Additional Notes
@@ -1724,7 +1729,7 @@ const AssignmentDetails: React.FC = () => {
 
         {/* Location map card — only when we have a worksite address */}
         {worksiteAddressStr && (
-          <Card elevation={0} sx={{ borderRadius: 0 }}>
+          <Card elevation={0}>
             <CardContent sx={{ pt: 1, px: 1 }}>
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                 {t('assignment.locationMap')}
@@ -1764,7 +1769,7 @@ const AssignmentDetails: React.FC = () => {
         )}
 
         {recruiters.length > 0 ? (
-          <Card elevation={0} sx={{ borderRadius: 0 }}>
+          <Card elevation={0}>
             <CardHeader
               title="My Recruiter"
               titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}

@@ -14,7 +14,6 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { sendPasswordReset } from '../../../services/sendPasswordResetCallable';
@@ -24,6 +23,7 @@ import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { setLanguage, useT } from '../../../i18n';
 import WorkerBasicIdentityCard from '../../../components/worker/profile/WorkerBasicIdentityCard';
+import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
 import EligibilityModal from '../../../components/EligibilityModal';
 import WorkEligibilityStep from '../../../components/apply/steps/WorkEligibilityStep';
 import { deriveWorkEligibilityFromAttestation } from '../../../types/workEligibility';
@@ -437,15 +437,7 @@ const WorkerProfileSection: React.FC = () => {
     return (
       <Box>
         <Stack spacing={3}>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <ArrowBackIcon
-              sx={{ cursor: 'pointer', color: 'text.secondary' }}
-              onClick={() => navigate('/c1/workers/profile')}
-            />
-            <Typography variant="h5" component="h1">
-              {t('profile.backToProfile')}
-            </Typography>
-          </Stack>
+          <WorkerPageHeader title={t('profile.backToProfile')} backTo="/c1/workers/profile" />
           <Alert severity="warning">{t('profile.sectionUnavailable')}</Alert>
         </Stack>
       </Box>
@@ -455,21 +447,16 @@ const WorkerProfileSection: React.FC = () => {
   return (
     <Box>
       <Stack spacing={3}>
-        {/* Canon page header (worker-app redesign): ink back arrow + h5 title
-            + body2 subtitle, OUTSIDE any card — matches the 5 main screens. */}
         <Box>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <ArrowBackIcon
-              sx={{ cursor: 'pointer', color: 'text.secondary' }}
-              onClick={() => navigate('/c1/workers/profile')}
-            />
-            <Typography variant="h5" component="h1">
-              {t(sectionMeta.titleKey)}
-            </Typography>
-          </Stack>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, ml: 4 }}>
-            {activeSection === 'skills' ? t('profile.workerSkillsPageHelper') : t(sectionMeta.descriptionKey)}
-          </Typography>
+          <WorkerPageHeader
+            title={t(sectionMeta.titleKey)}
+            backTo="/c1/workers/profile"
+            description={
+              activeSection === 'skills'
+                ? t('profile.workerSkillsPageHelper')
+                : t(sectionMeta.descriptionKey)
+            }
+          />
             {activeSection === 'skills' ? (
               <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                 {skillsCount === 0

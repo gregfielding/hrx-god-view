@@ -20,7 +20,7 @@ import {
   Typography,
 } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
 import { useT } from '../../../i18n';
 
 const ROWS = [
@@ -36,18 +36,11 @@ const ProfileExperience: React.FC = () => {
   return (
     <Box>
       <Stack spacing={3}>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <ArrowBackIcon
-            sx={{ cursor: 'pointer', color: 'text.secondary' }}
-            onClick={() => navigate('/c1/workers/profile')}
-          />
-          <Typography variant="h5" component="h1">
-            {t('profile.sectionExperienceTitle')}
-          </Typography>
-        </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: -2 }}>
-          {t('profile.sectionExperienceDescription')}
-        </Typography>
+        <WorkerPageHeader
+          title={t('profile.sectionExperienceTitle')}
+          backTo="/c1/workers/profile"
+          description={t('profile.sectionExperienceDescription')}
+        />
         <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
             <List disablePadding>

@@ -24,6 +24,7 @@ import SendIcon from '@mui/icons-material/Send';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../../../contexts/AuthContext';
+import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
 import { useT } from '../../../i18n';
 
 const COMMON_QUESTION_KEYS = [
@@ -134,15 +135,13 @@ const C1WorkerSupport: React.FC = () => {
   }
 
   return (
-    <Box sx={{ maxWidth: 560, mx: 'auto', px: 1.5, py: 2 }}>
-      <Typography variant="h5" sx={{ fontWeight: 700, mb: 2 }}>
-        {t('support.title')}
-      </Typography>
+    <Box>
+      <WorkerPageHeader title={t('support.title')} backTo="/c1/workers/profile" />
 
       {/* 1. Ask a question — AI support */}
       <Card variant="outlined" sx={{ mb: 2, }}>
         <CardContent sx={{ pt: 2, pb: 2 }}>
-          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>
+          <Typography variant="subtitle1" sx={{ mb: 1.5 }}>
             {t('support.askQuestion')}
           </Typography>
           <form onSubmit={handleSubmit}>
@@ -250,7 +249,7 @@ const C1WorkerSupport: React.FC = () => {
       </Card>
 
       {/* 2. Common questions */}
-      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant="subtitle1" sx={{ mb: 1 }}>
         {t('support.commonQuestions')}
       </Typography>
       <List disablePadding sx={{ mb: 2 }}>
@@ -273,7 +272,7 @@ const C1WorkerSupport: React.FC = () => {
       </List>
 
       {/* 3. Escalation — Contact recruiter */}
-      <Card variant="outlined" sx={{  borderColor: 'primary.main' }}>
+      <Card variant="outlined">
         <CardContent sx={{ pt: 2, pb: 2 }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
             <Typography variant="body2" color="text.secondary">

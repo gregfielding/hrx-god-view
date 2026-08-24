@@ -20,6 +20,7 @@ import { Timestamp, collection, getDocs, limit, query, where } from 'firebase/fi
 import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../../i18n';
+import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
 import { db } from '../../../firebase';
 import { p } from '../../../data/firestorePaths';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -177,14 +178,13 @@ const WorkerScreeningPage: React.FC = () => {
   }
 
   return (
-    <Container maxWidth="sm" sx={{ py: 2 }}>
+    <Box>
       <Stack spacing={2}>
-        <Typography variant="h5" component="h1" sx={{ fontWeight: 600 }}>
-          {t('workerAccount.screeningPageTitle')}
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          {t('workerAccount.screeningPageSubtitle')}
-        </Typography>
+        <WorkerPageHeader
+          title={t('workerAccount.screeningPageTitle')}
+          backTo="/c1/workers/dashboard"
+          description={t('workerAccount.screeningPageSubtitle')}
+        />
 
         {showEmploymentPointer ? (
           <ProfileTabPointerAlert
@@ -201,7 +201,7 @@ const WorkerScreeningPage: React.FC = () => {
 
         <Card variant="outlined" sx={{ }}>
           <CardContent>
-            <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
               Identity verification
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.45 }}>
@@ -321,7 +321,7 @@ const WorkerScreeningPage: React.FC = () => {
           </Card>
         ) : null}
       </Stack>
-    </Container>
+    </Box>
   );
 };
 

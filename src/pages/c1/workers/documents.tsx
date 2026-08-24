@@ -34,6 +34,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
 import DocRecordCard from '../../../components/worker/documents/DocRecordCard';
+import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
 import WorkerDocumentsSummary from '../../../components/worker/documents/WorkerDocumentsSummary';
 import WorkerDocumentsRequired from '../../../components/worker/documents/WorkerDocumentsRequired';
 import WorkerDocumentsOptional from '../../../components/worker/documents/WorkerDocumentsOptional';
@@ -138,33 +139,13 @@ const WorkerDocuments: React.FC = () => {
   };
 
   return (
-    <Container maxWidth="lg" sx={{ py: 2 }}>
+    <Box>
       <Stack spacing={3}>
-        {/* Page header */}
-        <Stack
-          direction="row"
-          justifyContent="space-between"
-          alignItems="flex-start"
-          flexWrap="wrap"
-          gap={2}
-        >
-          <Box>
-            <Typography variant="h4" sx={{ fontWeight: 600 }}>
-              {t('dashboard.documents')}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {t('documents.subtitle')}
-            </Typography>
-          </Box>
-          <Stack direction="row" spacing={1} flexWrap="wrap">
-            <Button variant="outlined" onClick={() => navigate('/c1/workers/profile')}>
-              {t('dashboard.jobReadiness')}
-            </Button>
-            <Button variant="contained" onClick={() => navigate('/c1/jobs-board')}>
-              {t('nav.findWork')}
-            </Button>
-          </Stack>
-        </Stack>
+        <WorkerPageHeader
+          title={t('dashboard.documents')}
+          backTo="/c1/workers/profile"
+          description={t('documents.subtitle')}
+        />
 
         {/* v3: Header — Compliance % only when checklist exists; else "Not started" */}
         <Card variant="outlined" sx={{  boxShadow: 'none', overflow: 'visible' }}>
@@ -387,7 +368,7 @@ const WorkerDocuments: React.FC = () => {
           <Button onClick={() => setComingSoonOpen(false)}>{t('common.ok')}</Button>
         </DialogActions>
       </Dialog>
-    </Container>
+    </Box>
   );
 };
 

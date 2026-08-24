@@ -301,7 +301,7 @@ const WorkerPayrollIndex: React.FC = () => {
                   onClick={() => navigate(`/c1/workers/earnings/${encodeURIComponent(tid)}`)}
                   sx={{ p: 2, alignItems: 'flex-start' }}
                 >
-                  <Typography variant="subtitle1" fontWeight={600}>
+                  <Typography variant="subtitle1">
                     {label}
                   </Typography>
                   {description ? (
