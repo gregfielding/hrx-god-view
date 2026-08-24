@@ -99,6 +99,7 @@ export function getActiveUsersTab(pathname: string): UsersTab {
   if (pathname.includes('/users/all-smart-groups')) return 'all-smart-groups';
   if (pathname.includes('/users/smart-groups')) return 'smart-groups';
   if (pathname.includes('/users/invite-users')) return 'invite-users';
+  if (pathname.includes('/users/deletion-requests')) return 'deletion-requests';
   if (pathname.includes('/users/my')) return 'my';
   if (pathname.includes('/users/all')) return 'all';
   return 'all';
