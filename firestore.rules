@@ -2,6 +2,16 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Account deletion REQUESTS (worker Profile → About & Legal, 2026-08-23).
+    // Workers create exactly one request for themselves; immutable from the
+    // client after creation (support processes it server-side / manually).
+    match /account_deletion_requests/{uid} {
+      allow create: if request.auth != null && request.auth.uid == uid;
+      allow read: if request.auth != null && (request.auth.uid == uid || isHRX());
+      allow update, delete: if false;
+    }
+
+
     // ============================================================================
     // PHASE 2 - CLAIMS-BASED AUTHORIZATION (NEW)
     // ============================================================================

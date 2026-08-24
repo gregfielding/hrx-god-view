@@ -115,6 +115,9 @@ const C1WorkerDashboard = lazy(() => import('./pages/c1/workers/dashboard'));
 const C1WorkerAssignments = lazy(() => import('./pages/c1/workers/assignments'));
 const C1WorkerProfile = lazy(() => import('./pages/c1/workers/profile'));
 const C1WorkerProfileSection = lazy(() => import('./pages/c1/workers/profileSection'));
+const C1WorkerProfileExperience = lazy(() => import('./pages/c1/workers/profileExperience'));
+const C1WorkerProfileAboutLegal = lazy(() => import('./pages/c1/workers/profileAboutLegal'));
+const C1WorkerDocuments = lazy(() => import('./pages/c1/workers/documents'));
 const C1WorkerMyEmployment = lazy(() => import('./pages/c1/workers/myEmployment'));
 const C1WorkerMyEmploymentDetail = lazy(() => import('./pages/c1/workers/myEmploymentDetail'));
 const C1WorkerScreening = lazy(() => import('./pages/c1/workers/screening'));
@@ -603,6 +606,9 @@ function App() {
             <Route path="applications" element={<UserApplications />} />
             <Route path="applications/:applicationId" element={<UserApplications />} />
             <Route path="profile" element={<WorkerProfile />} />
+            {/* Static profile sub-pages MUST precede the :section matcher. */}
+            <Route path="profile/experience" element={<C1WorkerProfileExperience />} />
+            <Route path="profile/about" element={<C1WorkerProfileAboutLegal />} />
             <Route path="profile/:section" element={<C1WorkerProfileSection />} />
             <Route path="my-employment" element={<C1WorkerMyEmployment />} />
             <Route path="my-employment/:employmentId" element={<C1WorkerMyEmploymentDetail />} />
@@ -610,7 +616,7 @@ function App() {
             <Route path="prescreen" element={<WorkerAiPrescreenPage />} />
             <Route path="find-work" element={<Navigate to="/c1/jobs-board" replace />} />
             <Route path="job-readiness" element={<Navigate to="/c1/workers/dashboard#home-readiness-summary" replace />} />
-            <Route path="documents" element={<Navigate to="/c1/workers/profile" replace />} />
+            <Route path="documents" element={<C1WorkerDocuments />} />
             <Route path="support" element={<WorkerSupport />} />
             <Route path="settings" element={<Navigate to="/c1/workers/profile/app-language" replace />} />
             <Route path="notifications" element={<C1WorkerNotifications />} />

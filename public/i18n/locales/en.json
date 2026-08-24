@@ -62,7 +62,8 @@
     "screeningPageTitle": "Pre-employment checks",
     "screeningPageSubtitle": "Background checks, employment verification, and related checks for your assignments. This page is read-only; your hiring team may contact you with next steps.",
     "screeningSignInPrompt": "Sign in to view your hiring progress.",
-    "screeningSelectWorkspace": "Select a workspace to view pre-employment checks."
+    "screeningSelectWorkspace": "Select a workspace to view pre-employment checks.",
+    "sectionDocuments": "Documents"
   },
   "workerEmploymentHub": {
     "statusNotStarted": "Not started",
@@ -852,7 +853,29 @@
     "statusRecommended": "Recommended",
     "keyItemsComplete": "{completed} of {total} key items complete ({percent}%)",
     "returnToHome": "Return to Home",
-    "workEligibilityConfirmDetails": "Confirm your authorization details so recruiters can place you in eligible roles."
+    "workEligibilityConfirmDetails": "Confirm your authorization details so recruiters can place you in eligible roles.",
+    "sectionExperienceTitle": "Experience",
+    "sectionExperienceDescription": "Your resume, work history, education, and bio.",
+    "sectionExperienceHubSecondary": "Resume, work history, education, and bio.",
+    "sectionSupportTitle": "Help & Support",
+    "sectionSupportDescription": "Get help with shifts, pay, or your account.",
+    "sectionAboutTitle": "About & Legal",
+    "sectionAboutDescription": "Terms, privacy, and account options.",
+    "sectionMyDocumentsTitle": "My documents",
+    "sectionMyDocumentsDescription": "Signed agreements, credentials, and job files.",
+    "sectionPayDocsTitle": "Pay stubs & tax documents",
+    "sectionPayDocsDescription": "Open your pay portal in Earnings.",
+    "statsShifts": "shifts",
+    "statsHours": "hours",
+    "statsMemberSince": "Member since",
+    "aboutTerms": "Terms of Service",
+    "aboutPrivacy": "Privacy Policy",
+    "aboutSmsPolicy": "SMS Policy",
+    "aboutDeleteTitle": "Delete account",
+    "aboutDeleteSecondary": "Request permanent deletion of your account.",
+    "aboutDeleteRequested": "Deletion requested — our team will contact you.",
+    "aboutDeleteExplainer": "This sends a deletion request to our team. Records we are legally required to keep (like payroll and tax records) are retained for the required period; everything else is removed. We will confirm by text or email.",
+    "aboutDeleteConfirm": "Request deletion"
   },
   "apply": {
     "availableShifts": "Available Shifts",

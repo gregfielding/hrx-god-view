@@ -20,7 +20,7 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WorkIcon from '@mui/icons-material/Work';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, getAggregateFromServer, onSnapshot, query, sum, count, where } from 'firebase/firestore';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { db } from '../../../firebase';
@@ -45,9 +45,51 @@ const WorkerProfile: React.FC = () => {
   const tenantId = authTenantId || activeTenant?.id || null;
   const t = useT();
   const navigate = useNavigate();
+
+
+
   const location = useLocation();
   const uid = user?.uid;
   const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
+
+  // Identity-card stats (worker-app redesign 2026-08-23): shifts + hours from
+  // the worker's own timesheet entries (rules allow self-read by workerId),
+  // "member since" from the user doc. Aggregation runs server-side — one
+  // round trip, no row downloads. Best-effort: on failure the row hides.
+  const [workerStats, setWorkerStats] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uid || !tenantId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const entriesQ = query(
+          collection(db, 'tenants', tenantId, 'timesheet_entries'),
+          where('workerId', '==', uid),
+        );
+        const agg = await getAggregateFromServer(entriesQ, {
+          shifts: count(),
+          reg: sum('totalRegularHours'),
+          ot: sum('totalOTHours'),
+          dt: sum('totalDoubleTime'),
+        });
+        if (!alive) return;
+        const shifts = agg.data().shifts ?? 0;
+        const hours = Math.round((agg.data().reg ?? 0) + (agg.data().ot ?? 0) + (agg.data().dt ?? 0));
+        const since = (userDoc?.createdAt as { toDate?: () => Date } | undefined)?.toDate?.() as Date | undefined;
+        const parts: string[] = [];
+        if (shifts > 0) parts.push(`${shifts} ${t('profile.statsShifts')}`);
+        if (hours > 0) parts.push(`${hours.toLocaleString()} ${t('profile.statsHours')}`);
+        if (since) parts.push(`${t('profile.statsMemberSince')} ${since.getFullYear()}`);
+        setWorkerStats(parts.length ? parts.join(' · ') : null);
+      } catch {
+        if (alive) setWorkerStats(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [uid, tenantId, userDoc, t]);
+
 
   const {
     loading: employmentLoading,
@@ -175,38 +217,32 @@ const WorkerProfile: React.FC = () => {
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'flex-start', sm: 'center' }}>
               <Avatar src={resolvedProfilePhoto || undefined} sx={{ width: 64, height: 64 }} />
               <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                <Typography variant="h6">
                   {fullName}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   {locationLabel}
                 </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
-                  {isProfileComplete
-                    ? t('profile.hubProfileComplete')
-                    : t('profile.hubSectionsProgress', {
-                        complete: completeSectionCount,
-                        total: totalSections,
-                      })}
-                </Typography>
+                {workerStats ? (
+                  <Typography variant="body2" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+                    {workerStats}
+                  </Typography>
+                ) : null}
+                {!isProfileComplete && (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+                    {t('profile.hubSectionsProgress', {
+                      complete: completeSectionCount,
+                      total: totalSections,
+                    })}
+                    {` · ${completionPercent}%`}
+                  </Typography>
+                )}
               </Box>
-              <Typography variant="caption" color="text.secondary">
-                {`${completionPercent}%`}
-              </Typography>
             </Stack>
-          </CardContent>
-        </Card>
-
-        <Card variant="outlined" sx={{ borderColor: 'divider' }}>
-          <CardContent sx={{ p: 0 }}>
-            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionProfile')}</Typography>
-            <Divider />
-            <List disablePadding>
+            <Divider sx={{ mt: 2 }} />
+            <List disablePadding sx={{ mx: -2, mb: -2 }}>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/personal-details')}>
-                <ListItemText
-                  primary={t('profile.sectionPersonalDetailsTitle')}
-                  secondary={t('profile.sectionPersonalDetailsHubSecondary')}
-                />
+                <ListItemText primary={t('profile.sectionPersonalDetailsTitle')} />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
             </List>
@@ -215,7 +251,7 @@ const WorkerProfile: React.FC = () => {
 
         <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent sx={{ p: 0 }}>
-            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionWorkProfile')}</Typography>
+            <Typography variant="subtitle1" sx={{ px: 2, py: 1.5 }}>{t('workerAccount.sectionWorkProfile')}</Typography>
             <Divider />
             <List disablePadding>
               {/* W.3 — hide the work-authorization sidebar row when */}
@@ -229,17 +265,11 @@ const WorkerProfile: React.FC = () => {
                   </Stack>
                 </ListItemButton>
               )}
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/resume')}>
-                <ListItemText primary={t('profile.sectionResumeTitle')} />
+
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/skills')}>
+                <ListItemText primary={t('profile.sectionSkillsTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
-                  {resumeComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
-                  <ChevronRightIcon color="action" />
-                </Stack>
-              </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/bio')}>
-                <ListItemText primary={t('profile.sectionBioTitle')} />
-                <Stack direction="row" spacing={0.5} alignItems="center">
-                  {bioComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
+                  {skillsComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
@@ -250,31 +280,10 @@ const WorkerProfile: React.FC = () => {
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/work-history')}>
-                <ListItemText primary={t('profile.sectionWorkHistoryTitle')} />
-                <Stack direction="row" spacing={0.5} alignItems="center">
-                  {workExperienceComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
-                  <ChevronRightIcon color="action" />
-                </Stack>
-              </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/education')}>
-                <ListItemText primary="Education" />
-                <Stack direction="row" spacing={0.5} alignItems="center">
-                  {educationComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
-                  <ChevronRightIcon color="action" />
-                </Stack>
-              </ListItemButton>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/languages')}>
                 <ListItemText primary={t('profile.sectionLanguagesTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {languagesComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
-                  <ChevronRightIcon color="action" />
-                </Stack>
-              </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/skills')}>
-                <ListItemText primary={t('profile.sectionSkillsTitle')} />
-                <Stack direction="row" spacing={0.5} alignItems="center">
-                  {skillsComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
@@ -285,6 +294,13 @@ const WorkerProfile: React.FC = () => {
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/experience')}>
+                <ListItemText
+                  primary={t('profile.sectionExperienceTitle')}
+                  secondary={t('profile.sectionExperienceHubSecondary')}
+                />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
             </List>
           </CardContent>
         </Card>
@@ -292,7 +308,7 @@ const WorkerProfile: React.FC = () => {
         {/* Employment block temporarily hidden while we clean up the worker view.
         <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent sx={{ p: 0 }}>
-            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionEmployment')}</Typography>
+            <Typography variant="subtitle1" sx={{ px: 2, py: 1.5 }}>{t('workerAccount.sectionEmployment')}</Typography>
             <Divider />
             {!tenantId ? (
               <Box sx={{ px: 2, py: 2 }}>
@@ -387,7 +403,7 @@ const WorkerProfile: React.FC = () => {
         {tenantId ? (
           <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent sx={{ p: 0 }}>
-              <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>
+              <Typography variant="subtitle1" sx={{ px: 2, py: 1.5 }}>
                 {t('workerAccount.sectionPreEmploymentChecks')}
               </Typography>
               <Divider />
@@ -410,7 +426,30 @@ const WorkerProfile: React.FC = () => {
 
         <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent sx={{ p: 0 }}>
-            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionAccountSettings')}</Typography>
+            <Typography variant="subtitle1" sx={{ px: 2, py: 1.5 }}>{t('workerAccount.sectionDocuments')}</Typography>
+            <Divider />
+            <List disablePadding>
+              <ListItemButton onClick={() => navigate('/c1/workers/documents')}>
+                <ListItemText
+                  primary={t('profile.sectionMyDocumentsTitle')}
+                  secondary={t('profile.sectionMyDocumentsDescription')}
+                />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/earnings')}>
+                <ListItemText
+                  primary={t('profile.sectionPayDocsTitle')}
+                  secondary={t('profile.sectionPayDocsDescription')}
+                />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+            </List>
+          </CardContent>
+        </Card>
+
+        <Card variant="outlined" sx={{ borderColor: 'divider' }}>
+          <CardContent sx={{ p: 0 }}>
+            <Typography variant="subtitle1" sx={{ px: 2, py: 1.5 }}>{t('workerAccount.sectionAccountSettings')}</Typography>
             <Divider />
             <List disablePadding>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/reset-password')}>
@@ -429,6 +468,20 @@ const WorkerProfile: React.FC = () => {
                 <ListItemText
                   primary={t('profile.sectionAppLanguageTitle')}
                   secondary={t('profile.sectionAppLanguageDescription')}
+                />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/support')}>
+                <ListItemText
+                  primary={t('profile.sectionSupportTitle')}
+                  secondary={t('profile.sectionSupportDescription')}
+                />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/about')}>
+                <ListItemText
+                  primary={t('profile.sectionAboutTitle')}
+                  secondary={t('profile.sectionAboutDescription')}
                 />
                 <ChevronRightIcon color="action" />
               </ListItemButton>

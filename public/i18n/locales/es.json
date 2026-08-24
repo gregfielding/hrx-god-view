@@ -62,7 +62,8 @@
     "screeningPageTitle": "Verificaciones previas al empleo",
     "screeningPageSubtitle": "Antecedentes, verificación de empleo y comprobaciones relacionadas con tus asignaciones. Esta página es solo lectura; tu equipo de contratación puede contactarte.",
     "screeningSignInPrompt": "Inicia sesión para ver tu avance de contratación.",
-    "screeningSelectWorkspace": "Selecciona un espacio de trabajo para ver las verificaciones previas al empleo."
+    "screeningSelectWorkspace": "Selecciona un espacio de trabajo para ver las verificaciones previas al empleo.",
+    "sectionDocuments": "Documentos"
   },
   "workerEmploymentHub": {
     "statusNotStarted": "Sin iniciar",
@@ -852,7 +853,29 @@
     "statusRecommended": "Recomendado",
     "keyItemsComplete": "{completed} de {total} elementos clave completos ({percent}%)",
     "returnToHome": "Volver al inicio",
-    "workEligibilityConfirmDetails": "Confirma tus datos de autorización para que los reclutadores puedan colocarte en roles elegibles."
+    "workEligibilityConfirmDetails": "Confirma tus datos de autorización para que los reclutadores puedan colocarte en roles elegibles.",
+    "sectionExperienceTitle": "Experiencia",
+    "sectionExperienceDescription": "Tu currículum, historial de trabajo, educación y biografía.",
+    "sectionExperienceHubSecondary": "Currículum, historial, educación y biografía.",
+    "sectionSupportTitle": "Ayuda y soporte",
+    "sectionSupportDescription": "Obtén ayuda con turnos, pagos o tu cuenta.",
+    "sectionAboutTitle": "Información y legal",
+    "sectionAboutDescription": "Términos, privacidad y opciones de la cuenta.",
+    "sectionMyDocumentsTitle": "Mis documentos",
+    "sectionMyDocumentsDescription": "Acuerdos firmados, credenciales y archivos de trabajo.",
+    "sectionPayDocsTitle": "Recibos de pago y documentos fiscales",
+    "sectionPayDocsDescription": "Abre tu portal de pagos en Pagos.",
+    "statsShifts": "turnos",
+    "statsHours": "horas",
+    "statsMemberSince": "Miembro desde",
+    "aboutTerms": "Términos de servicio",
+    "aboutPrivacy": "Política de privacidad",
+    "aboutSmsPolicy": "Política de SMS",
+    "aboutDeleteTitle": "Eliminar cuenta",
+    "aboutDeleteSecondary": "Solicita la eliminación permanente de tu cuenta.",
+    "aboutDeleteRequested": "Eliminación solicitada — nuestro equipo te contactará.",
+    "aboutDeleteExplainer": "Esto envía una solicitud de eliminación a nuestro equipo. Los registros que la ley nos obliga a conservar (como nómina e impuestos) se retienen por el período requerido; todo lo demás se elimina. Te confirmaremos por texto o correo.",
+    "aboutDeleteConfirm": "Solicitar eliminación"
   },
   "apply": {
     "availableShifts": "Turnos disponibles",
