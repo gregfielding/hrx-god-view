@@ -26,6 +26,7 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
 } from '../messaging/twilioSecrets';
 import { reconcileWorkerInternal } from '../integrations/everee/evereeReconcileWorker';
+import { getPayHistory } from '../integrations/everee/evereeService';
 
 /** Typed errors so the callable can map to proper HttpsError codes. */
 export class TicketNotFoundError extends Error {}
@@ -156,6 +157,40 @@ async function gatherWorkerPayrollContext(tenantId: string, uid: string): Promis
     parts.push(rows.length ? `Recent timesheet entries:\n${rows.join('\n')}` : 'Recent timesheet entries: none');
   } catch (e) {
     parts.push(`Recent timesheet entries: lookup failed (${String(e)})`);
+  }
+
+  // Actual payment truth from Everee (Earnings v1 companion, 2026-08-24):
+  // settled pay runs per entity, so the diagnosis can say "you WERE paid
+  // $X on <date>" / "no payment exists for that period" instead of
+  // inferring from the mirror. Tolerated on failure — the rest of the
+  // context still stands.
+  try {
+    const linkages = await loadProdLinkages(tenantId, uid);
+    const lines: string[] = [];
+    await Promise.all(
+      linkages.map(async (l) => {
+        if (!l.entityId) return;
+        try {
+          const hist = await getPayHistory(tenantId, l.entityId, uid);
+          for (const it of (hist.items ?? []).slice(0, 5)) {
+            lines.push(
+              `- [${l.entityId}] payDate=${it.payDate ?? 'pending'}: $${it.gross ?? '?'} (${it.status ?? 'unknown'})` +
+                (it.periodStart || it.periodEnd ? ` period ${it.periodStart ?? '?'}..${it.periodEnd ?? '?'}` : ''),
+            );
+          }
+        } catch (e) {
+          lines.push(`- [${l.entityId}] payment lookup failed (${String(e).slice(0, 80)})`);
+        }
+      }),
+    );
+    lines.sort((a, b) => b.localeCompare(a));
+    parts.push(
+      lines.length
+        ? ['Recent Everee payments (settled truth):', ...lines].join('\n')
+        : 'Recent Everee payments: NONE on record for any entity',
+    );
+  } catch (e) {
+    parts.push(`Recent Everee payments: lookup failed (${String(e)})`);
   }
 
   try {

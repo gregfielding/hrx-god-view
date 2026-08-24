@@ -1938,7 +1938,11 @@
     }
   },
   "earnings": {
-    "chooseEmployer": "Elige tu empleador para abrir tu registro de nómina o tu portal de pagos."
+    "chooseEmployer": "Elige tu empleador para abrir tu registro de nómina o tu portal de pagos.",
+    "recentPay": "Pagos recientes",
+    "statusPaid": "Pagado",
+    "statusPending": "En proceso",
+    "statusIssue": "Requiere atención"
   },
   "payrollHelp": {
     "title": "Ayuda con la nómina",

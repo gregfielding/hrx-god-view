@@ -24,6 +24,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { Box, Button, Card, CardActionArea, CircularProgress, Stack, Typography } from '@mui/material';
 import { db } from '../../../firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { Chip, Divider } from '@mui/material';
 import { useAuth } from '../../../contexts/AuthContext';
 import { getWorkerPayrollLanding } from '../../../utils/workerPayrollRouting';
 import {
@@ -39,6 +41,83 @@ import {
 interface EvereeEntityInfo {
   label: string;
   kind: PayrollWorkerKind;
+  /** HRX entity id (e.g. c1_select_llc) — needed for evereeGetPayHistory. */
+  entityId?: string;
+}
+
+interface PayHistoryRow {
+  statementId: string;
+  payDate: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  gross: number | null;
+  status: string | null;
+  employerLabel: string;
+}
+
+const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+
+/**
+ * Native pay history (Earnings v1, Greg 2026-08-24): merges
+ * evereeGetPayHistory across the worker's employers. The callable already
+ * allows self-access (canSelfOrManageEveree) — no new server surface.
+ */
+function useWorkerPayHistory(
+  tenantId: string | undefined,
+  infos: Record<string, EvereeEntityInfo>,
+): { rows: PayHistoryRow[]; loading: boolean } {
+  const [rows, setRows] = useState<PayHistoryRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const key = Object.entries(infos)
+    .map(([tid, i]) => `${tid}:${i.entityId ?? ''}`)
+    .sort()
+    .join('|');
+
+  useEffect(() => {
+    const entries = Object.values(infos).filter((i) => i.entityId);
+    if (!tenantId || entries.length === 0) {
+      setRows([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    void (async () => {
+      const merged: PayHistoryRow[] = [];
+      await Promise.all(
+        entries.map(async (info) => {
+          try {
+            const fn = httpsCallable(getFunctions(), 'evereeGetPayHistory');
+            const res = await fn({ tenantId, entityId: info.entityId });
+            const items = ((res.data as { items?: Array<Record<string, unknown>> })?.items ?? []).slice(0, 12);
+            for (const it of items) {
+              merged.push({
+                statementId: String(it.statementId || ''),
+                payDate: (it.payDate as string) ?? null,
+                periodStart: (it.periodStart as string) ?? null,
+                periodEnd: (it.periodEnd as string) ?? null,
+                gross: typeof it.gross === 'number' ? it.gross : null,
+                status: (it.status as string) ?? null,
+                employerLabel: info.label,
+              });
+            }
+          } catch {
+            /* pay history is a convenience — employer card still works */
+          }
+        }),
+      );
+      if (cancelled) return;
+      merged.sort((a, b) => String(b.payDate ?? '').localeCompare(String(a.payDate ?? '')));
+      setRows(merged.slice(0, 10));
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, key]);
+
+  return { rows, loading };
 }
 
 function useEvereeEntityInfos(
@@ -76,7 +155,7 @@ function useEvereeEntityInfos(
             payrollWorkerClassification: data.payrollWorkerClassification,
             workerType: data.workerType,
           });
-          next[tid] = { label, kind };
+          next[tid] = { label, kind, entityId: top?.id };
         }
       } catch {
         evereeTenantIds.forEach((tid) => {
@@ -228,6 +307,7 @@ const WorkerPayrollIndex: React.FC = () => {
   const idsForLabels =
     landing.kind === 'picker' ? landing.evereeTenantIds : landing.kind === 'redirect' ? [landing.evereeTenantId] : [];
   const { infos, loading: labelsLoading } = useEvereeEntityInfos(scopeTenantId, idsForLabels);
+  const { rows: payRows, loading: payLoading } = useWorkerPayHistory(scopeTenantId, infos);
 
   useEffect(() => {
     if (landing.kind === 'redirect') {
@@ -315,6 +395,62 @@ const WorkerPayrollIndex: React.FC = () => {
           })}
         </Stack>
       )}
+      {/* Native pay history (Earnings v1, 2026-08-24). */}
+      {(payLoading || payRows.length > 0) && (
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="subtitle1" sx={{ mb: 1 }}>
+            {t('earnings.recentPay')}
+          </Typography>
+          <Card variant="outlined">
+            {payLoading && payRows.length === 0 ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                <CircularProgress size={22} />
+              </Box>
+            ) : (
+              <Stack divider={<Divider />}>
+                {payRows.map((r) => (
+                  <Stack
+                    key={r.statementId}
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="space-between"
+                    sx={{ px: 2, py: 1.5 }}
+                    spacing={1}
+                  >
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                        {r.gross != null ? USD.format(r.gross) : '—'}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" noWrap display="block">
+                        {[r.payDate, r.employerLabel].filter(Boolean).join(' · ')}
+                      </Typography>
+                    </Box>
+                    <Chip
+                      size="small"
+                      label={
+                        r.status === 'PAID'
+                          ? t('earnings.statusPaid')
+                          : r.status === 'ERROR' || r.status === 'RETURNED'
+                            ? t('earnings.statusIssue')
+                            : t('earnings.statusPending')
+                      }
+                      color={
+                        r.status === 'PAID'
+                          ? 'success'
+                          : r.status === 'ERROR' || r.status === 'RETURNED'
+                            ? 'error'
+                            : 'default'
+                      }
+                      variant={r.status === 'PAID' ? 'filled' : 'outlined'}
+                    />
+                  </Stack>
+                ))}
+              </Stack>
+            )}
+          </Card>
+        </Box>
+      )}
+
       {/* Payroll help desk entry (Slice 1, 2026-08-24). */}
       <Button
         variant="text"

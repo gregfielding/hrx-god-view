@@ -1938,7 +1938,11 @@
     }
   },
   "earnings": {
-    "chooseEmployer": "Choose your employer to open payroll onboarding or your pay portal."
+    "chooseEmployer": "Choose your employer to open payroll onboarding or your pay portal.",
+    "recentPay": "Recent pay",
+    "statusPaid": "Paid",
+    "statusPending": "Processing",
+    "statusIssue": "Needs attention"
   },
   "payrollHelp": {
     "title": "Payroll help",
