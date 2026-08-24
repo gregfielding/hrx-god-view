@@ -66,12 +66,29 @@ and clearer onboarding status preempt most "where's my money" tickets.
   renders).
 - Mocha: `src/__tests__/payroll/payrollTicketsCore.test.ts` (pure helpers).
 
+## Slice 2 — approved actions (SHIPPED 2026-08-24, verified live)
+
+Callable actions (staff-only, drawer ACTIONS row):
+- `payroll_action_send_link` {kind: onboarding|bank_update} — SMS in the
+  worker's language + in-app notification, both deep-linking to
+  `/c1/workers/earnings/{evereeTenantId}` (onboarding → first incomplete
+  prod linkage; bank_update → first complete). Worker-visible system
+  message in the thread ("We sent you a text…" EN/ES).
+- `payroll_action_refresh_everee` — `reconcileWorkerInternal`
+  (syncSource 'manual') over all prod linkages, then RE-RUNS the diagnosis
+  on the fresh mirror (main-doc chips + private detail both update live).
+- Every action → audit entry in `payroll_tickets/{id}/private/audit`
+  (entries arrayUnion: at/action/byUid/byName + detail); drawer shows the
+  last 5. Money-moving actions deliberately excluded — human forever.
+- Everee tokens are env vars (all functions have them); Twilio secrets
+  already bound to workerSupportAssistant.
+
 ## Roadmap (agreed sequence)
 
 2. **Earnings v1** — native payment history from Everee API (deflection).
-3. **Approved actions** (Slice 2): one-click resend onboarding link, re-run
-   evereeReconcileWorker, flag timesheet for correction — staff-approved;
-   money-moving actions ALWAYS human. Keep `diagnosis` additive.
+3. ~~Approved actions~~ SHIPPED (above). Future action candidates:
+   flag-timesheet-for-correction + approver nudge; auto-execute safe
+   actions at ticket creation once trusted.
 4. **SMS intake**: dedicated Twilio number → existing inbound webhook branches
    on `To` number → `createPayrollTicket({channel:'sms'})`; replies go back
    out via SMS. Needs a number purchased/assigned (ask Greg).
