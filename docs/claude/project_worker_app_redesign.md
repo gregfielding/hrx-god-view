@@ -73,8 +73,17 @@ logic OUT of React components.
 
 ## Sequence
 - **P0 — DONE (above).**
-- **P1**: theme pass; native Earnings v1; profile reorg (+Settings/Support/Logout); delete legacy
-  action-items path + shims.
+- **P1 (in progress)**: theme pass SHIPPED 2026-08-23 (system fonts per-variant incl. body1/button,
+  ink text, warm ground, hairline cards r12, uniform CardContent 16, ink buttons, flat app bar,
+  double-gutters removed, 5 pages on one h5+subtitle header canon, layout 720). Profile reorg
+  SHIPPED 2026-08-23: identity card w/ stats row (aggregate over own timesheet_entries) +
+  completeness only <100%; Work Profile = Skills/Certs/Languages/Availability + Experience hub
+  (/profile/experience wraps resume/bio/work-history/education); Documents section (real documents
+  page restored + pay-docs → Earnings); Settings adds Help & Support + About & Legal
+  (/profile/about: terms/privacy/SMS + account-deletion REQUEST → `account_deletion_requests/{uid}`,
+  client-immutable, rules deployed — ⚠️ NOTHING notifies staff of new requests yet; add a sweep or
+  trigger before native launch). Remaining P1: native Earnings v1; delete legacy action-items path +
+  route shims; blue-vs-ink/yellow accent decision; severity-tinted card borders decision.
 - **P2**: native payroll onboarding (complete-record API); reliability/badges; bundle split.
 
 **Awaiting Greg**: approve 5-tab structure + P0 list; naming ("Jobs Board" vs "Find Shifts").
