@@ -74,6 +74,7 @@ import { sanitizeWorkerNameParts } from '../../utils/profileDisplayName';
 import { getActiveOnboardingType, isOnboardingInProgress } from './utils/onboardingHelpers';
 import { getTaskCompletionPercentage, initializeOnboardingTasks } from './utils/onboardingTasks';
 import FavoriteButton from '../../components/FavoriteButton';
+import OpenPayrollTicketChip from '../../components/payroll/OpenPayrollTicketChip';
 import { useFavorites } from '../../hooks/useFavorites';
 import MissingHomeAddressAlert from '../../components/MissingHomeAddressAlert';
 
@@ -2877,6 +2878,10 @@ const UserProfilePage = () => {
                                 }}
                               />
                             )}
+
+                        {canViewAdminContent && uid && activeTenant?.id && (
+                          <OpenPayrollTicketChip uid={uid} tenantId={activeTenant.id} />
+                        )}
 
                         {canViewAdminContent && (
                           <AiScoreGradeDisplay

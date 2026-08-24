@@ -381,6 +381,33 @@ export async function buildDeletionRequestsSection(): Promise<string | null> {
   );
 }
 
+/**
+ * Open payroll help-desk tickets (worker is waiting on us). Waiting-on-worker
+ * and resolved tickets are omitted — the brief flags only what needs staff.
+ */
+export async function buildPayrollTicketsSection(): Promise<string | null> {
+  const snap = await db
+    .collection('payroll_tickets')
+    .where('status', '==', 'open')
+    .limit(20)
+    .get();
+  if (snap.empty) return null;
+  const nowMs = Date.now();
+  const lines = snap.docs.map((d) => {
+    const x = d.data() as Record<string, unknown>;
+    const diag = (x.diagnosis ?? null) as { category?: string; severity?: string } | null;
+    const createdMs = (x.createdAt as admin.firestore.Timestamp | undefined)?.toMillis?.();
+    const daysOld = createdMs ? Math.floor((nowMs - createdMs) / 86400e3) : null;
+    const age = daysOld === null ? '' : daysOld === 0 ? 'today' : `${daysOld}d old`;
+    const sev = diag?.severity === 'urgent' ? 'URGENT ' : '';
+    return `• ${sev}${trim(x.workerName) || trim(x.uid)} — "${trim(x.subject).slice(0, 70)}" (${diag?.category ?? 'untriaged'}, ${age})`;
+  });
+  return (
+    `PAYROLL TICKETS WAITING ON US (${snap.size}):\n${lines.join('\n')}\n` +
+    `Work the queue: https://hrxone.com/payroll-tickets`
+  );
+}
+
 export async function morningBriefCore(tenantId: string): Promise<{ sent: boolean }> {
   const client = await gmailClientFor(tenantId);
   if (!client) return { sent: false };
@@ -426,6 +453,14 @@ export async function morningBriefCore(tenantId: string): Promise<{ sent: boolea
     if (del) sections.push(del);
   } catch (e) {
     logger.warn('morningBrief: deletion-requests scan failed', { e: String(e) });
+  }
+
+  // 3.6 Payroll help-desk tickets waiting on staff
+  try {
+    const pt = await buildPayrollTicketsSection();
+    if (pt) sections.push(pt);
+  } catch (e) {
+    logger.warn('morningBrief: payroll-tickets scan failed', { e: String(e) });
   }
 
   // 4. Campaign pulse

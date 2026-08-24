@@ -17,8 +17,22 @@
  */
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
+import twilio from 'twilio';
 import { getClaudeChat } from '../utils/claudeChat';
 import { sendNotificationAndPush } from '../messaging/unifiedWorkerNotifications';
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+} from '../messaging/twilioSecrets';
+
+/** Typed errors so the callable can map to proper HttpsError codes. */
+export class TicketNotFoundError extends Error {}
+export class TicketForbiddenError extends Error {}
+export class TicketRateLimitedError extends Error {}
+
+/** Max open/waiting tickets per worker — each creation runs a Claude call. */
+const MAX_ACTIVE_TICKETS_PER_WORKER = 3;
 
 const db = admin.firestore();
 
@@ -47,6 +61,16 @@ function trim(v: unknown): string {
   return String(v ?? '').trim();
 }
 
+/** Pure: does this user doc belong to the tenant? (tested in mocha) */
+export function isTenantMemberData(u: Record<string, unknown>, tenantId: string): boolean {
+  if (!tenantId) return false;
+  if (String(u.activeTenantId ?? '') === tenantId) return true;
+  if (String(u.tenantId ?? '') === tenantId) return true;
+  const tenantIds = (u.tenantIds ?? null) as Record<string, unknown> | null;
+  if (tenantIds && typeof tenantIds === 'object' && tenantId in tenantIds) return true;
+  return false;
+}
+
 async function isStaff(uid: string): Promise<boolean> {
   const snap = await db.collection('users').doc(uid).get();
   if (!snap.exists) return false;
@@ -67,6 +91,20 @@ async function isStaff(uid: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 // Diagnosis context — Firestore only (no Everee API calls in Slice 1).
 // ---------------------------------------------------------------------------
+
+function timesheetDate(x: Record<string, unknown>): string {
+  return trim(x.workDate) || trim(x.date);
+}
+
+/** Pure: one prompt line per timesheet entry (tested in mocha). */
+export function formatTimesheetLine(x: Record<string, unknown>): string {
+  const dt = Number(x.totalDoubleTimeHours ?? 0);
+  return (
+    `- ${timesheetDate(x) || 'undated'}: status=${trim(x.status)}, ` +
+    `reg=${Number(x.totalRegularHours ?? 0)}h, ot=${Number(x.totalOTHours ?? 0)}h` +
+    (dt ? `, dt=${dt}h` : '')
+  );
+}
 
 async function gatherWorkerPayrollContext(tenantId: string, uid: string): Promise<string> {
   const parts: string[] = [];
@@ -109,12 +147,11 @@ async function gatherWorkerPayrollContext(tenantId: string, uid: string): Promis
       .get();
     const rows = ts.docs
       .map((d) => d.data() as Record<string, unknown>)
-      .sort((a, b) => trim(b.date).localeCompare(trim(a.date)))
+      // Field is `workDate` (audit 2026-08-24 — `date` doesn't exist on
+      // timesheet_entries and made every entry read as undated).
+      .sort((a, b) => timesheetDate(b).localeCompare(timesheetDate(a)))
       .slice(0, 8)
-      .map(
-        (x) =>
-          `- ${trim(x.date)}: status=${trim(x.status)}, reg=${Number(x.totalRegularHours ?? 0)}h, ot=${Number(x.totalOTHours ?? 0)}h`,
-      );
+      .map(formatTimesheetLine);
     parts.push(rows.length ? `Recent timesheet entries:\n${rows.join('\n')}` : 'Recent timesheet entries: none');
   } catch (e) {
     parts.push(`Recent timesheet entries: lookup failed (${String(e)})`);
@@ -208,9 +245,26 @@ export async function createPayrollTicket(input: {
   tenantId: string;
   text: string;
   channel?: 'app' | 'sms' | 'email';
-}): Promise<{ ticketId: string; diagnosis: Omit<PayrollTicketDiagnosis, 'generatedAt'> | null }> {
+}): Promise<{ ticketId: string; diagnosis: { category: string; severity: string } | null }> {
   const userSnap = await db.collection('users').doc(input.uid).get();
   const u = (userSnap.data() ?? {}) as Record<string, unknown>;
+  // The caller chooses tenantId — verify they actually belong to it
+  // (audit 2026-08-24: previously unvalidated).
+  if (!isTenantMemberData(u, input.tenantId)) {
+    throw new TicketForbiddenError('You are not a member of this workspace.');
+  }
+  // Rate limit: each creation runs a Claude call; cap active tickets.
+  const active = await db
+    .collection('payroll_tickets')
+    .where('uid', '==', input.uid)
+    .where('status', 'in', ['open', 'waiting_worker'])
+    .limit(MAX_ACTIVE_TICKETS_PER_WORKER)
+    .get();
+  if (active.size >= MAX_ACTIVE_TICKETS_PER_WORKER) {
+    throw new TicketRateLimitedError(
+      'You already have open payroll requests — please reply on one of those instead of opening a new one.',
+    );
+  }
   const workerName = `${trim(u.firstName)} ${trim(u.lastName)}`.trim() || trim(u.displayName) || input.uid;
 
   const ref = db.collection('payroll_tickets').doc();
@@ -244,10 +298,33 @@ export async function createPayrollTicket(input: {
     ticketText: input.text,
   });
   if (diagnosis) {
+    // Category/severity/confidence live on the ticket (queue chips; fine for
+    // the worker to see about their own issue). The staff-facing summary and
+    // unsent draft replies go in a staff-only subcollection — the worker can
+    // read their ticket doc, and internal triage notes must not ride along
+    // (audit 2026-08-24).
     await ref.update({
-      diagnosis: { ...diagnosis, generatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      diagnosis: {
+        category: diagnosis.category,
+        severity: diagnosis.severity,
+        confidence: diagnosis.confidence,
+        generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    await ref.collection('private').doc('diagnosis').set({
+      ...diagnosis,
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    if (diagnosis.severity === 'urgent') {
+      await sendUrgentTicketAlert({
+        ticketId: ref.id,
+        workerName,
+        subject: input.text.slice(0, 100),
+        category: diagnosis.category,
+      });
+    }
   }
 
   logger.info('payrollTickets: created', {
@@ -268,11 +345,11 @@ export async function replyPayrollTicket(input: {
 }): Promise<{ ok: true }> {
   const ref = db.collection('payroll_tickets').doc(input.ticketId);
   const snap = await ref.get();
-  if (!snap.exists) throw new Error('Ticket not found.');
+  if (!snap.exists) throw new TicketNotFoundError('Ticket not found.');
   const t = snap.data() as Record<string, unknown>;
   const staff = await isStaff(input.actorUid);
   const isOwner = t.uid === input.actorUid;
-  if (!staff && !isOwner) throw new Error('Not allowed.');
+  if (!staff && !isOwner) throw new TicketForbiddenError('Not allowed.');
 
   const by = staff && !isOwner ? 'staff' : 'worker';
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -286,8 +363,14 @@ export async function replyPayrollTicket(input: {
     text: input.text,
     createdAt: now,
   });
+  // Status machine: worker reply always (re)opens; a staff reply moves an
+  // active ticket to waiting_worker but does NOT silently reopen a resolved
+  // one (follow-up info on a closed ticket stays closed — audit 2026-08-24).
+  const currentStatus = String(t.status || 'open') as PayrollTicketStatus;
+  const nextStatus: PayrollTicketStatus =
+    by === 'worker' ? 'open' : currentStatus === 'resolved' ? 'resolved' : 'waiting_worker';
   await ref.update({
-    status: (by === 'staff' ? 'waiting_worker' : 'open') satisfies PayrollTicketStatus,
+    status: nextStatus,
     lastMessageAt: now,
     lastMessageBy: by,
     updatedAt: now,
@@ -295,10 +378,12 @@ export async function replyPayrollTicket(input: {
 
   if (by === 'staff') {
     try {
+      // Notification in the worker's language (audit 2026-08-24 — was EN-only).
+      const es = trim(t.preferredLanguage) === 'es';
       await sendNotificationAndPush({
         uid: String(t.uid),
         tenantId: String(t.tenantId),
-        title: 'Payroll support replied',
+        title: es ? 'El equipo de nómina respondió' : 'Payroll support replied',
         body: input.text.slice(0, 140),
         type: 'support',
         category: 'system',
@@ -317,7 +402,7 @@ export async function setPayrollTicketStatus(input: {
   ticketId: string;
   status: PayrollTicketStatus;
 }): Promise<{ ok: true }> {
-  if (!(await isStaff(input.actorUid))) throw new Error('Not allowed.');
+  if (!(await isStaff(input.actorUid))) throw new TicketForbiddenError('Not allowed.');
   if (!['open', 'waiting_worker', 'resolved'].includes(input.status)) throw new Error('Bad status.');
   await db.collection('payroll_tickets').doc(input.ticketId).update({
     status: input.status,
@@ -328,3 +413,39 @@ export async function setPayrollTicketStatus(input: {
   });
   return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// Urgent-ticket alerting — SMS to the numbers in
+// `app_config/payroll_help_desk.urgentAlertPhones` (audit 2026-08-24:
+// urgent "I wasn't paid" tickets must not wait for the morning brief).
+// Never throws: alerting failure must not fail ticket creation.
+// ---------------------------------------------------------------------------
+
+async function sendUrgentTicketAlert(input: {
+  ticketId: string;
+  workerName: string;
+  subject: string;
+  category: string;
+}): Promise<void> {
+  try {
+    const cfg = await db.doc('app_config/payroll_help_desk').get();
+    const phones = ((cfg.get('urgentAlertPhones') as unknown) ?? []) as unknown[];
+    const targets = phones.map((v) => trim(v)).filter((v) => /^\+?1?\d{10,}$/.test(v));
+    if (!targets.length) return;
+    const from = TWILIO_MESSAGING_PHONE_NUMBER.value() || process.env.TWILIO_MESSAGING_PHONE_NUMBER;
+    if (!from) return;
+    const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
+    const body =
+      `URGENT payroll ticket (${input.category}) from ${input.workerName}: ` +
+      `"${input.subject}" — review at hrxone.com/payroll-tickets`;
+    await Promise.all(
+      targets.map((to) =>
+        client.messages.create({ to: to.startsWith('+') ? to : `+1${to}`, from, body }),
+      ),
+    );
+    logger.info('payrollTickets: urgent alert sent', { ticketId: input.ticketId, count: targets.length });
+  } catch (e) {
+    logger.warn('payrollTickets: urgent alert failed', { ticketId: input.ticketId, error: String(e) });
+  }
+}
+

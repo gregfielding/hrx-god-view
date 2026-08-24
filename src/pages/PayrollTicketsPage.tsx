@@ -31,7 +31,9 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { collection, doc, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { useNavigate } from 'react-router-dom';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -93,7 +95,14 @@ const CATEGORY_LABEL: Record<string, string> = {
   other: 'Other',
 };
 
+interface PrivateDiagnosis {
+  summary?: string;
+  suggestedReplyEn?: string;
+  suggestedReplyEs?: string;
+}
+
 const PayrollTicketsPage: React.FC = () => {
+  const navigate = useNavigate();
   const { activeTenant } = useAuth();
   const tenantId = activeTenant?.id ?? '';
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -101,6 +110,7 @@ const PayrollTicketsPage: React.FC = () => {
   const [statusTab, setStatusTab] = useState<0 | 1 | 2>(0);
   const [selected, setSelected] = useState<Ticket | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [privateDiagnosis, setPrivateDiagnosis] = useState<PrivateDiagnosis | null>(null);
   const [replyText, setReplyText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -166,6 +176,27 @@ const PayrollTicketsPage: React.FC = () => {
       );
     });
   }, [selected]);
+
+  // Staff-only diagnosis detail lives in private/diagnosis (workers can read
+  // their ticket doc, so internal notes are kept out of it). Legacy tickets
+  // (pre-hardening) still carry the detail on the main doc — fall back.
+  useEffect(() => {
+    if (!selected) {
+      setPrivateDiagnosis(null);
+      return;
+    }
+    const legacy = selected.diagnosis as PrivateDiagnosis | null;
+    return onSnapshot(
+      doc(db, 'payroll_tickets', selected.id, 'private', 'diagnosis'),
+      (snap) => {
+        if (snap.exists()) setPrivateDiagnosis(snap.data() as PrivateDiagnosis);
+        else if (legacy?.summary) setPrivateDiagnosis(legacy);
+        else setPrivateDiagnosis(null);
+      },
+      () => setPrivateDiagnosis(legacy?.summary ? legacy : null),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
 
   // Keep the drawer's ticket fresh as snapshots arrive (status chips etc.).
   useEffect(() => {
@@ -314,16 +345,27 @@ const PayrollTicketsPage: React.FC = () => {
       >
         {selected && (
           <Stack spacing={2}>
-            <Box>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                {selected.workerName}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {[selected.workerEmail, selected.workerPhone, `prefers ${selected.preferredLanguage.toUpperCase()}`]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </Typography>
-            </Box>
+            <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={1}>
+              <Box>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                  {selected.workerName}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {[selected.workerEmail, selected.workerPhone, `prefers ${selected.preferredLanguage.toUpperCase()}`]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </Typography>
+              </Box>
+              <Button
+                size="small"
+                variant="outlined"
+                endIcon={<OpenInNewIcon sx={{ fontSize: 14 }} />}
+                onClick={() => navigate(`/users/${selected.uid}`)}
+                sx={{ flexShrink: 0 }}
+              >
+                Open profile
+              </Button>
+            </Stack>
 
             {selected.diagnosis && (
               <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'rgba(255, 199, 0, 0.06)' }}>
@@ -343,10 +385,10 @@ const PayrollTicketsPage: React.FC = () => {
                   />
                 </Stack>
                 <Typography variant="body2" sx={{ mb: 1 }}>
-                  {selected.diagnosis.summary}
+                  {privateDiagnosis?.summary ?? 'Loading diagnosis detail…'}
                 </Typography>
                 {(['suggestedReplyEn', 'suggestedReplyEs'] as const).map((key) => {
-                  const value = selected.diagnosis?.[key];
+                  const value = privateDiagnosis?.[key];
                   if (!value) return null;
                   return (
                     <Box key={key} sx={{ mb: 0.75 }}>

@@ -24,6 +24,15 @@ service cloud.firestore {
         );
         allow create, update, delete: if false;
       }
+      // Staff-only: the AI's internal triage notes + unsent draft replies.
+      // The worker can read their ticket doc, but never this.
+      match /private/{docId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasSecurityLevel(get(/databases/$(database)/documents/payroll_tickets/$(ticketId)).data.tenantId, 5)
+        );
+        allow create, update, delete: if false;
+      }
     }
 
     match /account_deletion_requests/{uid} {

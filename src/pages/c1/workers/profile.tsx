@@ -70,7 +70,7 @@ const WorkerProfile: React.FC = () => {
           shifts: count(),
           reg: sum('totalRegularHours'),
           ot: sum('totalOTHours'),
-          dt: sum('totalDoubleTime'),
+          dt: sum('totalDoubleTimeHours'),
         });
         if (!alive) return;
         const shifts = agg.data().shifts ?? 0;

@@ -5,8 +5,23 @@ import {
   createPayrollTicket,
   replyPayrollTicket,
   setPayrollTicketStatus,
+  TicketForbiddenError,
+  TicketNotFoundError,
+  TicketRateLimitedError,
   type PayrollTicketStatus,
 } from './payroll/payrollTicketsCore';
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+} from './messaging/twilioSecrets';
+
+function toTicketHttpsError(e: unknown): HttpsError {
+  if (e instanceof TicketNotFoundError) return new HttpsError('not-found', e.message);
+  if (e instanceof TicketForbiddenError) return new HttpsError('permission-denied', e.message);
+  if (e instanceof TicketRateLimitedError) return new HttpsError('resource-exhausted', e.message);
+  return new HttpsError('internal', e instanceof Error ? e.message : String(e));
+}
 
 type SupportTopic =
   | 'shift_cancellation'
@@ -171,6 +186,8 @@ export const workerSupportAssistant = onCall(
     // 120s: payroll-ticket creation runs the Claude diagnosis inline
     // (Cloud Run cap — this callable hosts the help-desk actions too).
     timeoutSeconds: 120,
+    // Twilio secrets for the urgent-ticket SMS alert (payrollTicketsCore).
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER],
     memory: '512MiB', // 256MiB OOM'd on cold start (267MiB) after the 2026-08-21 Claude migration
   },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -187,7 +204,11 @@ export const workerSupportAssistant = onCall(
       const text = String(request.data?.text || '').trim();
       if (!tenantId || !text) throw new HttpsError('invalid-argument', 'tenantId and text are required.');
       if (text.length > 2000) throw new HttpsError('invalid-argument', 'Message is too long.');
-      return await createPayrollTicket({ uid: request.auth.uid, tenantId, text, channel: 'app' });
+      try {
+        return await createPayrollTicket({ uid: request.auth.uid, tenantId, text, channel: 'app' });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
     }
     if (action === 'payroll_reply') {
       const ticketId = String(request.data?.ticketId || '').trim();
@@ -197,7 +218,7 @@ export const workerSupportAssistant = onCall(
       try {
         return await replyPayrollTicket({ actorUid: request.auth.uid, ticketId, text });
       } catch (e) {
-        throw new HttpsError('permission-denied', e instanceof Error ? e.message : String(e));
+        throw toTicketHttpsError(e);
       }
     }
     if (action === 'payroll_set_status') {
@@ -207,7 +228,7 @@ export const workerSupportAssistant = onCall(
       try {
         return await setPayrollTicketStatus({ actorUid: request.auth.uid, ticketId, status });
       } catch (e) {
-        throw new HttpsError('permission-denied', e instanceof Error ? e.message : String(e));
+        throw toTicketHttpsError(e);
       }
     }
 
