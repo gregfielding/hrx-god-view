@@ -1942,7 +1942,19 @@
     "recentPay": "Recent pay",
     "statusPaid": "Paid",
     "statusPending": "Processing",
-    "statusIssue": "Needs attention"
+    "statusIssue": "Needs attention",
+    "viewAll": "View all",
+    "allEmployers": "All",
+    "payHistoryTitle": "Pay history",
+    "statementTitle": "Pay statement",
+    "period": "Pay period",
+    "earningsSection": "Earnings",
+    "taxes": "Taxes",
+    "deductions": "Deductions",
+    "viewPdf": "View PDF statement",
+    "noPdf": "PDF statement not available yet.",
+    "noPayments": "No payments yet.",
+    "statementError": "Couldn't load this statement — please try again."
   },
   "payrollHelp": {
     "title": "Payroll help",

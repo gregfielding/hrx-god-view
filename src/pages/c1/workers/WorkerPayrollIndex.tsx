@@ -24,8 +24,12 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { Box, Button, Card, CardActionArea, CircularProgress, Stack, Typography } from '@mui/material';
 import { db } from '../../../firebase';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Chip, Divider } from '@mui/material';
+import {
+  USD,
+  useWorkerEmployerLinkages,
+  useWorkerPayHistory,
+} from '../../../hooks/useWorkerPayHistory';
 import { useAuth } from '../../../contexts/AuthContext';
 import { getWorkerPayrollLanding } from '../../../utils/workerPayrollRouting';
 import {
@@ -43,81 +47,6 @@ interface EvereeEntityInfo {
   kind: PayrollWorkerKind;
   /** HRX entity id (e.g. c1_select_llc) — needed for evereeGetPayHistory. */
   entityId?: string;
-}
-
-interface PayHistoryRow {
-  statementId: string;
-  payDate: string | null;
-  periodStart: string | null;
-  periodEnd: string | null;
-  gross: number | null;
-  status: string | null;
-  employerLabel: string;
-}
-
-const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
-
-/**
- * Native pay history (Earnings v1, Greg 2026-08-24): merges
- * evereeGetPayHistory across the worker's employers. The callable already
- * allows self-access (canSelfOrManageEveree) — no new server surface.
- */
-function useWorkerPayHistory(
-  tenantId: string | undefined,
-  infos: Record<string, EvereeEntityInfo>,
-): { rows: PayHistoryRow[]; loading: boolean } {
-  const [rows, setRows] = useState<PayHistoryRow[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const key = Object.entries(infos)
-    .map(([tid, i]) => `${tid}:${i.entityId ?? ''}`)
-    .sort()
-    .join('|');
-
-  useEffect(() => {
-    const entries = Object.values(infos).filter((i) => i.entityId);
-    if (!tenantId || entries.length === 0) {
-      setRows([]);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    void (async () => {
-      const merged: PayHistoryRow[] = [];
-      await Promise.all(
-        entries.map(async (info) => {
-          try {
-            const fn = httpsCallable(getFunctions(), 'evereeGetPayHistory');
-            const res = await fn({ tenantId, entityId: info.entityId });
-            const items = ((res.data as { items?: Array<Record<string, unknown>> })?.items ?? []).slice(0, 12);
-            for (const it of items) {
-              merged.push({
-                statementId: String(it.statementId || ''),
-                payDate: (it.payDate as string) ?? null,
-                periodStart: (it.periodStart as string) ?? null,
-                periodEnd: (it.periodEnd as string) ?? null,
-                gross: typeof it.gross === 'number' ? it.gross : null,
-                status: (it.status as string) ?? null,
-                employerLabel: info.label,
-              });
-            }
-          } catch {
-            /* pay history is a convenience — employer card still works */
-          }
-        }),
-      );
-      if (cancelled) return;
-      merged.sort((a, b) => String(b.payDate ?? '').localeCompare(String(a.payDate ?? '')));
-      setRows(merged.slice(0, 10));
-      setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, key]);
-
-  return { rows, loading };
 }
 
 function useEvereeEntityInfos(
@@ -307,7 +236,8 @@ const WorkerPayrollIndex: React.FC = () => {
   const idsForLabels =
     landing.kind === 'picker' ? landing.evereeTenantIds : landing.kind === 'redirect' ? [landing.evereeTenantId] : [];
   const { infos, loading: labelsLoading } = useEvereeEntityInfos(scopeTenantId, idsForLabels);
-  const { rows: payRows, loading: payLoading } = useWorkerPayHistory(scopeTenantId, infos);
+  const { linkages: payLinkages } = useWorkerEmployerLinkages(scopeTenantId, uid);
+  const { rows: payRows, loading: payLoading } = useWorkerPayHistory(scopeTenantId, payLinkages, 10);
 
   useEffect(() => {
     if (landing.kind === 'redirect') {
@@ -414,8 +344,13 @@ const WorkerPayrollIndex: React.FC = () => {
                     direction="row"
                     alignItems="center"
                     justifyContent="space-between"
-                    sx={{ px: 2, py: 1.5 }}
+                    sx={{ px: 2, py: 1.5, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
                     spacing={1}
+                    onClick={() =>
+                      navigate(
+                        `/c1/workers/pay-history/${encodeURIComponent(r.evereeTenantId)}/${encodeURIComponent(r.statementId)}`,
+                      )
+                    }
                   >
                     <Box sx={{ minWidth: 0 }}>
                       <Typography variant="body1" sx={{ fontWeight: 600 }}>
@@ -448,6 +383,11 @@ const WorkerPayrollIndex: React.FC = () => {
               </Stack>
             )}
           </Card>
+          {payRows.length > 0 && (
+            <Button variant="text" onClick={() => navigate('/c1/workers/pay-history')} sx={{ mt: 1, px: 0 }}>
+              {t('earnings.viewAll')} →
+            </Button>
+          )}
         </Box>
       )}
 

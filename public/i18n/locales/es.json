@@ -1942,7 +1942,19 @@
     "recentPay": "Pagos recientes",
     "statusPaid": "Pagado",
     "statusPending": "En proceso",
-    "statusIssue": "Requiere atención"
+    "statusIssue": "Requiere atención",
+    "viewAll": "Ver todo",
+    "allEmployers": "Todos",
+    "payHistoryTitle": "Historial de pagos",
+    "statementTitle": "Comprobante de pago",
+    "period": "Período de pago",
+    "earningsSection": "Ingresos",
+    "taxes": "Impuestos",
+    "deductions": "Deducciones",
+    "viewPdf": "Ver comprobante en PDF",
+    "noPdf": "El comprobante en PDF aún no está disponible.",
+    "noPayments": "Aún no hay pagos.",
+    "statementError": "No se pudo cargar este comprobante — inténtalo de nuevo."
   },
   "payrollHelp": {
     "title": "Ayuda con la nómina",
