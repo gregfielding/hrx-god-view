@@ -102,7 +102,8 @@ const WorkerAppBar: React.FC = () => {
             aria-label={t('nav.notifications')}
             sx={{ color: 'text.secondary' }}
           >
-            <Badge badgeContent={unreadCount > 0 ? unreadCount : 0} color="primary" max={9}>
+            {/* C1 gold badge with ink count (accent decision 2026-08-23). */}
+            <Badge badgeContent={unreadCount > 0 ? unreadCount : 0} color="secondary" max={9}>
               {unreadCount > 0 ? <NotificationsIcon sx={{ fontSize: 24 }} /> : <NotificationsNoneIcon sx={{ fontSize: 24 }} />}
             </Badge>
           </IconButton>

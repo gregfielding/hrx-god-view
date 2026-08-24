@@ -1672,7 +1672,7 @@ const JobPostingDetail: React.FC = () => {
       case 'offer':
         return {
           label: 'Accepted',
-          backgroundColor: '#2196F3', // Blue
+          backgroundColor: '#111111', // Ink (accent decision 2026-08-23)
           color: '#fff',
           cursor: 'default',
           pointerEvents: 'none' as const,
@@ -1680,7 +1680,7 @@ const JobPostingDetail: React.FC = () => {
       case 'accepted':
         return {
           label: 'accepted_special', // Special flag for custom UI
-          backgroundColor: '#2196F3', // Blue for Accepted button
+          backgroundColor: '#111111', // Ink (accent decision 2026-08-23)
           color: '#fff',
           cursor: 'default',
           pointerEvents: 'none' as const,

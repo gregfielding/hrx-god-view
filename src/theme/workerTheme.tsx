@@ -26,6 +26,23 @@ export const workerDesignTokens = {
 export function getWorkerTheme() {
   return createTheme(getBaseTheme(), {
     palette: {
+      // Accent decision (Greg approved 2026-08-23): ink primary + C1 gold
+      // highlight — no blue on worker surfaces. Blue is the admin brand;
+      // the worker app is monochrome ink with the brand gold reserved for
+      // selected states and the notification badge (gold can't carry text
+      // on white, so it always pairs with ink ON it, never AS type).
+      primary: {
+        main: '#111111',
+        dark: '#000000',
+        light: '#3A3A3A',
+        contrastText: '#FFFFFF',
+      },
+      secondary: {
+        main: '#FFC700',
+        dark: '#E6B300',
+        light: '#FFD84D',
+        contrastText: '#111111',
+      },
       text: {
         // Ink, not slate (P1 theme pass — phone-login language).
         primary: '#16181A',
@@ -135,6 +152,10 @@ export function getWorkerTheme() {
             borderWidth: 1.5,
             '&:hover': { borderWidth: 1.5 },
           },
+          // Kill the base theme's blue hover glow on contained buttons.
+          contained: {
+            '&:hover': { boxShadow: 'none' },
+          },
           // Compact rows (inline actions, dialogs): keep a real tap target
           // but drop the visual weight.
           sizeSmall: {
@@ -157,6 +178,9 @@ export function getWorkerTheme() {
             height: 22,
             fontSize: 11,
           },
+          // Base theme hard-codes blue for colorPrimary — worker canon is ink.
+          colorPrimary: { backgroundColor: '#111111', color: '#FFFFFF' },
+          colorSecondary: { backgroundColor: '#FFC700', color: '#111111' },
         },
       },
       MuiIconButton: {
@@ -176,11 +200,12 @@ export function getWorkerTheme() {
             paddingLeft: 16,
             paddingRight: 16,
             '&.Mui-selected': {
-              backgroundColor: 'rgba(74, 144, 226, 0.1)',
-              borderLeft: '4px solid #1F6FC9',
+              // C1 gold selected state (accent decision 2026-08-23).
+              backgroundColor: 'rgba(255, 199, 0, 0.14)',
+              borderLeft: '4px solid #FFC700',
               paddingLeft: 12,
               '&:hover': {
-                backgroundColor: 'rgba(74, 144, 226, 0.12)',
+                backgroundColor: 'rgba(255, 199, 0, 0.2)',
               },
             },
           },
@@ -205,8 +230,9 @@ export function getWorkerTheme() {
               borderRadius: t.radius.md,
               minHeight: 44,
               '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+                // Ink focus ring (accent decision 2026-08-23 — no blue).
                 borderWidth: 2,
-                borderColor: '#4A90E2',
+                borderColor: '#111111',
               },
             },
           },
@@ -216,6 +242,10 @@ export function getWorkerTheme() {
         styleOverrides: {
           root: {
             minHeight: 48,
+          },
+          // Base theme hard-codes a blue indicator — ink on worker surfaces.
+          indicator: {
+            backgroundColor: '#111111',
           },
         },
       },

@@ -181,6 +181,7 @@ const InviteUsersPage = lazy(() => import('./pages/InviteUsersPage'));
 const SavedSmartGroupDetailPage = lazy(() => import('./pages/SavedSmartGroupDetailPage'));
 const RecruiterUsers = lazy(() => import('./pages/RecruiterUsers'));
 const UsersLayout = lazy(() => import('./pages/UsersLayout'));
+const DeletionRequestsPage = lazy(() => import('./pages/DeletionRequestsPage'));
 const RecruiterAccountDetails = lazy(() => import('./pages/RecruiterAccountDetails'));
 const AccountLocationDetail = lazy(() => import('./pages/AccountLocationDetail'));
 const GlobalInvoicingPage = lazy(() => import('./pages/GlobalInvoicingPage'));
@@ -1095,6 +1096,7 @@ function App() {
           <Route path="all-smart-groups" element={<AllSmartGroupsPage hideHeader />} />
           <Route path="my-smart-groups" element={<MySmartGroupsListPage hideHeader />} />
           <Route path="my-smart-groups/:groupId" element={<SavedSmartGroupDetailPage hideHeader />} />
+          <Route path="deletion-requests" element={<DeletionRequestsPage />} />
           <Route path=":uid/readiness" element={<UserReadinessPage />} />
           <Route path=":uid" element={<UserProfile />} />
         </Route>

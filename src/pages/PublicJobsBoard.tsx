@@ -1453,7 +1453,7 @@ const PublicJobsBoard: React.FC = () => {
       case 'accepted':
         return {
           label: t('jobs.applicationStatusAccepted'),
-          backgroundColor: '#2196F3', // Blue
+          backgroundColor: '#111111', // Ink (accent decision 2026-08-23)
           color: '#fff',
           cursor: 'default',
           pointerEvents: 'none' as const

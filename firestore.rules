@@ -8,7 +8,13 @@ service cloud.firestore {
     match /account_deletion_requests/{uid} {
       allow create: if request.auth != null && request.auth.uid == uid;
       allow read: if request.auth != null && (request.auth.uid == uid || isHRX());
-      allow update, delete: if false;
+      // HRX processes requests from /users/deletion-requests: status +
+      // audit fields only — the original request fields stay immutable.
+      allow update: if isHRX() &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'processedBy', 'processedAt', 'note']) &&
+        request.resource.data.status in ['pending', 'completed', 'dismissed'];
+      allow delete: if false;
     }
 
 

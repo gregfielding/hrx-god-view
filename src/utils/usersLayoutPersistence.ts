@@ -11,7 +11,8 @@ export type UsersTab =
   | 'my-user-groups'
   | 'smart-groups'
   | 'all-smart-groups'
-  | 'my-smart-groups';
+  | 'my-smart-groups'
+  | 'deletion-requests';
 
 export const USERS_LAYOUT_TAB_CONFIG: { tab: UsersTab; path: string; label: string }[] = [
   { tab: 'all', path: '/users/all', label: 'All Users' },
@@ -25,6 +26,9 @@ export const USERS_LAYOUT_TAB_CONFIG: { tab: UsersTab; path: string; label: stri
   { tab: 'smart-groups', path: '/users/smart-groups', label: 'Add Smart Group' },
   { tab: 'all-smart-groups', path: '/users/all-smart-groups', label: 'Smart Groups' },
   { tab: 'my-smart-groups', path: '/users/my-smart-groups', label: 'My Smart Groups' },
+  // Worker-initiated account-deletion requests (worker app "About & Legal",
+  // 2026-08-23). App Store compliance flow — support reviews each request here.
+  { tab: 'deletion-requests', path: '/users/deletion-requests', label: 'Deletion Requests' },
 ];
 
 const STORAGE_KEY = 'hrx_users_layout_v1';
