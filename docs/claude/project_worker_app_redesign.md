@@ -119,3 +119,22 @@ logic OUT of React components.
   ⚠️ V2 parity gap: the server snapshot model has NO `complete_payroll_setup` item — port it
   before flipping the flag or the nudge disappears.
 
+## 2026-08-23 (evening) — accent decision RESOLVED + Deletion Requests admin tab
+
+- **Accent (Greg approved)**: worker palette primary = **ink #111111**, secondary = **C1 gold
+  #FFC700**. NO blue on worker surfaces. Gold never carries text — it always pairs with ink ON it
+  (badge, selected tints), never as type on white. Implemented at theme level (palette + chip
+  colorPrimary/colorSecondary, tabs indicator, TextField focus ring, selected list rows gold tint,
+  contained-hover glow killed) + bell badge color="secondary" + accepted-state buttons in
+  jobs-board/job-detail. When adding worker UI: use `color="primary"` etc. normally — the theme
+  resolves it to ink; don't hard-code hexes.
+- **Deletion Requests tab** (`/users/deletion-requests`, `src/pages/DeletionRequestsPage.tsx`):
+  table over `account_deletion_requests` joined with users docs. Shows a **"Has payroll — retain"**
+  flag when Everee markers exist (`taxIdentity.source==='everee'`, `last4SSN`, `evereeWorkerId`) —
+  those accounts must NOT be hard-deleted (retention); deactivate + mark completed with note.
+  No-history accounts: same flow as removing a dup/unused profile — User Profile → System Access →
+  Delete (`deleteUserCompletely` callable: recursive Firestore delete + Auth delete; level 6+).
+  Rules: HRX may update only `status/processedBy/processedAt/note`; requests otherwise
+  client-immutable; no client delete. Verified end-to-end in prod (dismiss flow) 2026-08-23.
+  There is still NO push notification when a request lands — support must check the tab.
+
