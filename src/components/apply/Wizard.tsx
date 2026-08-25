@@ -1238,62 +1238,61 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       (preferences as any).shift = posting.shift[0];
     }
 
-    // Requirements prefill from user profile - only prefill once on initial load
-    // This prevents overwriting user input when they're actively editing
+    // Requirements prefill from user profile — FIELD-LEVEL and always-on
+    // (Greg 2026-08-25): the old all-or-nothing gate skipped the whole merge
+    // when the draft had ANY answer, so profile-known answers ("I have a
+    // car", "I can lift 50 lbs") never reached the form and got re-asked.
+    // Existing form values always win; profile answers only fill gaps.
+    // Reads legacy top-level fields plus the canonical workerAttestations map
+    // (both the real nested map and the literal dotted keys the pre-fix
+    // setDoc writes left on older docs).
     const existingRequirements = currentFormData.requirements || {};
-    const hasExistingRequirements =
-      Object.keys(existingRequirements).length > 0 &&
-      (existingRequirements.drugScreeningComfort ||
-        existingRequirements.backgroundScreeningComfort ||
-        existingRequirements.eVerifyComfort ||
-        existingRequirements.transportMethod ||
-        existingRequirements.languagesComfort ||
-        existingRequirements.physicalRequirementsComfort ||
-        existingRequirements.uniformRequirementsComfort ||
-        existingRequirements.customUniformRequirementsComfort ||
-        existingRequirements.requiredPpeComfort ||
-        (existingRequirements.additionalScreenings &&
-          Object.keys(existingRequirements.additionalScreenings).length > 0));
+    const attestOf = (legacy: string, leaf: string): string =>
+      String(
+        userProfile[legacy] ??
+          userProfile.workerAttestations?.[leaf] ??
+          (userProfile as Record<string, unknown>)['workerAttestations.' + leaf] ??
+          '',
+      );
 
-    // Only prefill if there's no existing requirements data and we haven't prefilled yet
-    if (!hasExistingRequirements && !prefilledRef.current) {
+    {
       const requirementsPrefill = {
         ...existingRequirements,
         drugScreeningComfort:
-          existingRequirements.drugScreeningComfort || userProfile.comfortablePassDrug || '',
+          existingRequirements.drugScreeningComfort || attestOf('comfortablePassDrug', 'drugScreeningWillingness'),
         drugExplanation:
-          existingRequirements.drugExplanation || userProfile.passDrugExplanation || '',
+          existingRequirements.drugExplanation || attestOf('passDrugExplanation', 'drugScreeningNotes'),
         backgroundScreeningComfort:
           existingRequirements.backgroundScreeningComfort ||
-          userProfile.comfortablePassBackground ||
-          '',
+          attestOf('comfortablePassBackground', 'backgroundCheckWillingness'),
         backgroundExplanation:
-          existingRequirements.backgroundExplanation || userProfile.passBackgroundExplanation || '',
+          existingRequirements.backgroundExplanation || attestOf('passBackgroundExplanation', 'backgroundCheckNotes'),
         additionalScreenings: {
           ...existingRequirements.additionalScreenings,
         },
-        eVerifyComfort: existingRequirements.eVerifyComfort || userProfile.comfortableEVerify || '',
+        eVerifyComfort:
+          existingRequirements.eVerifyComfort || attestOf('comfortableEVerify', 'eVerifyWillingness'),
         transportMethod:
           existingRequirements.transportMethod ||
           userProfile.transportMethod ||
           userProfile.workerProfile?.preferences?.transportMethod ||
           '',
         languagesComfort:
-          existingRequirements.languagesComfort || userProfile.comfortableWithLanguages || '',
+          existingRequirements.languagesComfort ||
+          attestOf('comfortableWithLanguages', 'languageRequirementWillingness'),
         physicalRequirementsComfort:
           existingRequirements.physicalRequirementsComfort ||
-          userProfile.comfortableWithPhysicalRequirements ||
-          '',
+          attestOf('comfortableWithPhysicalRequirements', 'physicalRequirementWillingness'),
         uniformRequirementsComfort:
           existingRequirements.uniformRequirementsComfort ||
-          userProfile.comfortableWithUniformRequirements ||
+          attestOf('comfortableWithUniformRequirements', 'uniformRequirementWillingness') ||
           '',
         customUniformRequirementsComfort:
           existingRequirements.customUniformRequirementsComfort ||
-          userProfile.comfortableWithCustomUniformRequirements ||
-          '',
+          attestOf('comfortableWithCustomUniformRequirements', 'customUniformRequirementWillingness'),
         requiredPpeComfort:
-          existingRequirements.requiredPpeComfort || userProfile.comfortableWithRequiredPpe || '',
+          existingRequirements.requiredPpeComfort ||
+          attestOf('comfortableWithRequiredPpe', 'requiredPpeWillingness'),
       };
 
       // Prefill additional screenings from user profile with dynamic field names
@@ -1331,6 +1330,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         );
       }
 
+      const requirementsChanged =
+        JSON.stringify(requirementsPrefill) !== JSON.stringify(existingRequirements);
+
+      if (!prefilledRef.current) {
       // Only prefill if formData doesn't already have meaningful data
       // This prevents overwriting user input after account creation
       const hasExistingPersonalData =
@@ -1387,6 +1390,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         if (hasPersistedName || !missingCriticalNames) {
           personalPrefilledRef.current = true;
         }
+      }
+      } else if (requirementsChanged) {
+        // Field-level top-up only: a profile answer that arrived after the
+        // first prefill fills a still-empty form field — never overwrites.
+        persist({ requirements: requirementsPrefill });
       }
     }
   }, [userProfile, posting]);
@@ -3695,8 +3703,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           maxWidth: { sm: 720 },
           mx: 'auto',
           width: '100%',
-          px: { xs: 2, sm: 3 },
-          py: { xs: 2, sm: 3 },
+          // Phones: full-bleed card so content sits on the same 16px edge as
+          // the page/posting headers — the gutter+card+content insets were
+          // stacking to 32px+ (Greg 2026-08-25). Tablet+ keeps the card.
+          px: { xs: 0, sm: 3 },
+          py: { xs: 0, sm: 3 },
         }}
       >
         <Paper
@@ -3704,8 +3715,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           sx={{
             display: 'flex',
             flexDirection: 'column',
-            borderRadius: '12px',
-            border: '1px solid #E9E9E5',
+            borderRadius: { xs: 0, sm: '12px' },
+            border: { xs: 'none', sm: '1px solid #E9E9E5' },
             overflow: 'hidden',
             backgroundColor: 'background.paper',
           }}
