@@ -65,9 +65,10 @@ interface DeletionRequestRow {
   displayName: string | null;
   phone: string | null;
   userDocExists: boolean;
-  /** Everee linkage heuristic mirrored onto the user doc — drives the
-   *  "has payroll history" warning. */
+  /** Real Everee pay/tax linkage — drives the "has payroll history" warning. */
   hasPayrollHistory: boolean;
+  /** SSN last-4 on file but NO pay records — deletable, just flag it. */
+  hasSsnOnFileOnly: boolean;
 }
 
 function toDate(v: unknown): Date | null {
@@ -123,7 +124,7 @@ const DeletionRequestsPage: React.FC = () => {
           try {
             const uSnap = await getDoc(doc(db, 'users', r.uid));
             if (!uSnap.exists()) {
-              return { ...r, displayName: null, phone: null, userDocExists: false, hasPayrollHistory: false };
+              return { ...r, displayName: null, phone: null, userDocExists: false, hasPayrollHistory: false, hasSsnOnFileOnly: false };
             }
             const u = uSnap.data() as Record<string, unknown>;
             const first = String(u.firstName || '').trim();
@@ -132,18 +133,21 @@ const DeletionRequestsPage: React.FC = () => {
             // Everee write-through markers — any of these means real pay/tax
             // records exist and the account must NOT be hard-deleted.
             const taxIdentity = (u.taxIdentity ?? null) as Record<string, unknown> | null;
-            const hasPayrollHistory = Boolean(
-              taxIdentity?.source === 'everee' || u.last4SSN || u.evereeWorkerId,
-            );
+            // Real pay/tax records (retention applies) vs merely an SSN last-4
+            // typed at signup (no retention obligation) — the combined flag
+            // made never-placed workers look undeletable (Grissett, 8/25).
+            const hasPayrollHistory = Boolean(taxIdentity?.source === 'everee' || u.evereeWorkerId);
+            const hasSsnOnFileOnly = !hasPayrollHistory && Boolean(u.last4SSN);
             return {
               ...r,
               displayName: name,
               phone: String(u.phone || '') || null,
               userDocExists: true,
               hasPayrollHistory,
+              hasSsnOnFileOnly,
             };
           } catch {
-            return { ...r, displayName: null, phone: null, userDocExists: true, hasPayrollHistory: false };
+            return { ...r, displayName: null, phone: null, userDocExists: true, hasPayrollHistory: false, hasSsnOnFileOnly: false };
           }
         }),
       );
@@ -256,6 +260,10 @@ const DeletionRequestsPage: React.FC = () => {
                     {r.hasPayrollHistory ? (
                       <Tooltip title="Everee pay/tax records exist — do NOT hard-delete; deactivate and retain records.">
                         <Chip size="small" color="error" variant="outlined" label="Has payroll — retain" />
+                      </Tooltip>
+                    ) : r.hasSsnOnFileOnly ? (
+                      <Tooltip title="SSN last-4 was typed at signup but there are NO pay/tax records — safe to hard-delete.">
+                        <Chip size="small" color="warning" variant="outlined" label="SSN on file — no pay history" />
                       </Tooltip>
                     ) : r.userDocExists ? (
                       <Chip size="small" variant="outlined" label="None found" />

@@ -1271,7 +1271,12 @@ const UserProfilePage = () => {
           specialTraining: data.specialTraining || '',
           resume: data.resume || null,
           education: data.education || [],
-          workExperience: data.workExperience || data.workHistory || [],
+          // Length-aware: phone signup seeds workHistory: [] (truthy empty),
+          // and writers don't always populate both names.
+          workExperience:
+            (Array.isArray(data.workExperience) && data.workExperience.length > 0
+              ? data.workExperience
+              : data.workHistory) || [],
           // New fields from the schema
           preferredName: data.preferredName || '',
           // Check both 'dob' and 'dateOfBirth' fields for backward compatibility
