@@ -5,6 +5,7 @@ import { sendPasswordReset } from '../services/sendPasswordResetCallable';
 import { A, langToggleStyle } from './authMinimalStyles';
 
 import { auth } from '../firebase';
+import { setLastLoginMethod } from '../utils/lastLoginMethod';
 import { useAuth } from '../contexts/AuthContext';
 import { setLanguage } from '../i18n';
 import { useGuestLanguage } from '../hooks/useGuestLanguage';
@@ -110,6 +111,9 @@ const Login = () => {
       // Firebase reports as auth/invalid-credential (2026-08-17, two
       // candidates locked out on mobile).
       await signInWithEmailAndPassword(auth, email.trim(), password);
+      // Phone-first /login: remember this browser signs in with email so the
+      // gate sends them straight back here next time.
+      setLastLoginMethod('email');
       // don't navigate here — wait for role to resolve in useEffect
       setLocalLoading(false);
     } catch (err: any) {
@@ -226,7 +230,7 @@ const Login = () => {
 
       <footer style={A.footer}>
         <img src="/C1.png" alt="C1 Staffing" style={A.logo} />
-        <button type="button" style={A.quietLink} onClick={() => navigate('/login/phone')}>
+        <button type="button" style={A.quietLink} onClick={() => navigate('/login/phone', { state: location.state })}>
           {copy.phoneLogin}
         </button>
       </footer>

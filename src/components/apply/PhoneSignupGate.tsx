@@ -29,6 +29,7 @@ import {
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { signInWithCustomToken } from 'firebase/auth';
 import { auth } from '../../firebase';
+import { setLastLoginMethod } from '../../utils/lastLoginMethod';
 import { useT, getLanguage } from '../../i18n';
 
 interface PhoneSignupGateProps {
@@ -90,6 +91,7 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
     if (result.status === 'signed_in' && result.token) {
       const existing = result.existing === true;
       if (existing) setExistingNotice(true);
+      setLastLoginMethod('phone');
       await signInWithCustomToken(auth, String(result.token));
       setStep('done');
       onAuthed?.({ existing, uid: String(result.uid ?? '') });

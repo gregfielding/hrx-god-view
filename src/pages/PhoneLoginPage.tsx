@@ -1,7 +1,8 @@
 /**
- * Phone-number sign-in — alternate login layout (Greg 2026-08-21).
+ * Phone-number sign-in — THE DEFAULT /login since 2026-08-25 (via LoginGate;
+ * /login/phone is a direct alias, email/password moved to /login/email).
  *
- * Test surface for phone (OTP) identity, route `/login/phone`. Deliberately
+ * Deliberately
  * stripped down: system fonts, black on white, one action per screen, the C1
  * mark small at the bottom. No MUI theme, no card — utilitarian.
  *
@@ -13,8 +14,9 @@
  * Firebase phone provider, no password. See docs/claude/project_phone_auth.md.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { signInWithCustomToken, onAuthStateChanged, type User } from 'firebase/auth';
+import { setLastLoginMethod } from '../utils/lastLoginMethod';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase';
@@ -86,6 +88,7 @@ import { A as S, langToggleStyle } from './authMinimalStyles';
 
 const PhoneLoginPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   // EN/ES choice is captured three ways: persisted for guests (localStorage,
   // same as Login/Jobs Board), applied to the app i18n immediately, and
   // stamped onto users/{uid}.preferredLanguage at sign-in (see below).
@@ -117,12 +120,20 @@ const PhoneLoginPage: React.FC = () => {
         await setDoc(doc(db, 'users', u.uid), { preferredLanguage: lang, updatedAt: serverTimestamp() }, { merge: true }).catch(() => undefined);
       }
       const level = parseInt(String(snap.get('securityLevel') ?? snap.get('tenantIds')?.BCiP2bQ9CgVOCTfV6MhD?.securityLevel ?? '0'), 10);
+      // Honor the auth-guard deep link (state.from) the way the email login
+      // does — workers only, and only into worker routes.
+      const state = location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null;
+      const from = state?.from;
+      const deepLink =
+        from && typeof from.pathname === 'string' && from.pathname.startsWith('/c1/')
+          ? `${from.pathname}${from.search || ''}${from.hash || ''}`
+          : '';
       // Workers land on THEIR OWN My Account view — never the internal
       // /users/:uid admin profile (activity log & scoring leaked there 8/23).
-      navigate(level >= 5 ? '/' : '/c1/workers/dashboard', { replace: true });
+      navigate(level >= 5 ? '/' : deepLink || '/c1/workers/dashboard', { replace: true });
     });
     return unsub;
-  }, [navigate, lang]);
+  }, [navigate, lang, location.state]);
 
   const mapError = (e: unknown): string => {
     const codeStr = String((e as { code?: string })?.code || '');
@@ -137,6 +148,7 @@ const PhoneLoginPage: React.FC = () => {
 
   const handleResolution = async (res: Record<string, unknown>) => {
     if (res.status === 'signed_in' && typeof res.token === 'string') {
+      setLastLoginMethod('phone');
       await signInWithCustomToken(auth, res.token);
       return; // onAuthStateChanged redirects
     }
@@ -328,7 +340,7 @@ const PhoneLoginPage: React.FC = () => {
 
       <footer style={S.footer}>
         <img src="/C1.png" alt="C1 Staffing" style={S.logo} />
-        <button type="button" style={S.quietLink} onClick={() => navigate('/login')}>
+        <button type="button" style={S.quietLink} onClick={() => navigate('/login/email', { state: location.state })}>
           {t.emailLogin}
         </button>
       </footer>

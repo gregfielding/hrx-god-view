@@ -26,6 +26,7 @@ const UserReadinessPage = lazy(() => import('./pages/UserReadinessPage'));
 const Login = lazy(() => import('./pages/Login'));
 // Phone (OTP) sign-in — alternate login layout under test (Greg 2026-08-21).
 const PhoneLoginPage = lazy(() => import('./pages/PhoneLoginPage'));
+const LoginGate = lazy(() => import('./pages/LoginGate'));
 const UserOnboarding = lazy(() => import('./pages/UserOnboarding'));
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { canAccessAccountInvoicingTab, canAccessGlobalInvoicing } from './utils/invoicingAccessControl';
@@ -578,7 +579,10 @@ function App() {
   
   const routes = (
     <Routes>
-      <Route path="/login" element={<Login />} />
+      {/* Phone-first login (Greg 2026-08-25): /login = phone OTP screen, with
+          last-method memory bouncing email/password users to /login/email. */}
+      <Route path="/login" element={<LoginGate />} />
+      <Route path="/login/email" element={<Login />} />
       <Route path="/login/phone" element={<PhoneLoginPage />} />
       <Route path="/crm/public" element={<PublicCRMView />} />
       <Route path="/setup-password" element={<SetupPassword />} />

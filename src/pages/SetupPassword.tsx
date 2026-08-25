@@ -281,7 +281,7 @@ const SetupPassword = () => {
                   >
                     Try a different email
                   </Button>
-                  <Button variant="text" onClick={() => navigate('/login')}>
+                  <Button variant="text" onClick={() => navigate('/login/email')}>
                     Sign in instead
                   </Button>
                 </Stack>
@@ -330,7 +330,7 @@ const SetupPassword = () => {
                 <Box sx={{ mt: 2, textAlign: 'center' }}>
                   <Typography variant="body2" color="text.secondary">
                     Already set your password?{' '}
-                    <Button variant="text" size="small" onClick={() => navigate('/login')}>
+                    <Button variant="text" size="small" onClick={() => navigate('/login/email')}>
                       Sign In
                     </Button>
                   </Typography>
@@ -409,7 +409,7 @@ const SetupPassword = () => {
               <Button
                 variant="text"
                 size="small"
-                onClick={() => navigate('/login')}
+                onClick={() => navigate('/login/email')}
               >
                 Sign In
               </Button>
