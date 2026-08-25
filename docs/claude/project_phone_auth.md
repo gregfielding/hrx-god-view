@@ -208,3 +208,23 @@ Greg watched a full production signup and cut the wizard to what staffing ops ac
   NEXT UP (Greg): audit the admin /users/:uid page so the captured signup
   data (dob, email, transportMethod, attestations, previousPhones,
   signupSource, preferredLanguage) displays properly.
+
+### 2026-08-25 — admin profile now displays what signup captures
+- Overview → Qualifications card: **Application answers** section (all attestation
+  Yes/No/Maybe with attested dates — canonical workerAttestations + dotted-key
+  legacy + top-level comfortable* fallbacks — plus transport + per-job
+  additional screenings), Languages chips (was computed-but-unrendered),
+  Experience summary (yearsExperience/educationLevel were dead-code-only),
+  cert expiration dates. Settings tab: read-only **Signup & consent** card
+  (source/group, TOS/SMS/privacy stamps w/ version+date, previousPhones,
+  lastPhoneSignInAt). Built from src/pages/UserProfile/utils/
+  overviewQualificationsSnapshot.ts (applicationAnswers builder).
+- Divergence fixes: admin DOB edit dual-writes dob+dateOfBirth; record-header
+  address + quick-profile modal fall back to top-level zipCode/homeLat/homeLng;
+  workHistory/workExperience reads are length-aware (signup seeds
+  workHistory: [] which masked workExperience).
+- Deletion queue chip split: red "Has payroll — retain" now ONLY for real
+  Everee linkage (taxIdentity.source==='everee' || evereeWorkerId); SSN last-4
+  alone shows amber "SSN on file — no pay history" (safe to hard-delete).
+  Context: Grissett request 8/24 was flagged retain on SSN-only — actual
+  procedure for such: Open profile → System Access → Delete → Mark completed.
