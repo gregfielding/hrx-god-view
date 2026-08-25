@@ -43,16 +43,10 @@ const YesNoMaybeButtons: React.FC<{
   const options = ['Yes', 'No', 'Maybe'] as const;
   const labels: Record<string, string> = { Yes: t('apply.yes'), No: t('apply.no'), Maybe: t('apply.maybe') };
   
-  const getColor = (option: string, selected: boolean) => {
-    if (!selected) return 'default';
-    if (option === 'Yes') return 'success';
-    if (option === 'No') return 'error';
-    if (option === 'Maybe') return 'warning';
-    return 'default';
-  };
-
+  // Worker canon (Greg 2026-08-25): selected = C1 gold with ink text, same as
+  // the transport chips — no traffic-light colors, no hover scale.
   return (
-    <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
       {options.map((option) => {
         const isSelected = value === option;
         return (
@@ -60,24 +54,20 @@ const YesNoMaybeButtons: React.FC<{
             key={option}
             label={labels[option]}
             onClick={() => onChange(isSelected ? '' : option)}
-            color={getColor(option, isSelected) as any}
+            color={isSelected ? 'secondary' : 'default'}
             variant={isSelected ? 'filled' : 'outlined'}
             sx={{
-              minWidth: 80,
-              height: 40,
-              fontSize: '0.95rem',
+              minWidth: 72,
+              height: 36,
+              px: 0.5,
+              fontSize: '0.875rem',
               fontWeight: isSelected ? 600 : 500,
               cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              '&:hover': {
-                transform: 'scale(1.05)',
-                boxShadow: 2
-              }
             }}
           />
         );
       })}
-    </Stack>
+    </Box>
   );
 };
 
@@ -92,15 +82,29 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
     onChange({ ...value, uploaded });
   };
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  // Transport already known when this step mounted (form prefill or profile,
-  // canonical nested spot included) -> don't re-ask; see render note below.
-  const transportKnownAtMountRef = useRef<boolean>(
-    Boolean(
-      value?.transportMethod ||
-        profile?.transportMethod ||
-        profile?.workerProfile?.preferences?.transportMethod,
-    ),
+  // Only ask what we DON'T already know (Greg 2026-08-25): repeat applicants
+  // kept re-answering questions their profile already carries ("can you lift
+  // 50 lbs" on every application). A question renders only while unanswered —
+  // or when the worker answered it in THIS session (so it doesn't vanish
+  // mid-tap). Prefill lands `value` from the profile, so gating on `value`
+  // covers profile answers even when the profile loads after mount.
+  const touchedRef = useRef<Set<string>>(new Set());
+  const touch = (k: string) => touchedRef.current.add(k);
+  const hasVal = (v: unknown) => String(v ?? '').trim().length > 0;
+  const showQ = (k: string, answered: boolean) => !answered || touchedRef.current.has(k);
+  const transportAnswered = Boolean(
+    value?.transportMethod ||
+      profile?.transportMethod ||
+      profile?.workerProfile?.preferences?.transportMethod,
   );
+  // Maybe-answers need their explanation before they count as answered
+  // (mirrors the wizard's needsRequirementsStep gate).
+  const drugAnswered =
+    hasVal(value?.drugScreeningComfort) &&
+    (value?.drugScreeningComfort !== 'Maybe' || hasVal(value?.drugExplanation));
+  const backgroundAnswered =
+    hasVal(value?.backgroundScreeningComfort) &&
+    (value?.backgroundScreeningComfort !== 'Maybe' || hasVal(value?.backgroundExplanation));
   const [pendingCert, setPendingCert] = useState<string | null>(null);
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
   
@@ -345,7 +349,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
   return (
     <Box sx={{ pb: 5 }}>
       <Stack spacing={3}>
-        {showEVerify && (
+        {showEVerify && showQ('everify', hasVal(value?.eVerifyComfort)) && (
           <Box>
             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
               <Typography variant="h6" sx={{ fontWeight: 700 }}>{t('apply.eVerify')}</Typography>
@@ -357,6 +361,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
             <YesNoMaybeButtons
               value={value?.eVerifyComfort || ''}
               onChange={(val) => {
+                touch('everify');
                 onChange({ ...value, eVerifyComfort: val });
                 debouncedWriteUser({ comfortableEVerify: val });
               }}
@@ -364,7 +369,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
           </Box>
         )}
         {/* Drug Screening */}
-        {showDrugScreening && (
+        {showDrugScreening && showQ('drug', drugAnswered) && (
           <Box>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
               {t('apply.drugScreening')}
@@ -375,6 +380,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
             <YesNoMaybeButtons
               value={value?.drugScreeningComfort || ''}
               onChange={(val) => {
+                touch('drug');
                 onChange({ ...value, drugScreeningComfort: val });
                 debouncedWriteUser({ comfortablePassDrug: val });
               }}
@@ -400,7 +406,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
               {screeningPackageWorkerCopy.title}
             </Typography>
             <Stack spacing={3}>
-              {screeningPkgServices.map((svc: string) => (
+              {screeningPkgServices.filter((svc: string) => showQ('pkg:' + svc, hasVal((value?.screeningPackageServices || {})[svc]))).map((svc: string) => (
                 <Box key={`pkg-svc-${svc}`}>
                   <Typography sx={{ fontWeight: 700, mb: 1 }}>{svc}</Typography>
                   <Typography color="text.secondary" sx={{ mb: 1.5 }}>
@@ -409,6 +415,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
                   <YesNoMaybeButtons
                     value={(value?.screeningPackageServices || {})[svc] || ''}
                     onChange={(val) => {
+                      touch('pkg:' + svc);
                       const next = { ...(value?.screeningPackageServices || {}), [svc]: val };
                       onChange({ ...value, screeningPackageServices: next });
                     }}
@@ -426,7 +433,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
               {t('apply.additionalScreenings')}
             </Typography>
             <Stack spacing={3}>
-              {jobPosting.additionalScreenings.map((screenName: string) => (
+              {jobPosting.additionalScreenings.filter((screenName: string) => showQ('add:' + screenName, hasVal((value?.additionalScreenings || {})[screenName]))).map((screenName: string) => (
                 <Box key={`add-screen-${screenName}`}>
                   <Typography sx={{ fontWeight: 700, mb: 1 }}>{screenName}</Typography>
                   <Typography color="text.secondary" sx={{ mb: 1.5 }}>
@@ -435,6 +442,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
                   <YesNoMaybeButtons
                     value={(value?.additionalScreenings || {})[screenName] || ''}
                     onChange={(val) => {
+                      touch('add:' + screenName);
                       const next = { ...(value?.additionalScreenings || {}), [screenName]: val };
                       onChange({ ...value, additionalScreenings: next });
                       const dynamicKey = `comfortableWith${screenName.replace(/[^a-zA-Z0-9]+/g,'')}`;
@@ -447,7 +455,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
           </Box>
         )}
 
-        {showBackgroundScreening && (
+        {showBackgroundScreening && showQ('background', backgroundAnswered) && (
           <Box>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
               {t('apply.backgroundScreening')}
@@ -458,6 +466,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
             <YesNoMaybeButtons
               value={value?.backgroundScreeningComfort || ''}
               onChange={(val) => {
+                touch('background');
                 onChange({ ...value, backgroundScreeningComfort: val });
                 debouncedWriteUser({ comfortablePassBackground: val });
               }}
@@ -479,7 +488,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       </Stack>
 
       {/* Language Requirements */}
-      {showLanguages && requiredLanguages.length > 0 && (
+      {showLanguages && requiredLanguages.length > 0 && showQ('languages', hasVal(value?.languagesComfort)) && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
             {t('apply.languageRequirements')}
@@ -490,6 +499,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
           <YesNoMaybeButtons
             value={value?.languagesComfort || ''}
             onChange={(val) => {
+              touch('languages');
               onChange({ ...value, languagesComfort: val });
               debouncedWriteUser({ comfortableWithLanguages: val });
             }}
@@ -498,7 +508,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       )}
 
       {/* Physical Requirements */}
-      {showPhysicalRequirements && requiredPhysical.length > 0 && (
+      {showPhysicalRequirements && requiredPhysical.length > 0 && showQ('physical', hasVal(value?.physicalRequirementsComfort)) && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
             {t('apply.physicalRequirements')}
@@ -509,6 +519,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
           <YesNoMaybeButtons
             value={value?.physicalRequirementsComfort || ''}
             onChange={(val) => {
+              touch('physical');
               onChange({ ...value, physicalRequirementsComfort: val });
               debouncedWriteUser({ comfortableWithPhysicalRequirements: val });
             }}
@@ -517,7 +528,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       )}
 
       {/* Uniform Requirements */}
-      {showUniformRequirements && requiredUniform.length > 0 && (
+      {showUniformRequirements && requiredUniform.length > 0 && showQ('uniform', hasVal(value?.uniformRequirementsComfort)) && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
             {t('apply.uniformRequirements')}
@@ -528,6 +539,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
           <YesNoMaybeButtons
             value={value?.uniformRequirementsComfort || ''}
             onChange={(val) => {
+              touch('uniform');
               onChange({ ...value, uniformRequirementsComfort: val });
               debouncedWriteUser({ comfortableWithUniformRequirements: val });
             }}
@@ -536,7 +548,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       )}
 
       {/* Custom Uniform Requirements */}
-      {showCustomUniformRequirements && customUniformText && (
+      {showCustomUniformRequirements && customUniformText && showQ('customUniform', hasVal(value?.customUniformRequirementsComfort)) && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
             {t('apply.customUniformRequirements')}
@@ -547,6 +559,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
           <YesNoMaybeButtons
             value={value?.customUniformRequirementsComfort || ''}
             onChange={(val) => {
+              touch('customUniform');
               onChange({ ...value, customUniformRequirementsComfort: val });
               debouncedWriteUser({ comfortableWithCustomUniformRequirements: val });
             }}
@@ -555,7 +568,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       )}
 
       {/* Required PPE */}
-      {showRequiredPpe && requiredPpe.length > 0 && (
+      {showRequiredPpe && requiredPpe.length > 0 && showQ('ppe', hasVal(value?.requiredPpeComfort)) && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
             {t('apply.requiredPpe')}
@@ -566,6 +579,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
           <YesNoMaybeButtons
             value={value?.requiredPpeComfort || ''}
             onChange={(val) => {
+              touch('ppe');
               onChange({ ...value, requiredPpeComfort: val });
               debouncedWriteUser({ comfortableWithRequiredPpe: val });
             }}
@@ -578,7 +592,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
           question the worker answered on a previous application read as a
           save bug (Greg 2026-08-25). Mount-time check so the section doesn't
           vanish mid-tap for workers answering it now. */}
-      {!transportKnownAtMountRef.current && (
+      {showQ('transport', transportAnswered) && (
       <Box sx={{ mt: 3 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
           {t('apply.howWillYouGetToWork')}
@@ -602,6 +616,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
                 icon={<Icon fontSize="small" />}
                 label={t(option.labelKey)}
                 onClick={() => {
+                  touch('transport');
                   const newValue = isSelected ? '' : option.value;
                   onChange({ ...value, transportMethod: newValue });
                   debouncedWriteUser({ transportMethod: newValue });

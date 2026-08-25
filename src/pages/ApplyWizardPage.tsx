@@ -1,10 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Box, CircularProgress, Typography } from '@mui/material';
+import { Box, CircularProgress, Stack, ThemeProvider, Typography } from '@mui/material';
 import { useParams } from 'react-router-dom';
 import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import Wizard from '../components/apply/Wizard';
+import { getWorkerTheme } from '../theme/workerTheme';
+import { langToggleStyle } from './authMinimalStyles';
+import { useGuestLanguage } from '../hooks/useGuestLanguage';
+import { loadLocale, setLanguage } from '../i18n';
 
 type RouteParams = {
   tenantSlug?: string;
@@ -14,6 +18,26 @@ type RouteParams = {
 const ApplyWizardPage: React.FC = () => {
   const { tenantSlug, jobId } = useParams<RouteParams>();
   const { user } = useAuth();
+  // Same shell as /c1/apply (Greg 2026-08-25): the jobs-board apply ran the
+  // shared wizard on the ADMIN theme — blue buttons, wrong fonts. Worker
+  // canon + the quiet EN|ES toggle now wrap this route too.
+  const workerTheme = useMemo(() => getWorkerTheme(), []);
+  const [guestLanguage, setGuestLanguage] = useGuestLanguage();
+  const [localeLoading, setLocaleLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLocaleLoading(true);
+    setLanguage(guestLanguage);
+    loadLocale(guestLanguage)
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLocaleLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [guestLanguage]);
 
   const [loading, setLoading] = useState(true);
   const [tenantId, setTenantId] = useState<string | null>(null);
@@ -105,7 +129,7 @@ const ApplyWizardPage: React.FC = () => {
     return () => { cancelled = true; };
   }, [effectiveTenantSlug, rawTenantSlug]);
 
-  if (loading) {
+  if (loading || localeLoading) {
     return (
       <Box display="flex" alignItems="center" justifyContent="center" minHeight="40vh">
         <CircularProgress size={28} />
@@ -123,15 +147,49 @@ const ApplyWizardPage: React.FC = () => {
   }
 
   return (
-    <Box sx={{ px: 0, py: 0 }}>
-      <Wizard
-        tenantId={tenantId}
-        tenantSlug={actualSlug || rawTenantSlug}
-        tenantName={tenantName || undefined}
-        jobId={jobId}
-        uid={user?.uid || null}
-      />
-    </Box>
+    <ThemeProvider theme={workerTheme}>
+      <Box sx={{ bgcolor: 'background.default', minHeight: '100vh', pb: 4 }}>
+        <Box
+          sx={{
+            px: { xs: 2, sm: 3 },
+            pt: { xs: 2, sm: 3 },
+            pb: 0,
+            maxWidth: { sm: 720 },
+            mx: 'auto',
+          }}
+        >
+          <Stack direction="row" alignItems="baseline" justifyContent="space-between" spacing={1}>
+            {/* Job applies get their title from the wizard's posting header;
+                the generic route mirrors /c1/apply's auth-aware title. */}
+            <Typography variant="h5" component="h1">
+              {jobId
+                ? guestLanguage === 'es'
+                  ? 'Aplicar'
+                  : 'Apply'
+                : user
+                  ? guestLanguage === 'es'
+                    ? 'Completa tu perfil'
+                    : 'Finish your profile'
+                  : guestLanguage === 'es'
+                    ? 'Crear cuenta'
+                    : 'Sign up'}
+            </Typography>
+            <Box sx={{ whiteSpace: 'nowrap' }}>
+              <button type="button" style={langToggleStyle(guestLanguage === 'en')} onClick={() => setGuestLanguage('en')}>EN</button>
+              <span style={{ color: '#ccc', margin: '0 8px' }}>|</span>
+              <button type="button" style={langToggleStyle(guestLanguage === 'es')} onClick={() => setGuestLanguage('es')}>ES</button>
+            </Box>
+          </Stack>
+        </Box>
+        <Wizard
+          tenantId={tenantId}
+          tenantSlug={actualSlug || rawTenantSlug}
+          tenantName={tenantName || undefined}
+          jobId={jobId}
+          uid={user?.uid || null}
+        />
+      </Box>
+    </ThemeProvider>
   );
 };
 
