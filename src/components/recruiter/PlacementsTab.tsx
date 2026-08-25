@@ -4277,6 +4277,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       return;
     }
     // Optimistic immediately; the offer fires when the undo window closes.
+    // 60s → 10s (Danny via Greg, 2026-08-25): recruiters sat waiting out the
+    // window before they could confirm each worker.
     pendingHireShiftByWorkerRef.current.set(worker.id, targetShiftId);
     setPendingHireWorkerIds((prev) => new Set(prev).add(worker.id));
     const fire = () => {
@@ -4284,7 +4286,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       setUndoHireCount(pendingUndoHiresRef.current.size);
       void executeDelayedHire(worker, targetShiftId);
     };
-    const timer = setTimeout(fire, 60_000);
+    const timer = setTimeout(fire, 10_000);
     pendingUndoHiresRef.current.set(worker.id, { timer, fire });
     setUndoHireCount(pendingUndoHiresRef.current.size);
   };
@@ -5709,7 +5711,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         <Snackbar
           open={undoHireCount > 0}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-          message={`Hiring ${undoHireCount} worker${undoHireCount === 1 ? '' : 's'} — the offer text sends in 60 seconds`}
+          message={`Hiring ${undoHireCount} worker${undoHireCount === 1 ? '' : 's'} — the offer text sends in 10 seconds`}
           action={
             <Button color="secondary" size="small" onClick={undoAllPendingHires}>
               Undo
