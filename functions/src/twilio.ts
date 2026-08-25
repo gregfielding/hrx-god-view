@@ -373,11 +373,20 @@ async function resolvePhoneSignIn(
  *     password) + users doc (wizard base-profile shape, email null) →
  *     custom token. Kills duplicate accounts at the source.
  */
+/** MM/DD/YYYY or YYYY-MM-DD → YYYY-MM-DD; '' when unparseable. */
+function normalizeDobIso(raw: unknown): string {
+  const s = String(raw ?? '').trim();
+  const mdY = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  const iso = mdY ? `${mdY[3]}-${mdY[1].padStart(2, '0')}-${mdY[2].padStart(2, '0')}` : s;
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : '';
+}
+
 async function resolvePhoneSignup(
   phoneE164: string,
   opts: {
     firstName?: string;
     lastName?: string;
+    dob?: string;
     preferredLanguage?: string;
     signupSource?: string;
     signupGroupId?: string | null;
@@ -416,6 +425,10 @@ async function resolvePhoneSignup(
   const lastName = String(opts.lastName ?? '').trim().slice(0, 60);
   const displayName = [firstName, lastName].filter(Boolean).join(' ');
   const preferredLanguage = String(opts.preferredLanguage ?? '').toLowerCase() === 'es' ? 'es' : 'en';
+  // DOB must persist HERE: step 0 auto-filters once the worker is authed, so
+  // its save-on-Next never runs — without this the typed DOB died in
+  // localStorage (found 2026-08-25 during the Slice 3 E2E).
+  const dobIso = normalizeDobIso(opts.dob);
 
   // Mint the Auth user with the verified phone. A same-phone Auth user can
   // exist without a users doc (throwaway from old experiments) — reuse it.
@@ -450,6 +463,7 @@ async function resolvePhoneSignup(
       displayName,
       firstName,
       lastName,
+      ...(dobIso ? { dob: dobIso } : {}),
       phone: tenDigit,
       phoneE164,
       phoneVerified: true,
@@ -684,6 +698,7 @@ export const checkOtp = onCall(
       return resolvePhoneSignup(phoneE164, {
         firstName: String(d.firstName ?? ''),
         lastName: String(d.lastName ?? ''),
+        dob: String(d.dob ?? ''),
         preferredLanguage: String(d.preferredLanguage ?? ''),
         signupSource: String(d.signupSource ?? ''),
         signupGroupId: (d.signupGroupId as string) ?? null,
@@ -720,6 +735,7 @@ export const checkOtp = onCall(
       return resolvePhoneSignup(phoneE164, {
         firstName: String(d.firstName ?? ''),
         lastName: String(d.lastName ?? ''),
+        dob: String(d.dob ?? ''),
         preferredLanguage: String(d.preferredLanguage ?? ''),
         signupSource: String(d.signupSource ?? ''),
         signupGroupId: (d.signupGroupId as string) ?? null,

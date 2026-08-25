@@ -3294,6 +3294,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 firstName={String((formData.personal as any)?.firstName || '')}
                 lastName={String((formData.personal as any)?.lastName || '')}
                 phone={String((formData.personal as any)?.phone || '')}
+                dob={String((formData.personal as any)?.dob || '')}
                 signupSource={signupGroupId ? 'apply_group_landing' : 'apply_landing'}
                 signupGroupId={signupGroupId || null}
                 jobContext={{

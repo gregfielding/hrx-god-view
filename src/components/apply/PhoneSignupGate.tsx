@@ -37,6 +37,9 @@ interface PhoneSignupGateProps {
   lastName: string;
   /** 10-digit US phone as typed in the personal-info form. */
   phone: string;
+  /** DOB as typed (MM/DD/YYYY or YYYY-MM-DD). Sent with signup so the server
+   *  persists it — step 0 auto-filters after auth, so its own save never runs. */
+  dob?: string;
   signupSource: string;
   signupGroupId?: string | null;
   jobContext?: { tenantId?: string | null; tenantSlug?: string | null; jobId?: string | null } | null;
@@ -63,6 +66,7 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
   firstName,
   lastName,
   phone,
+  dob = '',
   signupSource,
   signupGroupId = null,
   jobContext = null,
@@ -125,6 +129,7 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
         signup: true,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
+        dob: dob.trim(),
         preferredLanguage: getLanguage(),
         signupSource,
         signupGroupId,
