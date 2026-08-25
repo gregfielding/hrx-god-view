@@ -189,10 +189,11 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId }) => {
 
       {/* Upload Options */}
       <Box>
-        <Stack spacing={1.25} sx={{ maxWidth: 360 }}>
+        {/* Quieter than the nav CTA on purpose — Submit/Next stays the loudest
+            action on the screen (Greg 2026-08-25). */}
+        <Stack spacing={1} sx={{ maxWidth: 240, mx: 'auto', mt: 1 }}>
           <Button
             variant="contained"
-            size="large"
             startIcon={<PhotoCamera />}
             onClick={handleTakePhoto}
             disabled={uploading}
@@ -202,7 +203,6 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId }) => {
           </Button>
           <Button
             variant="outlined"
-            size="large"
             startIcon={<Upload />}
             onClick={handleUploadPhoto}
             disabled={uploading}
