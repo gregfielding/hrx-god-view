@@ -313,7 +313,11 @@ const PhoneLoginPage: React.FC = () => {
           <div>
             <p style={{ fontSize: 16, lineHeight: 1.45, margin: '0 0 8px' }}>{t.noAccountTitle}</p>
             <p style={S.hint}>{t.noAccountHint}</p>
-            <button type="button" style={S.button} onClick={() => navigate('/c1/apply')}>{t.signUp}</button>
+            <button
+              type="button"
+              style={S.button}
+              onClick={() => navigate(`/c1/apply?phone=${encodeURIComponent(phone.replace(/\D/g, '').slice(-10))}`)}
+            >{t.signUp}</button>
             <div style={{ marginTop: 24 }}>
               <button type="button" style={S.linkBtn} onClick={reset}>{t.startOver}</button>
             </div>

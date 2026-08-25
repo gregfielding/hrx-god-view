@@ -1974,5 +1974,20 @@
     "loadingThread": "Loading conversation…",
     "entryTitle": "Payroll help",
     "entrySubtitle": "Pay, direct deposit, or setup issues"
+  },
+  "phoneSignup": {
+    "title": "Verify your phone to create your account",
+    "subtitle": "No password needed — we'll text you a 6-digit code. If you've worked with C1 before, this signs you back into your existing account.",
+    "sendCode": "Text me a code",
+    "fillNamePhone": "Enter your first name, last name, and mobile number above first.",
+    "codeLabel": "6-digit code",
+    "verify": "Verify",
+    "resend": "Resend code",
+    "choosePrompt": "This phone number is on more than one account. Which one is you?",
+    "continue": "Continue",
+    "welcomeBack": "Welcome back — we found your existing account and signed you in.",
+    "accountReady": "Your account is ready — continue below.",
+    "genericError": "Something went wrong — please try again.",
+    "emailOptional": "Optional — we'll ask again later if payroll needs it."
   }
 }

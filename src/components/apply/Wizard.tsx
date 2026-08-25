@@ -51,6 +51,7 @@ import {
 import WorkEligibilityStep from './steps/WorkEligibilityStep';
 import { isWorkAuthCollectionDisabled } from '../../utils/workAuthCollectionFlag';
 import ProfilePictureStep from './steps/ProfilePictureStep';
+import PhoneSignupGate from '../apply/PhoneSignupGate';
 import ResumeStep from './steps/ResumeStep';
 import SkillsStep from './steps/SkillsStep';
 import EducationStep from './steps/EducationStep';
@@ -360,6 +361,21 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     } catch {
       return null;
     }
+  }, [searchParams]);
+
+  // Phone prefill from the login page's "no account → sign up" handoff
+  // (Slice 2): /c1/apply?phone=5551234567 seeds the personal form so the
+  // worker only types their number once.
+  useEffect(() => {
+    try {
+      const qp = String(searchParams.get('phone') || '').replace(/\D/g, '').slice(-10);
+      if (qp.length === 10 && !String((formData.personal as any)?.phone || '').trim()) {
+        persist({ personal: { ...(formData.personal || {}), phone: qp } });
+      }
+    } catch {
+      /* prefill is best-effort */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   // Extract selected shifts from query params (for Gig jobs)
@@ -1678,6 +1694,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       }
       // Create account after Personal Info step if not authenticated
       if (actualStep === 0 && !auth.currentUser) {
+        // Phone-first signup (Slice 2, 2026-08-25): accounts are created ONLY
+        // by the PhoneSignupGate OTP flow — Continue is disabled until then,
+        // so this legacy email/password branch must never run again.
+        alert(t('phoneSignup.fillNamePhone'));
+        setSaving(false);
+        return;
+        // eslint-disable-next-line no-unreachable
         const email = String(formData?.personal?.email || '').trim();
         if (!email) {
           alert(t('apply.enterEmail'));
@@ -3298,10 +3321,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             <PersonalInfoStep
               value={formData.personal || {}}
               onChange={(v) => persist({ personal: v })}
-              onPasswordChange={(pwd, confirmPwd) => {
-                setPassword(pwd);
-                setConfirmPassword(confirmPwd);
-              }}
+              hidePasswordFields
               showAddressFields={false}
             />
             <Box sx={{ mt: 3 }}>
@@ -3310,6 +3330,23 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 onChange={(v) => persist({ personal: v })}
               />
             </Box>
+            {/* Phone-first account creation (Slice 2, 2026-08-25): the gate
+                claims an existing account by phone or mints a passwordless
+                one server-side. Continue stays disabled until authenticated. */}
+            {!auth.currentUser && (
+              <PhoneSignupGate
+                firstName={String((formData.personal as any)?.firstName || '')}
+                lastName={String((formData.personal as any)?.lastName || '')}
+                phone={String((formData.personal as any)?.phone || '')}
+                signupSource={signupGroupId ? 'apply_group_landing' : 'apply_landing'}
+                signupGroupId={signupGroupId || null}
+                jobContext={{
+                  tenantId: tenantId || null,
+                  tenantSlug: tenantSlug ? String(tenantSlug).trim() : null,
+                  jobId: jobId ? String(jobId).trim() : null,
+                }}
+              />
+            )}
           </>
         );
       case 1:
@@ -3559,10 +3596,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     const email = typeof p.email === 'string' ? p.email.trim() : '';
     const phone = String(p.phone ?? '').trim();
     const dob = toDobString(p.dob);
+    // Email is OPTIONAL since phone-first signup (Slice 2, 2026-08-25) —
+    // Everee collects it later when payroll actually needs it.
     return !!(
       firstName &&
       lastName &&
-      email &&
       isValidUsPhone10(phone) &&
       dob &&
       dob.length >= 10
@@ -3875,10 +3913,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                         missing.everify ||
                         missing.additional.length > 0)) ||
                     (actualStep === 0 &&
-                      (!personalValid ||
-                        !addressValid ||
-                        (!auth.currentUser &&
-                          (password.length < 6 || password !== confirmPassword)))) ||
+                      (!personalValid || !addressValid || !auth.currentUser)) ||
                     (actualStep === 1 && !addressValid) ||
                     (actualStep === 3 &&
                       !String(formData?.requirements?.eVerifyComfort || '').trim()) ||

@@ -11,6 +11,9 @@ type Props = {
   value: any;
   onChange: (v: any) => void;
   onPasswordChange?: (password: string, confirmPassword: string) => void;
+  /** Phone-first signup (Slice 2, 2026-08-25): account creation happens via
+   *  the PhoneSignupGate OTP — no password is ever collected. */
+  hidePasswordFields?: boolean;
   showAddressFields?: boolean;
 };
 
@@ -104,7 +107,7 @@ const formatDateForStorage = (dateString: string) => {
   return '';
 };
 
-const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, showAddressFields = false }) => {
+const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, showAddressFields = false, hidePasswordFields = false }) => {
   const t = useT();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -502,7 +505,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             isFromResume={isFieldFromResume('email')} 
             confidence={getFieldConfidence('email')}
           >
-            <TextField fullWidth required type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} />
+            <TextField fullWidth type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} helperText={t('phoneSignup.emailOptional')} />
           </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
@@ -611,7 +614,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                   isFromResume={isFieldFromResume('email')} 
                   confidence={getFieldConfidence('email')}
                 >
-                  <TextField fullWidth required type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} />
+                  <TextField fullWidth type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} helperText={t('phoneSignup.emailOptional')} />
                 </ResumeSuggestionField>
               </Grid>
               <Grid item xs={12} md={6}>
@@ -697,8 +700,9 @@ label={t('profile.dateOfBirth')}
         </Card>
       )}
 
-      {/* Password Fields - Only show if not authenticated */}
-      {!isAuthenticated && (
+      {/* Password Fields - Only show if not authenticated (and not the
+          phone-first signup flow, which never collects a password) */}
+      {!isAuthenticated && !hidePasswordFields && (
         <Box sx={{ mt: isMobile ? 2 : 3 }}>
           {isMobile ? (
             <>

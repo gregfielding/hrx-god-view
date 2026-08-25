@@ -1974,5 +1974,20 @@
     "loadingThread": "Cargando conversación…",
     "entryTitle": "Ayuda con la nómina",
     "entrySubtitle": "Problemas de pago, depósito directo o configuración"
+  },
+  "phoneSignup": {
+    "title": "Verifica tu teléfono para crear tu cuenta",
+    "subtitle": "Sin contraseña — te enviaremos un código de 6 dígitos por texto. Si ya trabajaste con C1, esto te conecta a tu cuenta existente.",
+    "sendCode": "Envíame un código",
+    "fillNamePhone": "Primero escribe tu nombre, apellido y número de celular arriba.",
+    "codeLabel": "Código de 6 dígitos",
+    "verify": "Verificar",
+    "resend": "Reenviar código",
+    "choosePrompt": "Este número de teléfono está en más de una cuenta. ¿Cuál eres tú?",
+    "continue": "Continuar",
+    "welcomeBack": "¡Bienvenido de nuevo! Encontramos tu cuenta existente y ya iniciaste sesión.",
+    "accountReady": "Tu cuenta está lista — continúa abajo.",
+    "genericError": "Algo salió mal — inténtalo de nuevo.",
+    "emailOptional": "Opcional — te lo pediremos después si la nómina lo necesita."
   }
 }

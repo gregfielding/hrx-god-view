@@ -312,6 +312,158 @@ async function resolvePhoneSignIn(
   };
 }
 
+
+/**
+ * Phone-first SIGNUP resolution (Slice 2, Greg approved 2026-08-25) — the
+ * one shared account-creation path. After Twilio approves the code:
+ *   - phone already has account(s) → NEVER create a second: same claim
+ *     behavior as sign-in (single/survivor mint, household picker) with
+ *     `existing: true` so the UI can say "welcome back".
+ *   - no account → rehire gate (exact-phone match on rehireEligible:false,
+ *     generic denial) → mint Auth user with the VERIFIED phone (no
+ *     password) + users doc (wizard base-profile shape, email null) →
+ *     custom token. Kills duplicate accounts at the source.
+ */
+async function resolvePhoneSignup(
+  phoneE164: string,
+  opts: {
+    firstName?: string;
+    lastName?: string;
+    preferredLanguage?: string;
+    signupSource?: string;
+    signupGroupId?: string | null;
+    jobContext?: { tenantId?: string | null; tenantSlug?: string | null; jobId?: string | null } | null;
+    ip: string;
+  },
+): Promise<Record<string, unknown>> {
+  const existing = await resolvePhoneSignIn(phoneE164, { ip: opts.ip });
+  if (existing.status !== 'no_account') {
+    return { ...existing, existing: true };
+  }
+
+  // Rehire-ineligibility gate — exact phone match, generic message
+  // (mirrors separation/checkRehireEligibility; never reveal the flag).
+  const tenDigit = phoneE164.replace(/\D/g, '').slice(-10);
+  for (const [field, value] of [
+    ['phoneE164', phoneE164],
+    ['phone', tenDigit],
+  ] as const) {
+    const flagged = await db
+      .collection('users')
+      .where(field, '==', value)
+      .where('rehireEligible', '==', false)
+      .limit(1)
+      .get()
+      .catch(() => null);
+    if (flagged && !flagged.empty) {
+      throw new HttpsError(
+        'failed-precondition',
+        'We are unable to create an account with this information. Please contact C1 Staffing for assistance.',
+      );
+    }
+  }
+
+  const firstName = String(opts.firstName ?? '').trim().slice(0, 60);
+  const lastName = String(opts.lastName ?? '').trim().slice(0, 60);
+  const displayName = [firstName, lastName].filter(Boolean).join(' ');
+  const preferredLanguage = String(opts.preferredLanguage ?? '').toLowerCase() === 'es' ? 'es' : 'en';
+
+  // Mint the Auth user with the verified phone. A same-phone Auth user can
+  // exist without a users doc (throwaway from old experiments) — reuse it.
+  let uid: string;
+  try {
+    const created = await admin.auth().createUser({
+      phoneNumber: phoneE164,
+      ...(displayName ? { displayName } : {}),
+    });
+    uid = created.uid;
+  } catch (e: unknown) {
+    const code = (e as { code?: string })?.code ?? '';
+    if (code === 'auth/phone-number-already-exists') {
+      const holder = await admin.auth().getUserByPhoneNumber(phoneE164);
+      uid = holder.uid;
+    } else {
+      throw new HttpsError('internal', 'Could not create your account. Please try again.');
+    }
+  }
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const jobId = String(opts.jobContext?.jobId ?? '').trim();
+  const signupGroupId = String(opts.signupGroupId ?? '').trim() || null;
+  const resumePath = jobId ? 'job' : signupGroupId ? 'c1_group' : 'c1_general';
+  const agreementStamp = { agreed: true, version: '2025-10-21', timestamp: new Date().toISOString() };
+  // Wizard base-profile shape (apply/Wizard.tsx step 0) — email is null and
+  // OPTIONAL now; Everee's flow collects it later when payroll needs it.
+  await db.doc(`users/${uid}`).set(
+    {
+      uid,
+      email: null,
+      displayName,
+      firstName,
+      lastName,
+      phone: tenDigit,
+      phoneE164,
+      phoneVerified: true,
+      phoneVerifiedAt: now,
+      phoneVerification: {
+        verified: true,
+        phoneNumber: phoneE164,
+        verifiedAt: new Date().toISOString(),
+        method: 'twilio_verify_signup',
+      },
+      createdAt: now,
+      updatedAt: now,
+      source: 'phone_signup',
+      signupSource: String(opts.signupSource ?? 'phone_signup').slice(0, 40),
+      signupGroupId,
+      applyResumeSnapshot: {
+        path: resumePath,
+        tenantId: String(opts.jobContext?.tenantId ?? '').trim() || null,
+        tenantSlug: String(opts.jobContext?.tenantSlug ?? '').trim() || null,
+        jobId: jobId || null,
+        signupGroupId,
+      },
+      applyWizardReminderPending: true,
+      profileComplete: false,
+      onboarded: false,
+      role: 'Tenant',
+      orgType: 'Tenant',
+      preferredLanguage,
+      isActive: true,
+      skills: [],
+      certifications: [],
+      languages: [],
+      education: [],
+      workHistory: [],
+      applications: [],
+      favorites: [],
+      crm_sales: false,
+      recruiter: false,
+      jobsBoard: false,
+      userGroupIds: [],
+      userAgreements: {
+        termsOfUse: agreementStamp,
+        smsConsent: agreementStamp,
+        privacyPolicy: { acknowledged: true, version: '2025-10-21', timestamp: agreementStamp.timestamp },
+      },
+    },
+    { merge: true },
+  );
+
+  await db.collection('phone_signin_audit').add({
+    uid,
+    phoneE164,
+    mode: 'signup_created',
+    cluster: [uid],
+    ip: opts.ip,
+    signupSource: String(opts.signupSource ?? 'phone_signup').slice(0, 40),
+    at: now,
+  });
+  const token = await admin.auth().createCustomToken(uid, { phoneSignIn: true });
+  logger.info('phone signup created', { uid, signupSource: opts.signupSource ?? null });
+  return { status: 'signed_in', token, uid, created: true };
+}
+
 /**
  * Verify OTP code via Twilio Verify
  */
@@ -328,8 +480,8 @@ export const checkOtp = onCall(
   //   throw new HttpsError('unauthenticated', 'Must be signed in to verify phone');
   // }
 
-  const { phoneE164, code, signIn, selectionToken, pick } = request.data as {
-    phoneE164: string; code?: string; signIn?: boolean; selectionToken?: string; pick?: string;
+  const { phoneE164, code, signIn, signup, selectionToken, pick } = request.data as {
+    phoneE164: string; code?: string; signIn?: boolean; signup?: boolean; selectionToken?: string; pick?: string;
   };
   const uid = request.auth?.uid; // Get uid from request auth if available
   const callerIp = String(request.rawRequest?.headers?.['x-forwarded-for'] ?? request.rawRequest?.ip ?? '').split(',')[0].trim();
@@ -366,6 +518,20 @@ export const checkOtp = onCall(
     // Phone SIGN-IN mode: turn the approved code into a session for the existing account.
     if (signIn === true) {
       return resolvePhoneSignIn(phoneE164, { ip: callerIp });
+    }
+
+    // Phone SIGNUP mode (Slice 2): claim the existing account or create one.
+    if (signup === true) {
+      const d = request.data as Record<string, unknown>;
+      return resolvePhoneSignup(phoneE164, {
+        firstName: String(d.firstName ?? ''),
+        lastName: String(d.lastName ?? ''),
+        preferredLanguage: String(d.preferredLanguage ?? ''),
+        signupSource: String(d.signupSource ?? ''),
+        signupGroupId: (d.signupGroupId as string) ?? null,
+        jobContext: (d.jobContext as { tenantId?: string; tenantSlug?: string; jobId?: string } | null) ?? null,
+        ip: callerIp,
+      });
     }
 
     // Update user profile with verified phone
