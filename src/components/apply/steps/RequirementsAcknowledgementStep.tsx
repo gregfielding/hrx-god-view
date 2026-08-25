@@ -92,6 +92,15 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
     onChange({ ...value, uploaded });
   };
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Transport already known when this step mounted (form prefill or profile,
+  // canonical nested spot included) -> don't re-ask; see render note below.
+  const transportKnownAtMountRef = useRef<boolean>(
+    Boolean(
+      value?.transportMethod ||
+        profile?.transportMethod ||
+        profile?.workerProfile?.preferences?.transportMethod,
+    ),
+  );
   const [pendingCert, setPendingCert] = useState<string | null>(null);
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
   
@@ -564,7 +573,12 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         </Box>
       )}
 
-      {/* Transport Method */}
+      {/* Transport Method — only when we don't already know it. This step
+          renders for ANY unanswered posting requirement, and re-asking a
+          question the worker answered on a previous application read as a
+          save bug (Greg 2026-08-25). Mount-time check so the section doesn't
+          vanish mid-tap for workers answering it now. */}
+      {!transportKnownAtMountRef.current && (
       <Box sx={{ mt: 3 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
           {t('apply.howWillYouGetToWork')}
@@ -606,6 +620,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
           })}
         </Box>
       </Box>
+      )}
 
       {/* Hidden file input used for uploads */}
       <input

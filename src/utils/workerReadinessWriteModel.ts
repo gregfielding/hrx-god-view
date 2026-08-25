@@ -59,6 +59,42 @@ function setIfDefined(target: AnyMap, key: string, value: unknown) {
 }
 
 /**
+ * Convert a patch's dotted keys ('workerProfile.preferences.transportMethod')
+ * into real nested objects, for use with **setDoc + merge** ONLY.
+ *
+ * ☠️ Why this exists (found 2026-08-25 on Greg's worker doc): `updateDoc`
+ * interprets dots as field paths, but `setDoc({merge:true})` treats them as
+ * LITERAL field names — every setDoc call site that passed this model's
+ * dotted patch has been stamping corrupt top-level fields like
+ * `"workerProfile.preferences.transportMethod"` onto users docs, alongside
+ * (and disagreeing with) the real nested map written by updateDoc callers.
+ * setDoc+merge deep-merges nested maps, so the expanded shape is safe here.
+ * Do NOT pass the expanded shape to `updateDoc` — there a nested object
+ * REPLACES the whole map and wipes sibling fields.
+ */
+export function expandDottedKeys(patch: AnyMap): AnyMap {
+  const out: AnyMap = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (!key.includes('.')) {
+      out[key] = value;
+      continue;
+    }
+    const parts = key.split('.');
+    let node: AnyMap = out;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      const existing = node[part];
+      if (existing === null || typeof existing !== 'object' || Array.isArray(existing)) {
+        node[part] = {};
+      }
+      node = node[part] as AnyMap;
+    }
+    node[parts[parts.length - 1]] = value;
+  }
+  return out;
+}
+
+/**
  * Options for `buildCanonicalWorkerProfileWritePatch`.
  *
  * `source` controls the `workerAttestations._meta.<field>.source` value

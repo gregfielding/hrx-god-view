@@ -72,7 +72,7 @@ import { getRequirementPackV1 } from '../../data/jobRequirementPacksV1';
 import { computeJobScoreSummaryV1 } from '../../utils/jobScoreV1';
 import { getUserScore } from '../../utils/scoreSummary';
 import { useT } from '../../i18n';
-import { buildCanonicalWorkerProfileWritePatch } from '../../utils/workerReadinessWriteModel';
+import { buildCanonicalWorkerProfileWritePatch, expandDottedKeys } from '../../utils/workerReadinessWriteModel';
 import { buildCanonicalHomeAddressFromWizardPersonal } from '../../utils/buildCanonicalHomeAddress';
 import { isApplyHomeAddressValid } from '../../utils/applyHomeAddressValid';
 import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroupAutoAdd';
@@ -1273,7 +1273,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           ...existingRequirements.additionalScreenings,
         },
         eVerifyComfort: existingRequirements.eVerifyComfort || userProfile.comfortableEVerify || '',
-        transportMethod: existingRequirements.transportMethod || userProfile.transportMethod || '',
+        transportMethod:
+          existingRequirements.transportMethod ||
+          userProfile.transportMethod ||
+          userProfile.workerProfile?.preferences?.transportMethod ||
+          '',
         languagesComfort:
           existingRequirements.languagesComfort || userProfile.comfortableWithLanguages || '',
         physicalRequirementsComfort:
@@ -2120,7 +2124,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const update: any = { updatedAt: serverTimestamp() };
           if (p.profilePicture) update.avatar = p.profilePicture;
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         } else if (actualStep === 6) {
           // Skills → save skills, certifications, languages to profile
@@ -2130,7 +2134,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Array.isArray(q.certifications)) update.certifications = q.certifications;
           if (Array.isArray(q.languages)) update.languages = normalizeLanguageList(q.languages);
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         } else if (actualStep === 7) {
           // Education → save education to profile
@@ -2138,7 +2142,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const update: any = { updatedAt: serverTimestamp() };
           if (Array.isArray(q.education)) update.education = q.education;
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         } else if (actualStep === 8) {
           // Licenses and Certifications → save certifications to profile
@@ -2146,7 +2150,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const update: any = { updatedAt: serverTimestamp() };
           if (Array.isArray(q.certifications)) update.certifications = q.certifications;
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         } else if (actualStep === 9) {
           // Work Experience → save work experience to profile
@@ -2158,7 +2162,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             update.workHistory = q.workExperience; // Also save to workHistory for backward compatibility
           }
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         } else if (actualStep === 10) {
           // Bio → save professional bio to profile
@@ -2181,7 +2185,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Array.isArray(update.preferences.shiftPreferences)) {
             update['preferences.shiftPreferences'] = update.preferences.shiftPreferences;
           }
-          await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+          await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
         } else if (actualStep === 12) {
           // Requirements → save screening responses and availability to user profile
           const r = formData.requirements || {};
@@ -2236,7 +2240,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
 
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         }
       }
@@ -2772,7 +2776,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         }
       }
 
-      await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(profileUpdate), { merge: true });
+      await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(profileUpdate)), { merge: true });
 
       // Create final submitted application in tenants/{tenantId}/applications
       try {
