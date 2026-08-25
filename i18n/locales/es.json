@@ -1067,7 +1067,8 @@
     "headshotTitle": "Agrega tu foto",
     "headshotSubtitle": "Una foto clara ayuda a los supervisores a reconocerte en el turno.",
     "headshotLaterHint": "Puedes agregarla después — puede ser necesaria antes de aceptar turnos.",
-    "takingYouHome": "Llevándote a tu pantalla de inicio…"
+    "takingYouHome": "Llevándote a tu pantalla de inicio…",
+    "emailNeededForJob": "Obligatorio — te enviaremos novedades de tu solicitud aquí."
   },
   "jobs": {
     "title": "Trabajos",
@@ -1986,7 +1987,7 @@
     "title": "Verifica tu teléfono para crear tu cuenta",
     "subtitle": "Sin contraseña — te enviaremos un código de 6 dígitos por texto. Si ya trabajaste con C1, esto te conecta a tu cuenta existente.",
     "sendCode": "Envíame un código",
-    "fillNamePhone": "Primero escribe tu nombre, apellido y número de celular arriba.",
+    "fillNamePhone": "Primero ingresa tu nombre, apellido, número de celular y fecha de nacimiento arriba.",
     "codeLabel": "Código de 6 dígitos",
     "verify": "Verificar",
     "resend": "Reenviar código",
@@ -1995,6 +1996,7 @@
     "welcomeBack": "¡Bienvenido de nuevo! Encontramos tu cuenta existente y ya iniciaste sesión.",
     "accountReady": "Tu cuenta está lista — continúa abajo.",
     "genericError": "Algo salió mal — inténtalo de nuevo.",
-    "emailOptional": "Opcional — te lo pediremos después si la nómina lo necesita."
+    "emailOptional": "Opcional — te lo pediremos después si la nómina lo necesita.",
+    "mustBe18": "Debes tener al menos 18 años para trabajar con C1 Staffing."
   }
 }

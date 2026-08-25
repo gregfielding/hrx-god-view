@@ -1067,7 +1067,8 @@
     "headshotTitle": "Add your headshot",
     "headshotSubtitle": "A clear photo helps managers recognize you on shift.",
     "headshotLaterHint": "You can add one later — a photo may be required before accepting shifts.",
-    "takingYouHome": "Taking you to your home screen…"
+    "takingYouHome": "Taking you to your home screen…",
+    "emailNeededForJob": "Required — we'll send updates about your application here."
   },
   "jobs": {
     "title": "Jobs",
@@ -1986,7 +1987,7 @@
     "title": "Verify your phone to create your account",
     "subtitle": "No password needed — we'll text you a 6-digit code. If you've worked with C1 before, this signs you back into your existing account.",
     "sendCode": "Text me a code",
-    "fillNamePhone": "Enter your first name, last name, and mobile number above first.",
+    "fillNamePhone": "Enter your first name, last name, mobile number, and date of birth above first.",
     "codeLabel": "6-digit code",
     "verify": "Verify",
     "resend": "Resend code",
@@ -1995,6 +1996,7 @@
     "welcomeBack": "Welcome back — we found your existing account and signed you in.",
     "accountReady": "Your account is ready — continue below.",
     "genericError": "Something went wrong — please try again.",
-    "emailOptional": "Optional — we'll ask again later if payroll needs it."
+    "emailOptional": "Optional — we'll ask again later if payroll needs it.",
+    "mustBe18": "You must be at least 18 years old to work with C1 Staffing."
   }
 }

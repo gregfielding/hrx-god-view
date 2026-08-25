@@ -128,6 +128,21 @@ const toDobString = (val: unknown): string => {
   return '';
 };
 
+/** 18+ gate (W-2 staffing): iso YYYY-MM-DD in, sane 18-100 age out. */
+const isAdultDob = (iso: string): boolean => {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return false;
+  const dobDate = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(dobDate.getTime())) return false;
+  const now = new Date();
+  let age = now.getFullYear() - dobDate.getFullYear();
+  const beforeBirthday =
+    now.getMonth() < dobDate.getMonth() ||
+    (now.getMonth() === dobDate.getMonth() && now.getDate() < dobDate.getDate());
+  if (beforeBirthday) age -= 1;
+  return age >= 18 && age <= 100;
+};
+
 // Firestore does not allow `undefined` anywhere in a document (including nested objects).
 // This helper removes undefined values deeply while preserving non-plain objects (Dates, Timestamps, FieldValue, etc).
 const deepStripUndefined = (value: any): any => {
@@ -560,7 +575,15 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         homeLat !== undefined &&
         homeLng !== undefined
     );
-    if (isAuthenticated && addressComplete) indices = indices.filter((i) => i !== 1);
+    // Job applications REQUIRE an email (Greg 2026-08-25) — recruiters and
+    // application updates need a channel beyond SMS, and Everee needs one at
+    // hire. General signup keeps it optional (conversion-first).
+    const emailOnFile = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+      String(personal.email || profile.email || '').trim(),
+    );
+    if (isAuthenticated && addressComplete && (!jobId || emailOnFile)) {
+      indices = indices.filter((i) => i !== 1);
+    }
 
     // W.3 — when the work-auth collection flag is on (default), step 4
     // is auto-skipped for every entity, every user. The data is sourced
@@ -768,6 +791,35 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     setDoc(doc(db, 'users', authedUid), update, { merge: true }).catch(() => {
       addressPersistRef.current = false;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.personal, userProfile, uid]);
+
+  // Persist the email the moment it's valid (same auto-skip lesson as the
+  // address/DOB: once address+email are complete, step 1 filters itself out
+  // and its save-on-Next never runs). Debounced; only fills a profile that
+  // doesn't have an email yet.
+  const emailPersistedRef = useRef('');
+  useEffect(() => {
+    const authedUid = auth.currentUser?.uid || uid;
+    if (!authedUid) return;
+    const typed = String((formData.personal as any)?.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(typed)) return;
+    if (typed === emailPersistedRef.current) return;
+    if (String(userProfile?.email || '').trim()) {
+      emailPersistedRef.current = typed;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      emailPersistedRef.current = typed;
+      setDoc(
+        doc(db, 'users', authedUid),
+        { email: typed, updatedAt: serverTimestamp() },
+        { merge: true },
+      ).catch(() => {
+        emailPersistedRef.current = '';
+      });
+    }, 800);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.personal, userProfile, uid]);
 
@@ -3362,6 +3414,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 lastName={String((formData.personal as any)?.lastName || '')}
                 phone={String((formData.personal as any)?.phone || '')}
                 dob={String((formData.personal as any)?.dob || '')}
+                dobRequired
                 signupSource={signupGroupId ? 'apply_group_landing' : 'apply_landing'}
                 signupGroupId={signupGroupId || null}
                 jobContext={{
@@ -3381,12 +3434,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               <TextField
                 fullWidth
                 type="email"
+                required={Boolean(jobId)}
                 label={t('profile.email')}
                 value={String((formData.personal as any)?.email || '')}
                 onChange={(e) =>
                   persist({ personal: { ...(formData.personal || {}), email: e.target.value } })
                 }
-                helperText={t('phoneSignup.emailOptional')}
+                helperText={jobId ? t('apply.emailNeededForJob') : t('phoneSignup.emailOptional')}
               />
             </Box>
             <AddressStep value={formData.personal || {}} onChange={(v) => persist({ personal: v })} />
@@ -3593,17 +3647,18 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     if (!p) return false;
     const firstName = typeof p.firstName === 'string' ? p.firstName.trim() : '';
     const lastName = typeof p.lastName === 'string' ? p.lastName.trim() : '';
-    const email = typeof p.email === 'string' ? p.email.trim() : '';
     const phone = String(p.phone ?? '').trim();
     const dob = toDobString(p.dob);
     // Email is OPTIONAL since phone-first signup (Slice 2, 2026-08-25) —
-    // Everee collects it later when payroll actually needs it.
+    // Everee collects it later when payroll actually needs it. Workers must
+    // be 18+ (W-2 staffing; Greg 2026-08-25) — checked here and server-side.
     return !!(
       firstName &&
       lastName &&
       isValidUsPhone10(phone) &&
       dob &&
-      dob.length >= 10
+      dob.length >= 10 &&
+      isAdultDob(dob)
     );
   })();
 
@@ -3833,7 +3888,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                       missing.everify ||
                       missing.additional.length > 0)) ||
                   (actualStep === 0 && (!personalValid || !auth.currentUser)) ||
-                  (actualStep === 1 && !addressValid) ||
+                  (actualStep === 1 &&
+                    (!addressValid ||
+                      (Boolean(jobId) &&
+                        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+                          String((formData.personal as any)?.email || userProfile?.email || '').trim(),
+                        )))) ||
                   (actualStep === 4 && formData?.eligibility?.workAuthorized !== true) ||
                   saving
                 }

@@ -40,6 +40,8 @@ interface PhoneSignupGateProps {
   /** DOB as typed (MM/DD/YYYY or YYYY-MM-DD). Sent with signup so the server
    *  persists it — step 0 auto-filters after auth, so its own save never runs. */
   dob?: string;
+  /** Require a valid 18+ DOB before the code can be sent (wizard step 0). */
+  dobRequired?: boolean;
   signupSource: string;
   signupGroupId?: string | null;
   jobContext?: { tenantId?: string | null; tenantSlug?: string | null; jobId?: string | null } | null;
@@ -67,6 +69,7 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
   lastName,
   phone,
   dob = '',
+  dobRequired = false,
   signupSource,
   signupGroupId = null,
   jobContext = null,
@@ -83,7 +86,29 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
   const [existingNotice, setExistingNotice] = useState(false);
 
   const phoneE164 = toE164(phone);
-  const ready = Boolean(firstName.trim() && lastName.trim() && phoneE164);
+  // 18+ (W-2 staffing, Greg 2026-08-25). Server enforces the same rule.
+  const dobIso = (() => {
+    const t = dob.trim();
+    const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : t;
+  })();
+  const dobAdult = (() => {
+    const m = dobIso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return false;
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (Number.isNaN(d.getTime())) return false;
+    const now = new Date();
+    let age = now.getFullYear() - d.getFullYear();
+    if (
+      now.getMonth() < d.getMonth() ||
+      (now.getMonth() === d.getMonth() && now.getDate() < d.getDate())
+    )
+      age -= 1;
+    return age >= 18 && age <= 100;
+  })();
+  const dobOk = !dobRequired || dobAdult;
+  const underage = dobRequired && dobIso.length === 10 && !dobAdult;
+  const ready = Boolean(firstName.trim() && lastName.trim() && phoneE164 && dobOk);
 
   const finishSignIn = async (result: Record<string, unknown>) => {
     if (result.status === 'choose') {
@@ -191,8 +216,12 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
           </Button>
         )}
         {step === 'idle' && !ready && (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-            {t('phoneSignup.fillNamePhone')}
+          <Typography
+            variant="caption"
+            color={underage ? 'error' : 'text.secondary'}
+            sx={{ display: 'block', mt: 1 }}
+          >
+            {underage ? t('phoneSignup.mustBe18') : t('phoneSignup.fillNamePhone')}
           </Typography>
         )}
 

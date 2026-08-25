@@ -429,6 +429,29 @@ async function resolvePhoneSignup(
   // its save-on-Next never runs — without this the typed DOB died in
   // localStorage (found 2026-08-25 during the Slice 3 E2E).
   const dobIso = normalizeDobIso(opts.dob);
+  // 18+ (W-2 staffing, Greg 2026-08-25) — the wizard blocks this client-side;
+  // this is the authoritative check. Only enforced when a DOB was provided
+  // (AuthDialog's gate doesn't collect one).
+  if (dobIso) {
+    const m = dobIso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      const dobDate = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      const now = new Date();
+      let age = now.getFullYear() - dobDate.getFullYear();
+      if (
+        now.getMonth() < dobDate.getMonth() ||
+        (now.getMonth() === dobDate.getMonth() && now.getDate() < dobDate.getDate())
+      ) {
+        age -= 1;
+      }
+      if (age < 18) {
+        throw new HttpsError(
+          'failed-precondition',
+          'You must be at least 18 years old to work with C1 Staffing.',
+        );
+      }
+    }
+  }
 
   // Mint the Auth user with the verified phone. A same-phone Auth user can
   // exist without a users doc (throwaway from old experiments) — reuse it.
