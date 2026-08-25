@@ -5,9 +5,11 @@
  * for the same home-address step used elsewhere in the app.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { Box, CircularProgress, Typography, Alert, Button, Stack } from '@mui/material';
+import { Box, CircularProgress, Typography, Alert, Stack, ThemeProvider } from '@mui/material';
+import { getWorkerTheme } from '../theme/workerTheme';
+import { langToggleStyle } from './authMinimalStyles';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../contexts/AuthContext';
 import Wizard from '../components/apply/Wizard';
@@ -22,6 +24,9 @@ type ApplyRouteParams = {
 
 const Apply: React.FC = () => {
   const { user } = useAuth();
+  // Worker canon (Greg 2026-08-25): the public signup runs on the same
+  // design language as the worker app — system fonts, ink, hairline inputs.
+  const workerTheme = useMemo(() => getWorkerTheme(), []);
   const location = useLocation();
   const params = useParams<ApplyRouteParams>();
   const [guestLanguage, setGuestLanguage] = useGuestLanguage();
@@ -106,51 +111,46 @@ const Apply: React.FC = () => {
   }
 
   return (
-    <Box sx={{ px: 0, py: 0 }}>
-      <Box
-        sx={{
-          px: { xs: 2, md: 3 },
-          pt: { xs: 2, md: 3 },
-          maxWidth: { xs: '100%', md: '1200px' },
-          mx: { xs: 0, md: 'auto' },
-        }}
-      >
-        <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-          <Typography variant="body2" color="text.secondary">
-            {signupGroupTitle ? (
-              <>
-                Signing up for: <strong>{signupGroupTitle}</strong>
-              </>
-            ) : (
-              'Sign up'
-            )}
-          </Typography>
-          <Stack direction="row" spacing={1}>
-            <Button
-              size="small"
-              variant={guestLanguage === 'en' ? 'contained' : 'outlined'}
-              onClick={() => setGuestLanguage('en')}
-            >
-              EN
-            </Button>
-            <Button
-              size="small"
-              variant={guestLanguage === 'es' ? 'contained' : 'outlined'}
-              onClick={() => setGuestLanguage('es')}
-            >
-              ES
-            </Button>
+    <ThemeProvider theme={workerTheme}>
+      <Box sx={{ bgcolor: 'background.default', minHeight: '100vh', pb: 4 }}>
+        <Box
+          sx={{
+            px: { xs: 2, sm: 3 },
+            pt: { xs: 2, sm: 3 },
+            pb: 1,
+            maxWidth: 760,
+            mx: 'auto',
+          }}
+        >
+          <Stack direction="row" alignItems="baseline" justifyContent="space-between" spacing={1}>
+            <Box>
+              <Typography variant="h5" component="h1">
+                {guestLanguage === 'es' ? 'Crear cuenta' : 'Sign up'}
+              </Typography>
+              {signupGroupTitle ? (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  {guestLanguage === 'es' ? 'Registrándote para: ' : 'Signing up for: '}
+                  <strong>{signupGroupTitle}</strong>
+                </Typography>
+              ) : null}
+            </Box>
+            {/* Quiet EN | ES toggle — same language picker as /login/phone. */}
+            <Box sx={{ whiteSpace: 'nowrap' }}>
+              <button type="button" style={langToggleStyle(guestLanguage === 'en')} onClick={() => setGuestLanguage('en')}>EN</button>
+              <span style={{ color: '#ccc', margin: '0 8px' }}>|</span>
+              <button type="button" style={langToggleStyle(guestLanguage === 'es')} onClick={() => setGuestLanguage('es')}>ES</button>
+            </Box>
           </Stack>
-        </Stack>
+        </Box>
+        <Wizard
+          tenantId={C1_TENANT_ID}
+          tenantSlug="c1"
+          tenantName="C1 Staffing"
+          uid={user?.uid || null}
+          signupGroupId={signupGroupId}
+        />
       </Box>
-      <Wizard
-        tenantId={C1_TENANT_ID}
-        tenantSlug="c1"
-        tenantName="C1 Staffing"
-        uid={user?.uid || null}
-        signupGroupId={signupGroupId}
-      />
-    </Box>
+    </ThemeProvider>
   );
 };
 

@@ -3740,7 +3740,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         >
           <Box
             sx={{
-              maxWidth: { xs: '100%', md: '1200px' },
+              maxWidth: { xs: '100%', md: '760px' },
               mx: { xs: 0, md: 'auto' },
             }}
           >
@@ -3776,7 +3776,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         sx={{
           display: 'flex',
           flexDirection: 'column',
-          maxWidth: { xs: '100%', md: '1200px' },
+          maxWidth: { xs: '100%', md: '760px' },
           mx: { xs: 0, md: 'auto' },
           width: '100%',
           px: { xs: 0, md: 3 },
