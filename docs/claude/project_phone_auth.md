@@ -2,8 +2,21 @@
 
 > Decision (Greg + Mark, independently, 2026-08-21): workers sign up and sign in with their phone
 > number (OTP), not email + password. Staff keep email/password. Companion to
-> [[project_worker_onboarding_everee]] and [[project_recruiter_roster_adoption]]. Status: PLAN +
-> slice 0 (last-4 SSN removal) shipped; slices 1–4 pending Greg's two decisions below.
+> [[project_worker_onboarding_everee]] and [[project_recruiter_roster_adoption]].
+>
+> **Status 2026-08-25: Slices 0–1 SHIPPED.** Decisions resolved: 1B (JIT claim) and — contrary to
+> the 2A recommendation below — **2B: our OWN Twilio Verify OTP + custom tokens** (Firebase's
+> invisible reCAPTCHA threw image challenges + `auth/invalid-app-credential` at Greg; Twilio also
+> enables the household picker Firebase's 1-phone-1-account model can't do). Live: `/login/phone`
+> (linked from Login as "Sign in with your phone instead") → `sendOtp`/`checkOtp({signIn:true})` →
+> `resolvePhoneSignIn`: one match → claim + custom token for the EXISTING uid; same-person dupes →
+> survivor rule (Everee-complete → lastPaidAt → updatedAt); household-shared phone → picker with
+> email under each name; staff excluded unless Auth phoneNumber opt-in; audits to
+> `phone_signin_audit`. SMS reads "Your C1 verification code". Side effect: the ~3,700
+> no-credential Auth users can now sign in (claim needs no password provider).
+> **Slice 2 (phone-first SIGNUP) is the open gap** — all four signup surfaces below still run
+> `createUserWithEmailAndPassword` with NO resolve-by-phone first (the duplicate factory is still
+> on), and /login/phone's no-account path bounces to the password wizard at /c1/apply.
 
 ## Ground truth (2026-08-21)
 
