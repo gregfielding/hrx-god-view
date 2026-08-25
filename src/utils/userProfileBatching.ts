@@ -23,7 +23,11 @@ class UserProfileBatcher {
   private static instance: UserProfileBatcher;
   private pendingUpdates: Map<string, PendingUpdate> = new Map();
   private saveTimer: NodeJS.Timeout | null = null;
-  private saveInterval = 10 * 60 * 1000; // 10 minutes
+  // 15s (was 10 MINUTES, 2026-08-25): requirement-chip answers queue here,
+  // and the only other flush triggers (unload/visibility/outside-click) are
+  // unreliable — beforeunload async writes die mid-navigation. Answers
+  // routinely never reached the profile, so every application re-asked them.
+  private saveInterval = 15 * 1000;
   private isInitialized = false;
   private lastSaveTime = 0;
   private minSaveInterval = 30 * 1000; // Minimum 30 seconds between saves

@@ -712,6 +712,65 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   lastActualStepRef.current = actualStep;
   const isLastVisibleStep = activeStep === visibleStepIndices.length - 1;
 
+  // Auto-skipped steps eat their save-on-Next writes (the DOB bug's sibling,
+  // found 2026-08-25): the address step filters itself out the moment the
+  // picked address lands in formData, so its exit write never ran and the
+  // profile kept NO address — every later apply re-asked it. Persist the
+  // address the moment it's complete for an authed user whose profile
+  // doesn't have one yet.
+  const addressPersistRef = useRef(false);
+  useEffect(() => {
+    const authedUid = auth.currentUser?.uid || uid;
+    if (!authedUid || addressPersistRef.current) return;
+    const p = (formData.personal || {}) as Record<string, any>;
+    const complete = Boolean(
+      String(p.street || '').trim() &&
+        String(p.city || '').trim() &&
+        String(p.state || '').trim() &&
+        String(p.zip || '').trim() &&
+        p.homeLat !== undefined &&
+        p.homeLng !== undefined,
+    );
+    if (!complete) return;
+    const prof = (userProfile || {}) as Record<string, any>;
+    const profileHasAddress = Boolean(
+      String(prof.addressInfo?.streetAddress || '').trim() &&
+        prof.addressInfo?.homeLat !== undefined &&
+        prof.addressInfo?.homeLng !== undefined,
+    );
+    addressPersistRef.current = true;
+    if (profileHasAddress) return;
+    const update: Record<string, any> = {
+      updatedAt: serverTimestamp(),
+      address: {
+        street: String(p.street).trim(),
+        ...(p.unit ? { unit: String(p.unit).trim() } : {}),
+        city: String(p.city).trim(),
+        state: String(p.state).trim(),
+        zipCode: String(p.zip).trim(),
+        coordinates: { lat: Number(p.homeLat), lng: Number(p.homeLng) },
+      },
+      city: String(p.city).trim(),
+      state: String(p.state).trim(),
+      zipCode: String(p.zip).trim(),
+      homeLat: Number(p.homeLat),
+      homeLng: Number(p.homeLng),
+      addressInfo: {
+        streetAddress: String(p.street).trim(),
+        ...(p.unit ? { unitNumber: String(p.unit).trim() } : {}),
+        city: String(p.city).trim(),
+        state: String(p.state).trim(),
+        zip: String(p.zip).trim(),
+        homeLat: Number(p.homeLat),
+        homeLng: Number(p.homeLng),
+      },
+    };
+    setDoc(doc(db, 'users', authedUid), update, { merge: true }).catch(() => {
+      addressPersistRef.current = false;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.personal, userProfile, uid]);
+
   // Clamp activeStep when visible steps shrink (e.g. posting loads and we skip Preferences)
   useEffect(() => {
     if (activeStep >= visibleStepIndices.length) {
