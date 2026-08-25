@@ -14,6 +14,7 @@ import {
   TicketRateLimitedError,
   type PayrollTicketStatus,
 } from './payroll/payrollTicketsCore';
+import { approvePhoneChange, rejectPhoneChange } from './phoneChangeCore';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -270,6 +271,21 @@ export const workerSupportAssistant = onCall(
       } catch (e) {
         throw toTicketHttpsError(e);
       }
+    }
+
+    // Phone-change recovery approvals (Slice 3, 2026-08-25) — staff-only,
+    // reviewed at /users/phone-changes; same callable for the same cap reason.
+    if (action === 'phone_change_approve') {
+      const requestId = String(request.data?.requestId || '').trim();
+      const uid = String(request.data?.uid || '').trim();
+      if (!requestId || !uid) throw new HttpsError('invalid-argument', 'requestId and uid are required.');
+      return approvePhoneChange({ actorUid: request.auth.uid, requestId, uid });
+    }
+    if (action === 'phone_change_reject') {
+      const requestId = String(request.data?.requestId || '').trim();
+      const note = String(request.data?.note || '').trim() || undefined;
+      if (!requestId) throw new HttpsError('invalid-argument', 'requestId is required.');
+      return rejectPhoneChange({ actorUid: request.auth.uid, requestId, note });
     }
 
     const { question, tenantId } = (request.data || {}) as SupportRequest;

@@ -12,7 +12,8 @@ export type UsersTab =
   | 'smart-groups'
   | 'all-smart-groups'
   | 'my-smart-groups'
-  | 'deletion-requests';
+  | 'deletion-requests'
+  | 'phone-changes';
 
 export const USERS_LAYOUT_TAB_CONFIG: { tab: UsersTab; path: string; label: string }[] = [
   { tab: 'all', path: '/users/all', label: 'All Users' },
@@ -29,6 +30,9 @@ export const USERS_LAYOUT_TAB_CONFIG: { tab: UsersTab; path: string; label: stri
   // Worker-initiated account-deletion requests (worker app "About & Legal",
   // 2026-08-23). App Store compliance flow — support reviews each request here.
   { tab: 'deletion-requests', path: '/users/deletion-requests', label: 'Deletion Requests' },
+  // Phone-change recovery queue (phone-first login Slice 3, 2026-08-25) —
+  // worker "my number changed" claims, staff approve/reject.
+  { tab: 'phone-changes', path: '/users/phone-changes', label: 'Phone Changes' },
 ];
 
 const STORAGE_KEY = 'hrx_users_layout_v1';
@@ -100,6 +104,7 @@ export function getActiveUsersTab(pathname: string): UsersTab {
   if (pathname.includes('/users/smart-groups')) return 'smart-groups';
   if (pathname.includes('/users/invite-users')) return 'invite-users';
   if (pathname.includes('/users/deletion-requests')) return 'deletion-requests';
+  if (pathname.includes('/users/phone-changes')) return 'phone-changes';
   if (pathname.includes('/users/my')) return 'my';
   if (pathname.includes('/users/all')) return 'all';
   return 'all';

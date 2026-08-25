@@ -281,9 +281,27 @@ async function mintPhoneSignIn(acc: PhoneAccount, phoneE164: string, meta: { clu
  *   { status: 'signed_in', token, uid } | { status: 'choose', selectionToken, candidates }
  *   | { status: 'no_account' }
  */
+/**
+ * Single-use, 10-minute proof that THIS device just OTP-verified a phone that
+ * has no account — lets the phone-change recovery leg (Slice 3) run without a
+ * second SMS. Stored in phone_signin_pending alongside selection tokens;
+ * `purpose: 'recovery'` keeps the two legs from accepting each other's tokens.
+ */
+async function mintRecoveryToken(phoneE164: string): Promise<string> {
+  const token = crypto.randomBytes(24).toString('hex');
+  await db.doc(`phone_signin_pending/${token}`).set({
+    phoneE164,
+    purpose: 'recovery',
+    attempts: 0,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return token;
+}
+
 async function resolvePhoneSignIn(
   phoneE164: string,
-  opts: { selectionToken?: string; pick?: string; ip: string },
+  opts: { selectionToken?: string; pick?: string; ip: string; withRecoveryToken?: boolean },
 ): Promise<Record<string, unknown>> {
   // Second leg of the household picker: prove the earlier approval via the selection token.
   if (opts.selectionToken && opts.pick) {
@@ -308,7 +326,13 @@ async function resolvePhoneSignIn(
     filtered.push(a);
   }
   accs = filtered;
-  if (accs.length === 0) return { status: 'no_account' };
+  if (accs.length === 0) {
+    // Sign-in mode hands back a recovery token so "my number changed" can
+    // proceed without a second OTP; signup mode doesn't need one.
+    return opts.withRecoveryToken
+      ? { status: 'no_account', recoveryToken: await mintRecoveryToken(phoneE164) }
+      : { status: 'no_account' };
+  }
   if (accs.length === 1) return mintPhoneSignIn(accs[0], phoneE164, { cluster: [accs[0].uid], mode: 'single', ip: opts.ip });
 
   // Cluster same-person duplicates; each cluster collapses to its survivor.
@@ -490,6 +514,115 @@ async function resolvePhoneSignup(
 }
 
 /**
+ * Phone-change recovery (Slice 3, 2026-08-25). Entered from the sign-in
+ * no_account screen: the worker OTP-verified a NEW number (possession proven
+ * by the recovery token minted alongside that no_account), then claims their
+ * existing account by name + DOB. We NEVER auto-switch — knowing a name and
+ * birthday is weak proof — so matches land in `phone_change_requests` for
+ * staff approval (/users/phone-changes; approve/reject actions live on
+ * workerSupportAssistant, see phoneChangeCore.ts).
+ */
+async function resolvePhoneChange(
+  newPhoneE164: string,
+  opts: { recoveryToken: string; firstName: string; lastName: string; dob: string; ip: string },
+): Promise<Record<string, unknown>> {
+  const tokenRef = db.doc(`phone_signin_pending/${opts.recoveryToken}`);
+  const tokenSnap = await tokenRef.get();
+  const tok = tokenSnap.data() as { phoneE164?: string; purpose?: string; attempts?: number; expiresAt?: number } | undefined;
+  if (!tokenSnap.exists || tok?.purpose !== 'recovery' || tok?.phoneE164 !== newPhoneE164 || (tok?.expiresAt ?? 0) < Date.now()) {
+    throw new HttpsError('permission-denied', 'That session expired. Start over.');
+  }
+  if ((tok?.attempts ?? 0) >= 5) {
+    await tokenRef.delete();
+    throw new HttpsError('resource-exhausted', 'Too many attempts. Start over.');
+  }
+  await tokenRef.set({ attempts: (tok?.attempts ?? 0) + 1 }, { merge: true });
+
+  // DOB → YYYY-MM-DD (accept MM/DD/YYYY from the form).
+  const rawDob = String(opts.dob ?? '').trim();
+  const mdY = rawDob.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  const dobIso = mdY ? `${mdY[3]}-${mdY[1].padStart(2, '0')}-${mdY[2].padStart(2, '0')}` : rawDob;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dobIso)) throw new HttpsError('invalid-argument', 'Invalid date of birth.');
+  const first = normName(opts.firstName);
+  const last = normName(opts.lastName);
+  if (first.length < 2 || last.length < 2) throw new HttpsError('invalid-argument', 'Name is required.');
+
+  // Candidates: DOB equality on the canonical `dob` string (wizard/signup) and
+  // legacy `dateOfBirth` where it's the same string form, then in-memory name
+  // match — first name on its first 3 letters (nicknames), last name exact,
+  // both accent/case-insensitive. Staff and merged accounts never match.
+  const cand = new Map<string, Record<string, any>>();
+  for (const field of ['dob', 'dateOfBirth']) {
+    const q = await db.collection('users').where(field, '==', dobIso).limit(25).get().catch(() => null);
+    q?.forEach((d) => cand.set(d.id, d.data() as Record<string, any>));
+  }
+  const matches: Array<{ uid: string; u: Record<string, any> }> = [];
+  for (const [uid, u] of cand) {
+    if (u.accountStatus === 'merged' || u.mergedInto) continue;
+    const lvl = Number(u.tenantIds?.[TENANT_C1]?.securityLevel ?? u.securityLevel ?? 0) || 0;
+    if (lvl >= 5) continue;
+    if (normName(u.firstName).slice(0, 3) !== first.slice(0, 3)) continue;
+    if (normName(u.lastName) !== last) continue;
+    matches.push({ uid, u });
+  }
+
+  if (matches.length === 0) {
+    await db.collection('phone_signin_audit').add({
+      phoneE164: newPhoneE164,
+      mode: 'phone_change_no_match',
+      claimedDob: dobIso,
+      ip: opts.ip,
+      at: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { status: 'not_found' };
+  }
+
+  // One live request per new number — a resubmit returns the existing one.
+  const dup = await db
+    .collection('phone_change_requests')
+    .where('newPhoneE164', '==', newPhoneE164)
+    .where('status', '==', 'pending')
+    .limit(1)
+    .get();
+  if (!dup.empty) {
+    await tokenRef.delete();
+    return { status: 'pending_approval', requestId: dup.docs[0].id };
+  }
+
+  const reqRef = await db.collection('phone_change_requests').add({
+    tenantId: TENANT_C1,
+    newPhoneE164,
+    newPhone: newPhoneE164.replace(/\D/g, '').slice(-10),
+    claimedFirstName: String(opts.firstName).trim().slice(0, 60),
+    claimedLastName: String(opts.lastName).trim().slice(0, 60),
+    claimedDob: dobIso,
+    candidateUids: matches.map((m) => m.uid),
+    candidates: matches.map((m) => ({
+      uid: m.uid,
+      firstName: String(m.u.firstName ?? ''),
+      lastName: String(m.u.lastName ?? ''),
+      email: String(m.u.email ?? '') || null,
+      oldPhoneE164: String(m.u.phoneE164 ?? '') || null,
+      oldPhone: String(m.u.phone ?? '') || null,
+    })),
+    status: 'pending',
+    requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+    ip: opts.ip,
+  });
+  await db.collection('phone_signin_audit').add({
+    phoneE164: newPhoneE164,
+    mode: 'phone_change_requested',
+    requestId: reqRef.id,
+    candidateUids: matches.map((m) => m.uid),
+    ip: opts.ip,
+    at: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await tokenRef.delete();
+  logger.info('phone change requested', { requestId: reqRef.id, candidates: matches.length });
+  return { status: 'pending_approval', requestId: reqRef.id };
+}
+
+/**
  * Verify OTP code via Twilio Verify
  */
 export const checkOtp = onCall(
@@ -505,8 +638,9 @@ export const checkOtp = onCall(
   //   throw new HttpsError('unauthenticated', 'Must be signed in to verify phone');
   // }
 
-  const { phoneE164, code, signIn, signup, selectionToken, pick } = request.data as {
+  const { phoneE164, code, signIn, signup, selectionToken, pick, phoneChange, recoveryToken } = request.data as {
     phoneE164: string; code?: string; signIn?: boolean; signup?: boolean; selectionToken?: string; pick?: string;
+    phoneChange?: boolean; recoveryToken?: string;
   };
   const uid = request.auth?.uid; // Get uid from request auth if available
   const callerIp = String(request.rawRequest?.headers?.['x-forwarded-for'] ?? request.rawRequest?.ip ?? '').split(',')[0].trim();
@@ -521,6 +655,19 @@ export const checkOtp = onCall(
     return resolvePhoneSignIn(phoneE164, { selectionToken, pick, ip: callerIp });
   }
 
+  // Phone-change recovery leg (Slice 3): the recovery token minted with the
+  // no_account response proves the NEW number was just OTP-verified here.
+  if (phoneChange === true && recoveryToken) {
+    const d = request.data as Record<string, unknown>;
+    return resolvePhoneChange(phoneE164, {
+      recoveryToken: String(recoveryToken),
+      firstName: String(d.firstName ?? ''),
+      lastName: String(d.lastName ?? ''),
+      dob: String(d.dob ?? ''),
+      ip: callerIp,
+    });
+  }
+
   if (!code || !/^\d{6}$/.test(code)) {
     throw new HttpsError('invalid-argument', 'Invalid code format. Please enter a 6-digit code.');
   }
@@ -531,7 +678,7 @@ export const checkOtp = onCall(
     if (code !== fixedCode) {
       throw new HttpsError('permission-denied', 'Invalid verification code. Please try again.');
     }
-    if (signIn === true) return resolvePhoneSignIn(phoneE164, { ip: callerIp });
+    if (signIn === true) return resolvePhoneSignIn(phoneE164, { ip: callerIp, withRecoveryToken: true });
     if (signup === true) {
       const d = request.data as Record<string, unknown>;
       return resolvePhoneSignup(phoneE164, {
@@ -564,7 +711,7 @@ export const checkOtp = onCall(
 
     // Phone SIGN-IN mode: turn the approved code into a session for the existing account.
     if (signIn === true) {
-      return resolvePhoneSignIn(phoneE164, { ip: callerIp });
+      return resolvePhoneSignIn(phoneE164, { ip: callerIp, withRecoveryToken: true });
     }
 
     // Phone SIGNUP mode (Slice 2): claim the existing account or create one.

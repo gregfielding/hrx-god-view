@@ -35,6 +35,18 @@ service cloud.firestore {
       }
     }
 
+    // Phone-change recovery queue (Slice 3, 2026-08-25). Created server-side
+    // by checkOtp's phoneChange leg; staff review at /users/phone-changes and
+    // approve/reject through workerSupportAssistant actions. Contains old/new
+    // phone numbers — staff eyes only, all writes server-side.
+    match /phone_change_requests/{requestId} {
+      allow read: if request.auth != null && (
+        isHRX() ||
+        hasSecurityLevel(resource.data.tenantId, 5)
+      );
+      allow create, update, delete: if false;
+    }
+
     match /account_deletion_requests/{uid} {
       allow create: if request.auth != null && request.auth.uid == uid;
       allow read: if request.auth != null && (request.auth.uid == uid || isHRX());

@@ -49,6 +49,16 @@ const COPY: Record<Lang, Record<string, string>> = {
     signUp: 'Create account',
     startOver: 'Start over',
     emailLogin: 'Sign in with email instead',
+    numberChanged: 'My number changed — I already have an account',
+    recoverTitle: 'Find your account',
+    recoverHint: 'Tell us who you are and our team will move your account to this number.',
+    firstName: 'First name',
+    lastName: 'Last name',
+    dobLabel: 'Date of birth',
+    submitRecovery: 'Submit',
+    recoverNotFound: 'We couldn’t find a matching account. Check the spelling and date of birth, or contact your recruiter.',
+    recoverPendingTitle: 'Got it — we’re on it.',
+    recoverPendingHint: 'Our team will verify your request and move your account to this number, usually within 1 business day. We’ll text you here when it’s done.',
   },
   es: {
     title: 'Iniciar sesión',
@@ -74,6 +84,16 @@ const COPY: Record<Lang, Record<string, string>> = {
     signUp: 'Crear cuenta',
     startOver: 'Empezar de nuevo',
     emailLogin: 'Iniciar sesión con correo',
+    numberChanged: 'Cambié de número — ya tengo una cuenta',
+    recoverTitle: 'Encuentra tu cuenta',
+    recoverHint: 'Dinos quién eres y nuestro equipo moverá tu cuenta a este número.',
+    firstName: 'Nombre',
+    lastName: 'Apellido',
+    dobLabel: 'Fecha de nacimiento',
+    submitRecovery: 'Enviar',
+    recoverNotFound: 'No encontramos una cuenta que coincida. Revisa la ortografía y la fecha de nacimiento, o contacta a tu reclutador.',
+    recoverPendingTitle: 'Listo — lo estamos revisando.',
+    recoverPendingHint: 'Nuestro equipo verificará tu solicitud y moverá tu cuenta a este número, normalmente en 1 día hábil. Te enviaremos un texto aquí cuando esté listo.',
   },
 };
 
@@ -97,12 +117,18 @@ const PhoneLoginPage: React.FC = () => {
   const t = COPY[lang];
   const [rawError, setRawError] = useState('');
 
-  const [step, setStep] = useState<'phone' | 'code' | 'choose' | 'no_account'>('phone');
+  const [step, setStep] = useState<'phone' | 'code' | 'choose' | 'no_account' | 'recover' | 'recover_pending'>('phone');
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [choice, setChoice] = useState<{ selectionToken: string; candidates: Array<{ uid: string; firstName: string; lastInitial: string; email?: string }> } | null>(null);
+  // Phone-change recovery (Slice 3): token proving THIS device just verified
+  // the new number, handed back with no_account; name+DOB claim the account.
+  const [recoveryToken, setRecoveryToken] = useState('');
+  const [recFirst, setRecFirst] = useState('');
+  const [recLast, setRecLast] = useState('');
+  const [recDob, setRecDob] = useState('');
   const redirectedRef = useRef(false);
   const fns = useMemo(() => getFunctions(), []);
 
@@ -157,7 +183,37 @@ const PhoneLoginPage: React.FC = () => {
       setStep('choose');
       return;
     }
+    setRecoveryToken(String(res.recoveryToken || ''));
     setStep('no_account');
+  };
+
+  const submitRecovery = async () => {
+    if (!recoveryToken || !recFirst.trim() || !recLast.trim() || !recDob) return;
+    setBusy(true);
+    setError('');
+    setRawError('');
+    try {
+      const r = await httpsCallable<unknown, Record<string, unknown>>(fns, 'checkOtp')({
+        phoneE164: e164,
+        phoneChange: true,
+        recoveryToken,
+        firstName: recFirst.trim(),
+        lastName: recLast.trim(),
+        dob: recDob,
+      });
+      const status = String((r.data ?? {}).status || '');
+      if (status === 'pending_approval') {
+        setStep('recover_pending');
+      } else if (status === 'not_found') {
+        setError(t.recoverNotFound);
+      } else {
+        setError(t.generic);
+      }
+    } catch (e) {
+      setError(mapError(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const sendCode = async () => {
@@ -217,6 +273,10 @@ const PhoneLoginPage: React.FC = () => {
     setChoice(null);
     setError('');
     setRawError('');
+    setRecoveryToken('');
+    setRecFirst('');
+    setRecLast('');
+    setRecDob('');
   };
 
   const primaryStyle = (disabled: boolean) => ({ ...S.button, ...(disabled ? S.buttonDisabled : {}) });
@@ -330,9 +390,73 @@ const PhoneLoginPage: React.FC = () => {
               style={S.button}
               onClick={() => navigate(`/c1/apply?phone=${encodeURIComponent(phone.replace(/\D/g, '').slice(-10))}`)}
             >{t.signUp}</button>
+            <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start' }}>
+              {recoveryToken && (
+                <button type="button" style={S.linkBtn} onClick={() => { setError(''); setStep('recover'); }}>
+                  {t.numberChanged}
+                </button>
+              )}
+              <button type="button" style={S.linkBtn} onClick={reset}>{t.startOver}</button>
+            </div>
+          </div>
+        )}
+
+        {step === 'recover' && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitRecovery();
+            }}
+          >
+            <h2 style={{ ...S.h1, fontSize: 20, margin: '0 0 8px' }}>{t.recoverTitle}</h2>
+            <p style={S.hint}>{t.recoverHint}</p>
+            <label style={S.label} htmlFor="recover-first">{t.firstName}</label>
+            <input
+              id="recover-first"
+              style={S.input}
+              type="text"
+              autoComplete="given-name"
+              autoFocus
+              value={recFirst}
+              onChange={(e) => setRecFirst(e.target.value)}
+            />
+            <label style={{ ...S.label, marginTop: 16 }} htmlFor="recover-last">{t.lastName}</label>
+            <input
+              id="recover-last"
+              style={S.input}
+              type="text"
+              autoComplete="family-name"
+              value={recLast}
+              onChange={(e) => setRecLast(e.target.value)}
+            />
+            <label style={{ ...S.label, marginTop: 16 }} htmlFor="recover-dob">{t.dobLabel}</label>
+            <input
+              id="recover-dob"
+              style={S.input}
+              type="date"
+              autoComplete="bday"
+              value={recDob}
+              onChange={(e) => setRecDob(e.target.value)}
+            />
+            <button
+              type="submit"
+              style={{ ...primaryStyle(busy || !recFirst.trim() || !recLast.trim() || !recDob), marginTop: 20 }}
+              disabled={busy || !recFirst.trim() || !recLast.trim() || !recDob}
+            >
+              {busy ? t.sending : t.submitRecovery}
+            </button>
+            {error && <p style={S.error}>{error}</p>}
+            {rawError && <p style={S.mono}>{rawError}</p>}
             <div style={{ marginTop: 24 }}>
               <button type="button" style={S.linkBtn} onClick={reset}>{t.startOver}</button>
             </div>
+          </form>
+        )}
+
+        {step === 'recover_pending' && (
+          <div>
+            <h2 style={{ ...S.h1, fontSize: 20, margin: '0 0 8px' }}>{t.recoverPendingTitle}</h2>
+            <p style={S.hint}>{t.recoverPendingHint}</p>
           </div>
         )}
 

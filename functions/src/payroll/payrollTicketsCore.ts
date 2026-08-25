@@ -109,7 +109,7 @@ export function isTenantMemberData(u: Record<string, unknown>, tenantId: string)
   return false;
 }
 
-async function isStaff(uid: string): Promise<boolean> {
+export async function isStaff(uid: string): Promise<boolean> {
   const snap = await db.collection('users').doc(uid).get();
   if (!snap.exists) return false;
   const u = snap.data() as Record<string, unknown>;
