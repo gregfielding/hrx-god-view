@@ -131,3 +131,36 @@ Greg watched a full production signup and cut the wizard to what staffing ops ac
   this happened twice with Testina (+19255550188). Always delete/verify via Identity Toolkit REST
   (`gcloud auth print-access-token` + `x-goog-user-project: hrx1-d3beb`, `accounts:delete` then
   `accounts:lookup` to confirm empty) — same footgun as the invite flow in project_conventions.md.
+
+### 2026-08-25 (evening) — phone-first /login flipped + Slice 3 SHIPPED
+- **/login is now the phone OTP screen** (LoginGate): email/password moved to `/login/email`,
+  `/login/phone` stays as a never-redirecting alias. `c1LastLoginMethod` (localStorage, stamped
+  only on SUCCESSFUL sign-in — Login, PhoneLoginPage, PhoneSignupGate) bounces email users
+  straight to `/login/email`, so staff pay nothing for the flip. Phone login honors auth-guard
+  deep links (`state.from`, worker routes only). SetupPassword's post-reset buttons → `/login/email`.
+- **Slice 3 — phone-change recovery, live E2E-verified on prod**: sign-in no_account now returns a
+  single-use 10-min `recoveryToken` (phone_signin_pending, `purpose:'recovery'`, 5-attempt cap) →
+  "My number changed" form (name + DOB) → `checkOtp({phoneChange:true, recoveryToken,...})` →
+  `resolvePhoneChange` matches by DOB equality (`dob`/`dateOfBirth` iso) + normalized name
+  (first 3-prefix, last exact), staff/merged excluded → `phone_change_requests` (staff-read-only
+  rules, tenantId-stamped; one pending per number). Staff queue: **/users/phone-changes** (Users
+  hub tab). Approve/reject ride workerSupportAssistant (`phone_change_approve`/`_reject`,
+  phoneChangeCore.ts): moves phone on users doc + Auth (strips a doc-less orphan holder; creates
+  the Auth user if the doc never had one), arrayUnions `previousPhones`, audits
+  `phone_signin_audit` (`phone_change_requested/_approved/_rejected/_no_match`), SMS-confirms the
+  worker on the new number (EN/ES). NEVER auto-approved — name+DOB is weak proof.
+- **☠️ AuthContext staff-default footgun (fixed at source)**: a users doc with `role` but NO
+  `securityLevel`/`tenantIds` falls into AuthContext's last-resort `setSecurityLevel('5')` —
+  fresh phone signups were treated as STAFF client-side, bounced to admin /dashboard, and crashed
+  (useGoogleStatus outside provider). `resolvePhoneSignup` now stamps `securityLevel: '2'`
+  (applicant). The AuthContext '5' default itself is untouched (changing it risks locking out
+  legacy staff docs) — any future account-creation path MUST stamp securityLevel.
+- **☠️ DOB fix**: step 0 auto-filters once authed, so its save-on-Next never runs — DOB died in
+  localStorage. PhoneSignupGate now sends `dob`; resolvePhoneSignup normalizes → `dob` iso.
+- **☠️ Browser-pane test-session zombie**: `indexedDB.deleteDatabase('firebaseLocalStorageDb')`
+  is BLOCKED while the app holds its connection — "cleared" sessions resurrect on reload (a
+  deleted uid's zombie session even crash-looped). Clear the `firebaseLocalStorage` OBJECT STORE
+  contents instead, then navigate.
+- Remaining Slice 3 scope NOT built: admin merge tool for the ~722 same-phone duplicate accounts
+  (survivor rule already routes their sign-ins correctly; merge is data hygiene). Slice 4
+  (retire worker passwords, invites via OTP link) also open.
