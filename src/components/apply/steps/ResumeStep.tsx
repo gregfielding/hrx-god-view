@@ -250,8 +250,11 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
 
   return (
     <Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>
-        {t('apply.uploadResume')}
+      <Typography variant="h6" sx={{ mb: 0.5 }}>
+        {t('apply.resumeTitle')}
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        {t('apply.resumeSubtitle')}
       </Typography>
 
       {error && (
@@ -316,19 +319,6 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         </Card>
       )}
 
-      {!currentResume && !loading && userId && (
-        <>
-          <Alert severity="info" sx={{ mb: 1 }}>
-            {t('apply.resumeOptional')}
-          </Alert>
-          <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-            <Button variant="text" size="small" onClick={() => onChange?.({ ...(value || {}), skipped: true })} aria-label={t('apply.skipForNow')}>
-              {t('apply.skipForNow')}
-            </Button>
-          </Stack>
-        </>
-      )}
-
       {currentResume && !showUpload && (
         <Alert severity="success" sx={{ mb: 2 }}>
           {t('apply.resumeUploaded')} {formatDate(currentResume.timestamp)} -{' '}
@@ -356,8 +346,8 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
             tenantId={tenantId}
             onResumeParsed={handleResumeParsed}
           />
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            {t('apply.acceptedFormats')}
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            {t('apply.resumeFormats')}
           </Typography>
         </Box>
       )}

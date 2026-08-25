@@ -1060,7 +1060,14 @@
     "addAtLeastOneSkill": "Añade al menos una habilidad para continuar.",
     "trustedClient": "Cliente de confianza",
     "popularShift": "Turno popular",
-    "highDemand": "Alta demanda"
+    "highDemand": "Alta demanda",
+    "resumeTitle": "Agrega tu currículum",
+    "resumeSubtitle": "La usaremos para completar automáticamente tus habilidades, experiencia y educación.",
+    "resumeFormats": "PDF, DOCX o TXT",
+    "headshotTitle": "Agrega tu foto",
+    "headshotSubtitle": "Una foto clara ayuda a los supervisores a reconocerte en el turno.",
+    "headshotLaterHint": "Puedes agregarla después — puede ser necesaria antes de aceptar turnos.",
+    "takingYouHome": "Llevándote a tu pantalla de inicio…"
   },
   "jobs": {
     "title": "Trabajos",

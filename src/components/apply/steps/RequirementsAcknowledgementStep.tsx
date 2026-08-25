@@ -572,7 +572,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
           {t('apply.microcopyTransportation')}
         </Typography>
-        <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
           {[
             { value: 'Car', labelKey: 'apply.transportCar' as const, icon: DirectionsCar },
             { value: 'Public Transit', labelKey: 'apply.transportPublicTransit' as const, icon: DirectionsTransit },
@@ -585,51 +585,27 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
             return (
               <Chip
                 key={option.value}
-                icon={<Icon />}
+                icon={<Icon fontSize="small" />}
                 label={t(option.labelKey)}
                 onClick={() => {
                   const newValue = isSelected ? '' : option.value;
                   onChange({ ...value, transportMethod: newValue });
                   debouncedWriteUser({ transportMethod: newValue });
                 }}
-                color={isSelected ? 'success' : 'default'}
+                color={isSelected ? 'secondary' : 'default'}
                 variant={isSelected ? 'filled' : 'outlined'}
                 sx={{
-                  height: 40,
-                  fontSize: '0.95rem',
+                  height: 36,
+                  px: 0.5,
+                  fontSize: '0.875rem',
                   fontWeight: isSelected ? 600 : 500,
                   cursor: 'pointer',
-                  transition: 'all 0.2s ease',
-                  '&:hover': {
-                    transform: 'scale(1.05)',
-                    boxShadow: 2
-                  }
                 }}
               />
             );
           })}
-        </Stack>
-      </Box>
-
-      {/* When can you start? - Only show for Career jobs, not Gig jobs with specific dates */}
-      {jobPosting?.jobType !== 'gig' && (
-        <Box sx={{ mt: 3 }}>
-          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-            {t('apply.whenCanYouStart')}
-          </Typography>
-          <AvailabilitySection 
-            value={preferences || {}} 
-            onChange={(v) => {
-              // This will be handled by the parent Wizard component
-              // We need to update preferences, not requirements
-              const currentPreferences = preferences || {};
-              const updatedPreferences = { ...currentPreferences, ...v };
-              // Store in a way that Wizard can pick up
-              onChange({ ...value, _preferencesUpdate: updatedPreferences });
-            }} 
-          />
         </Box>
-      )}
+      </Box>
 
       {/* Hidden file input used for uploads */}
       <input
@@ -641,56 +617,6 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         onChange={handleFileSelected}
       />
     </Box>
-  );
-};
-
-// When can you start? component
-const AvailabilitySection: React.FC<{ value: any; onChange: (v: any) => void }> = ({ value, onChange }) => {
-  const t = useT();
-  const [availableToStartDate, setAvailableToStartDate] = React.useState<string>(value?.availableToStartDate || '');
-  
-  // Sync with external value changes
-  React.useEffect(() => {
-    if (value?.availableToStartDate !== undefined) {
-      setAvailableToStartDate(value.availableToStartDate || '');
-    }
-  }, [value?.availableToStartDate]);
-
-  // Debounced Firestore updater - increased debounce to prevent excessive writes
-  const debounceRef = React.useRef<any>(null);
-  const debouncedUpdate = (data: any) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const uid = auth.currentUser?.uid;
-        if (!uid) return;
-        const userRef = doc(db, 'users', uid);
-        await updateDoc(
-          userRef,
-          buildCanonicalWorkerProfileWritePatch({ ...data, updatedAt: serverTimestamp() }),
-        );
-      } catch {}
-    }, 2000); // Increased from 400ms to 2000ms to reduce Firestore writes
-  };
-
-  // Removed onSnapshot listener to prevent feedback loop - value is synced via props
-
-  return (
-    <TextField
-      label={t('apply.startDate')}
-      type="date"
-      value={availableToStartDate || ''}
-      onChange={(e) => {
-        const v = e.target.value;
-        setAvailableToStartDate(v);
-        onChange({ availableToStartDate: v });
-        debouncedUpdate({ availableToStartDate: v });
-      }}
-      onBlur={(e) => debouncedUpdate({ availableToStartDate: e.target.value })}
-      InputLabelProps={{ shrink: true }}
-      fullWidth
-      sx={{ maxWidth: 360 }}
-    />
   );
 };
 

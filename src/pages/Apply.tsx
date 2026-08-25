@@ -124,8 +124,16 @@ const Apply: React.FC = () => {
         >
           <Stack direction="row" alignItems="baseline" justifyContent="space-between" spacing={1}>
             <Box>
+              {/* Once the OTP gate signs the worker in, the remaining steps
+                  are profile completion — "Sign up" would be wrong. */}
               <Typography variant="h5" component="h1">
-                {guestLanguage === 'es' ? 'Crear cuenta' : 'Sign up'}
+                {user
+                  ? guestLanguage === 'es'
+                    ? 'Completa tu perfil'
+                    : 'Finish your profile'
+                  : guestLanguage === 'es'
+                    ? 'Crear cuenta'
+                    : 'Sign up'}
               </Typography>
               {signupGroupTitle ? (
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>

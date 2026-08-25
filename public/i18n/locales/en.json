@@ -1060,7 +1060,14 @@
     "addAtLeastOneSkill": "Please add at least one skill to continue.",
     "trustedClient": "Trusted client",
     "popularShift": "Popular shift",
-    "highDemand": "High demand"
+    "highDemand": "High demand",
+    "resumeTitle": "Add your résumé",
+    "resumeSubtitle": "We'll use it to fill in your skills, experience, and education automatically.",
+    "resumeFormats": "PDF, DOCX, or TXT",
+    "headshotTitle": "Add your headshot",
+    "headshotSubtitle": "A clear photo helps managers recognize you on shift.",
+    "headshotLaterHint": "You can add one later — a photo may be required before accepting shifts.",
+    "takingYouHome": "Taking you to your home screen…"
   },
   "jobs": {
     "title": "Jobs",

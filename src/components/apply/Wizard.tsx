@@ -5,9 +5,6 @@ import {
   Button,
   Divider,
   Stack,
-  Step,
-  StepLabel,
-  Stepper,
   Typography,
   Alert,
   Snackbar,
@@ -43,7 +40,6 @@ import { db } from '../../firebase';
 
 import PersonalInfoStep from './steps/PersonalInfoStep';
 import AddressStep from './steps/AddressStep';
-import EVerifyComfortStep from './steps/EVerifyComfortStep';
 import {
   getEffectiveJobOrderField,
   type JobOrderForEffectiveRead,
@@ -56,10 +52,7 @@ import ResumeStep from './steps/ResumeStep';
 import SkillsStep from './steps/SkillsStep';
 import EducationStep from './steps/EducationStep';
 import WorkExperienceStep from './steps/WorkExperienceStep';
-import BioStep from './steps/BioStep';
-import JobPreferencesStep from './steps/JobPreferencesStep';
 import RequirementsAcknowledgementStep from './steps/RequirementsAcknowledgementStep';
-import MilestoneProgress from '../common/MilestoneProgress';
 import EligibilityModal from '../../components/EligibilityModal';
 import { geocodeAddress, geocodeAddressDetailed } from '../../utils/geocodeAddress';
 import {
@@ -498,16 +491,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     location: string;
   } | null>(null);
 
-  // Step indices: 2 = Resume (after address); 3 = E-Verify comfort (generic /c1/apply only; job applies use requirements when eVerifyRequired).
+  // Steps 3 (E-Verify comfort), 10 (bio), and 11 (shift preferences) were
+  // permanently cut 2026-08-25: staff never read them and no major gig app
+  // asks at signup (E-Verify comfort belongs at the job-requirements gate,
+  // bios come from resumes, availability comes from shift acceptance).
   const visibleStepIndices = useMemo(() => {
-    const all = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-    let indices = jobId ? all.filter((i) => i !== 3) : [...all];
+    const all = [0, 1, 2, 4, 5, 6, 7, 8, 9, 12];
+    let indices = [...all];
 
     if (hiringEntityName && /C1 Events LLC/i.test(hiringEntityName)) {
       indices = indices.filter((i) => i !== 4);
-    }
-    if (posting?.jobType === 'gig') {
-      indices = indices.filter((i) => i !== 11);
     }
 
     const isAuthenticated = Boolean(auth.currentUser?.uid || uid);
@@ -565,10 +558,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         homeLng !== undefined
     );
     if (isAuthenticated && addressComplete) indices = indices.filter((i) => i !== 1);
-
-    if (!jobId && isAuthenticated && hasValue(requirementsForm.eVerifyComfort)) {
-      indices = indices.filter((i) => i !== 3);
-    }
 
     // W.3 — when the work-auth collection flag is on (default), step 4
     // is auto-skipped for every entity, every user. The data is sourced
@@ -668,28 +657,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       indices = indices.filter((i) => i !== 9);
     }
 
-    const professionalBioText = String(
-      (formData.bio || {}).professionalBio || profile.professionalBio || ''
-    ).trim();
-    if (professionalBioText.length > 0) indices = indices.filter((i) => i !== 10);
-
-    const prefsForm = formData.preferences || {};
-    const prefsProfile = profile.preferences || {};
-    const preferencesCaptured =
-      (typeof prefsForm.targetPay === 'number' && !Number.isNaN(prefsForm.targetPay)) ||
-      (typeof prefsForm.shift === 'string' && prefsForm.shift.trim().length > 0) ||
-      (Array.isArray(prefsForm.shiftPreferences) && prefsForm.shiftPreferences.length > 0) ||
-      (typeof prefsForm.availableToStartDate === 'string' &&
-        prefsForm.availableToStartDate.trim().length > 0) ||
-      (typeof prefsForm.availabilityNotes === 'string' &&
-        prefsForm.availabilityNotes.trim().length > 0) ||
-      (typeof prefsProfile.targetPay === 'number' && !Number.isNaN(prefsProfile.targetPay)) ||
-      (typeof prefsProfile.shift === 'string' && prefsProfile.shift.trim().length > 0) ||
-      (Array.isArray(prefsProfile.shiftPreferences) && prefsProfile.shiftPreferences.length > 0);
-    if (posting?.jobType !== 'gig' && preferencesCaptured) {
-      indices = indices.filter((i) => i !== 11);
-    }
-
     const needsDrug = Boolean(posting?.showDrugScreening || posting?.drugScreeningRequired);
     const needsBackground = Boolean(posting?.showBackgroundChecks || posting?.backgroundCheckRequired);
     const needsEVerifyOnPosting = Boolean(posting?.eVerifyRequired);
@@ -732,20 +699,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   const actualStep = visibleStepIndices[Math.min(activeStep, visibleStepIndices.length - 1)] ?? 0;
   const isLastVisibleStep = activeStep === visibleStepIndices.length - 1;
-
-  // Grouped progress: Getting started (0-5 incl. resume, everify, work auth, photo), Qualifications (6-8), Experience (9-10), Prefs (11), Final (12)
-  const progressGroupIndex = (step: number) =>
-    step <= 5 ? 0 : step <= 8 ? 1 : step <= 10 ? 2 : step === 11 ? 3 : 4;
-  const progressGroupLabels = [
-    t('apply.progressPersonal'),
-    t('apply.progressSkills'),
-    t('apply.progressExperience'),
-    t('apply.progressVerification'),
-    t('apply.progressFinal'),
-  ];
-  const progressCompleted = progressGroupIndex(actualStep);
-  const progressTotal = 5;
-  const steps = progressGroupLabels;
 
   // Clamp activeStep when visible steps shrink (e.g. posting loads and we skip Preferences)
   useEffect(() => {
@@ -2113,17 +2066,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Object.keys(update).length > 1) {
             await setDoc(userRef, update, { merge: true });
           }
-        } else if (actualStep === 3) {
-          // Generic apply: E-Verify comfort (persisted live via EVerifyComfortStep; sync to user on Next)
-          const r = formData.requirements || {};
-          const ev = String(r.eVerifyComfort || '').trim();
-          if (ev) {
-            await setDoc(
-              userRef,
-              buildCanonicalWorkerProfileWritePatch({ comfortableEVerify: ev, updatedAt: serverTimestamp() }),
-              { merge: true },
-            );
-          }
         } else if (actualStep === 4) {
           // Work Eligibility → save attestation (not a document) + legacy workEligibility
           // Prefer ref so Skip EEO + Next in one tick sees cleared optional fields
@@ -3368,27 +3310,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         );
       case 2:
         return (
-          <Box>
-            <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
-              {t('apply.profileImprovementOptional')}
-            </Typography>
-            <ResumeStep
-              value={{ ...(formData.resume || {}), userId: uid || '' }}
-              onChange={(v) => persist({ resume: v })}
-              tenantId={tenantId}
-            />
-          </Box>
-        );
-      case 3:
-        return (
-          <EVerifyComfortStep
-            variant="generic"
-            value={String((formData.requirements || {}).eVerifyComfort || '')}
-            onChange={(comfort) =>
-              persist({
-                requirements: { ...(formData.requirements || {}), eVerifyComfort: comfort },
-              })
-            }
+          <ResumeStep
+            value={{ ...(formData.resume || {}), userId: uid || '' }}
+            onChange={(v) => persist({ resume: v })}
+            tenantId={tenantId}
           />
         );
       case 4:
@@ -3405,7 +3330,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             value={formData.profilePicture || {}}
             onChange={(v) => persist({ profilePicture: v })}
             userId={auth.currentUser?.uid || uid || undefined}
-            onSkip={handleNext}
           />
         );
       case 6:
@@ -3468,27 +3392,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             jobId={jobId}
             jobPosting={posting}
             resumeData={formData.resume || userProfile?.resume || null}
-          />
-          </Box>
-        );
-      case 10:
-        return (
-          <BioStep
-            value={formData.bio || {}}
-            onChange={(v) => persist({ bio: v })}
-            jobPosting={posting}
-          />
-        );
-      case 11:
-        return (
-          <Box>
-            <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
-              {t('apply.profileImprovementOptional')}
-            </Typography>
-            <JobPreferencesStep
-            value={formData.preferences || {}}
-            onChange={(v) => persist({ preferences: v })}
-            jobPosting={posting}
           />
           </Box>
         );
@@ -3656,15 +3559,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   const applicationsPath = tenantSlug ? `/${tenantSlug}/applications` : '/c1/applications';
   const jobsBoardPath = tenantSlug ? `/${tenantSlug}/jobs-board` : '/c1/jobs-board';
-  // Worker payroll lives under the c1 slug regardless of which tenant the
-  // application was for — it's a fixed worker-facing surface backed by
-  // `WorkerPayrollIndex` (auto-redirects to the Everee embed when there's
-  // exactly one provisioned employer; falls back to a "no payroll yet" /
-  // dashboard link when Everee hasn't provisioned yet, e.g. because the
-  // background hire-automation trigger hasn't fired before this redirect
-  // lands). Confirmed with Greg 2026-05-08: always `c1`.
-  const payrollPath = '/c1/workers/payroll';
-
   if (submittedSuccess) {
     // Came from JobPostingDetail's per-shift Apply (returnTo=/c1/jobs-board/
     // {postId}) → bounce straight back to the shift list so they can apply
@@ -3686,32 +3580,22 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       );
     }
 
-    // Group / auto-hire apply (no returnTo): DON'T force them into Everee
-    // payroll. Workers kept thinking onboarding was required before they
-    // could pick up shifts. Show a clear choice — find shifts now, or set
-    // up payroll — and make it explicit payroll can be finished later
-    // (it's also surfaced as a dashboard action item).
+    // Group / auto-hire apply (no returnTo): the worker is signed in now, so
+    // land them in the real app chrome (bottom nav, dashboard action items —
+    // payroll setup, headshot, etc.) instead of a dead-end card under the
+    // signup header (Greg 2026-08-25).
     return (
       <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
-        <Paper elevation={0} sx={{ maxWidth: 480, mx: 'auto', mt: { xs: 4, md: 6 }, p: 3, textAlign: 'center' }}>
-          <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
-            {t('apply.hiredTitle')}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
-            {t('apply.hiredPayrollOptional')}
-          </Typography>
-          <Stack spacing={1.25} sx={{ mb: 1.5 }}>
-            <Button variant="contained" size="large" fullWidth onClick={() => navigate(jobsBoardPath)}>
-              {t('apply.findShifts')}
-            </Button>
-            <Button variant="outlined" size="large" fullWidth onClick={() => navigate(payrollPath)}>
-              {t('apply.setUpPayroll')}
-            </Button>
-          </Stack>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-            {t('apply.payrollLaterHint')}
-          </Typography>
-        </Paper>
+        <PostSubmitRedirect
+          to="/c1/workers/dashboard"
+          delayMs={1500}
+          headlineKey="apply.hiredTitle"
+          subheadKey="apply.takingYouHome"
+          helperKey="apply.payrollLaterHint"
+          applicationsPath={applicationsPath}
+          jobsBoardPath={jobsBoardPath}
+          t={t}
+        />
       </Box>
     );
   }
@@ -3806,31 +3690,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             backgroundColor: 'background.paper',
           }}
         >
-          {/* Full-bleed sticky progress under top bar (grouped: Personal, Skills, Experience, Verification, Final) */}
-          <MilestoneProgress
-            total={progressTotal}
-            completed={progressCompleted}
-            labels={steps}
-            sticky="top"
-            onJump={undefined}
-            sx={{ px: { xs: 2, md: 3 }, py: 1 }}
-          />
           {saving && (
             <Box sx={{ mb: 2 }} aria-live="polite" aria-atomic>
               <LinearProgress />
             </Box>
           )}
-
-          {/* Keep stepper for structure but hide visually to reduce clutter (a11y preserved) */}
-          <Box sx={{ display: { xs: 'none', md: 'none' } }} aria-hidden>
-            <Stepper activeStep={activeStep} alternativeLabel>
-              {steps.map((label) => (
-                <Step key={label}>
-                  <StepLabel>{label}</StepLabel>
-                </Step>
-              ))}
-            </Stepper>
-          </Box>
 
           <Box
             sx={{
@@ -3868,78 +3732,28 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               <Button onClick={handleBack} disabled={activeStep === 0}>
                 {t('apply.back')}
               </Button>
-              {actualStep === 5 ? (
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  flexWrap="wrap"
-                  justifyContent="flex-end"
-                  sx={{ flex: 1, minWidth: 0 }}
-                >
-                  <Button
-                    variant="outlined"
-                    onClick={isLastVisibleStep ? handleSubmit : handleNext}
-                    disabled={saving}
-                  >
-                    {t('apply.addPhotoLater')}
-                  </Button>
-                  <Button
-                    variant="contained"
-                    onClick={isLastVisibleStep ? handleSubmit : handleNext}
-                    disabled={saving}
-                  >
-                    {t('apply.continueWithoutPhoto')}
-                  </Button>
-                </Stack>
-              ) : actualStep === 2 ? (
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  flexWrap="wrap"
-                  justifyContent="flex-end"
-                  sx={{ flex: 1, minWidth: 0 }}
-                >
-                  <Button
-                    variant="outlined"
-                    onClick={isLastVisibleStep ? handleSubmit : handleNext}
-                    disabled={saving}
-                  >
-                    {t('apply.addResumeLater')}
-                  </Button>
-                  <Button
-                    variant="contained"
-                    onClick={isLastVisibleStep ? handleSubmit : handleNext}
-                    disabled={saving}
-                  >
-                    {t('apply.continueWithoutResume')}
-                  </Button>
-                </Stack>
-              ) : (
-                <Button
-                  variant="contained"
-                  onClick={isLastVisibleStep ? handleSubmit : handleNext}
-                  disabled={
-                    (isLastVisibleStep &&
-                      actualStep === 12 &&
-                      (missing.drug ||
-                        missing.background ||
-                        missing.everify ||
-                        missing.additional.length > 0)) ||
-                    (actualStep === 0 && (!personalValid || !auth.currentUser)) ||
-                    (actualStep === 1 && !addressValid) ||
-                    (actualStep === 3 &&
-                      !String(formData?.requirements?.eVerifyComfort || '').trim()) ||
-                    (actualStep === 4 && formData?.eligibility?.workAuthorized !== true) ||
-                    saving
-                  }
-                >
-                  {isLastVisibleStep
-                    ? t('apply.submitApplication')
-                    : actualStep === 8 && hasMissingRequiredCerts
-                    ? t('apply.skipForNow')
-                    : t('apply.next')}
-                </Button>
-              )}
+              <Button
+                variant="contained"
+                onClick={isLastVisibleStep ? handleSubmit : handleNext}
+                disabled={
+                  (isLastVisibleStep &&
+                    actualStep === 12 &&
+                    (missing.drug ||
+                      missing.background ||
+                      missing.everify ||
+                      missing.additional.length > 0)) ||
+                  (actualStep === 0 && (!personalValid || !auth.currentUser)) ||
+                  (actualStep === 1 && !addressValid) ||
+                  (actualStep === 4 && formData?.eligibility?.workAuthorized !== true) ||
+                  saving
+                }
+              >
+                {isLastVisibleStep
+                  ? t('apply.submitApplication')
+                  : actualStep === 2 || actualStep === 5 || (actualStep === 8 && hasMissingRequiredCerts)
+                  ? t('apply.skipForNow')
+                  : t('apply.next')}
+              </Button>
             </Stack>
           </Box>
         </Paper>

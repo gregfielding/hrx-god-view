@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Box, Button, Typography, Avatar, CircularProgress, Alert, Paper, useTheme, useMediaQuery, Stack } from '@mui/material';
-import { PhotoCamera, Upload, Delete, ArrowForward } from '@mui/icons-material';
+import { PhotoCamera, Upload, Delete } from '@mui/icons-material';
 import { uploadBytes, ref as storageRef, getDownloadURL } from 'firebase/storage';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db, storage } from '../../../firebase';
@@ -20,16 +20,9 @@ interface Props {
    * still persists the avatar on step-exit, so verification just runs a step later.
    */
   userId?: string;
-  /**
-   * Optional. When provided, the "Skip for now" button becomes an explicit skip action
-   * that advances the wizard in one tap. The wizard passes its `handleNext` callback so
-   * workers can bypass the headshot today — the Accept-shift gate will enforce a
-   * verified headshot later when it actually matters.
-   */
-  onSkip?: () => void;
 }
 
-const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId, onSkip }) => {
+const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId }) => {
   const t = useT();
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,14 +128,6 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId, onSkip }
     else handleUploadPhoto();
   };
 
-  const handleSkip = () => {
-    // Clear whatever was picked locally so the wizard's step-exit write doesn't persist it,
-    // then advance immediately if the wizard gave us a next callback.
-    onChange({ profilePicture: undefined });
-    setError(null);
-    onSkip?.();
-  };
-
   // Show verification UI only when we've actually persisted the current picture, i.e. the
   // Firestore user doc has the matching avatar URL. Without a userId we can't subscribe,
   // so verification feedback only shows up once the wizard writes the field (next step).
@@ -150,24 +135,12 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId, onSkip }
 
   return (
     <Box>
-      <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 0.5 }}>
-        {t('apply.profileImprovementOptional')}
+      <Typography variant="h6" sx={{ mb: 0.5 }}>
+        {t('apply.headshotTitle')}
       </Typography>
-      <Typography
-        variant="h6"
-        gutterBottom
-        sx={{ fontSize: isMobile ? '1rem' : undefined, fontWeight: isMobile ? 500 : undefined }}
-      >
-        Take your headshot
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        {t('apply.headshotSubtitle')}
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-        A quick, clear headshot helps hiring managers recognize you on shift. We&apos;ll
-        check it for good framing and lighting — if something&apos;s off, we&apos;ll let
-        you know so you can retake.
-      </Typography>
-      <Alert severity="info" sx={{ mb: 2 }} icon={false}>
-        {t('apply.microcopyProfilePhoto')}
-      </Alert>
 
       {/* Current Headshot */}
       {value.profilePicture && (
@@ -215,42 +188,29 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId, onSkip }
       )}
 
       {/* Upload Options */}
-      <Paper
-        elevation={isMobile ? 0 : 2}
-        sx={{
-          p: { xs: 2, md: 3 },
-          borderRadius: 2,
-          border: isMobile ? '1px solid' : undefined,
-          borderColor: isMobile ? 'divider' : undefined
-        }}
-      >
-        <Typography variant="subtitle2" gutterBottom>
-          {value.profilePicture ? 'Retake headshot' : 'Add your headshot'}
-        </Typography>
-
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
-          {/* Take Photo Button */}
+      <Box>
+        <Stack spacing={1.25} sx={{ maxWidth: 360 }}>
           <Button
             variant="contained"
+            size="large"
             startIcon={<PhotoCamera />}
             onClick={handleTakePhoto}
             disabled={uploading}
-            sx={{ minWidth: 150 }}
+            fullWidth
           >
             {t('apply.takePhoto')}
           </Button>
-
-          {/* Upload Photo Button */}
           <Button
             variant="outlined"
+            size="large"
             startIcon={<Upload />}
             onClick={handleUploadPhoto}
             disabled={uploading}
-            sx={{ minWidth: 150 }}
+            fullWidth
           >
             {t('apply.uploadPhoto')}
           </Button>
-        </Box>
+        </Stack>
 
         {/* Upload Progress */}
         {uploading && (
@@ -285,42 +245,11 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId, onSkip }
           capture="user"
           style={{ display: 'none' }}
         />
+      </Box>
 
-        {/* Tips */}
-        <Box sx={{ mt: 3, p: 2, backgroundColor: 'grey.50', borderRadius: 1 }}>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-            <strong>Tips for a great headshot:</strong>
-          </Typography>
-          <ul style={{ margin: '4px 0 0 0', paddingLeft: '20px' }}>
-            <li>Fill the frame with your head and shoulders — no full-body shots</li>
-            <li>Face the camera straight on, eyes open, neutral or friendly expression</li>
-            <li>Even, natural light on your face — avoid harsh backlight or deep shadows</li>
-            <li>Remove sunglasses, hats, and filters that obscure your face</li>
-            <li>Just you — no friends, pets, or group photos</li>
-          </ul>
-        </Box>
-      </Paper>
-
-      {/* Skip for now — explicit action so workers know the step is optional. The Accept
-          shift gate later enforces a verified headshot when it actually matters. */}
-      <Stack direction="row" justifyContent="center" sx={{ mt: 3 }}>
-        <Button
-          variant="text"
-          color="inherit"
-          endIcon={<ArrowForward />}
-          onClick={handleSkip}
-          disabled={uploading}
-        >
-          Skip for now
-        </Button>
-      </Stack>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ display: 'block', textAlign: 'center', mt: 0.5 }}
-      >
-        You can add a headshot later from your profile. One may be required before you
-        can accept shifts.
+      {/* The Accept-shift gate later enforces a verified headshot when it matters. */}
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
+        {t('apply.headshotLaterHint')}
       </Typography>
     </Box>
   );
