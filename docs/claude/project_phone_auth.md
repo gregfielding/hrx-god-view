@@ -100,3 +100,34 @@ embed collect it).
 ### Metrics
 Sign-up completion rate (account created → address → first assignment visible), login success rate,
 support tickets "can't log in", duplicate accounts created per week (target 0).
+
+### 2026-08-25 (later) — conversion cuts after Greg's live E2E review
+Greg watched a full production signup and cut the wizard to what staffing ops actually reads
+(weighed against Instawork/Wonolo/Indeed Flex norms — none ask these at signup):
+- **Removed permanently**: MilestoneProgress bar (stuck at 0% through auto-skipped steps; short
+  flows don't need one), step 3 E-Verify comfort (E-Verify is ops-disabled anyway — see
+  project_everify_disabled.md), step 10 bio (comes from résumé), step 11 shift preferences and
+  the final-step "When can you start?" date (admin side never reads either). `visibleStepIndices`
+  base array is now `[0,1,2,4,5,6,7,8,9,12]`; the switch cases + step components' dead code deleted.
+- **Slimmed**: résumé step (h6 + one-line subtitle + dropzone, `hideTitle` on ResumeUpload);
+  headshot step (title + one line + centered ~240px Take/Upload buttons + one hint — tips list,
+  info alerts, in-step skip buttons all gone). One nav CTA: "Skip for now" on steps 2/5 replaces
+  the old dual skip buttons.
+- **Transport chips** (kept — "how you get to work is important"): flex-wrap `gap:1`, 36px,
+  selected = `color="secondary"` (C1 gold bg + ink text per worker canon).
+- **☠️ Step-eviction bug + guard**: completing the final step's last unanswered field (tapping a
+  transport chip) flipped `needsRequirementsStep` false and the recompute EVICTED step 12 while
+  the worker stood on it, bouncing them back to an earlier step. Guard: `lastActualStepRef`
+  (previous render's actualStep) — never filter step 12 out when it's the current step. Any new
+  "skip if complete" filter must consider the same live-eviction hazard.
+- **Post-submit**: signed-in workers now land on `/c1/workers/dashboard` (real app chrome,
+  bottom nav) via PostSubmitRedirect (1.5s "You're all set! 🎉"), replacing the dead-end card
+  under the signup header. Apply.tsx header is auth-aware: "Sign up" → "Finish your profile"
+  once the OTP gate signs them in.
+- **Layout canon**: wizard now matches C1WorkerLayout — `maxWidth {sm:720}`, `px {xs:2, sm:3}`
+  page gutter, content on a hairline card (12px radius, #E9E9E5 border) over `background.default`.
+- **☠️ Test-account cleanup**: laptop admin-SDK **Auth** ops fail as `auth/internal-error`
+  (Firestore ops work fine) — a cleanup script can print "deleted" while the Auth user survives;
+  this happened twice with Testina (+19255550188). Always delete/verify via Identity Toolkit REST
+  (`gcloud auth print-access-token` + `x-goog-user-project: hrx1-d3beb`, `accounts:delete` then
+  `accounts:lookup` to confirm empty) — same footgun as the invite flow in project_conventions.md.
