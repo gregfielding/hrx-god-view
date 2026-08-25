@@ -490,6 +490,11 @@ async function resolvePhoneSignup(
       profileComplete: false,
       onboarded: false,
       role: 'Tenant',
+      // ☠️ Must be stamped at signup: AuthContext's last-resort fallback treats
+      // a users doc with role but NO securityLevel as STAFF ('5'), which
+      // bounced fresh phone signups to the admin /dashboard and crashed
+      // (found 2026-08-25). '2' = applicant, same as the legacy signup path.
+      securityLevel: '2',
       orgType: 'Tenant',
       preferredLanguage,
       isActive: true,
