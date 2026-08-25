@@ -67,7 +67,17 @@ embed collect it).
 - **Slice 1 — Phone login (workers), behind a flag.** Login page gets "Continue with phone" (default for
   workers; staff link stays email). `signInWithPhoneNumber` + invisible reCAPTCHA → `claimAccountByPhone`
   (JIT, decision 1B) → land on dashboard. Email/password remains as fallback during rollout.
-- **Slice 2 — Sign-up = phone.** Wizard step 0: name + phone → OTP → (if phone already has an account →
+- **Slice 2 — SHIPPED 2026-08-25.** `checkOtp({signup:true, firstName, lastName, preferredLanguage,
+  signupSource, signupGroupId, jobContext})` → `resolvePhoneSignup`: existing phone → sign-in claim
+  path with `existing:true`; none → rehire gate (exact phone, generic denial) → Auth user minted
+  with verified phone (no password; `auth/phone-number-already-exists` → reuse orphan uid) + users
+  doc in wizard base-profile shape (email NULL/optional; applyResumeSnapshot preserved for the SMS
+  resume reminder) + audit `signup_created` + custom token. Client: shared
+  `src/components/apply/PhoneSignupGate.tsx` in wizard step 0 (passwords gone, Continue gated on
+  auth, legacy branch neutralized, email optional) + AuthDialog Create tab (email/password now
+  sign-in-only); /login/phone no-account → /c1/apply?phone= prefill. ⚠️ The OTP leg needs a human
+  phone to E2E-test: claim path testable with any existing worker phone; CREATE path needs a
+  never-used number. Original design for reference: Wizard step 0: name + phone → OTP → (if phone already has an account →
   sign in, never create a second) → address/DOB/language → account exists with NO password. Email field
   optional. Same for AuthDialog (jobs-board) and group landing pages. This kills duplicates at the source.
 - **Slice 3 — Recovery + admin tools.** "New phone number?" flow (OTP on new number + recruiter approval or
