@@ -180,3 +180,17 @@ Greg watched a full production signup and cut the wizard to what staffing ops ac
   50 lbs" on every application.
 - Yes/No/Maybe chips on canon: 36px, gold selected + ink text, no
   traffic-light colors or hover scale.
+- **☠️ Root causes of "asks me every time" (both fixed)**: (1) requirement-chip
+  answers queue in userProfileBatching with a **10-minute** flush (now 15s) and
+  the unload flush dies mid-navigation — answers only ever persisted via full
+  submit; (2) the auto-skip class of bug — a step that filters itself out the
+  moment its data is complete never runs its save-on-Next (DOB at signup,
+  ADDRESS at the address step). Address now persists to the users doc the
+  moment it's complete. ANY new wizard step that auto-skips on completeness
+  must persist its data at the moment of entry, not on step-exit.
+- Requirements prefill is field-level + always-on (stale drafts no longer
+  block profile answers), reading legacy fields + canonical workerAttestations
+  (nested and dotted). Verified: a profile with physical=Yes + transport=Car
+  applying to a new job sees ONLY that job's unanswered questions.
+- Mobile: wizard card is full-bleed on xs — one 16px edge for headers and
+  content (insets were stacking to 32px+).
