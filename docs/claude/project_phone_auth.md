@@ -164,3 +164,19 @@ Greg watched a full production signup and cut the wizard to what staffing ops ac
 - Remaining Slice 3 scope NOT built: admin merge tool for the ~722 same-phone duplicate accounts
   (survivor rule already routes their sign-ins correctly; merge is data hygiene). Slice 4
   (retire worker passwords, invites via OTP link) also open.
+
+### 2026-08-25 (night) — jobs-board apply unified with the phone-first flow
+- `/apply/:tenantSlug/:jobId` (the URL every jobs-board Apply button hits when
+  logged out) now wraps the shared wizard in the same worker-canon shell as
+  /c1/apply: workerTheme, EN|ES toggle, "Apply" title (the wizard's posting
+  header carries job title/pay/location). Same PhoneSignupGate step 0 —
+  signup from a posting IS the signup flow, followed only by job questions.
+- Requirements step asks ONLY unanswered questions: each section (E-Verify,
+  drug, background, languages, physical, uniform, custom uniform, PPE,
+  additional screenings, screening package, transport) gates on
+  value-prefilled-from-profile + a touched-set so a question never vanishes
+  mid-tap. 'Maybe' counts as answered only with its explanation (mirrors
+  needsRequirementsStep). Repeat applicants stop re-answering "can you lift
+  50 lbs" on every application.
+- Yes/No/Maybe chips on canon: 36px, gold selected + ink text, no
+  traffic-light colors or hover scale.
