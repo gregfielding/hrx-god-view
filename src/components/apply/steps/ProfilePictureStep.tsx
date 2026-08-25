@@ -194,6 +194,7 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId }) => {
         <Stack spacing={1} sx={{ maxWidth: 240, mx: 'auto', mt: 1 }}>
           <Button
             variant="contained"
+            size="small"
             startIcon={<PhotoCamera />}
             onClick={handleTakePhoto}
             disabled={uploading}
@@ -203,6 +204,7 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId }) => {
           </Button>
           <Button
             variant="outlined"
+            size="small"
             startIcon={<Upload />}
             onClick={handleUploadPhoto}
             disabled={uploading}
