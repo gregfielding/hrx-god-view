@@ -16,6 +16,10 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   Drawer,
   Stack,
@@ -50,6 +54,8 @@ interface Ticket {
   workerEmail: string | null;
   workerPhone: string | null;
   preferredLanguage: string;
+  lane: 'fix_it' | 'money';
+  resolutionNote: string | null;
   lastMessageAt: Date | null;
   lastMessageBy: string;
   createdAt: Date | null;
@@ -108,6 +114,9 @@ const PayrollTicketsPage: React.FC = () => {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusTab, setStatusTab] = useState<0 | 1 | 2>(0);
+  const [laneFilter, setLaneFilter] = useState<'all' | 'fix_it' | 'money'>('all');
+  const [resolveOpen, setResolveOpen] = useState(false);
+  const [resolveNote, setResolveNote] = useState('');
   const [selected, setSelected] = useState<Ticket | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [privateDiagnosis, setPrivateDiagnosis] = useState<PrivateDiagnosis | null>(null);
@@ -137,6 +146,8 @@ const PayrollTicketsPage: React.FC = () => {
                 workerEmail: (x.workerEmail as string) ?? null,
                 workerPhone: (x.workerPhone as string) ?? null,
                 preferredLanguage: String(x.preferredLanguage || 'en'),
+                lane: (x.lane as 'fix_it' | 'money') || 'fix_it',
+                resolutionNote: (x.resolutionNote as string) ?? null,
                 lastMessageAt: tsToDate(x.lastMessageAt),
                 lastMessageBy: String(x.lastMessageBy || ''),
                 createdAt: tsToDate(x.createdAt),
@@ -227,8 +238,10 @@ const PayrollTicketsPage: React.FC = () => {
 
   const filtered = useMemo(() => {
     const wanted: TicketStatus[] = statusTab === 0 ? ['open'] : statusTab === 1 ? ['waiting_worker'] : ['resolved'];
-    return tickets.filter((x) => wanted.includes(x.status));
-  }, [tickets, statusTab]);
+    return tickets.filter(
+      (x) => wanted.includes(x.status) && (laneFilter === 'all' || x.lane === laneFilter),
+    );
+  }, [tickets, statusTab, laneFilter]);
 
   const counts = useMemo(
     () => ({
@@ -264,9 +277,14 @@ const PayrollTicketsPage: React.FC = () => {
     setReplyText('');
   };
 
-  const setStatus = async (status: TicketStatus) => {
+  const setStatus = async (status: TicketStatus, note?: string) => {
     if (!selected) return;
-    await callAction({ action: 'payroll_set_status', ticketId: selected.id, status });
+    await callAction({ action: 'payroll_set_status', ticketId: selected.id, status, note });
+  };
+
+  const setLane = async (lane: 'fix_it' | 'money') => {
+    if (!selected) return;
+    await callAction({ action: 'payroll_set_lane', ticketId: selected.id, lane });
   };
 
   return (
@@ -285,11 +303,31 @@ const PayrollTicketsPage: React.FC = () => {
         </Alert>
       )}
 
-      <Tabs value={statusTab} onChange={(_, v) => setStatusTab(v)} sx={{ mb: 2 }}>
+      <Tabs value={statusTab} onChange={(_, v) => setStatusTab(v)} sx={{ mb: 1 }}>
         <Tab label={`Open (${counts.open})`} />
         <Tab label={`Waiting on worker (${counts.waiting})`} />
         <Tab label={`Resolved (${counts.resolved})`} />
       </Tabs>
+      {/* Lane filter (Greg 2026-08-25): fix-it = AI/support can resolve;
+          money = the payroll team owes dollars. */}
+      <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+        {(
+          [
+            ['all', 'All lanes'],
+            ['fix_it', 'Fix-it lane'],
+            ['money', 'Money lane'],
+          ] as const
+        ).map(([value, label]) => (
+          <Chip
+            key={value}
+            label={label}
+            size="small"
+            color={laneFilter === value ? 'primary' : 'default'}
+            variant={laneFilter === value ? 'filled' : 'outlined'}
+            onClick={() => setLaneFilter(value)}
+          />
+        ))}
+      </Stack>
 
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
@@ -305,6 +343,7 @@ const PayrollTicketsPage: React.FC = () => {
                 <TableCell>Worker</TableCell>
                 <TableCell>Issue</TableCell>
                 <TableCell>AI diagnosis</TableCell>
+                <TableCell>Lane</TableCell>
                 <TableCell>Last activity</TableCell>
               </TableRow>
             </TableHead>
@@ -350,10 +389,23 @@ const PayrollTicketsPage: React.FC = () => {
                     )}
                   </TableCell>
                   <TableCell>
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      color={row.lane === 'money' ? 'error' : 'default'}
+                      label={row.lane === 'money' ? 'Money' : 'Fix-it'}
+                    />
+                  </TableCell>
+                  <TableCell>
                     <Typography variant="caption">
                       {row.lastMessageAt ? row.lastMessageAt.toLocaleString() : '—'}
                       {row.lastMessageBy === 'worker' && row.status === 'open' ? ' · worker waiting' : ''}
                     </Typography>
+                    {row.status === 'resolved' && row.resolutionNote ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontStyle: 'italic' }}>
+                        {row.resolutionNote}
+                      </Typography>
+                    ) : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -531,7 +583,15 @@ const PayrollTicketsPage: React.FC = () => {
             <Stack direction="row" spacing={1} justifyContent="space-between">
               <Stack direction="row" spacing={1}>
                 {selected.status !== 'resolved' ? (
-                  <Button size="small" variant="outlined" disabled={busy} onClick={() => void setStatus('resolved')}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={busy}
+                    onClick={() => {
+                      setResolveNote('');
+                      setResolveOpen(true);
+                    }}
+                  >
                     Resolve
                   </Button>
                 ) : (
@@ -539,6 +599,14 @@ const PayrollTicketsPage: React.FC = () => {
                     Reopen
                   </Button>
                 )}
+                <Button
+                  size="small"
+                  variant="text"
+                  disabled={busy}
+                  onClick={() => void setLane(selected.lane === 'money' ? 'fix_it' : 'money')}
+                >
+                  {selected.lane === 'money' ? 'Move to Fix-it lane' : 'Move to Money lane'}
+                </Button>
               </Stack>
               <Button
                 variant="contained"
@@ -551,6 +619,40 @@ const PayrollTicketsPage: React.FC = () => {
           </Stack>
         )}
       </Drawer>
+
+      {/* Resolution note — the "resolutions" half of the queue table; also
+          posted to the payroll Slack channel. */}
+      <Dialog open={resolveOpen} onClose={() => setResolveOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Resolve ticket</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            What fixed it? One line for the queue history (e.g. "sent bank-update link, worker
+            confirmed" or "ad-hoc payment $312 submitted").
+          </Typography>
+          <TextField
+            fullWidth
+            size="small"
+            multiline
+            minRows={2}
+            label="Resolution (optional)"
+            value={resolveNote}
+            onChange={(e) => setResolveNote(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setResolveOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={busy}
+            onClick={async () => {
+              await setStatus('resolved', resolveNote.trim() || undefined);
+              setResolveOpen(false);
+            }}
+          >
+            Resolve
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

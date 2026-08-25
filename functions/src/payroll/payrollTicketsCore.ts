@@ -20,11 +20,15 @@ import { logger } from 'firebase-functions/v2';
 import twilio from 'twilio';
 import { getClaudeChat } from '../utils/claudeChat';
 import { sendNotificationAndPush } from '../messaging/unifiedWorkerNotifications';
+import { defineSecret } from 'firebase-functions/params';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
   TWILIO_MESSAGING_PHONE_NUMBER,
 } from '../messaging/twilioSecrets';
+
+/** Same bot the mentions bridge uses — must be bound by the host callable. */
+export const PAYROLL_SLACK_BOT_TOKEN = defineSecret('SLACK_BOT_TOKEN');
 import { reconcileWorkerInternal } from '../integrations/everee/evereeReconcileWorker';
 import { getPayHistory } from '../integrations/everee/evereeService';
 
@@ -39,6 +43,38 @@ const MAX_ACTIVE_TICKETS_PER_WORKER = 3;
 const db = admin.firestore();
 
 export type PayrollTicketStatus = 'open' | 'waiting_worker' | 'resolved';
+export type PayrollTicketLane = 'fix_it' | 'money';
+
+/** Pure (tested): money lane = dollars are owed; everything else the AI can
+ *  fix or explain (provisioning / Everee / docs). */
+export function laneForCategory(category: string | null | undefined): PayrollTicketLane {
+  return category === 'missing_pay' || category === 'wrong_amount' ? 'money' : 'fix_it';
+}
+
+/**
+ * Post to the payroll Slack channel (Greg 2026-08-25: every queue posting
+ * also hits Slack). Channel id lives in
+ * `app_config/payroll_help_desk.slackChannelId`; silently skipped when unset
+ * or the token is unavailable — Slack is a mirror, never a dependency.
+ */
+async function postPayrollSlack(text: string): Promise<void> {
+  try {
+    const cfg = await db.doc('app_config/payroll_help_desk').get();
+    const channel = trim(cfg.get('slackChannelId'));
+    if (!channel) return;
+    const token = PAYROLL_SLACK_BOT_TOKEN.value() || process.env.SLACK_BOT_TOKEN;
+    if (!token) return;
+    const res = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ channel, text, unfurl_links: false }),
+    });
+    const body = (await res.json()) as { ok?: boolean; error?: string };
+    if (!body.ok) logger.warn('payrollTickets: slack post failed', { error: body.error });
+  } catch (e) {
+    logger.warn('payrollTickets: slack post errored', { error: String(e) });
+  }
+}
 
 export interface PayrollTicketDiagnosis {
   category: string;
@@ -310,6 +346,7 @@ export async function createPayrollTicket(input: {
     uid: input.uid,
     tenantId: input.tenantId,
     status: 'open' satisfies PayrollTicketStatus,
+    lane: 'fix_it' satisfies PayrollTicketLane,
     channel: input.channel ?? 'app',
     subject: input.text.slice(0, 120),
     workerName,
@@ -347,6 +384,8 @@ export async function createPayrollTicket(input: {
         confidence: diagnosis.confidence,
         generatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
+      // Queue lane (Greg 2026-08-25): money = payroll team; fix_it = AI/support.
+      lane: laneForCategory(diagnosis.category),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     await ref.collection('private').doc('diagnosis').set({
@@ -415,6 +454,12 @@ export async function createPayrollTicket(input: {
     category: diagnosis?.category ?? null,
     severity: diagnosis?.severity ?? null,
   });
+  await postPayrollSlack(
+    `:ticket: New payroll ticket — *${workerName}* · ${laneForCategory(diagnosis?.category)} lane · ` +
+      `${diagnosis?.category ?? 'uncategorized'}/${diagnosis?.severity ?? '—'}\n` +
+      `>${input.text.slice(0, 180)}\n` +
+      `https://hrxone.com/payroll-tickets`,
+  );
   return { ticketId: ref.id, diagnosis };
 }
 
@@ -481,16 +526,45 @@ export async function setPayrollTicketStatus(input: {
   actorUid: string;
   ticketId: string;
   status: PayrollTicketStatus;
+  /** Optional resolution note — the "resolutions" half of the queue table. */
+  note?: string;
 }): Promise<{ ok: true }> {
   if (!(await isStaff(input.actorUid))) throw new TicketForbiddenError('Not allowed.');
   if (!['open', 'waiting_worker', 'resolved'].includes(input.status)) throw new Error('Bad status.');
-  await db.collection('payroll_tickets').doc(input.ticketId).update({
+  const ref = db.collection('payroll_tickets').doc(input.ticketId);
+  await ref.update({
     status: input.status,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     ...(input.status === 'resolved'
-      ? { resolvedAt: admin.firestore.FieldValue.serverTimestamp(), resolvedBy: input.actorUid }
+      ? {
+          resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+          resolvedBy: input.actorUid,
+          ...(trim(input.note) ? { resolutionNote: trim(input.note) } : {}),
+        }
       : {}),
   });
+  if (input.status === 'resolved') {
+    const snap = await ref.get();
+    const t = (snap.data() ?? {}) as Record<string, unknown>;
+    await postPayrollSlack(
+      `:white_check_mark: Resolved — *${trim(t.workerName) || 'worker'}*` +
+        (trim(input.note) ? `: ${trim(input.note).slice(0, 200)}` : ''),
+    );
+  }
+  return { ok: true };
+}
+
+/** Staff lane override — diagnosis guesses, humans decide. */
+export async function setPayrollTicketLane(input: {
+  actorUid: string;
+  ticketId: string;
+  lane: PayrollTicketLane;
+}): Promise<{ ok: true }> {
+  if (!(await isStaff(input.actorUid))) throw new TicketForbiddenError('Not allowed.');
+  if (!['fix_it', 'money'].includes(input.lane)) throw new Error('Bad lane.');
+  const ctx = await loadTicketForStaffAction(input.actorUid, input.ticketId);
+  await ctx.ref.update({ lane: input.lane, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+  await appendAudit(ctx, 'set_lane', { lane: input.lane });
   return { ok: true };
 }
 

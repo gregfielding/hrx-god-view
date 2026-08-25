@@ -49,3 +49,20 @@ describe('payrollTicketsCore — isTenantMemberData', () => {
     expect(isTenantMemberData({ tenantIds: { other: {} } }, TENANT)).to.equal(false);
   });
 });
+
+describe('laneForCategory (queue lanes, 2026-08-25)', () => {
+  const { laneForCategory } = require('../../payroll/payrollTicketsCore');
+  it('routes money categories to the payroll team lane', () => {
+    expect(laneForCategory('missing_pay')).to.equal('money');
+    expect(laneForCategory('wrong_amount')).to.equal('money');
+  });
+  it('routes everything else (and unknowns) to the fix-it lane', () => {
+    expect(laneForCategory('onboarding_stuck')).to.equal('fix_it');
+    expect(laneForCategory('direct_deposit')).to.equal('fix_it');
+    expect(laneForCategory('tax_docs')).to.equal('fix_it');
+    expect(laneForCategory('other')).to.equal('fix_it');
+    expect(laneForCategory(null)).to.equal('fix_it');
+    expect(laneForCategory(undefined)).to.equal('fix_it');
+  });
+});
+

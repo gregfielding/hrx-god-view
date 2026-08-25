@@ -5,8 +5,10 @@ import {
   createPayrollTicket,
   replyPayrollTicket,
   setPayrollTicketStatus,
+  setPayrollTicketLane,
   sendPayrollLinkAction,
   refreshEvereeAction,
+  PAYROLL_SLACK_BOT_TOKEN,
   TicketForbiddenError,
   TicketNotFoundError,
   TicketRateLimitedError,
@@ -189,7 +191,7 @@ export const workerSupportAssistant = onCall(
     // (Cloud Run cap — this callable hosts the help-desk actions too).
     timeoutSeconds: 120,
     // Twilio secrets for the urgent-ticket SMS alert (payrollTicketsCore).
-    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER],
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, PAYROLL_SLACK_BOT_TOKEN],
     memory: '512MiB', // 256MiB OOM'd on cold start (267MiB) after the 2026-08-21 Claude migration
   },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -223,6 +225,16 @@ export const workerSupportAssistant = onCall(
         throw toTicketHttpsError(e);
       }
     }
+    if (action === 'payroll_set_lane') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const lane = String(request.data?.lane || '').trim() as 'fix_it' | 'money';
+      if (!ticketId || !lane) throw new HttpsError('invalid-argument', 'ticketId and lane are required.');
+      try {
+        return await setPayrollTicketLane({ actorUid: request.auth.uid, ticketId, lane });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
     if (action === 'payroll_action_send_link') {
       const ticketId = String(request.data?.ticketId || '').trim();
       const kind = String(request.data?.kind || '').trim();
@@ -251,9 +263,10 @@ export const workerSupportAssistant = onCall(
     if (action === 'payroll_set_status') {
       const ticketId = String(request.data?.ticketId || '').trim();
       const status = String(request.data?.status || '').trim() as PayrollTicketStatus;
+      const note = String(request.data?.note || '').trim() || undefined;
       if (!ticketId || !status) throw new HttpsError('invalid-argument', 'ticketId and status are required.');
       try {
-        return await setPayrollTicketStatus({ actorUid: request.auth.uid, ticketId, status });
+        return await setPayrollTicketStatus({ actorUid: request.auth.uid, ticketId, status, note });
       } catch (e) {
         throw toTicketHttpsError(e);
       }
