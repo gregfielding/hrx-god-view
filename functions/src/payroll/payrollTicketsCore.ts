@@ -362,6 +362,49 @@ export async function createPayrollTicket(input: {
         category: diagnosis.category,
       });
     }
+    // AI first reply (Greg approved 2026-08-24): when confidence clears the
+    // bar, the drafted reply goes to the worker immediately — clearly
+    // labeled as the assistant — and staff follow up. The ticket STAYS
+    // 'open' (lastMessageBy 'ai') so the queue still shows it needs a
+    // human. Kill switch + threshold in app_config/payroll_help_desk.
+    try {
+      const cfg = await db.doc('app_config/payroll_help_desk').get();
+      const enabled = cfg.get('aiFirstReplyEnabled') !== false;
+      const minConfidence = Number(cfg.get('aiFirstReplyMinConfidence') ?? 0.7);
+      const es = (trim(u.preferredLanguage) || 'en') === 'es';
+      const replyText = es ? diagnosis.suggestedReplyEs : diagnosis.suggestedReplyEn;
+      if (enabled && replyText && diagnosis.confidence >= minConfidence) {
+        const aiNow = admin.firestore.FieldValue.serverTimestamp();
+        await ref.collection('messages').add({
+          at: aiNow,
+          by: 'ai',
+          authorName: es ? 'Asistente C1 (IA)' : 'C1 Assistant (AI)',
+          text: replyText,
+          createdAt: aiNow,
+        });
+        await ref.update({ lastMessageAt: aiNow, lastMessageBy: 'ai', updatedAt: aiNow });
+        await ref.collection('private').doc('audit').set(
+          {
+            entries: admin.firestore.FieldValue.arrayUnion({
+              at: admin.firestore.Timestamp.now(),
+              action: 'ai_first_reply',
+              byUid: 'ai',
+              byName: 'C1 Assistant',
+              confidence: diagnosis.confidence,
+            }),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.Timestamp.now(),
+          },
+          { merge: true },
+        );
+        logger.info('payrollTickets: ai first reply sent', {
+          ticketId: ref.id,
+          confidence: diagnosis.confidence,
+        });
+      }
+    } catch (e) {
+      logger.warn('payrollTickets: ai first reply failed', { ticketId: ref.id, error: String(e) });
+    }
   }
 
   logger.info('payrollTickets: created', {

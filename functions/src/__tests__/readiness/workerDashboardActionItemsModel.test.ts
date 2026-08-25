@@ -560,3 +560,37 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
     });
   });
 });
+
+describe('workerDashboardActionItemsModel — complete_payroll_setup (V2 parity port 2026-08-24)', () => {
+  it('emits the payroll item with the employer deep link when onboarding is incomplete', () => {
+    const out = buildWorkerDashboardActionItemsSnapshot(
+      input({ payroll: { incomplete: true, evereeTenantId: '3138' } }),
+    );
+    const item = out.items.find((i) => i.id === 'complete_payroll_setup');
+    expect(item, 'payroll item should appear').to.exist;
+    expect(item!.category).to.equal('important');
+    expect(item!.href).to.equal('/c1/workers/earnings/3138');
+    expect(item!.priorityScore).to.equal(
+      WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES.complete_payroll_setup,
+    );
+  });
+
+  it('falls back to the earnings index when no Everee tenant id is known', () => {
+    const out = buildWorkerDashboardActionItemsSnapshot(
+      input({ payroll: { incomplete: true, evereeTenantId: null } }),
+    );
+    expect(out.items.find((i) => i.id === 'complete_payroll_setup')!.href).to.equal(
+      '/c1/workers/earnings',
+    );
+  });
+
+  it('stays silent when payroll is complete or the signal is absent (old snapshots)', () => {
+    const complete = buildWorkerDashboardActionItemsSnapshot(
+      input({ payroll: { incomplete: false, evereeTenantId: null } }),
+    );
+    expect(complete.items.find((i) => i.id === 'complete_payroll_setup')).to.not.exist;
+    const absent = buildWorkerDashboardActionItemsSnapshot(input({}));
+    expect(absent.items.find((i) => i.id === 'complete_payroll_setup')).to.not.exist;
+  });
+});
+
