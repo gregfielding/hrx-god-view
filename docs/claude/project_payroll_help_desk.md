@@ -103,6 +103,15 @@ Callable actions (staff-only, drawer ACTIONS row):
   dotenv or ANTHROPIC_API_KEY is missing and runPayrollTicketDiagnosis
   silently returns null (looks like a stale doc).
 
+## AI first reply (SHIPPED 2026-08-25, Greg approved)
+
+At ticket creation, when diagnosis confidence ≥ 0.7 the drafted reply posts
+to the thread immediately as **"C1 Assistant (AI)" / "Asistente C1 (IA)"**
+(worker's language). Ticket STAYS open with lastMessageBy 'ai' so staff
+still follow up; audit entry `ai_first_reply` {confidence}. Config:
+`app_config/payroll_help_desk` — `aiFirstReplyEnabled` (kill switch,
+default on) + `aiFirstReplyMinConfidence` (default 0.7).
+
 ## Roadmap (agreed sequence)
 
 2. ~~Earnings v1~~ SHIPPED (above). v2: statement detail / PDF via

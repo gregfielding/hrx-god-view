@@ -138,3 +138,21 @@ logic OUT of React components.
   client-immutable; no client delete. Verified end-to-end in prod (dismiss flow) 2026-08-23.
   Pending requests now surface in Greg's morning brief (inboxMorningBriefCron → buildDeletionRequestsSection, 2026-08-24) — section appears only when the queue is non-empty, with a HAS PAYROLL retain warning per row.
 
+## 2026-08-25 — action items V2 is the ONLY pipeline (legacy deleted)
+
+- Dashboard reads the server snapshot exclusively; the
+  `REACT_APP_WORKER_DASHBOARD_ACTION_ITEMS_V2` flag is GONE (no fallback).
+  Missing snapshot → dashboard calls `syncWorkerDashboardActionItemsV1`
+  (now `cors: true`, 512MiB) once; the doc listener delivers the result.
+- Server model gained `complete_payroll_setup` (score 760, deep link
+  `/c1/workers/earnings/{evereeTenantId}`) via `loadPayrollOnboardingSignal`
+  — sandbox 2320/smokeData skipped; completion from status/readinessMirror/
+  apiObservedOnboardingCompleteAt. 30 mocha cases green.
+- Deleted: the in-browser builder (utils/workerDashboardActionItems is
+  TYPES-ONLY now), the client compliance deriver (+test — server mirror in
+  workerDashboardActionItemsLoadContext.ts is canonical), dashboard
+  jobSignals queries. `WorkerComplianceSignals` type inlined into
+  workerJobRequirementSignals.ts. Item mutations refresh via the user-doc
+  trigger → snapshot listener; no client rebuild path exists.
+- Also 2026-08-25: placements hire-offer undo window 60s→10s (Danny).
+
