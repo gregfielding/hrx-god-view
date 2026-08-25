@@ -41,6 +41,11 @@ const RECOMPUTE_PATH_PREFIXES = [
   'certifications',
   'workerProfile.skills',
   'skills',
+  // Keep in sync with functions/src/readiness/homeSnapshotTriggerStub.ts —
+  // the parser writes downloadUrl/storagePath/fileName, not fileUrl.
+  'resume.downloadUrl',
+  'resume.storagePath',
+  'resume.fileName',
   'resume.fileUrl',
   'resumeUrl',
 ];

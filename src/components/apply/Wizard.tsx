@@ -2896,7 +2896,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               preferences: prefs?.shiftPreferences
                 ? { ...prefs, shiftPreferences: prefs.shiftPreferences }
                 : userData.preferences,
-              resume: formData?.requirements?.uploaded ?? userData.resume,
+              resume: formData?.resume?.fileName || formData?.resume?.parsed ? formData.resume : userData.resume,
               languages: qual.languages ?? userData.languages,
             };
             const packV1 = getRequirementPackV1(requirementPackId);
@@ -2986,7 +2986,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             skills: qual.skills ?? userData.skills,
             workExperience: qual.workExperience ?? userData.workExperience ?? userData.workHistory,
             workHistory: qual.workExperience ?? userData.workHistory,
-            resume: formData?.requirements?.uploaded ?? userData.resume,
+            resume: formData?.resume?.fileName || formData?.resume?.parsed ? formData.resume : userData.resume,
             addressInfo: mergedAddressInfo,
             city: addrSrc.city ?? userData.city,
             state: addrSrc.state ?? userData.state,

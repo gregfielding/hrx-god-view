@@ -2712,9 +2712,9 @@ const UserProfilePage = () => {
                             if (resume.downloadUrl) {
                               window.open(resume.downloadUrl, '_blank');
                             } else if (resume.storagePath) {
-                              const encodedPath = encodeURIComponent(resume.storagePath);
-                              const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
-                              window.open(publicUrl, '_blank');
+                              // Authed token URL — resumes are no longer world-readable (2026-08-25).
+                              const url = await getDownloadURL(ref(storage, resume.storagePath));
+                              window.open(url, '_blank');
                             }
                           }}
                         >
@@ -2952,9 +2952,9 @@ const UserProfilePage = () => {
                         if (resume.downloadUrl) {
                           window.open(resume.downloadUrl, '_blank');
                         } else if (resume.storagePath) {
-                          const encodedPath = encodeURIComponent(resume.storagePath);
-                          const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
-                          window.open(publicUrl, '_blank');
+                          // Authed token URL — resumes are no longer world-readable (2026-08-25).
+                          const url = await getDownloadURL(ref(storage, resume.storagePath));
+                          window.open(url, '_blank');
                         }
                       }}
                     >

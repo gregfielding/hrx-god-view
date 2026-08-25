@@ -84,11 +84,11 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         return;
       }
       
-      // Use public URL directly (since file is made public)
+      // Resumes are owner/staff-read only now (storage.rules 2026-08-25) —
+      // fetch an authed token URL via the SDK instead of a public URL.
       if (currentResume.storagePath) {
-        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(currentResume.storagePath)}?alt=media`;
-        logger.debug('Using public URL:', publicUrl);
-        window.open(publicUrl, '_blank');
+        const url = await getDownloadURL(storageRef(storage, currentResume.storagePath));
+        window.open(url, '_blank');
         return;
       }
       
@@ -120,12 +120,11 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         return;
       }
       
-      // Use public URL directly (since file is made public)
+      // Authed token URL via SDK (rules tightened 2026-08-25).
       if (currentResume.storagePath) {
-        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(currentResume.storagePath)}?alt=media`;
-        logger.debug('Using public URL for download:', publicUrl);
+        const url = await getDownloadURL(storageRef(storage, currentResume.storagePath));
         const link = document.createElement('a');
-        link.href = publicUrl;
+        link.href = url;
         link.download = currentResume.fileName;
         document.body.appendChild(link);
         link.click();

@@ -1,4 +1,5 @@
 import { getApp } from 'firebase/app';
+import { getDownloadURL, getStorage, ref } from 'firebase/storage';
 
 /** Subset of `users.resume` used to open the file the same way as `UserProfileHeader`. */
 export type UserResumeForOpen = {
@@ -44,11 +45,19 @@ export function openUserResumeInNewTab(resume: UserResumeForOpen): void {
       return;
     }
     if (resume.storagePath) {
-      const bucket = getApp().options.storageBucket;
-      if (!bucket) return;
-      const encodedPath = encodeURIComponent(resume.storagePath);
-      const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodedPath}?alt=media`;
-      window.open(publicUrl, '_blank', 'noopener,noreferrer');
+      // Resumes are no longer world-readable (storage.rules 2026-08-25), so
+      // the old hand-built ?alt=media URL 403s. Fetch an authed token URL via
+      // the SDK; the window opens synchronously so popup blockers stay calm.
+      const win = window.open('', '_blank', 'noopener,noreferrer');
+      void getDownloadURL(ref(getStorage(getApp()), resume.storagePath))
+        .then((url) => {
+          if (win) win.location.href = url;
+          else window.open(url, '_blank', 'noopener,noreferrer');
+        })
+        .catch((e) => {
+          win?.close();
+          console.error('Error opening resume:', e);
+        });
     }
   } catch (e) {
     console.error('Error opening resume:', e);

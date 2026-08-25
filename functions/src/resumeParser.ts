@@ -581,8 +581,12 @@ function proficiencyDisplay(p: unknown): string {
 /**
  * Only profile fields the app reads — not full parsed blob (parsedText, aiAnalysis, etc.).
  */
-function buildUserProfileMergePatch(mergedData: Record<string, any>): Record<string, unknown> {
+function buildUserProfileMergePatch(
+  mergedData: Record<string, any>,
+  existingUser: Record<string, any> = {},
+): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
+  const normName = (v: unknown) => String(v ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
   const bioText = [mergedData.bio, mergedData.summary].find(
     (x) => typeof x === 'string' && x.trim().length > 0
@@ -604,21 +608,53 @@ function buildUserProfileMergePatch(mergedData: Record<string, any>): Record<str
     patch.education = mergedData.education;
   }
 
+  // Skills: same additive rule — existing entries keep their richer shape
+  // (canonicalId/source/confidence from admin SkillsTab); resume adds new ones.
   const skills = normalizeSkillsForUser(mergedData.skills);
   if (skills.length > 0) {
-    patch.skills = skills;
+    const existingSkills: any[] = Array.isArray(existingUser.skills) ? existingUser.skills : [];
+    const existingSkillNames = new Set(
+      existingSkills
+        .map((sk: any) => normName(typeof sk === 'string' ? sk : sk?.name))
+        .filter(Boolean),
+    );
+    const newSkills = skills.filter((sk: any) => !existingSkillNames.has(normName(sk?.name ?? sk)));
+    if (existingSkills.length === 0) {
+      patch.skills = skills;
+    } else if (newSkills.length > 0) {
+      patch.skills = [...existingSkills, ...newSkills];
+    }
   }
 
+  // Certifications: ADDITIVE merge (2026-08-25 audit defect #2). The old code
+  // wholesale-replaced the array, destroying user-uploaded evidence
+  // (fileUrl/fileName/expirationDate from the wizard's cert upload) and
+  // fabricating dateObtained = today when the resume stated none. Existing
+  // entries are preserved verbatim; only genuinely new names are appended.
   if (Array.isArray(mergedData.certifications) && mergedData.certifications.length > 0) {
-    patch.certifications = mergedData.certifications
-      .map((c: any) => ({
-        name: String(c?.name || '').trim(),
-        issuer: String(c?.issuer || 'Unknown').trim(),
-        dateObtained:
-          String(c?.dateObtained || '').trim() || new Date().toISOString().split('T')[0],
-        credentialId: String(c?.credentialId || '').trim(),
-      }))
-      .filter((c: any) => c.name);
+    const existingCerts: any[] = Array.isArray(existingUser.certifications)
+      ? existingUser.certifications
+      : [];
+    const existingNames = new Set(
+      existingCerts
+        .map((c: any) => normName(typeof c === 'string' ? c : c?.name))
+        .filter(Boolean),
+    );
+    const newCerts = mergedData.certifications
+      .map((c: any) => {
+        const entry: Record<string, string> = {
+          name: String(c?.name || '').trim(),
+          issuer: String(c?.issuer || '').trim() || 'Unknown',
+          credentialId: String(c?.credentialId || '').trim(),
+        };
+        const dateObtained = String(c?.dateObtained || '').trim();
+        if (dateObtained) entry.dateObtained = dateObtained;
+        return entry;
+      })
+      .filter((c: any) => c.name && !existingNames.has(normName(c.name)));
+    if (newCerts.length > 0) {
+      patch.certifications = [...existingCerts, ...newCerts];
+    }
   }
 
   if (Array.isArray(mergedData.languages) && mergedData.languages.length > 0) {
@@ -724,7 +760,9 @@ async function commitMerge(uid: string, uploadId: string, acceptedChanges: any =
     });
   }
   
-  const userProfilePatch = buildUserProfileMergePatch(mergedData as Record<string, any>);
+  const existingUserSnap = await db.collection('users').doc(uid).get();
+  const existingUserData = (existingUserSnap.data() ?? {}) as Record<string, any>;
+  const userProfilePatch = buildUserProfileMergePatch(mergedData as Record<string, any>, existingUserData);
   if (Object.keys(userProfilePatch).length <= 1 && userProfilePatch.updatedAt) {
     console.warn('commitMerge: no profile fields to merge beyond updatedAt; parsed data may be empty');
   }
@@ -797,6 +835,9 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
   // see utils/claudeChat). Throws if ANTHROPIC_API_KEY is unset.
   const openai = getClaudeChat();
 
+  // Hoisted so the catch can mark the REAL upload doc failed (previously the
+  // failure path minted a fresh uploadId and wrote a bogus doc with no file).
+  let activeUploadId: string | null = null;
   try {
     // Get user info
     const userDoc = await db.collection('users').doc(userId).get();
@@ -809,6 +850,7 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
 
     // Generate upload ID and storage path
     const uploadId = generateUploadId();
+    activeUploadId = uploadId;
     const storagePath = `resumes/${userId}/${uploadId}.${fileName.split('.').pop()}`;
 
     // Download and parse the file
@@ -1074,21 +1116,21 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
       throw error;
     }
     
-    // Update upload status to failed
-    const uploadId = generateUploadId();
-    const uploadRef = db.collection('resumeUploads').doc(userId).collection('uploads').doc(uploadId);
+    // Mark the REAL upload doc failed (fall back to a fresh record only when
+    // we crashed before the upload doc was created).
+    const failedUploadId = activeUploadId ?? generateUploadId();
+    const uploadRef = db.collection('resumeUploads').doc(userId).collection('uploads').doc(failedUploadId);
     await uploadRef.set({
-      uploadId,
+      uploadId: failedUploadId,
       userId,
       fileName,
       fileType: fileName.split('.').pop() || '',
       sizeKB: Math.round(fileSize / 1024),
       status: 'failed',
       uploadDate: new Date(),
-      storagePath: '',
       archived: false,
       error: error instanceof Error ? error.message : 'Unknown error'
-    });
+    }, { merge: true });
 
     throw new Error(`Failed to parse resume: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
@@ -1359,9 +1401,24 @@ async function extractResumeData(text: string, fileName: string, openai: ChatCli
   const mergedData = mergeExtractions(aiExtraction, nlpExtraction);
   console.log('Merged data result:', JSON.stringify(mergedData, null, 2));
   
-  // Generate AI analysis
-  const aiAnalysis = await generateAIAnalysis(mergedData, cleanedText, openai);
-  
+  // Analysis scalars now come from the extraction call itself (2026-08-25):
+  // the dedicated generateAIAnalysis LLM call was ~1/3 of per-resume spend and
+  // produced scores/jobFit nothing ever read — only yearsOfExperience and
+  // educationLevel reached the user doc.
+  const yearsRaw = (aiExtraction as Record<string, unknown>)?.yearsOfExperience;
+  const yearsNum = typeof yearsRaw === 'number' ? yearsRaw : parseFloat(String(yearsRaw ?? ''));
+  const aiAnalysis: AIAnalysis = {
+    overallScore: 0,
+    skillGaps: [],
+    recommendations: [],
+    marketability: 0,
+    yearsOfExperience: Number.isFinite(yearsNum) ? yearsNum : 0,
+    educationLevel: String((aiExtraction as Record<string, unknown>)?.educationLevel ?? '').trim(),
+    keyStrengths: [],
+    areasForImprovement: [],
+    jobFit: {}
+  };
+
   return {
     ...mergedData,
     parsedText: cleanedText,
@@ -1480,18 +1537,16 @@ Extract structured information from this resume. Return a JSON object with the f
       "endDate": "End date",
       "description": "Description of volunteer work"
     }
-  ]
+  ],
+  "yearsOfExperience": "Estimated total years of professional experience as a number",
+  "educationLevel": "Highest education level attained (e.g. High School, Associate, Bachelor, Master, Doctorate), or empty string if unclear"
 }
 
 Resume text:
-${text.substring(0, 4000)} // Limit to first 4000 characters for API efficiency
+${text.substring(0, 12000)}
 `;
 
-  try {
-    console.log('Starting AI extraction with OpenAI...');
-    console.log('Prompt length:', prompt.length);
-    console.log('Text length:', text.length);
-    
+  const attemptExtraction = async () => {
     const extractionModel = process.env.RESUME_EXTRACTION_MODEL || 'gpt-4o-mini';
     const jsonMode = /gpt-4o|gpt-4-turbo|o1|o3|gpt-5/i.test(extractionModel);
     const completion = await openai.chat.completions.create({
@@ -1512,45 +1567,35 @@ ${text.substring(0, 4000)} // Limit to first 4000 characters for API efficiency
       ...(jsonMode ? { response_format: { type: 'json_object' as const } } : {})
     });
 
-    console.log('OpenAI API call completed');
     const response = completion.choices[0]?.message?.content;
     console.log('AI response length:', response?.length || 0);
-    console.log('AI response preview:', response?.substring(0, 200) || 'No response');
-    
     if (!response) {
       throw new Error('No response from AI');
     }
-
-    // Extract JSON from response
     const jsonMatch = response.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      console.error('No JSON found in AI response. Full response:', response);
+      console.error('No JSON found in AI response. Full response:', response.substring(0, 500));
       throw new Error('No JSON found in AI response');
     }
+    return JSON.parse(jsonMatch[0]);
+  };
 
-    const parsedResult = JSON.parse(jsonMatch[0]);
-    console.log('Successfully parsed AI response:', JSON.stringify(parsedResult, null, 2));
-    return parsedResult;
-  } catch (error) {
-    console.error('AI extraction failed:', error);
-    console.error('Error details:', {
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      name: error instanceof Error ? error.name : undefined
-    });
-    // Return empty structure if AI fails
-    return {
-      contact: { name: '', email: '', phone: '', address: '' },
-      summary: '',
-      skills: [],
-      education: [],
-      experience: [],
-      certifications: [],
-      languages: [],
-      projects: [],
-      awards: [],
-      volunteerWork: []
-    };
+  // One bounded retry, then FAIL LOUD. The old catch returned an all-empty
+  // structure, so a failed extraction surfaced as "parsed successfully!" with
+  // a blank profile (2026-08-25 audit, defect #1).
+  try {
+    console.log('Starting AI extraction (attempt 1)...');
+    return await attemptExtraction();
+  } catch (firstError) {
+    console.warn('AI extraction attempt 1 failed, retrying once:', firstError instanceof Error ? firstError.message : firstError);
+    try {
+      return await attemptExtraction();
+    } catch (secondError) {
+      console.error('AI extraction failed after retry:', secondError);
+      throw new ResumeParseClientError(
+        "We couldn't read this resume. Please try a clearer PDF or photo — or skip this step and add it later."
+      );
+    }
   }
 }
 
@@ -1760,84 +1805,6 @@ function mergeExtractions(aiExtraction: any, nlpExtraction: any) {
     awards: aiExtraction.awards || [],
     volunteerWork: aiExtraction.volunteerWork || []
   };
-}
-
-/**
- * Generate AI analysis of the resume
- */
-async function generateAIAnalysis(parsedData: any, originalText: string, openai: ChatClientLike): Promise<AIAnalysis> {
-  const prompt = `
-Analyze this resume and provide insights. Return a JSON object with:
-
-{
-  "overallScore": "Score from 1-10",
-  "skillGaps": ["List of missing skills for common roles"],
-  "recommendations": ["List of improvement recommendations"],
-  "marketability": "Score from 1-10",
-  "yearsOfExperience": "Estimated total years",
-  "educationLevel": "Highest education level",
-  "keyStrengths": ["List of key strengths"],
-  "areasForImprovement": ["Areas that need improvement"],
-  "jobFit": {
-    "Software Engineer": "Fit score 1-10",
-    "Project Manager": "Fit score 1-10",
-    "Data Analyst": "Fit score 1-10"
-  }
-}
-
-Resume data:
-${JSON.stringify(parsedData, null, 2)}
-
-Original text (first 2000 chars):
-${originalText.substring(0, 2000)}
-`;
-
-  try {
-    const analysisModel = process.env.RESUME_ANALYSIS_MODEL || 'gpt-4o-mini';
-    const analysisJsonMode = /gpt-4o|gpt-4-turbo|o1|o3|gpt-5/i.test(analysisModel);
-    const completion = await openai.chat.completions.create({
-      model: analysisModel,
-      messages: [
-        {
-          role: "system",
-          content:
-            'You are an expert resume analyst. Return a single valid JSON object only (no markdown).'
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      temperature: 0.3,
-      max_completion_tokens: 4096,
-      ...(analysisJsonMode ? { response_format: { type: 'json_object' as const } } : {})
-    });
-
-    const response = completion.choices[0]?.message?.content;
-    if (!response) {
-      throw new Error('No response from AI analysis');
-    }
-
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('No JSON found in AI analysis response');
-    }
-
-    return JSON.parse(jsonMatch[0]);
-  } catch (error) {
-    console.error('AI analysis failed:', error);
-    return {
-      overallScore: 5,
-      skillGaps: [],
-      recommendations: [],
-      marketability: 5,
-      yearsOfExperience: 0,
-      educationLevel: 'Unknown',
-      keyStrengths: [],
-      areasForImprovement: [],
-      jobFit: {}
-    };
-  }
 }
 
 /**
