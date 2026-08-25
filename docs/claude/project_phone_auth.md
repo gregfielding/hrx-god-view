@@ -194,3 +194,17 @@ Greg watched a full production signup and cut the wizard to what staffing ops ac
   applying to a new job sees ONLY that job's unanswered questions.
 - Mobile: wizard card is full-bleed on xs — one 16px edge for headers and
   content (insets were stacking to 32px+).
+- **2026-08-25 (late)**: 18+ enforced (PhoneSignupGate blocks the code send
+  with an inline error; resolvePhoneSignup rejects server-side — AuthDialog
+  path exempt since it collects no DOB). Email REQUIRED for job applications
+  (step 1 stays visible until a valid email is on file, Next gates on it,
+  email persists the moment it's valid); general signup keeps email optional.
+  quick-apply already routes email-less users to the wizard via
+  hasExistingApplicationData's email check. Job posting page: green
+  'Apply For This Shift' CTA (renamed from 'I Can Work This Shift', EN/ES),
+  one type scale (subtitle1-700 headers / body2 body), quiet text-style Maps
+  link, compact 'Sign In' pill, and a page-level gutter for GUESTS (they
+  render outside C1WorkerLayout — px only when !user or it doubles).
+  NEXT UP (Greg): audit the admin /users/:uid page so the captured signup
+  data (dob, email, transportMethod, attestations, previousPhones,
+  signupSource, preferredLanguage) displays properly.
