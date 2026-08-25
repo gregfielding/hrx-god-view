@@ -107,6 +107,53 @@ interface PrivateDiagnosis {
   suggestedReplyEs?: string;
 }
 
+/** private/investigation — the money-lane hours-vs-paid research (Slice 3). */
+interface InvestigationDoc {
+  generatedBy?: string;
+  entries?: Array<{
+    workDate?: string;
+    status?: string;
+    source?: string | null;
+    hiringEntityId?: string | null;
+    payRate?: number | null;
+    regHours?: number;
+    otHours?: number;
+    dtHours?: number;
+    expectedTotal?: number;
+  }>;
+  payments?: Array<{
+    entityId?: string;
+    payDate?: string | null;
+    periodStart?: string | null;
+    periodEnd?: string | null;
+    gross?: number | null;
+    status?: string | null;
+  }>;
+  totals?: { submittedExpected?: number; unsubmittedExpected?: number; paidGross?: number };
+  defaultEntityId?: string | null;
+  ai?: {
+    summary?: string;
+    recommendation?: string;
+    proposedAmount?: number | null;
+    proposedWorkDate?: string | null;
+    proposedHours?: number | null;
+    proposedHourlyRate?: number | null;
+    workerReplyEn?: string;
+    workerReplyEs?: string;
+    rationale?: string;
+    confidence?: number;
+  };
+}
+
+const fmtUsd = (n: number | null | undefined): string =>
+  n == null || Number.isNaN(n) ? '—' : `$${n.toFixed(2)}`;
+
+const RECOMMENDATION_CHIP: Record<string, { label: string; color: 'error' | 'success' | 'warning' }> = {
+  pay_correction: { label: 'Correction owed', color: 'error' },
+  paid_correctly: { label: 'Paid correctly', color: 'success' },
+  needs_review: { label: 'Needs review', color: 'warning' },
+};
+
 const PayrollTicketsPage: React.FC = () => {
   const navigate = useNavigate();
   const { activeTenant } = useAuth();
@@ -125,6 +172,17 @@ const PayrollTicketsPage: React.FC = () => {
   const [replyText, setReplyText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Money-lane investigation panel + one-click correction (Slice 3).
+  const [investigation, setInvestigation] = useState<InvestigationDoc | null>(null);
+  const [correctionOpen, setCorrectionOpen] = useState(false);
+  const [corrAmount, setCorrAmount] = useState('');
+  const [corrWorkDate, setCorrWorkDate] = useState('');
+  const [corrHours, setCorrHours] = useState('');
+  const [corrRate, setCorrRate] = useState('');
+  const [corrEntity, setCorrEntity] = useState('');
+  const [corrWarning, setCorrWarning] = useState<string | null>(null);
+  const [paidCorrectlyOpen, setPaidCorrectlyOpen] = useState(false);
+  const [paidCorrectlyText, setPaidCorrectlyText] = useState('');
 
   useEffect(() => {
     if (!tenantId) return;
@@ -211,6 +269,21 @@ const PayrollTicketsPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id]);
 
+  // Money-lane investigation (staff-only subcollection, written at ticket
+  // creation for money tickets and by the "Re-run investigation" action).
+  useEffect(() => {
+    if (!selected) {
+      setInvestigation(null);
+      return;
+    }
+    return onSnapshot(
+      doc(db, 'payroll_tickets', selected.id, 'private', 'investigation'),
+      (snap) => setInvestigation(snap.exists() ? (snap.data() as InvestigationDoc) : null),
+      () => setInvestigation(null),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
+
   // Action audit trail (staff-only subcollection).
   useEffect(() => {
     if (!selected) {
@@ -252,14 +325,16 @@ const PayrollTicketsPage: React.FC = () => {
     [tickets],
   );
 
-  const callAction = async (payload: Record<string, unknown>) => {
+  const callAction = async (payload: Record<string, unknown>): Promise<Record<string, unknown> | null> => {
     setBusy(true);
     setError(null);
     try {
       const fn = httpsCallable(getFunctions(), 'workerSupportAssistant');
-      await fn(payload);
+      const res = await fn(payload);
+      return (res.data ?? {}) as Record<string, unknown>;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return null;
     } finally {
       setBusy(false);
     }
@@ -285,6 +360,58 @@ const PayrollTicketsPage: React.FC = () => {
   const setLane = async (lane: 'fix_it' | 'money') => {
     if (!selected) return;
     await callAction({ action: 'payroll_set_lane', ticketId: selected.id, lane });
+  };
+
+  const openCorrectionDialog = () => {
+    const ai = investigation?.ai;
+    setCorrAmount(ai?.proposedAmount != null ? String(ai.proposedAmount) : '');
+    setCorrWorkDate(ai?.proposedWorkDate ?? '');
+    setCorrHours(ai?.proposedHours != null ? String(ai.proposedHours) : '');
+    setCorrRate(ai?.proposedHourlyRate != null ? String(ai.proposedHourlyRate) : '');
+    setCorrEntity(investigation?.defaultEntityId ?? '');
+    setCorrWarning(null);
+    setCorrectionOpen(true);
+  };
+
+  const submitCorrection = async (override: boolean) => {
+    if (!selected) return;
+    const data = await callAction({
+      action: 'payroll_authorize_correction',
+      ticketId: selected.id,
+      amount: Number(corrAmount) || 0,
+      workDate: corrWorkDate.trim(),
+      hours: Number(corrHours) || 0,
+      hourlyRate: Number(corrRate) || 0,
+      entityId: corrEntity.trim(),
+      overrideDuplicateWarning: override,
+    });
+    if (!data) return; // error already surfaced
+    if (data.status === 'duplicate_warning') {
+      const w = data.duplicateWarning as { message?: string } | undefined;
+      setCorrWarning(String(w?.message || 'This worker may already have been paid for this date.'));
+      return;
+    }
+    setCorrectionOpen(false);
+    setActionNote(`Correction of ${fmtUsd(Number(corrAmount))} sent — worker notified, ticket resolved.`);
+  };
+
+  const openPaidCorrectlyDialog = () => {
+    const ai = investigation?.ai;
+    const es = (selected?.preferredLanguage ?? 'en') === 'es';
+    setPaidCorrectlyText((es ? ai?.workerReplyEs || ai?.workerReplyEn : ai?.workerReplyEn) || '');
+    setPaidCorrectlyOpen(true);
+  };
+
+  const submitPaidCorrectly = async () => {
+    if (!selected || !paidCorrectlyText.trim()) return;
+    const data = await callAction({
+      action: 'payroll_resolve_paid_correctly',
+      ticketId: selected.id,
+      text: paidCorrectlyText.trim(),
+    });
+    if (!data) return;
+    setPaidCorrectlyOpen(false);
+    setActionNote('Explanation sent to the worker — ticket resolved.');
   };
 
   return (
@@ -484,6 +611,149 @@ const PayrollTicketsPage: React.FC = () => {
               </Paper>
             )}
 
+            {/* Slice 3 — money-lane investigation: deterministic hours-vs-paid
+                comparison + AI recommendation, with one-click authorize/resolve. */}
+            {(selected.lane === 'money' || investigation) && (
+              <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'rgba(211, 47, 47, 0.04)' }}>
+                <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.75 }}>
+                  <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                    INVESTIGATION — HOURS VS. PAID
+                  </Typography>
+                  {investigation?.ai?.recommendation && RECOMMENDATION_CHIP[investigation.ai.recommendation] && (
+                    <Chip
+                      size="small"
+                      label={RECOMMENDATION_CHIP[investigation.ai.recommendation].label}
+                      color={RECOMMENDATION_CHIP[investigation.ai.recommendation].color}
+                    />
+                  )}
+                </Stack>
+                {!investigation ? (
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    No investigation yet — run one to compare recorded hours against Everee payments.
+                  </Typography>
+                ) : (
+                  <>
+                    {investigation.ai?.summary && (
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        {investigation.ai.summary}
+                      </Typography>
+                    )}
+                    {(investigation.entries?.length ?? 0) > 0 && (
+                      <TableContainer sx={{ maxHeight: 180, mb: 1 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ py: 0.25 }}>Work date</TableCell>
+                              <TableCell sx={{ py: 0.25 }}>Status</TableCell>
+                              <TableCell sx={{ py: 0.25 }} align="right">Hours</TableCell>
+                              <TableCell sx={{ py: 0.25 }} align="right">Rate</TableCell>
+                              <TableCell sx={{ py: 0.25 }} align="right">Expected</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {(investigation.entries ?? []).map((e, i) => (
+                              <TableRow key={i}>
+                                <TableCell sx={{ py: 0.25 }}>{e.workDate || '—'}</TableCell>
+                                <TableCell sx={{ py: 0.25 }}>
+                                  <Typography
+                                    variant="caption"
+                                    color={
+                                      e.status === 'paid' || e.status === 'sent_to_everee'
+                                        ? 'success.main'
+                                        : 'warning.main'
+                                    }
+                                  >
+                                    {e.status}
+                                  </Typography>
+                                </TableCell>
+                                <TableCell sx={{ py: 0.25 }} align="right">
+                                  {((e.regHours ?? 0) + (e.otHours ?? 0) + (e.dtHours ?? 0)).toFixed(2)}
+                                </TableCell>
+                                <TableCell sx={{ py: 0.25 }} align="right">{fmtUsd(e.payRate)}</TableCell>
+                                <TableCell sx={{ py: 0.25 }} align="right">{fmtUsd(e.expectedTotal)}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
+                    {(investigation.payments?.length ?? 0) > 0 && (
+                      <TableContainer sx={{ maxHeight: 140, mb: 1 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ py: 0.25 }}>Paid</TableCell>
+                              <TableCell sx={{ py: 0.25 }}>Period</TableCell>
+                              <TableCell sx={{ py: 0.25 }} align="right">Gross</TableCell>
+                              <TableCell sx={{ py: 0.25 }}>Status</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {(investigation.payments ?? []).map((p, i) => (
+                              <TableRow key={i}>
+                                <TableCell sx={{ py: 0.25 }}>{p.payDate || 'pending'}</TableCell>
+                                <TableCell sx={{ py: 0.25 }}>
+                                  <Typography variant="caption">
+                                    {p.periodStart || '?'} – {p.periodEnd || '?'}
+                                  </Typography>
+                                </TableCell>
+                                <TableCell sx={{ py: 0.25 }} align="right">{fmtUsd(p.gross)}</TableCell>
+                                <TableCell sx={{ py: 0.25 }}>
+                                  <Typography variant="caption">{p.status || '—'}</Typography>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                      Submitted for pay: {fmtUsd(investigation.totals?.submittedExpected)} · Not yet
+                      submitted: {fmtUsd(investigation.totals?.unsubmittedExpected)} · Everee paid:{' '}
+                      {fmtUsd(investigation.totals?.paidGross)}
+                    </Typography>
+                    {investigation.ai?.rationale && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, fontStyle: 'italic' }}>
+                        {investigation.ai.rationale}
+                      </Typography>
+                    )}
+                  </>
+                )}
+                {selected.status !== 'resolved' && (
+                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                    <Button
+                      size="small"
+                      variant={investigation?.ai?.recommendation === 'pay_correction' ? 'contained' : 'outlined'}
+                      color="success"
+                      disabled={busy}
+                      onClick={openCorrectionDialog}
+                      sx={{ fontWeight: 700 }}
+                    >
+                      {investigation?.ai?.proposedAmount != null
+                        ? `Authorize correction — pay ${fmtUsd(investigation.ai.proposedAmount)}`
+                        : 'Authorize a correction…'}
+                    </Button>
+                    <Button size="small" variant="outlined" disabled={busy} onClick={openPaidCorrectlyDialog}>
+                      Paid correctly — send &amp; resolve
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="text"
+                      disabled={busy}
+                      onClick={() =>
+                        void runTicketAction(
+                          { action: 'payroll_investigate', ticketId: selected.id },
+                          'Investigation updated below.',
+                        )
+                      }
+                    >
+                      {investigation ? 'Re-run investigation' : 'Run investigation'}
+                    </Button>
+                  </Stack>
+                )}
+              </Paper>
+            )}
+
             {/* Slice 2 — one-click approved actions (safe, non-money-moving). */}
             <Paper variant="outlined" sx={{ p: 1.5 }}>
               <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 1 }}>
@@ -619,6 +889,108 @@ const PayrollTicketsPage: React.FC = () => {
           </Stack>
         )}
       </Drawer>
+
+      {/* Authorize correction — the one-click money action. The amount rides
+          the standard off-cycle path (duplicate guard, caps); a duplicate-pay
+          warning comes back for an explicit second confirm. */}
+      <Dialog open={correctionOpen} onClose={() => setCorrectionOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Authorize pay correction</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Sends an off-cycle payment through Everee now, notifies the worker, and resolves the
+            ticket. It appears in the Payroll Costs report like any other off-cycle payment.
+          </Typography>
+          <Stack spacing={1.5}>
+            <TextField
+              size="small"
+              label="Gross amount (USD)"
+              value={corrAmount}
+              onChange={(e) => setCorrAmount(e.target.value)}
+              inputProps={{ inputMode: 'decimal' }}
+            />
+            <TextField
+              size="small"
+              label="Work date (YYYY-MM-DD)"
+              value={corrWorkDate}
+              onChange={(e) => setCorrWorkDate(e.target.value)}
+            />
+            <Stack direction="row" spacing={1.5}>
+              <TextField
+                size="small"
+                label="Hours (optional)"
+                value={corrHours}
+                onChange={(e) => setCorrHours(e.target.value)}
+                inputProps={{ inputMode: 'decimal' }}
+              />
+              <TextField
+                size="small"
+                label="Hourly rate (optional)"
+                value={corrRate}
+                onChange={(e) => setCorrRate(e.target.value)}
+                inputProps={{ inputMode: 'decimal' }}
+              />
+            </Stack>
+            <TextField
+              size="small"
+              label="Hiring entity"
+              value={corrEntity}
+              onChange={(e) => setCorrEntity(e.target.value)}
+            />
+          </Stack>
+          {corrWarning && (
+            <Alert severity="warning" sx={{ mt: 2 }}>
+              {corrWarning}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setCorrectionOpen(false)}>Cancel</Button>
+          {corrWarning ? (
+            <Button variant="contained" color="warning" disabled={busy} onClick={() => void submitCorrection(true)}>
+              Pay anyway
+            </Button>
+          ) : (
+            <Button
+              variant="contained"
+              color="success"
+              disabled={busy || !(Number(corrAmount) > 0) || !corrWorkDate.trim() || !corrEntity.trim()}
+              onClick={() => void submitCorrection(false)}
+              sx={{ fontWeight: 700 }}
+            >
+              {busy ? 'Sending…' : `Pay ${fmtUsd(Number(corrAmount) || 0)}`}
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+
+      {/* Paid correctly — send the (editable) explanation and resolve. */}
+      <Dialog open={paidCorrectlyOpen} onClose={() => setPaidCorrectlyOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Paid correctly — notify &amp; resolve</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            This message goes to the worker, then the ticket resolves.
+          </Typography>
+          <TextField
+            fullWidth
+            size="small"
+            multiline
+            minRows={4}
+            label="Message to worker"
+            value={paidCorrectlyText}
+            onChange={(e) => setPaidCorrectlyText(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setPaidCorrectlyOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={busy || !paidCorrectlyText.trim()}
+            onClick={() => void submitPaidCorrectly()}
+          >
+            {busy ? 'Sending…' : 'Send & resolve'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Resolution note — the "resolutions" half of the queue table; also
           posted to the payroll Slack channel. */}

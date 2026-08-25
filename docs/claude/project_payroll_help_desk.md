@@ -112,13 +112,89 @@ still follow up; audit entry `ai_first_reply` {confidence}. Config:
 `app_config/payroll_help_desk` — `aiFirstReplyEnabled` (kill switch,
 default on) + `aiFirstReplyMinConfidence` (default 0.7).
 
+## Slice 3 — two-lane autonomy (SHIPPED 2026-08-25, Greg's spec)
+
+Greg's operating model: **fix-it lane = AI resolves alone** (staff only read
+the Resolved tab / #payroll Slack); **money lane = AI investigates, staff
+authorize with one click**.
+
+**Fix-it auto-resolution** (`maybeAutoResolveFixIt`, runs at ticket
+creation): category allowlist `onboarding_stuck→onboarding link`,
+`direct_deposit→bank_update link`, `tax_docs→portal link` (new 'portal'
+kind: pay stubs + tax docs copy, same earnings embed URL). Requirements:
+config `autoResolveEnabled !== false`, confidence ≥
+`autoResolveMinConfidence` (default 0.75), **AI first reply actually
+sent** (never resolve silently), prod Everee linkage exists (link send
+throws otherwise → stays open). On success: resolved w/ resolvedBy 'ai',
+resolutionNote "Auto-resolved by AI: replied and sent …", audit
+`auto_resolved`, Slack `:robot_face:` post. Worker reply reopens (status
+machine) — failed fixes come straight back. Any failure = ticket stays
+open, creation never fails.
+
+**Money-lane investigation** (`runMoneyInvestigation`): deterministic
+hours-vs-paid comparison written to `private/investigation` — every
+timesheet entry with expected pay computed by the cost-report math
+(reg/OT/DT × payRate + premiums + tips + bonus; csv_import excludes DT +
+premiums) next to settled `getPayHistory` payments per prod linkage.
+Claude only NARRATES the computed numbers → `{summary, recommendation:
+pay_correction|paid_correctly|needs_review, proposedAmount (must derive
+from shown numbers, ≤$10k else null; pay_correction w/o amount degrades
+to needs_review), workerReplyEn/Es (for paid_correctly), rationale}`.
+Runs automatically at creation for money-lane tickets + via
+`payroll_investigate` action ("Re-run investigation" button).
+`defaultEntityId` computed in code (unpaid entries' entity, else first
+linkage) — never AI-chosen.
+
+**One-click actions** (workerSupportAssistant):
+- `payroll_authorize_correction` {ticketId, amount, workDate, hours?,
+  hourlyRate?, entityId, overrideDuplicateWarning?} — gate
+  `ensureBooksAccess` (level ≥6); executes via
+  `createOffCyclePaymentInternal` (extracted from Mark's
+  createOffCyclePayment onCall — SAME battle-tested path: duplicate-pay
+  guard, $10k/$1k caps, payable + payout w/
+  includeWorkersOnRegularPayCycle, reason 'payroll_correction',
+  `sourceTicketId` stamped on the offcycle doc). duplicate_warning is
+  passed through for a "Pay anyway" second confirm. Success: worker
+  system-message + push ("correction of $X sent"), audit
+  `authorize_correction`, ticket resolved, `:money_with_wings:` Slack.
+- `payroll_resolve_paid_correctly` {ticketId, text} — sends the editable
+  explanation (prefilled from investigation workerReply) then resolves;
+  audit `resolved_paid_correctly`.
+
+Console (PayrollTicketsPage): "INVESTIGATION — HOURS VS. PAID" panel on
+money tickets (recommendation chip, summary, entries/payments tables,
+totals, rationale) + green "Authorize correction — pay $X" (confirm
+dialog w/ editable amount/date/hours/rate/entity), "Paid correctly —
+send & resolve" dialog, "Re-run investigation".
+
+Verified 2026-08-25 on Greg's own test tickets: money ticket ("$50
+short") investigation correctly returned needs_review, refusing to
+invent the $50 (only a 0-hour draft entry + zero Everee payments on
+record); fix-it ticket ("switched banks") auto-resolved end-to-end
+(conf 0.9 → AI reply → bank-update link → resolved by ai). ☠️ Do NOT
+click Authorize on the test tickets — the test identity is Greg's own
+account. NOT yet exercised live: an actual Everee correction payment
+through the authorize button (first real money-lane ticket will be).
+
+☠️ Footguns learned:
+- Diagnosis sometimes omits `confidence` → coerced to 0 → no AI reply,
+  no auto-resolve (safe direction; observed once locally). Don't "fix"
+  by defaulting up.
+- `sendNotificationAndPush` used to write `undefined` fields — only
+  worked because resumeParser's module load sets
+  `ignoreUndefinedProperties` globally in the deployed monolith. Now
+  hardened to nulls; any new notification writer must never rely on
+  that global.
+- Local scratch runs: Twilio/Slack `defineSecret().value()` is empty →
+  SMS/Slack silently skipped (fine — deployed callable has them bound).
+
 ## Roadmap (agreed sequence)
 
 2. ~~Earnings v1~~ SHIPPED (above). v2: statement detail / PDF via
    evereeGetPayStatement; per-employer "view all".
-3. ~~Approved actions~~ SHIPPED (above). Future action candidates:
-   flag-timesheet-for-correction + approver nudge; auto-execute safe
-   actions at ticket creation once trusted.
+3. ~~Approved actions~~ SHIPPED (above). ~~Auto-execute safe actions~~
+   SHIPPED as Slice 3 auto-resolution (above). Future: flag-timesheet-
+   for-correction + approver nudge.
 4. **SMS intake**: dedicated Twilio number → existing inbound webhook branches
    on `To` number → `createPayrollTicket({channel:'sms'})`; replies go back
    out via SMS. Needs a number purchased/assigned (ask Greg).

@@ -8,11 +8,15 @@ import {
   setPayrollTicketLane,
   sendPayrollLinkAction,
   refreshEvereeAction,
+  investigatePayrollTicketAction,
+  authorizeCorrectionAction,
+  resolvePaidCorrectlyAction,
   PAYROLL_SLACK_BOT_TOKEN,
   TicketForbiddenError,
   TicketNotFoundError,
   TicketRateLimitedError,
   type PayrollTicketStatus,
+  type PayrollLinkKind,
 } from './payroll/payrollTicketsCore';
 import { approvePhoneChange, rejectPhoneChange } from './phoneChangeCore';
 import {
@@ -22,6 +26,9 @@ import {
 } from './messaging/twilioSecrets';
 
 function toTicketHttpsError(e: unknown): HttpsError {
+  // ensureBooksAccess / the off-cycle path throw HttpsError directly — keep
+  // their codes (permission-denied, invalid-argument) instead of 'internal'.
+  if (e instanceof HttpsError) return e;
   if (e instanceof TicketNotFoundError) return new HttpsError('not-found', e.message);
   if (e instanceof TicketForbiddenError) return new HttpsError('permission-denied', e.message);
   if (e instanceof TicketRateLimitedError) return new HttpsError('resource-exhausted', e.message);
@@ -239,15 +246,60 @@ export const workerSupportAssistant = onCall(
     if (action === 'payroll_action_send_link') {
       const ticketId = String(request.data?.ticketId || '').trim();
       const kind = String(request.data?.kind || '').trim();
-      if (!ticketId || !['onboarding', 'bank_update'].includes(kind)) {
+      if (!ticketId || !['onboarding', 'bank_update', 'portal'].includes(kind)) {
         throw new HttpsError('invalid-argument', 'ticketId and a valid kind are required.');
       }
       try {
         return await sendPayrollLinkAction({
           actorUid: request.auth.uid,
           ticketId,
-          kind: kind as 'onboarding' | 'bank_update',
+          kind: kind as PayrollLinkKind,
         });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_investigate') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      if (!ticketId) throw new HttpsError('invalid-argument', 'ticketId is required.');
+      try {
+        return await investigatePayrollTicketAction({ actorUid: request.auth.uid, ticketId });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_authorize_correction') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const amount = Number(request.data?.amount) || 0;
+      const workDate = String(request.data?.workDate || '').trim();
+      const entityId = String(request.data?.entityId || '').trim();
+      if (!ticketId || amount <= 0 || !workDate || !entityId) {
+        throw new HttpsError('invalid-argument', 'ticketId, amount, workDate, and entityId are required.');
+      }
+      try {
+        return await authorizeCorrectionAction({
+          actorUid: request.auth.uid,
+          actorToken: request.auth.token as never,
+          ticketId,
+          amount,
+          workDate,
+          hours: Number(request.data?.hours) || 0,
+          hourlyRate: Number(request.data?.hourlyRate) || 0,
+          entityId,
+          notes: String(request.data?.notes || '').trim() || undefined,
+          overrideDuplicateWarning: request.data?.overrideDuplicateWarning === true,
+        });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_resolve_paid_correctly') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const text = String(request.data?.text || '').trim();
+      if (!ticketId || !text) throw new HttpsError('invalid-argument', 'ticketId and text are required.');
+      if (text.length > 2000) throw new HttpsError('invalid-argument', 'Message is too long.');
+      try {
+        return await resolvePaidCorrectlyAction({ actorUid: request.auth.uid, ticketId, text });
       } catch (e) {
         throw toTicketHttpsError(e);
       }

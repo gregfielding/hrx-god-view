@@ -159,21 +159,49 @@ export const listOffCyclePayments = onCall(
   },
 );
 
-export const createOffCyclePayment = onCall(
-  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 120 },
-  async (request) => {
-    const tenantId = trim(request.data?.tenantId);
-    const hiringEntityId = trim(request.data?.hiringEntityId);
-    const workerId = trim(request.data?.workerId);
-    const reason = trim(request.data?.reason) as OffCycleReason;
-    const workDate = trim(request.data?.workDate);
-    const jobOrderId = trim(request.data?.jobOrderId);
-    const notes = trim(request.data?.notes).slice(0, 1000);
-    const hours = Number(request.data?.hours) || 0;
-    const hourlyRate = Number(request.data?.hourlyRate) || 0;
-    const grossAmount = round2(Number(request.data?.grossAmount) || 0);
-    const perDiemAmount = round2(Number(request.data?.perDiemAmount) || 0);
-    const overrideDuplicateWarning = request.data?.overrideDuplicateWarning === true;
+export interface OffCyclePaymentInput {
+  tenantId: string;
+  hiringEntityId: string;
+  workerId: string;
+  reason: OffCycleReason;
+  workDate: string;
+  jobOrderId?: string;
+  notes?: string;
+  hours?: number;
+  hourlyRate?: number;
+  grossAmount: number;
+  perDiemAmount?: number;
+  overrideDuplicateWarning?: boolean;
+  actorUid: string | null;
+  /** Payroll help-desk ticket that authorized this correction, when the
+   *  payment originates from the tickets console (2026-08-25). */
+  sourceTicketId?: string | null;
+}
+
+/**
+ * Core off-cycle payment path — shared by the admin onCall below and the
+ * payroll help desk's "authorize correction" action (2026-08-25). The ticket
+ * flow must reuse this exact path: the payable+payout footguns encoded here
+ * (payout request with includeWorkersOnRegularPayCycle, REGULAR_HOURLY
+ * rate×hours requirement, duplicate-pay guard) were each bought with a real
+ * stuck or double payment. Caller is responsible for access control.
+ */
+export async function createOffCyclePaymentInternal(
+  input: OffCyclePaymentInput,
+): Promise<Record<string, unknown>> {
+  {
+    const tenantId = trim(input.tenantId);
+    const hiringEntityId = trim(input.hiringEntityId);
+    const workerId = trim(input.workerId);
+    const reason = trim(input.reason) as OffCycleReason;
+    const workDate = trim(input.workDate);
+    const jobOrderId = trim(input.jobOrderId);
+    const notes = trim(input.notes).slice(0, 1000);
+    const hours = Number(input.hours) || 0;
+    const hourlyRate = Number(input.hourlyRate) || 0;
+    const grossAmount = round2(Number(input.grossAmount) || 0);
+    const perDiemAmount = round2(Number(input.perDiemAmount) || 0);
+    const overrideDuplicateWarning = input.overrideDuplicateWarning === true;
 
     if (!tenantId || !hiringEntityId || !workerId) {
       throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, and workerId are required.');
@@ -193,8 +221,6 @@ export const createOffCyclePayment = onCall(
         `Amount exceeds the safety cap ($${MAX_GROSS} gross / $${MAX_PER_DIEM} per diem). Split the payment or ask engineering to raise the cap.`,
       );
     }
-    await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
-
     // Worker must exist (Everee submission uses the HRX uid as externalWorkerId).
     const workerSnap = await db.collection('users').doc(workerId).get();
     if (!workerSnap.exists) throw new HttpsError('not-found', 'Worker not found.');
@@ -346,13 +372,14 @@ export const createOffCyclePayment = onCall(
       duplicateOverride:
         duplicateEntries.length > 0
           ? {
-              acknowledgedByUid: request.auth?.uid ?? null,
+              acknowledgedByUid: input.actorUid ?? null,
               entryIds: duplicateEntries.map((x) => x.entryId),
               entryHours: round2(duplicateEntries.reduce((s, x) => s + x.hours, 0)),
               entryTotal: round2(duplicateEntries.reduce((s, x) => s + x.total, 0)),
             }
           : null,
-      createdByUid: request.auth?.uid ?? null,
+      createdByUid: input.actorUid ?? null,
+      sourceTicketId: trim(input.sourceTicketId) || null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       status: 'pending' as const,
     };
@@ -450,5 +477,31 @@ export const createOffCyclePayment = onCall(
       await docRef.update({ status: 'error', errorMessage: message.slice(0, 500) });
       throw new HttpsError('internal', `Everee rejected the payment: ${message}`);
     }
+  }
+}
+
+export const createOffCyclePayment = onCall(
+  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 120 },
+  async (request) => {
+    const tenantId = trim(request.data?.tenantId);
+    if (!tenantId) {
+      throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, and workerId are required.');
+    }
+    await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+    return createOffCyclePaymentInternal({
+      tenantId,
+      hiringEntityId: trim(request.data?.hiringEntityId),
+      workerId: trim(request.data?.workerId),
+      reason: trim(request.data?.reason) as OffCycleReason,
+      workDate: trim(request.data?.workDate),
+      jobOrderId: trim(request.data?.jobOrderId),
+      notes: trim(request.data?.notes),
+      hours: Number(request.data?.hours) || 0,
+      hourlyRate: Number(request.data?.hourlyRate) || 0,
+      grossAmount: Number(request.data?.grossAmount) || 0,
+      perDiemAmount: Number(request.data?.perDiemAmount) || 0,
+      overrideDuplicateWarning: request.data?.overrideDuplicateWarning === true,
+      actorUid: request.auth?.uid ?? null,
+    });
   },
 );

@@ -31,6 +31,8 @@ import {
 export const PAYROLL_SLACK_BOT_TOKEN = defineSecret('SLACK_BOT_TOKEN');
 import { reconcileWorkerInternal } from '../integrations/everee/evereeReconcileWorker';
 import { getPayHistory } from '../integrations/everee/evereeService';
+import { createOffCyclePaymentInternal } from './offCyclePayments';
+import { ensureBooksAccess } from './payrollCostReport';
 
 /** Typed errors so the callable can map to proper HttpsError codes. */
 export class TicketNotFoundError extends Error {}
@@ -313,6 +315,82 @@ export async function runPayrollTicketDiagnosis(input: {
 // Ticket operations (all invoked from the workerSupportAssistant callable).
 // ---------------------------------------------------------------------------
 
+/** Fix-it categories the AI may close on its own, and the fix for each. */
+const AUTO_RESOLVE_LINK_KIND: Record<string, PayrollLinkKind> = {
+  onboarding_stuck: 'onboarding',
+  direct_deposit: 'bank_update',
+  tax_docs: 'portal',
+};
+
+const AUTO_RESOLVE_KIND_LABEL: Record<PayrollLinkKind, string> = {
+  onboarding: 'onboarding link',
+  bank_update: 'bank-update link',
+  portal: 'pay stubs & tax docs link',
+};
+
+/**
+ * Fix-it auto-resolution (Greg 2026-08-25): account issues the AI can fix
+ * directly get fixed at creation — send the right payroll link, and (since
+ * the AI reply already explained it to the worker) resolve the ticket. Staff
+ * only see it in the Resolved tab and Slack. Any doubt — low confidence, no
+ * linkage, no reply sent, category outside the allowlist — leaves the ticket
+ * open for a human. A worker reply reopens a resolved ticket (status
+ * machine), so a fix that didn't work comes straight back.
+ * Kill switch: app_config/payroll_help_desk.autoResolveEnabled = false.
+ */
+async function maybeAutoResolveFixIt(input: {
+  ref: FirebaseFirestore.DocumentReference;
+  ticket: Record<string, unknown>;
+  diagnosis: Omit<PayrollTicketDiagnosis, 'generatedAt'>;
+  aiReplySent: boolean;
+}): Promise<void> {
+  try {
+    const kind = AUTO_RESOLVE_LINK_KIND[input.diagnosis.category];
+    if (!kind) return;
+    const cfg = await db.doc('app_config/payroll_help_desk').get();
+    if (cfg.get('autoResolveEnabled') === false) return;
+    const minConfidence = Number(cfg.get('autoResolveMinConfidence') ?? 0.75);
+    if (input.diagnosis.confidence < minConfidence) return;
+    // The worker must have received the AI explanation — never close silently.
+    if (!input.aiReplySent) return;
+
+    const ctx: TicketActionContext = {
+      ref: input.ref,
+      ticket: input.ticket,
+      actorUid: 'ai',
+      actorName: 'C1 Assistant',
+    };
+    // Throws when the worker has no prod linkage — ticket stays open.
+    await executeSendPayrollLink(ctx, kind);
+    const kindLabel = AUTO_RESOLVE_KIND_LABEL[kind];
+    await input.ref.update({
+      status: 'resolved' satisfies PayrollTicketStatus,
+      resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      resolvedBy: 'ai',
+      resolutionNote: `Auto-resolved by AI: replied and sent ${kindLabel}`,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await appendAudit(ctx, 'auto_resolved', {
+      category: input.diagnosis.category,
+      confidence: input.diagnosis.confidence,
+      kind,
+    });
+    await postPayrollSlack(
+      `:robot_face: Auto-resolved (${input.diagnosis.category}) — *${trim(input.ticket.workerName) || 'worker'}*: ` +
+        `replied and sent ${kindLabel}`,
+    );
+    logger.info('payrollTickets: auto-resolved', {
+      ticketId: input.ref.id,
+      category: input.diagnosis.category,
+      kind,
+      confidence: input.diagnosis.confidence,
+    });
+  } catch (e) {
+    // Any failure leaves the ticket open for staff — never fail creation.
+    logger.warn('payrollTickets: auto-resolve skipped', { ticketId: input.ref.id, error: String(e) });
+  }
+}
+
 export async function createPayrollTicket(input: {
   uid: string;
   tenantId: string;
@@ -406,6 +484,7 @@ export async function createPayrollTicket(input: {
     // labeled as the assistant — and staff follow up. The ticket STAYS
     // 'open' (lastMessageBy 'ai') so the queue still shows it needs a
     // human. Kill switch + threshold in app_config/payroll_help_desk.
+    let aiReplySent = false;
     try {
       const cfg = await db.doc('app_config/payroll_help_desk').get();
       const enabled = cfg.get('aiFirstReplyEnabled') !== false;
@@ -436,6 +515,7 @@ export async function createPayrollTicket(input: {
           },
           { merge: true },
         );
+        aiReplySent = true;
         logger.info('payrollTickets: ai first reply sent', {
           ticketId: ref.id,
           confidence: diagnosis.confidence,
@@ -443,6 +523,38 @@ export async function createPayrollTicket(input: {
       }
     } catch (e) {
       logger.warn('payrollTickets: ai first reply failed', { ticketId: ref.id, error: String(e) });
+    }
+
+    if (laneForCategory(diagnosis.category) === 'money') {
+      // Money lane (Greg 2026-08-25): run the hours-vs-paid investigation up
+      // front so the console opens with the research already done.
+      try {
+        await runMoneyInvestigation({
+          tenantId: input.tenantId,
+          uid: input.uid,
+          ref,
+          ticketText: input.text,
+          generatedBy: 'auto',
+        });
+      } catch (e) {
+        logger.warn('payrollTickets: auto investigation failed', { ticketId: ref.id, error: String(e) });
+      }
+    } else {
+      // Fix-it lane (Greg 2026-08-25): account issues the AI can fix directly
+      // — execute the fix, tell the worker, resolve the ticket. Staff only see
+      // it in the Resolved tab / Slack; a worker reply reopens it.
+      await maybeAutoResolveFixIt({
+        ref,
+        ticket: {
+          uid: input.uid,
+          tenantId: input.tenantId,
+          preferredLanguage: trim(u.preferredLanguage) || 'en',
+          workerPhone: trim(u.phone) || null,
+          workerName,
+        },
+        diagnosis,
+        aiReplySent,
+      });
     }
   }
 
@@ -698,42 +810,71 @@ function workerSms(to: string, body: string): Promise<unknown> {
  * /c1/workers/earnings/{evereeTenantId} serves onboarding OR the worker
  * portal depending on their state.
  */
-export async function sendPayrollLinkAction(input: {
-  actorUid: string;
-  ticketId: string;
-  kind: 'onboarding' | 'bank_update';
-}): Promise<{ ok: true; sentSms: boolean; entityId: string }> {
-  const ctx = await loadTicketForStaffAction(input.actorUid, input.ticketId);
+export type PayrollLinkKind = 'onboarding' | 'bank_update' | 'portal';
+
+/** Per-kind copy: [SMS, push body, thread message] × [en, es]. */
+const LINK_COPY: Record<PayrollLinkKind, { sms: [string, string]; push: [string, string]; thread: [string, string] }> = {
+  onboarding: {
+    sms: ['C1 Staffing: finish your payroll setup here: ', 'C1 Staffing: termina tu configuración de nómina aquí: '],
+    push: ['Tap to finish your payroll setup.', 'Toca para terminar tu configuración de nómina.'],
+    thread: [
+      'We sent you a text with a link to finish your payroll setup.',
+      'Te enviamos un enlace por mensaje de texto para terminar tu configuración de nómina.',
+    ],
+  },
+  bank_update: {
+    sms: [
+      'C1 Staffing: update your bank account for direct deposit here: ',
+      'C1 Staffing: actualiza tu cuenta bancaria para depósito directo aquí: ',
+    ],
+    push: ['Tap to update your bank account.', 'Toca para actualizar tu cuenta bancaria.'],
+    thread: [
+      'We sent you a text with a link to update your bank account.',
+      'Te enviamos un enlace por mensaje de texto para actualizar tu cuenta bancaria.',
+    ],
+  },
+  portal: {
+    sms: [
+      'C1 Staffing: view your pay stubs and tax documents here: ',
+      'C1 Staffing: consulta tus talones de pago y documentos de impuestos aquí: ',
+    ],
+    push: ['Tap to view your pay stubs and tax documents.', 'Toca para ver tus talones de pago y documentos de impuestos.'],
+    thread: [
+      'We sent you a text with a link to your pay stubs and tax documents.',
+      'Te enviamos un enlace por mensaje de texto a tus talones de pago y documentos de impuestos.',
+    ],
+  },
+};
+
+/** Shared by the staff button and the AI auto-resolve path — the actor in
+ *  `ctx` may be a staff member or the synthetic AI actor. */
+async function executeSendPayrollLink(
+  ctx: TicketActionContext,
+  kind: PayrollLinkKind,
+): Promise<{ ok: true; sentSms: boolean; entityId: string }> {
   const uid = String(ctx.ticket.uid);
   const tenantId = String(ctx.ticket.tenantId);
   const es = trim(ctx.ticket.preferredLanguage) === 'es';
+  const i = es ? 1 : 0;
+  const copy = LINK_COPY[kind];
 
   const linkages = await loadProdLinkages(tenantId, uid);
   if (!linkages.length) throw new Error('Worker has no production payroll linkage.');
   const target =
-    input.kind === 'onboarding'
+    kind === 'onboarding'
       ? linkages.find((l) => !l.complete) ?? linkages[0]
       : linkages.find((l) => l.complete) ?? linkages[0];
   const path = `/c1/workers/earnings/${encodeURIComponent(target.evereeTenantId)}`;
   const url = `https://hrxone.com${path}`;
 
-  const smsBody =
-    input.kind === 'onboarding'
-      ? es
-        ? `C1 Staffing: termina tu configuración de nómina aquí: ${url}`
-        : `C1 Staffing: finish your payroll setup here: ${url}`
-      : es
-        ? `C1 Staffing: actualiza tu cuenta bancaria para depósito directo aquí: ${url}`
-        : `C1 Staffing: update your bank account for direct deposit here: ${url}`;
-
   let sentSms = false;
   const phone = trim(ctx.ticket.workerPhone);
   if (phone) {
     try {
-      await workerSms(phone, smsBody);
+      await workerSms(phone, `${copy.sms[i]}${url}`);
       sentSms = true;
     } catch (e) {
-      logger.warn('payrollTickets: action SMS failed', { ticketId: input.ticketId, error: String(e) });
+      logger.warn('payrollTickets: action SMS failed', { ticketId: ctx.ref.id, error: String(e) });
     }
   }
   try {
@@ -741,41 +882,35 @@ export async function sendPayrollLinkAction(input: {
       uid,
       tenantId,
       title: es ? 'Tu enlace de nómina' : 'Your payroll link',
-      body:
-        input.kind === 'onboarding'
-          ? es
-            ? 'Toca para terminar tu configuración de nómina.'
-            : 'Tap to finish your payroll setup.'
-          : es
-            ? 'Toca para actualizar tu cuenta bancaria.'
-            : 'Tap to update your bank account.',
+      body: copy.push[i],
       type: 'support',
       category: 'system',
       deepLink: path,
       source: 'automation',
     });
   } catch (e) {
-    logger.warn('payrollTickets: action notification failed', { ticketId: input.ticketId, error: String(e) });
+    logger.warn('payrollTickets: action notification failed', { ticketId: ctx.ref.id, error: String(e) });
   }
 
-  await appendSystemThreadMessage(
-    ctx,
-    input.kind === 'onboarding'
-      ? es
-        ? 'Te enviamos un enlace por mensaje de texto para terminar tu configuración de nómina.'
-        : 'We sent you a text with a link to finish your payroll setup.'
-      : es
-        ? 'Te enviamos un enlace por mensaje de texto para actualizar tu cuenta bancaria.'
-        : 'We sent you a text with a link to update your bank account.',
-  );
-  await appendAudit(ctx, `send_link_${input.kind}`, { entityId: target.entityId, sentSms });
+  await appendSystemThreadMessage(ctx, copy.thread[i]);
+  await appendAudit(ctx, `send_link_${kind}`, { entityId: target.entityId, sentSms });
   logger.info('payrollTickets: link action', {
-    ticketId: input.ticketId,
-    kind: input.kind,
+    ticketId: ctx.ref.id,
+    kind,
     entityId: target.entityId,
     sentSms,
+    by: ctx.actorUid,
   });
   return { ok: true, sentSms, entityId: target.entityId };
+}
+
+export async function sendPayrollLinkAction(input: {
+  actorUid: string;
+  ticketId: string;
+  kind: PayrollLinkKind;
+}): Promise<{ ok: true; sentSms: boolean; entityId: string }> {
+  const ctx = await loadTicketForStaffAction(input.actorUid, input.ticketId);
+  return executeSendPayrollLink(ctx, input.kind);
 }
 
 /**
@@ -843,5 +978,377 @@ export async function refreshEvereeAction(input: {
     category: diagnosis?.category ?? null,
     severity: diagnosis?.severity ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Slice 3 — money-lane investigation + one-click correction (Greg 2026-08-25).
+//
+// Money tickets get a deterministic hours-vs-paid comparison written to
+// `private/investigation`: every recorded timesheet entry with its computed
+// expected pay (same math as the Payroll Costs report) next to the settled
+// Everee payments. Claude narrates the comparison and proposes ONE of:
+// pay_correction (with a concrete amount derived from the shown numbers),
+// paid_correctly (worker was paid what was recorded), or needs_review.
+// The numbers come from code; the AI only reads them — it never invents
+// amounts. Execution goes through createOffCyclePaymentInternal (the same
+// battle-tested payable+payout path as the admin off-cycle dialog), gated
+// to books-level staff (level ≥ 6) with an explicit authorize click.
+// ---------------------------------------------------------------------------
+
+const num = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+interface InvestigationEntry {
+  entryId: string;
+  workDate: string;
+  status: string;
+  source: string | null;
+  hiringEntityId: string | null;
+  payRate: number | null;
+  regHours: number;
+  otHours: number;
+  dtHours: number;
+  tips: number;
+  bonus: number;
+  premiums: number;
+  expectedTotal: number;
+}
+
+interface InvestigationPayment {
+  entityId: string;
+  statementId: string;
+  payDate: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  gross: number | null;
+  status: string | null;
+}
+
+/** Same per-entry dollar math as the Payroll Costs report / duplicate guard. */
+function computeEntryExpected(e: Record<string, unknown>): {
+  premiums: number;
+  expectedTotal: number;
+} {
+  const rate = num(e.payRate);
+  const reg = num(e.totalRegularHours);
+  const ot = num(e.totalOTHours);
+  const dt = num(e.totalDoubleTimeHours);
+  const isImport = trim(e.source) === 'csv_import';
+  const gross = isImport
+    ? round2(reg * rate + ot * rate * 1.5)
+    : round2(reg * rate + ot * rate * 1.5 + dt * rate * 2);
+  const premiums = isImport
+    ? 0
+    : round2((num(e.mealBreakPenaltyHours) + num(e.restBreakPenaltyHours)) * rate);
+  return { premiums, expectedTotal: round2(gross + premiums + num(e.tips) + num(e.bonusAmount)) };
+}
+
+const PAID_STATUSES = ['sent_to_everee', 'paid'];
+
+export async function runMoneyInvestigation(input: {
+  tenantId: string;
+  uid: string;
+  ref: FirebaseFirestore.DocumentReference;
+  ticketText: string;
+  generatedBy: string; // staff uid, or 'auto' at ticket creation
+}): Promise<{ recommendation: string; proposedAmount: number | null }> {
+  // 1. Recorded timesheet entries with computed expected pay.
+  const ts = await db
+    .collection(`tenants/${input.tenantId}/timesheet_entries`)
+    .where('workerId', '==', input.uid)
+    .limit(60)
+    .get();
+  const entries: InvestigationEntry[] = ts.docs
+    .map((d) => {
+      const e = d.data() as Record<string, unknown>;
+      const { premiums, expectedTotal } = computeEntryExpected(e);
+      return {
+        entryId: d.id,
+        workDate: timesheetDate(e) || '',
+        status: trim(e.status) || 'unknown',
+        source: trim(e.source) || null,
+        hiringEntityId: trim(e.hiringEntityId) || null,
+        payRate: num(e.payRate) || null,
+        regHours: num(e.totalRegularHours),
+        otHours: num(e.totalOTHours),
+        dtHours: num(e.totalDoubleTimeHours),
+        tips: num(e.tips),
+        bonus: num(e.bonusAmount),
+        premiums,
+        expectedTotal,
+      };
+    })
+    .sort((a, b) => b.workDate.localeCompare(a.workDate))
+    .slice(0, 25);
+
+  // 2. Settled payment truth from Everee, per prod linkage.
+  const linkages = await loadProdLinkages(input.tenantId, input.uid);
+  const payments: InvestigationPayment[] = [];
+  await Promise.all(
+    linkages.map(async (l) => {
+      if (!l.entityId) return;
+      try {
+        const hist = await getPayHistory(input.tenantId, l.entityId, input.uid);
+        for (const it of (hist.items ?? []).slice(0, 10)) {
+          payments.push({
+            entityId: l.entityId,
+            statementId: trim(it.statementId),
+            payDate: it.payDate ?? null,
+            periodStart: it.periodStart ?? null,
+            periodEnd: it.periodEnd ?? null,
+            gross: it.gross ?? null,
+            status: it.status ?? null,
+          });
+        }
+      } catch (e) {
+        logger.warn('payrollTickets: investigation pay lookup failed', {
+          entityId: l.entityId,
+          error: String(e).slice(0, 120),
+        });
+      }
+    }),
+  );
+  payments.sort((a, b) => String(b.payDate ?? '').localeCompare(String(a.payDate ?? '')));
+
+  const submitted = entries.filter((e) => PAID_STATUSES.includes(e.status));
+  const unsubmitted = entries.filter((e) => !PAID_STATUSES.includes(e.status));
+  const totals = {
+    submittedExpected: round2(submitted.reduce((s, e) => s + e.expectedTotal, 0)),
+    unsubmittedExpected: round2(unsubmitted.reduce((s, e) => s + e.expectedTotal, 0)),
+    paidGross: round2(payments.reduce((s, p) => s + (p.gross ?? 0), 0)),
+  };
+  // Entity for a proposed correction: where the unpaid hours live, else the
+  // worker's (single) linkage.
+  const defaultEntityId =
+    unsubmitted.find((e) => e.hiringEntityId)?.hiringEntityId ??
+    submitted.find((e) => e.hiringEntityId)?.hiringEntityId ??
+    linkages[0]?.entityId ??
+    null;
+
+  // 3. Claude narrates the deterministic comparison and proposes a verdict.
+  const entryLines = entries.map(
+    (e) =>
+      `- ${e.workDate || 'undated'} [${e.hiringEntityId ?? '?'}]: status=${e.status}${e.source ? ` (${e.source})` : ''}, ` +
+      `${e.regHours}h reg + ${e.otHours}h OT${e.dtHours ? ` + ${e.dtHours}h DT` : ''} @ $${e.payRate ?? '?'} ` +
+      `→ expected $${e.expectedTotal.toFixed(2)}` +
+      (e.tips || e.bonus ? ` (incl tips $${e.tips.toFixed(2)}, bonus $${e.bonus.toFixed(2)})` : ''),
+  );
+  const paymentLines = payments.map(
+    (p) =>
+      `- [${p.entityId}] payDate=${p.payDate ?? 'pending'}: $${p.gross?.toFixed(2) ?? '?'} (${p.status ?? 'unknown'})` +
+      (p.periodStart || p.periodEnd ? ` period ${p.periodStart ?? '?'}..${p.periodEnd ?? '?'}` : ''),
+  );
+
+  const systemPrompt = [
+    'You are the payroll investigator for C1 Staffing (staffing agency; payroll runs on Everee).',
+    "A worker says their pay is wrong or missing. You are given (a) their complaint, (b) every timesheet entry HRX has recorded with its computed expected pay, and (c) the settled payments Everee actually issued.",
+    'Statuses: entries with status sent_to_everee or paid have been submitted for payment; draft/pending/approved entries have NOT been paid yet.',
+    'Decide exactly one recommendation:',
+    '- "pay_correction": the records concretely show recorded hours that were never paid, or a computable underpayment. proposedAmount MUST be derived from the numbers shown (e.g. the expected total of the unpaid entries) — never invented, never a guess at hours we have no record of.',
+    '- "paid_correctly": the payments cover what was recorded — the worker was paid what our records support.',
+    '- "needs_review": the records are incomplete or ambiguous (e.g. the worker claims hours we never recorded — staff must check the client timesheet).',
+    'summary: 2-4 sentences for STAFF — the research result: what was recorded, what was paid, where the gap is (cite dates and dollars).',
+    'workerReplyEn/workerReplyEs: a warm, plain reply to the WORKER for the paid_correctly case — walk through what they were paid and when, no jargon. Empty string if recommendation is not paid_correctly.',
+    'proposedWorkDate: the work date (YYYY-MM-DD) the correction covers; proposedHours/proposedHourlyRate when the gap is specific recorded hours at a known rate, else null.',
+    'Return strict JSON only: {"summary":string,"recommendation":"pay_correction"|"paid_correctly"|"needs_review","proposedAmount":number|null,"proposedWorkDate":string|null,"proposedHours":number|null,"proposedHourlyRate":number|null,"workerReplyEn":string,"workerReplyEs":string,"rationale":string,"confidence":number}',
+  ].join('\n');
+  const userPrompt = [
+    `Worker's complaint: "${input.ticketText}"`,
+    `Recorded timesheet entries (newest first):\n${entryLines.join('\n') || '(none recorded)'}`,
+    `Settled Everee payments (newest first):\n${paymentLines.join('\n') || '(none on record)'}`,
+    `Totals: submitted-for-pay expected $${totals.submittedExpected.toFixed(2)} · not-yet-submitted expected $${totals.unsubmittedExpected.toFixed(2)} · Everee paid gross $${totals.paidGross.toFixed(2)}`,
+  ].join('\n\n');
+
+  let ai: Record<string, unknown> | null = null;
+  try {
+    const claude = getClaudeChat();
+    const completion = await claude.chat.completions.create({
+      model: 'claude-opus-5',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: { type: 'json_object' },
+      max_completion_tokens: 1200,
+    });
+    const text = trim(completion.choices?.[0]?.message?.content);
+    if (text) ai = JSON.parse(text) as Record<string, unknown>;
+  } catch (e) {
+    logger.warn('payrollTickets: investigation AI failed', { ticketId: input.ref.id, error: String(e) });
+  }
+
+  let recommendation = trim(ai?.recommendation);
+  if (!['pay_correction', 'paid_correctly', 'needs_review'].includes(recommendation)) {
+    recommendation = 'needs_review';
+  }
+  let proposedAmount: number | null = round2(Number(ai?.proposedAmount ?? 0)) || null;
+  if (proposedAmount !== null && (proposedAmount <= 0 || proposedAmount > 10000)) proposedAmount = null;
+  // A correction without a computable amount is not actionable — degrade.
+  if (recommendation === 'pay_correction' && proposedAmount === null) recommendation = 'needs_review';
+
+  await input.ref.collection('private').doc('investigation').set({
+    generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    generatedBy: input.generatedBy,
+    entries,
+    payments,
+    totals,
+    defaultEntityId,
+    ai: {
+      summary: trim(ai?.summary),
+      recommendation,
+      proposedAmount,
+      proposedWorkDate: trim(ai?.proposedWorkDate) || null,
+      proposedHours: num(ai?.proposedHours) || null,
+      proposedHourlyRate: num(ai?.proposedHourlyRate) || null,
+      workerReplyEn: trim(ai?.workerReplyEn),
+      workerReplyEs: trim(ai?.workerReplyEs),
+      rationale: trim(ai?.rationale),
+      confidence: Math.max(0, Math.min(1, Number(ai?.confidence ?? 0))),
+    },
+  });
+  logger.info('payrollTickets: investigation written', {
+    ticketId: input.ref.id,
+    recommendation,
+    proposedAmount,
+    generatedBy: input.generatedBy,
+  });
+  return { recommendation, proposedAmount };
+}
+
+/** Staff "Re-run investigation" button. */
+export async function investigatePayrollTicketAction(input: {
+  actorUid: string;
+  ticketId: string;
+}): Promise<{ ok: true; recommendation: string; proposedAmount: number | null }> {
+  const ctx = await loadTicketForStaffAction(input.actorUid, input.ticketId);
+  const firstMsg = await ctx.ref.collection('messages').orderBy('createdAt', 'asc').limit(1).get();
+  const ticketText = trim(firstMsg.docs[0]?.get('text')) || trim(ctx.ticket.subject);
+  const res = await runMoneyInvestigation({
+    tenantId: String(ctx.ticket.tenantId),
+    uid: String(ctx.ticket.uid),
+    ref: ctx.ref,
+    ticketText,
+    generatedBy: input.actorUid,
+  });
+  await appendAudit(ctx, 'investigate', {
+    recommendation: res.recommendation,
+    proposedAmount: res.proposedAmount,
+  });
+  return { ok: true, ...res };
+}
+
+/**
+ * One-click payment correction (Greg 2026-08-25): books-level staff (≥6)
+ * authorizes the amount shown in the investigation panel; the payment rides
+ * the exact off-cycle path (duplicate guard, caps, payable+payout). On
+ * success the worker is told, the ticket resolves, and Slack gets the log.
+ * A duplicate-pay warning is returned untouched for the console to confirm.
+ */
+export async function authorizeCorrectionAction(input: {
+  actorUid: string;
+  actorToken: Record<string, unknown> | undefined;
+  ticketId: string;
+  amount: number;
+  workDate: string;
+  hours?: number;
+  hourlyRate?: number;
+  entityId: string;
+  notes?: string;
+  overrideDuplicateWarning?: boolean;
+}): Promise<Record<string, unknown>> {
+  const ctx = await loadTicketForStaffAction(input.actorUid, input.ticketId);
+  const tenantId = String(ctx.ticket.tenantId);
+  const uid = String(ctx.ticket.uid);
+  // Money moves: books-level bar (≥6), same as the admin off-cycle dialog.
+  await ensureBooksAccess(input.actorUid, input.actorToken as never, tenantId);
+
+  const res = await createOffCyclePaymentInternal({
+    tenantId,
+    hiringEntityId: input.entityId,
+    workerId: uid,
+    reason: 'payroll_correction',
+    workDate: input.workDate,
+    notes: `Payroll help desk ticket ${input.ticketId}${trim(input.notes) ? ` — ${trim(input.notes)}` : ''}`,
+    hours: input.hours,
+    hourlyRate: input.hourlyRate,
+    grossAmount: input.amount,
+    overrideDuplicateWarning: input.overrideDuplicateWarning === true,
+    actorUid: input.actorUid,
+    sourceTicketId: input.ticketId,
+  });
+  if (res.status === 'duplicate_warning') return res;
+
+  const es = trim(ctx.ticket.preferredLanguage) === 'es';
+  const amountStr = `$${round2(input.amount).toFixed(2)}`;
+  await appendSystemThreadMessage(
+    ctx,
+    es
+      ? `Buenas noticias: revisamos tu pago y enviamos una corrección de ${amountStr}. Normalmente llega a tu cuenta en 1 a 2 días hábiles.`
+      : `Good news — we reviewed your pay and sent a correction of ${amountStr}. It typically arrives in your account within 1–2 business days.`,
+  );
+  try {
+    await sendNotificationAndPush({
+      uid,
+      tenantId,
+      title: es ? 'Corrección de pago enviada' : 'Pay correction sent',
+      body: es
+        ? `Enviamos una corrección de ${amountStr} a tu cuenta.`
+        : `We sent a ${amountStr} correction to your account.`,
+      type: 'support',
+      category: 'system',
+      deepLink: `/c1/workers/payroll-help/${input.ticketId}`,
+      source: 'automation',
+    });
+  } catch (e) {
+    logger.warn('payrollTickets: correction notify failed', { ticketId: input.ticketId, error: String(e) });
+  }
+  await appendAudit(ctx, 'authorize_correction', {
+    amount: round2(input.amount),
+    workDate: input.workDate,
+    entityId: input.entityId,
+    offcycleId: res.id ?? null,
+    payRunId: res.payRunId ?? null,
+  });
+  await ctx.ref.update({
+    status: 'resolved' satisfies PayrollTicketStatus,
+    resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+    resolvedBy: input.actorUid,
+    resolutionNote: `Correction paid: ${amountStr} off-cycle (${String(res.id ?? '')})`,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await postPayrollSlack(
+    `:money_with_wings: Correction authorized — *${trim(ctx.ticket.workerName) || 'worker'}*: ${amountStr} ` +
+      `by ${ctx.actorName} · ticket resolved`,
+  );
+  logger.info('payrollTickets: correction authorized', {
+    ticketId: input.ticketId,
+    amount: round2(input.amount),
+    offcycleId: res.id ?? null,
+    by: input.actorUid,
+  });
+  return { ok: true, ...res };
+}
+
+/**
+ * "Paid correctly" close-out: sends the (editable) explanation to the worker
+ * and resolves the ticket in one click. Reuses the reply + status helpers so
+ * notification and Slack behavior stay identical.
+ */
+export async function resolvePaidCorrectlyAction(input: {
+  actorUid: string;
+  ticketId: string;
+  text: string;
+}): Promise<{ ok: true }> {
+  const ctx = await loadTicketForStaffAction(input.actorUid, input.ticketId);
+  await replyPayrollTicket({ actorUid: input.actorUid, ticketId: input.ticketId, text: input.text });
+  await setPayrollTicketStatus({
+    actorUid: input.actorUid,
+    ticketId: input.ticketId,
+    status: 'resolved',
+    note: 'Verified paid correctly — worker notified.',
+  });
+  await appendAudit(ctx, 'resolved_paid_correctly', {});
+  return { ok: true };
 }
 

@@ -306,14 +306,18 @@ export async function sendNotificationAndPush(payload: {
     severity: payload.severity ?? 'info',
     createdAt: now,
     readAt: null,
-    deepLink: deepLink || undefined,
-    entityId: entityId || undefined,
+    // null, never undefined: this writer only worked because resumeParser's
+    // module load happens to set ignoreUndefinedProperties globally in the
+    // deployed monolith — any leaner bundle (or a local script) throws
+    // (found 2026-08-25 running the payroll link action outside the bundle).
+    deepLink: deepLink || null,
+    entityId: entityId || null,
     source: payload.source ?? 'system',
     channel: 'push',
-    ctaLabel: payload.ctaLabel,
-    ctaUrl: (payload.ctaUrl ?? deepLink) || undefined,
-    threadId: payload.threadId,
-    entity: payload.entity,
+    ctaLabel: payload.ctaLabel ?? null,
+    ctaUrl: (payload.ctaUrl ?? deepLink) || null,
+    threadId: payload.threadId ?? null,
+    entity: payload.entity ?? null,
     schemaVersion: WORKER_NOTIFICATION_SCHEMA_VERSION,
     routing,
     delivery: {
