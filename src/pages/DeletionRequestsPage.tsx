@@ -124,6 +124,22 @@ const DeletionRequestsPage: React.FC = () => {
           try {
             const uSnap = await getDoc(doc(db, 'users', r.uid));
             if (!uSnap.exists()) {
+              // Self-healing (Greg 2026-08-25): the account is already gone —
+              // the deletion evidently happened — so a still-pending request
+              // completes itself instead of waiting for a manual click.
+              if (r.status === 'pending') {
+                try {
+                  await updateDoc(doc(db, 'account_deletion_requests', r.uid), {
+                    status: 'completed',
+                    processedBy: 'auto (account deleted)',
+                    processedAt: serverTimestamp(),
+                    note: 'Auto-completed: account no longer exists.',
+                  });
+                  r = { ...r, status: 'completed', processedBy: 'auto (account deleted)', note: 'Auto-completed: account no longer exists.', processedAt: new Date() };
+                } catch {
+                  /* non-HRX viewers can't write — display as-is */
+                }
+              }
               return { ...r, displayName: null, phone: null, userDocExists: false, hasPayrollHistory: false, hasSsnOnFileOnly: false };
             }
             const u = uSnap.data() as Record<string, unknown>;
@@ -309,6 +325,7 @@ const DeletionRequestsPage: React.FC = () => {
                           <Button
                             size="small"
                             variant="outlined"
+                            sx={{ minHeight: 30, py: 0.25, px: 1.25, fontSize: 13 }}
                             onClick={() => {
                               setActionNote('');
                               setActionRow({ uid: r.uid, nextStatus: 'completed' });
@@ -320,6 +337,7 @@ const DeletionRequestsPage: React.FC = () => {
                             size="small"
                             variant="text"
                             color="inherit"
+                            sx={{ minHeight: 30, py: 0.25, px: 1, fontSize: 13 }}
                             onClick={() => {
                               setActionNote('');
                               setActionRow({ uid: r.uid, nextStatus: 'dismissed' });
