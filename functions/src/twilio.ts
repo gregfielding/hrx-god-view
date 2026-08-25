@@ -107,6 +107,24 @@ export const sendOtpHttp = onRequest(
 /**
  * Send OTP via Twilio Verify (Callable version - keeping for compatibility)
  */
+/**
+ * Config-gated TEST phone numbers (Greg 2026-08-25): fictional numbers in
+ * `app_config/phone_auth.testPhones` ({"+1925555xxxx": "123456"}) skip
+ * Twilio entirely — sendOtp no-ops, checkOtp accepts the fixed code. Used
+ * for autonomous signup-flow testing now and Apple App Review later.
+ * Real numbers are unaffected; empty the config doc to disable.
+ */
+async function testPhoneFixedCode(phoneE164: string): Promise<string | null> {
+  try {
+    const cfg = await db.doc('app_config/phone_auth').get();
+    const map = (cfg.get('testPhones') ?? null) as Record<string, string> | null;
+    const code = map && typeof map === 'object' ? map[phoneE164] : null;
+    return typeof code === 'string' && /^\d{6}$/.test(code) ? code : null;
+  } catch {
+    return null;
+  }
+}
+
 export const sendOtp = onCall(
   {
     secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, verifyServiceSid],
@@ -126,6 +144,13 @@ export const sendOtp = onCall(
   // Validate phone format (E.164)
   if (!phoneE164 || !/^\+[1-9]\d{7,14}$/.test(phoneE164)) {
     throw new HttpsError('invalid-argument', 'Invalid phone number format. Use E.164 format (e.g., +17025550147)');
+  }
+
+  // Test numbers: no Twilio call (fictional numbers would error), the
+  // fixed code in config is the "sent" code.
+  if (await testPhoneFixedCode(phoneE164)) {
+    logger.info(`OTP send skipped for test phone ${phoneE164}`);
+    return { success: true, test: true };
   }
 
   try {
@@ -498,6 +523,28 @@ export const checkOtp = onCall(
 
   if (!code || !/^\d{6}$/.test(code)) {
     throw new HttpsError('invalid-argument', 'Invalid code format. Please enter a 6-digit code.');
+  }
+
+  // Test numbers: the config's fixed code stands in for Twilio approval.
+  const fixedCode = await testPhoneFixedCode(phoneE164);
+  if (fixedCode) {
+    if (code !== fixedCode) {
+      throw new HttpsError('permission-denied', 'Invalid verification code. Please try again.');
+    }
+    if (signIn === true) return resolvePhoneSignIn(phoneE164, { ip: callerIp });
+    if (signup === true) {
+      const d = request.data as Record<string, unknown>;
+      return resolvePhoneSignup(phoneE164, {
+        firstName: String(d.firstName ?? ''),
+        lastName: String(d.lastName ?? ''),
+        preferredLanguage: String(d.preferredLanguage ?? ''),
+        signupSource: String(d.signupSource ?? ''),
+        signupGroupId: (d.signupGroupId as string) ?? null,
+        jobContext: (d.jobContext as { tenantId?: string; tenantSlug?: string; jobId?: string } | null) ?? null,
+        ip: callerIp,
+      });
+    }
+    return { success: true, status: 'approved', test: true };
   }
 
   try {
