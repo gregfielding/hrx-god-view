@@ -1073,7 +1073,7 @@
   "jobs": {
     "title": "Trabajos",
     "applyNow": "Aplicar",
-    "applyForShift": "Puedo trabajar este turno",
+    "applyForShift": "Aplicar a este turno",
     "invitedBanner": "Te invitaron a solicitar este turno. Las primeras solicitudes calificadas se confirman: te enviaremos un mensaje de texto en cuanto estés confirmado.",
     "reapplyToShift": "Volver a solicitar turno",
     "shiftRequested": "Turno solicitado",
@@ -1232,7 +1232,8 @@
     "multiDayPromptBody": "Estás postulando para el {date}. ¿Quieres postularte también para los otros días?",
     "multiDayJustThisDay": "Solo este día",
     "multiDayApplyToOne": "Postularme a 1 día",
-    "multiDayApplyToMany": "Postularme a {count} días"
+    "multiDayApplyToMany": "Postularme a {count} días",
+    "nextAvailableShift": "Próximo turno disponible"
   },
   "assignment": {
     "title": "Asignación",

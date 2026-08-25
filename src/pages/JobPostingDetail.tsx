@@ -2816,8 +2816,7 @@ const JobPostingDetail: React.FC = () => {
         <IconButton
           onClick={() => navigate('/c1/jobs-board')}
           aria-label={t('jobs.backToJobsBoard')}
-          edge="start"
-          sx={{ color: 'text.secondary' }}
+          sx={{ color: 'text.secondary', ml: -1 }}
         >
           <ArrowBackIcon />
         </IconButton>
@@ -3229,10 +3228,10 @@ const JobPostingDetail: React.FC = () => {
             return (
               <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
                 <CardContent sx={{ p: 0 }}>
-                  <Typography variant="subtitle1" gutterBottom>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                     {t('jobs.aboutThisJob')}
                   </Typography>
-                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>
                     {displayText || t('jobs.noDescriptionProvided')}
                   </Typography>
                   {isLong && (
@@ -3255,7 +3254,7 @@ const JobPostingDetail: React.FC = () => {
           {posting.jobType === 'career' && careerOpenShifts.length > 1 ? (
             <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
-                <Typography variant="subtitle1" gutterBottom>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                   {t('jobs.availableShifts')}
                 </Typography>
                 <RadioGroup
@@ -3286,7 +3285,7 @@ const JobPostingDetail: React.FC = () => {
           ) : posting.jobType === 'career' && careerWeeklyScheduleSummary ? (
             <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
-                <Typography variant="subtitle1" gutterBottom>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                   {t('jobs.weeklySchedule')}
                 </Typography>
                 <Typography variant="body1" sx={{ lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
@@ -3300,7 +3299,7 @@ const JobPostingDetail: React.FC = () => {
           {(posting.worksiteAddress?.street || posting.worksiteAddress?.city || posting.worksiteAddress?.state) && (
             <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
-                <Typography variant="subtitle1" gutterBottom>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                   {t('jobs.location')}
                 </Typography>
                 {(() => {
@@ -3310,19 +3309,19 @@ const JobPostingDetail: React.FC = () => {
                   const mapsQuery = encodeURIComponent(addressStr || `${wa?.city} ${wa?.state}`.trim());
                   return (
                     <>
-                      <Typography variant="body1" sx={{ mb: 1 }}>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
                         {posting.worksiteName ? `${posting.worksiteName} — ` : ''}{addressStr || t('jobs.addressTbd')}
                       </Typography>
                       {addressStr && (
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center', mb: 2 }}>
                           <Button
-                            variant="contained"
+                            variant="text"
                             size="small"
                             startIcon={<DirectionsIcon />}
                             href={`https://www.google.com/maps/search/?api=1&query=${mapsQuery}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            sx={{ textTransform: 'none' }}
+                            sx={{ textTransform: 'none', px: 1, minHeight: 36, fontWeight: 600 }}
                           >
                             {t('assignment.openInGoogleMaps')}
                           </Button>
@@ -3680,7 +3679,7 @@ const JobPostingDetail: React.FC = () => {
             return (
               <Card sx={{ ...cardBaseSx }} elevation={2}>
                 <CardContent>
-                  <Typography variant="subtitle1" gutterBottom>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                     {t('jobs.requirements')}
                   </Typography>
 
@@ -3742,7 +3741,7 @@ const JobPostingDetail: React.FC = () => {
               elevation={2}
             >
               <CardContent sx={{ p: 0 }}>
-                <Typography variant="subtitle1" gutterBottom>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                   {statusButtonProps?.label === 'confirmed_special'
                     ? t('jobs.youveBeenHired')
                     : (statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode)

@@ -1073,7 +1073,7 @@
   "jobs": {
     "title": "Jobs",
     "applyNow": "Apply",
-    "applyForShift": "I Can Work This Shift",
+    "applyForShift": "Apply For This Shift",
     "invitedBanner": "You've been invited to request this shift. First qualified requests get confirmed — we'll text you as soon as you're confirmed.",
     "reapplyToShift": "Re-apply to Shift",
     "shiftRequested": "Shift Requested",
@@ -1232,7 +1232,8 @@
     "multiDayPromptBody": "You're applying for {date}. Want to apply for the other days too?",
     "multiDayJustThisDay": "Just this day",
     "multiDayApplyToOne": "Apply to 1 day",
-    "multiDayApplyToMany": "Apply to {count} days"
+    "multiDayApplyToMany": "Apply to {count} days",
+    "nextAvailableShift": "Next Available Shift"
   },
   "assignment": {
     "title": "Assignment",
