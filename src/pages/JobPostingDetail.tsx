@@ -2780,7 +2780,19 @@ const JobPostingDetail: React.FC = () => {
   } as const;
 
   return (
-    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 0, pt: 1, pb: showStickyApply ? 10 : 0 }}>
+    <Box
+      sx={{
+        maxWidth: 1200,
+        mx: 'auto',
+        p: 0,
+        pt: 1,
+        pb: showStickyApply ? 10 : 0,
+        // Guests render OUTSIDE C1WorkerLayout (no shell for logged-out
+        // visitors), so the page supplies its own gutter; signed-in workers
+        // already get it from the layout — padding here would double it.
+        px: user ? 0 : { xs: 2, sm: 3 },
+      }}
+    >
       {/* Google Jobs Structured Data */}
       <Helmet>
         <title>
@@ -2855,12 +2867,12 @@ const JobPostingDetail: React.FC = () => {
             <Button
               variant="contained"
               onClick={() => setAuthDialogOpen(true)}
-              size={isMobile ? 'small' : 'medium'}
+              size="small"
               sx={{
-                px: { xs: 1.5, sm: 2 },
-                py: { xs: 0.75, sm: 1 },
+                px: 2,
                 fontWeight: 600,
-                borderRadius: 2,
+                minHeight: 36,
+                borderRadius: 999,
                 textTransform: 'none',
                 whiteSpace: 'nowrap',
               }}
