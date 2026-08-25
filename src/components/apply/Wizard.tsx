@@ -537,10 +537,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
     const hasValue = (v: unknown) => String(v || '').trim().length > 0;
 
+    // Email dropped from the step-0 completeness test (phone-first signup,
+    // 2026-08-25) — it's optional and lives on step 1 now; requiring it here
+    // would bounce authed workers back to a step that no longer shows it.
     const personalComplete = Boolean(
       String(personal.firstName || profile.firstName || '').trim() &&
         String(personal.lastName || profile.lastName || '').trim() &&
-        String(personal.email || profile.email || '').trim() &&
         String(personal.phone || profile.phone || profile.phoneE164 || '').trim() &&
         String(personal.dob || profile.dob || profile.dateOfBirth || '').trim()
     );
@@ -3310,26 +3312,22 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const renderStep = () => {
     switch (actualStep) {
       case 0:
-        // Home address is collected AT account creation (Greg 2026-08-07:
-        // "users without an address are nearly worthless") — an account can
-        // no longer exist without a verified, geocoded address. Reuses the
-        // maintained AddressStep (manual entry + server-side geocode), NOT
-        // PersonalInfoStep's legacy showAddressFields (client-side geocode
-        // is REQUEST_DENIED on the browser key — the July footgun).
+        // Conversion-first step 0 (Greg 2026-08-25, supersedes the 2026-08-07
+        // address-at-creation rule): ONLY name + phone + DOB, then the OTP
+        // gate — fewest possible fields before the account exists. Email and
+        // address move to step 1 (post-code); an abandoned signup still
+        // leaves a claimable account, and the applyWizardReminder SMS nudges
+        // completion. Language comes from the page's EN|ES toggle (saved
+        // server-side at signup) — no dropdown.
         return (
           <>
             <PersonalInfoStep
               value={formData.personal || {}}
               onChange={(v) => persist({ personal: v })}
               hidePasswordFields
+              minimalPhoneFirst
               showAddressFields={false}
             />
-            <Box sx={{ mt: 3 }}>
-              <AddressStep
-                value={formData.personal || {}}
-                onChange={(v) => persist({ personal: v })}
-              />
-            </Box>
             {/* Phone-first account creation (Slice 2, 2026-08-25): the gate
                 claims an existing account by phone or mints a passwordless
                 one server-side. Continue stays disabled until authenticated. */}
@@ -3350,8 +3348,23 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           </>
         );
       case 1:
+        // Post-code step: optional email + home address (Greg 2026-08-25).
         return (
-          <AddressStep value={formData.personal || {}} onChange={(v) => persist({ personal: v })} />
+          <>
+            <Box sx={{ mb: 3 }}>
+              <TextField
+                fullWidth
+                type="email"
+                label={t('profile.email')}
+                value={String((formData.personal as any)?.email || '')}
+                onChange={(e) =>
+                  persist({ personal: { ...(formData.personal || {}), email: e.target.value } })
+                }
+                helperText={t('phoneSignup.emailOptional')}
+              />
+            </Box>
+            <AddressStep value={formData.personal || {}} onChange={(v) => persist({ personal: v })} />
+          </>
         );
       case 2:
         return (
@@ -3912,8 +3925,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                         missing.background ||
                         missing.everify ||
                         missing.additional.length > 0)) ||
-                    (actualStep === 0 &&
-                      (!personalValid || !addressValid || !auth.currentUser)) ||
+                    (actualStep === 0 && (!personalValid || !auth.currentUser)) ||
                     (actualStep === 1 && !addressValid) ||
                     (actualStep === 3 &&
                       !String(formData?.requirements?.eVerifyComfort || '').trim()) ||

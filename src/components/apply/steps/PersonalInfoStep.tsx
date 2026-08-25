@@ -14,6 +14,10 @@ type Props = {
   /** Phone-first signup (Slice 2, 2026-08-25): account creation happens via
    *  the PhoneSignupGate OTP — no password is ever collected. */
   hidePasswordFields?: boolean;
+  /** Conversion-first step 0 (Greg 2026-08-25): only name + phone + DOB.
+   *  Email moves to the post-code step; language comes from the page's
+   *  EN|ES toggle (saved server-side at signup) — no dropdown. */
+  minimalPhoneFirst?: boolean;
   showAddressFields?: boolean;
 };
 
@@ -107,7 +111,7 @@ const formatDateForStorage = (dateString: string) => {
   return '';
 };
 
-const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, showAddressFields = false, hidePasswordFields = false }) => {
+const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, showAddressFields = false, hidePasswordFields = false, minimalPhoneFirst = false }) => {
   const t = useT();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -500,6 +504,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             <TextField fullWidth required label={t('profile.lastName')} value={value.lastName || ''} onChange={(e) => handle('lastName', e.target.value)} />
           </ResumeSuggestionField>
         </Grid>
+        {!minimalPhoneFirst && (
         <Grid item xs={12} md={6}>
           <ResumeSuggestionField 
             isFromResume={isFieldFromResume('email')} 
@@ -508,6 +513,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             <TextField fullWidth type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} helperText={t('phoneSignup.emailOptional')} />
           </ResumeSuggestionField>
         </Grid>
+        )}
         <Grid item xs={12} md={6}>
           <ResumeSuggestionField 
             isFromResume={isFieldFromResume('phone')} 
@@ -527,6 +533,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             />
           </ResumeSuggestionField>
         </Grid>
+        {!minimalPhoneFirst && (
         <Grid item xs={12} md={6}>
           <FormControl fullWidth>
             <InputLabel id="apply-preferred-language-mobile-label">{t('apply.preferredMessageLanguage')}</InputLabel>
@@ -541,6 +548,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             </Select>
           </FormControl>
         </Grid>
+        )}
         <Grid item xs={12} md={6}>
           <TextField 
             fullWidth 
@@ -609,6 +617,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                   <TextField fullWidth required label={t('profile.lastName')} value={value.lastName || ''} onChange={(e) => handle('lastName', e.target.value)} />
                 </ResumeSuggestionField>
               </Grid>
+              {!minimalPhoneFirst && (
               <Grid item xs={12} md={6}>
                 <ResumeSuggestionField 
                   isFromResume={isFieldFromResume('email')} 
@@ -617,6 +626,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                   <TextField fullWidth type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} helperText={t('phoneSignup.emailOptional')} />
                 </ResumeSuggestionField>
               </Grid>
+              )}
               <Grid item xs={12} md={6}>
                 <ResumeSuggestionField 
                   isFromResume={isFieldFromResume('phone')} 
@@ -639,6 +649,7 @@ label={t('profile.phone')}
                   />
                 </ResumeSuggestionField>
               </Grid>
+              {!minimalPhoneFirst && (
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
                   <InputLabel id="apply-preferred-language-desktop-label">{t('apply.preferredMessageLanguage')}</InputLabel>
@@ -653,6 +664,7 @@ label={t('profile.phone')}
                   </Select>
                 </FormControl>
               </Grid>
+              )}
               <Grid item xs={12} md={6}>
                 <TextField 
                   fullWidth 
