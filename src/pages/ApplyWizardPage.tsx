@@ -151,10 +151,14 @@ const ApplyWizardPage: React.FC = () => {
       <Box sx={{ bgcolor: 'background.default', minHeight: '100vh', pb: 4 }}>
         <Box
           sx={{
-            px: { xs: 2, sm: 3 },
-            pt: { xs: 2, sm: 3 },
-            pb: 0,
-            maxWidth: { sm: 720 },
+            // Signed-in: C1WorkerLayout already provides the gutter, top
+            // padding, and 720 width — adding our own stacked them (the
+            // Apply/EN|ES row sat low and narrower than the card, Greg
+            // 2026-08-25). Guests get the full shell from this page.
+            px: user ? 0 : { xs: 2, sm: 3 },
+            pt: user ? 0.5 : { xs: 2, sm: 3 },
+            pb: 1.5,
+            maxWidth: user ? 'none' : { sm: 720 },
             mx: 'auto',
           }}
         >

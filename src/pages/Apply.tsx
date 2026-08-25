@@ -117,7 +117,7 @@ const Apply: React.FC = () => {
           sx={{
             px: { xs: 2, sm: 3 },
             pt: { xs: 2, sm: 3 },
-            pb: 0,
+            pb: 1.5,
             maxWidth: { sm: 720 },
             mx: 'auto',
           }}
