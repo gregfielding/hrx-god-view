@@ -1,6 +1,20 @@
 {
   "indexes": [
     {
+      "collectionGroup": "parsedResumes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "uploadDate",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "assignmentReadinessItems",
       "queryScope": "COLLECTION_GROUP",
       "fields": [

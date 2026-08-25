@@ -228,3 +228,26 @@ Greg watched a full production signup and cut the wizard to what staffing ops ac
   alone shows amber "SSN on file — no pay history" (safe to hard-delete).
   Context: Grissett request 8/24 was flagged retain on SSN-only — actual
   procedure for such: Open profile → System Access → Delete → Mark completed.
+
+## Signup completeness round (SHIPPED 2026-08-25)
+
+- **Funnel analytics**: GA4 events `apply_step_viewed` / `apply_step_completed`
+  / `apply_abandoned` / `apply_completed` (src/utils/applyWizardAnalytics.ts,
+  mirrors prescreenAnalytics). Stable ids in `STEP_IDS` (Wizard.tsx, next to
+  stepKeys); params carry stepId/stepIndex/totalSteps/jobId/signupSource.
+  Read in GA4 funnel exploration — there is NO in-app funnel page.
+  Verified live: events observed in window.dataLayer on prod.
+- **Position interests — wizard step 13** (generic signups only; jobId flows
+  skip it — applying IS the position signal). 8 category chips
+  (POSITION_INTEREST_KEYS in PositionInterestsStep.tsx) → canonical
+  `workerProfile.preferences.positionInterests` (write-model mapping +
+  CANONICAL_PREFERENCE_KEYS entry). ☠️ Persists AT TAP, not just on Next:
+  when 13 is the last visible step the button is handleSubmit and the
+  on-Next save never runs (the auto-skip write-eater class, again).
+  Already-answered workers and job applicants never see it
+  (nested+dotted+top-level read, lastActualStepRef guard).
+- **Emergency contact**: NOT built — it already exists end-to-end
+  (dashboard action item `add_emergency_contact` → personal-details page;
+  admin edit in ProfileOverview). The client homeReadinessModel checklist
+  that lacks it appears to have zero render sites (dead model) — don't
+  extend it without checking for a consumer first.

@@ -176,7 +176,6 @@ function extractProfileScore100(scoreSummary: Record<string, unknown> | undefine
 }
 
 function resumePresent(userData: Record<string, unknown>): boolean {
-  if (userData.resumeUrl && String(userData.resumeUrl).trim()) return true;
   const r = userData.resume;
   if (r && typeof r === 'object') {
     const o = r as Record<string, unknown>;

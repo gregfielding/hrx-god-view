@@ -493,10 +493,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                 userData.address?.state || 
                 '';
     
-    // Extract resume URL (could be in multiple places)
-    const resumeUrl = userData.resumeUrl || 
-                     userData.resume?.downloadUrl || 
-                     '';
+    const resumeUrl = userData.resume?.downloadUrl || '';
     const resume = userData.resume || null;
     
     // Extract skills and languages (ensure arrays of strings; profile data may

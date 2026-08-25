@@ -27,7 +27,7 @@ import { logger } from './utils/logger';
 import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './messaging/twilioSecrets';
 import { sendWorkerMessageInternal } from './twilio';
 import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
-import { parseResumeHttp, getResumeParsingStatus, getUserResumeUploads, getResumeSignedUrl } from './resumeParser';
+import { parseResumeHttp } from './resumeParser';
 import { getUserParsedResumes } from './getUserParsedResumes';
 import { logMobileAppError, monitorMobileAppErrors, getMobileErrorStats } from './mobileErrorMonitoring';
 import {
@@ -5739,7 +5739,9 @@ export const validatePromptConsistency = onCall(async (request) => {
 });
 
 // Resume Parser Functions (getUserParsedResumes is in getUserParsedResumes.ts — small bundle, higher memory)
-export { parseResumeHttp, getResumeParsingStatus, getUserResumeUploads, getResumeSignedUrl };
+// getResumeParsingStatus / getUserResumeUploads / getResumeSignedUrl deleted
+// 2026-08-25 (zero client callers) — freed 3 Cloud Run service slots.
+export { parseResumeHttp };
 export { getUserParsedResumes };
 
 // Phase 1C: Documents + E-Sign Infrastructure was scaffolded but never

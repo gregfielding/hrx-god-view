@@ -42,22 +42,48 @@ env `CLAUDE_MODEL`, adapter ignores per-call model params — the
    (ResumeStep, userResumeOpen, UserProfile) now use authed SDK
    `getDownloadURL`. Verified: public URL 403, token URL 200.
 
-## Known remaining debt (audit items NOT yet fixed — ranked)
-- Zod validation is theatre: schemas mismatch the prompt output, every parse
-  logs console.error and returns raw data; `ParsedResumeSchema` omits
-  `storagePath` (would strip it if validation ever started passing) — fix
-  together.
-- `resumeUrl`/`resumeStoragePath`/`resume.fileUrl` are read by 9+ files but
-  written by nothing — pick `users.resume` as canonical and delete branches.
-- Dead server code: `updateUserProfile`/`logAiEvent`/`geocodeAddress` etc.
-  (~150 lines) — including the résumé-address geocoding the UI claims happens.
-- `resumeSuggestions`/badges UI dead (reads formData.personal, written to
-  formData.resume); ResumeHistory page reads `data.success` that's never set;
-  `parsedResumes` has no client read rules (QualificationsStep autofill dies).
-- 3 identical copies of work history on users docs
-  (workExperience/workHistory/employmentHistory); parsedText+aiAnalysis
-  duplicated into localStorage/applicationDrafts/applications.
-- Client base64-JSON transport: 25MB cap ≈ 33MB encoded vs Cloud Run's 32MB
-  body limit; maxInstances 5 is a surge ceiling.
-- Docs RESUME_PARSING_SYSTEM.md still describes OpenAI + a `parseResume`
-  callable that doesn't exist.
+## Fixed 2026-08-25 (second sweep — the ranked remaining-debt list)
+- **Zod aligned + real**: schemas now match the extraction output (skills
+  without source/confidence, string years/current/isNative, schemeless
+  LinkedIn, synthesized aiAnalysis zeros, `storagePath` on
+  `ParsedResumeSchema` — Zod's unknown-key stripping would have silently
+  dropped it the day validation passed). Still fail-open: a
+  console.error from a validator now means REAL prompt/schema drift.
+- **Legacy fields purged**: every reader of never-written
+  `resumeUrl`/`resumeStoragePath`/`resume.fileUrl` trimmed to canonical
+  `users.resume.{downloadUrl,storagePath,fileName}` (15+ files incl. all
+  shared/ mirrors). ☠️ Real bug found beyond the audit:
+  `homeSnapshotModel.hasResume` read ONLY the phantom fields — every
+  worker's resume checklist item showed incomplete
+  (syncC1WorkerHomeReadinessSnapshot redeployed with the fix).
+- **Dead code deleted**: updateUserProfile/geocodeAddress/logAiEvent/
+  helpers/commitMerge URL block (~350 lines); resumeSuggestions producer
+  (wrote formData.resume, consumer read formData.personal — dead since
+  day one); dead client callable consts. **Three deployed callables
+  DELETED from Cloud Run** (getResumeParsingStatus, getUserResumeUploads,
+  getResumeSignedUrl — zero callers) → 3 service slots freed at the cap.
+- **ResumeHistory fixed**: gated on a `success` flag the callable never
+  returned — page was permanently in its error state.
+- **parsedResumes autofill revived**: rules entry (owner-only read) +
+  userId+uploadDate composite index deployed; QualificationsStep's bare
+  `catch {}` now logs. Work-history autofill from parsed résumés works
+  for the first time.
+- **employmentHistory retired as a write target** (3rd identical copy):
+  resumeParser + admin SkillsTab now write workHistory; readers keep
+  fallbacks for old docs.
+- **Upload cap 25MB → 20MB**: base64-JSON inflates ~4/3 against Cloud
+  Run's 32MB body limit — 24-25MB files died platform-side with a
+  generic error before our handler ran.
+- Root RESUME_PARSING_SYSTEM.md replaced with a pointer here (described
+  OpenAI + a parseResume callable that didn't exist).
+
+## Known remaining debt (deliberately deferred)
+- workHistory vs workExperience dual-write is a REAL migration:
+  calculateApplicantFitScore/applicantScoring read only workHistory;
+  jobScore*/workHistoryJobTitles prefer workExperience. Target per
+  jobReadinessReadModel: `workerProfile.experience.workHistory`.
+- Transport refactor: client → Storage direct upload + POST storagePath
+  (kills the 32MB ceiling and the 1GiB memory need); maxInstances 5 is
+  the parse-surge ceiling.
+- parsedText+aiAnalysis still duplicated into
+  localStorage/applicationDrafts/applications.

@@ -65,10 +65,7 @@ function userDocHasStoredResume(userDoc: Record<string, unknown> | null | undefi
   return Boolean(
     resumeObj.downloadUrl ||
       resumeObj.fileName ||
-      resumeObj.storagePath ||
-      resumeObj.fileUrl ||
-      userDoc.resumeStoragePath ||
-      userDoc.resumeUrl,
+      resumeObj.storagePath,
   );
 }
 

@@ -39,10 +39,6 @@ export function buildPrescreenSessionProfileEnhancements(
   if (typeof userDoc.city === 'string' && userDoc.city.trim()) o.city = userDoc.city.trim();
   if (typeof userDoc.state === 'string' && userDoc.state.trim()) o.state = userDoc.state.trim();
   if (typeof userDoc.zip === 'string' && userDoc.zip.trim()) o.zip = userDoc.zip.trim();
-  if (typeof userDoc.resumeUrl === 'string' && userDoc.resumeUrl.trim()) o.resumeUrl = userDoc.resumeUrl.trim();
-  if (typeof userDoc.resumeStoragePath === 'string' && userDoc.resumeStoragePath.trim()) {
-    o.resumeStoragePath = userDoc.resumeStoragePath.trim();
-  }
 
   return Object.keys(o).length > 0 ? o : undefined;
 }

@@ -24,6 +24,7 @@ import {
 } from './messaging/twilioSecrets';
 import { userInInterviewReinviteCooldown } from './workerAiPrescreen/interviewInviteCooldown';
 import { normalizeApplicationStatus } from './utils/applicationStatusNormalize';
+import { runAccountDeletionGraceSweep } from './accountDeletionGraceSweep';
 import {
   userIsInActiveMigration,
   APPLY_WIZARD_SUPPRESSION_REASON,
@@ -481,9 +482,9 @@ export const processApplyAbandonNudges = onSchedule(
 
       if (await userHasAnySubmittedApplication(uid)) continue;
 
-      const snapshot = (data.applyResumeSnapshot as Record<string, unknown>) ?? {};
-      const snapUrl = String(snapshot.resumeUrl || '').trim();
-      const url = /^https?:\/\//.test(snapUrl) ? snapUrl : 'https://hrxone.com/c1/apply';
+      // applyResumeSnapshot never carried a resumeUrl (writers store {path,
+      // tenantId, jobId, …}) — the nudge always used the apply landing page.
+      const url = 'https://hrxone.com/c1/apply';
 
       const firstName =
         String(data.firstName || (String(data.displayName || '').trim().split(/\s+/)[0] || '') || 'there').trim() ||
@@ -544,5 +545,17 @@ export const processApplyAbandonNudges = onSchedule(
       suppressedActiveMigration: suppressed,
       hitPerRunCap: skippedCap > 0,
     });
+
+    // Account-deletion grace sweep (2026-08-25) rides this cron — the only
+    // daily schedule with Twilio bound and a daylight send window (Cloud Run
+    // service cap forbids a dedicated function). Isolated so neither job's
+    // failure starves the other.
+    try {
+      await runAccountDeletionGraceSweep();
+    } catch (e) {
+      logger.error('deletionGraceSweep: sweep crashed', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   },
 );

@@ -58,11 +58,10 @@ const ResumeHistory: React.FC<ResumeHistoryProps> = ({ userId }) => {
       const result = await getUserParsedResumes({ userId });
       const data = result.data as any;
 
-      if (data.success) {
-        setResumes(data.resumes || []);
-      } else {
-        setError(data.error || 'Failed to load resume history');
-      }
+      // Callable returns { resumes } — a `success` flag was never part of the
+      // shape, and gating on it left this page permanently in its error state
+      // (fixed 2026-08-25).
+      setResumes(Array.isArray(data?.resumes) ? data.resumes : []);
     } catch (err: any) {
       setError(err.message || 'Failed to load resume history');
     } finally {

@@ -47,6 +47,15 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Parsed résumés — server-written by parseResumeHttp. Workers read their
+    // own (wizard work-history autofill in QualificationsStep); this rule was
+    // missing since launch, so the autofill silently permission-denied
+    // (résumé sweep 2026-08-25). Requires the userId+uploadDate index.
+    match /parsedResumes/{docId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create, update, delete: if false;
+    }
+
     match /account_deletion_requests/{uid} {
       allow create: if request.auth != null && request.auth.uid == uid;
       allow read: if request.auth != null && (request.auth.uid == uid || isHRX());

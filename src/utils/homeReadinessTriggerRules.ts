@@ -46,8 +46,6 @@ const RECOMPUTE_PATH_PREFIXES = [
   'resume.downloadUrl',
   'resume.storagePath',
   'resume.fileName',
-  'resume.fileUrl',
-  'resumeUrl',
 ];
 
 const ITEM_TO_LAUNCH_STEP: Record<string, HomeReadinessLaunchStep> = {

@@ -10,7 +10,7 @@ export type UserResumeForOpen = {
 
 /**
  * Returns resume metadata when the user has a named resume and at least one openable URL/path.
- * Aligns with profile header: requires `resume.fileName` plus `downloadUrl`, `fileUrl`, or `storagePath`.
+ * Aligns with profile header: requires `resume.fileName` plus `downloadUrl` or `storagePath`.
  */
 export function pickResumeFromUserDoc(user: Record<string, unknown> | null | undefined): UserResumeForOpen | null {
   if (!user) return null;
@@ -22,14 +22,11 @@ export function pickResumeFromUserDoc(user: Record<string, unknown> | null | und
 
   const downloadUrl =
     typeof resume.downloadUrl === 'string' && resume.downloadUrl.trim() ? resume.downloadUrl.trim() : '';
-  const fileUrl =
-    typeof resume.fileUrl === 'string' && resume.fileUrl.trim() ? resume.fileUrl.trim() : '';
   const storagePath =
     typeof resume.storagePath === 'string' && resume.storagePath.trim() ? resume.storagePath.trim() : '';
 
-  const fromDownloadOrFile = downloadUrl || fileUrl;
-  if (fromDownloadOrFile) {
-    return { fileName, downloadUrl: fromDownloadOrFile };
+  if (downloadUrl) {
+    return { fileName, downloadUrl };
   }
   if (storagePath) {
     return { fileName, storagePath };

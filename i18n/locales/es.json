@@ -1068,7 +1068,19 @@
     "headshotSubtitle": "Una foto clara ayuda a los supervisores a reconocerte en el turno.",
     "headshotLaterHint": "Puedes agregarla después — puede ser necesaria antes de aceptar turnos.",
     "takingYouHome": "Llevándote a tu pantalla de inicio…",
-    "emailNeededForJob": "Obligatorio — te enviaremos novedades de tu solicitud aquí."
+    "emailNeededForJob": "Obligatorio — te enviaremos novedades de tu solicitud aquí.",
+    "stepPositionInterests": "Intereses de trabajo",
+    "positionInterestsTitle": "¿Qué tipo de trabajo buscas?",
+    "positionInterestsSubtitle": "Elige todos los que quieras: te conectaremos con las vacantes adecuadas.",
+    "positionInterestsHint": "Puedes cambiarlos en cualquier momento en tu perfil.",
+    "positionInterest_janitorial": "Limpieza y mantenimiento",
+    "positionInterest_food_service": "Servicio de alimentos",
+    "positionInterest_events": "Eventos y estadios",
+    "positionInterest_warehouse": "Almacén y logística",
+    "positionInterest_hospitality": "Hospitalidad y hoteles",
+    "positionInterest_general_labor": "Trabajo general",
+    "positionInterest_customer_service": "Atención al cliente",
+    "positionInterest_skilled_trades": "Oficios especializados"
   },
   "jobs": {
     "title": "Trabajos",

@@ -239,12 +239,9 @@ const placementProfileTileIconBtnSx = {
  * the storage-bucket fallback.
  */
 export function resolvePlacementResumeUrl(worker: Worker): string | null {
-  if (worker.resumeUrl) return worker.resumeUrl;
-  if (worker.resume?.downloadUrl) return worker.resume.downloadUrl;
-  if (worker.resume?.storagePath) {
-    return `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(worker.resume.storagePath)}?alt=media`;
-  }
-  return null;
+  // downloadUrl only (2026-08-25): the hand-built public ?alt=media URL 403s
+  // since the resumes storage lockdown, and worker.resumeUrl was never written.
+  return worker.resume?.downloadUrl || null;
 }
 
 /**

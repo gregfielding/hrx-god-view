@@ -68,16 +68,8 @@ export function buildOverviewQualificationsFromUserDoc(data: Record<string, unkn
   }
 
   const resumeObj = (data.resume || {}) as Record<string, unknown>;
-  const resumeUrl =
-    (typeof resumeObj.downloadUrl === 'string' ? resumeObj.downloadUrl : null) ||
-    (typeof data.resumeUrl === 'string' ? data.resumeUrl : null);
-  const hasResume = Boolean(
-    resumeObj.downloadUrl ||
-      resumeObj.fileName ||
-      resumeObj.storagePath ||
-      data.resumeStoragePath ||
-      data.resumeUrl,
-  );
+  const resumeUrl = typeof resumeObj.downloadUrl === 'string' ? resumeObj.downloadUrl : null;
+  const hasResume = Boolean(resumeObj.downloadUrl || resumeObj.fileName || resumeObj.storagePath);
   const bio = String(
     data.professionalBio || data.bio || data.summary || (data as { professionalSummary?: string }).professionalSummary || '',
   ).trim();

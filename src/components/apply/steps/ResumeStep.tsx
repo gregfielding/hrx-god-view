@@ -66,8 +66,6 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
     return () => unsubscribe();
   }, [user?.uid]);
 
-  const getResumeSignedUrl = httpsCallable(functions, 'getResumeSignedUrl');
-
   const handleViewResume = async () => {
     if (!currentResume) {
       setError(t('apply.noResumeToView'));
@@ -140,51 +138,21 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
   };
 
   const handleResumeParsed = (parsed: any) => {
-    // Extract contact information and map to form fields
+    // resumeSuggestions/resumeConfidence maps removed 2026-08-25: they were
+    // written into formData.resume while their only consumer read
+    // formData.personal — dead since day one, and step order (personal is
+    // step 0, resume step 2) makes the "from resume" badges moot anyway.
     const contact = parsed?.contact || {};
-    const resumeSuggestions: Record<string, boolean> = {};
-    const resumeConfidence: Record<string, number> = {};
-    
-    // Map resume fields to form fields
-    if (contact.name) {
-      const nameParts = contact.name.split(' ');
-      if (nameParts.length >= 2) {
-        resumeSuggestions.firstName = true;
-        resumeSuggestions.lastName = true;
-        resumeConfidence.firstName = 0.9;
-        resumeConfidence.lastName = 0.9;
-      }
-    }
-    
-    if (contact.email) {
-      resumeSuggestions.email = true;
-      resumeConfidence.email = 0.95;
-    }
-    
-    if (contact.phone) {
-      resumeSuggestions.phone = true;
-      resumeConfidence.phone = 0.85;
-    }
-    
-    if (contact.address) {
-      resumeSuggestions.street = true;
-      resumeConfidence.street = 0.8;
-      // Note: Coordinates will be geocoded on the backend during resume parsing
-    }
-    
-    // Update the form with parsed data and suggestion metadata
     const updatedValue = {
       ...(value || {}),
       parsed,
-      resumeSuggestions,
-      resumeConfidence,
       // Pre-fill form fields from resume
       firstName: contact.name ? contact.name.split(' ')[0] : value?.firstName,
       lastName: contact.name ? contact.name.split(' ').slice(1).join(' ') : value?.lastName,
       email: contact.email || value?.email,
       phone: contact.phone || value?.phone,
     };
-    
+
     onChange(updatedValue);
     setShowUpload(false);
   };

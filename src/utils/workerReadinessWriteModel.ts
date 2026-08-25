@@ -161,6 +161,12 @@ export function buildCanonicalWorkerProfileWritePatch(
     setIfDefined(patch, 'workerProfile.preferences.transportMethod', partial.transportMethod);
   }
 
+  // Position-interest chips (wizard step 13, 2026-08-25) — stable category
+  // keys, see POSITION_INTEREST_KEYS in PositionInterestsStep.
+  if (partial.positionInterests !== undefined) {
+    setIfDefined(patch, 'workerProfile.preferences.positionInterests', partial.positionInterests);
+  }
+
   if (partial.availableToStartDate !== undefined) {
     setIfDefined(patch, 'workerProfile.preferences.availableToStartDate', partial.availableToStartDate);
   }

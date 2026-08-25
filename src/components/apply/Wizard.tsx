@@ -53,6 +53,13 @@ import SkillsStep from './steps/SkillsStep';
 import EducationStep from './steps/EducationStep';
 import WorkExperienceStep from './steps/WorkExperienceStep';
 import RequirementsAcknowledgementStep from './steps/RequirementsAcknowledgementStep';
+import PositionInterestsStep from './steps/PositionInterestsStep';
+import {
+  logApplyStepViewed,
+  logApplyStepCompleted,
+  logApplyAbandoned,
+  logApplyCompleted,
+} from '../../utils/applyWizardAnalytics';
 import EligibilityModal from '../../components/EligibilityModal';
 import { geocodeAddress, geocodeAddressDetailed } from '../../utils/geocodeAddress';
 import {
@@ -179,7 +186,26 @@ const stepKeys = [
   'apply.stepBio',
   'apply.stepPreferences',
   'apply.stepRequirements',
+  'apply.stepPositionInterests',
 ];
+
+/** Stable analytics ids per actual-step index (GA4 funnel, 2026-08-25). */
+const STEP_IDS: Record<number, string> = {
+  0: 'personal_info',
+  1: 'address',
+  2: 'resume',
+  3: 'everify_comfort',
+  4: 'work_eligibility',
+  5: 'profile_picture',
+  6: 'skills',
+  7: 'education',
+  8: 'licenses_certifications',
+  9: 'work_experience',
+  10: 'bio',
+  11: 'preferences',
+  12: 'requirements',
+  13: 'position_interests',
+};
 const detectDefaultLanguage = (): 'en' | 'es' => {
   if (typeof navigator === 'undefined') return 'en';
   return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
@@ -216,14 +242,7 @@ const toStringList = (value: unknown): string[] =>
     : [];
 
 const hasResumeData = (resume: any): boolean =>
-  Boolean(
-    resume?.fileName ||
-      resume?.storagePath ||
-      resume?.downloadUrl ||
-      resume?.fileUrl ||
-      resume?.resumeUrl ||
-      resume?.parsed
-  );
+  Boolean(resume?.fileName || resume?.storagePath || resume?.downloadUrl || resume?.parsed);
 
 /** Skill labels from structured resume parse (same shapes as resumeParser `skills` array). */
 function parsedResumeSkillNames(resume: any): string[] {
@@ -509,13 +528,34 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   // Previous render's current step — see the step-12 evict guard below.
   const lastActualStepRef = useRef(0);
 
+  // Signup-funnel analytics (2026-08-25) — GA4 events, best-effort only.
+  const funnelStartRef = useRef(Date.now());
+  const viewedKeyRef = useRef('');
+  const submittedRef = useRef(false);
+  const abandonCtxRef = useRef<{ lastStepId: string; stepIndex: number }>({ lastStepId: '', stepIndex: 0 });
+
   // Steps 3 (E-Verify comfort), 10 (bio), and 11 (shift preferences) were
   // permanently cut 2026-08-25: staff never read them and no major gig app
   // asks at signup (E-Verify comfort belongs at the job-requirements gate,
   // bios come from resumes, availability comes from shift acceptance).
   const visibleStepIndices = useMemo(() => {
-    const all = [0, 1, 2, 4, 5, 6, 7, 8, 9, 12];
+    // 13 (position interests) sits between experience and requirements —
+    // generic signups only, filtered below for job applications.
+    const all = [0, 1, 2, 4, 5, 6, 7, 8, 9, 13, 12];
     let indices = [...all];
+
+    // Position interests: job applicants already told us the position by
+    // applying; workers who answered before are never re-asked (nested +
+    // dotted + top-level reads — setDoc dotted-key corruption legacy).
+    const existingInterests =
+      (userProfile as any)?.workerProfile?.preferences?.positionInterests ??
+      (userProfile as any)?.['workerProfile.preferences.positionInterests'] ??
+      (userProfile as any)?.positionInterests;
+    const interestsAnswered =
+      Array.isArray(existingInterests) && existingInterests.length > 0;
+    if ((Boolean(jobId) || interestsAnswered) && lastActualStepRef.current !== 13) {
+      indices = indices.filter((i) => i !== 13);
+    }
 
     if (hiringEntityName && /C1 Events LLC/i.test(hiringEntityName)) {
       indices = indices.filter((i) => i !== 4);
@@ -605,7 +645,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     );
     if (hasProfilePhoto) indices = indices.filter((i) => i !== 5);
 
-    const hasResume = hasResumeData(resume) || hasResumeData(profile.resume) || Boolean(profile.resumeUrl);
+    const hasResume = hasResumeData(resume) || hasResumeData(profile.resume);
     if (hasResume) indices = indices.filter((i) => i !== 2);
 
     const requiredSkills = toStringList(
@@ -730,6 +770,36 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   }, [posting, hiringEntityName, userProfile, formData, uid, requirements, auth.currentUser?.uid, jobId]);
 
   const actualStep = visibleStepIndices[Math.min(activeStep, visibleStepIndices.length - 1)] ?? 0;
+
+  // Funnel: one step_viewed per (position, step) pair; remembers the last view
+  // so the unmount cleanup can attribute the abandonment.
+  useEffect(() => {
+    const stepId = STEP_IDS[actualStep] ?? String(actualStep);
+    const key = `${activeStep}:${stepId}`;
+    if (viewedKeyRef.current === key) return;
+    viewedKeyRef.current = key;
+    abandonCtxRef.current = { lastStepId: stepId, stepIndex: activeStep };
+    logApplyStepViewed({
+      stepId,
+      stepIndex: activeStep,
+      totalSteps: visibleStepIndices.length,
+      jobId: jobId || null,
+      signupSource: signupGroupId ? 'apply_group_landing' : 'apply_landing',
+      authed: Boolean(auth.currentUser?.uid || uid),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actualStep, activeStep, visibleStepIndices.length]);
+
+  // Funnel: abandonment on unmount without a submit.
+  useEffect(() => {
+    return () => {
+      if (submittedRef.current) return;
+      const ctx = abandonCtxRef.current;
+      if (!ctx.lastStepId) return;
+      logApplyAbandoned({ lastStepId: ctx.lastStepId, stepIndex: ctx.stepIndex });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Previous render's current step, read by the visibleStepIndices memo above
   // (safe: the memo re-runs on the formData change the guard cares about).
   lastActualStepRef.current = actualStep;
@@ -1576,6 +1646,15 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       if (leavingActualStep === 8) {
         setHasMissingRequiredCerts(false);
       }
+      if (leavingActualStep !== undefined) {
+        logApplyStepCompleted({
+          stepId: STEP_IDS[leavingActualStep] ?? String(leavingActualStep),
+          stepIndex: prev,
+          totalSteps: visibleStepIndices.length,
+          jobId: jobId || null,
+          signupSource: signupGroupId ? 'apply_group_landing' : 'apply_landing',
+        });
+      }
       try {
         localStorage.setItem(stepStorageKey, newStep.toString());
       } catch (error) {
@@ -1583,7 +1662,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       }
       return newStep;
     });
-  }, [stepStorageKey, visibleStepIndices]);
+  }, [stepStorageKey, visibleStepIndices, jobId, signupGroupId]);
 
   const retreatStep = useCallback(() => {
     setActiveStep((prev) => {
@@ -2281,6 +2360,15 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             update.workHistory = q.workExperience; // Also save to workHistory for backward compatibility
           }
           if (Object.keys(update).length > 1) {
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
+          }
+        } else if (actualStep === 13) {
+          // Position interests → canonical preferences (stable category keys)
+          const interests = Array.isArray(formData.positionInterests)
+            ? formData.positionInterests
+            : [];
+          if (interests.length > 0) {
+            const update: any = { updatedAt: serverTimestamp(), positionInterests: interests };
             await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         } else if (actualStep === 10) {
@@ -3370,6 +3458,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       }
 
       // Show confirmation screen instead of redirecting immediately
+      submittedRef.current = true;
+      logApplyCompleted({
+        totalSteps: visibleStepIndices.length,
+        durationMs: Date.now() - funnelStartRef.current,
+        jobId: jobId || null,
+        signupSource: signupGroupId ? 'apply_group_landing' : 'apply_landing',
+      });
       setSubmittedSuccess(true);
       setSaving(false);
       return;
@@ -3532,6 +3627,31 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             resumeData={formData.resume || userProfile?.resume || null}
           />
           </Box>
+        );
+      case 13:
+        return (
+          <PositionInterestsStep
+            value={Array.isArray(formData.positionInterests) ? formData.positionInterests : []}
+            onChange={(next) => {
+              persist({ positionInterests: next });
+              // Persist at the moment of entry (auto-skip write-eater class):
+              // when 13 is the LAST visible step the button is handleSubmit,
+              // not handleNext, so the on-Next save never runs.
+              const authedUid = auth.currentUser?.uid || uid;
+              if (authedUid) {
+                void setDoc(
+                  doc(db, 'users', authedUid),
+                  expandDottedKeys(
+                    buildCanonicalWorkerProfileWritePatch({
+                      positionInterests: next,
+                      updatedAt: serverTimestamp(),
+                    }),
+                  ),
+                  { merge: true },
+                ).catch((e) => console.warn('positionInterests persist failed:', e));
+              }
+            }}
+          />
         );
       case 12:
         return (

@@ -25,7 +25,7 @@ const DOMAIN_PATH_PREFIXES: Record<ReadinessDomain, string[]> = {
   // Parser writes resume.downloadUrl/.storagePath/.fileName — the old
   // ['resume.fileUrl','resumeUrl'] pair matched fields NOTHING writes, so
   // resume uploads never recomputed readiness (2026-08-25 audit defect #4).
-  resume: ['resume.downloadUrl', 'resume.storagePath', 'resume.fileName', 'resume.fileUrl', 'resumeUrl'],
+  resume: ['resume.downloadUrl', 'resume.storagePath', 'resume.fileName'],
   target_industries: ['workerProfile.preferences.targetIndustries', 'workerProfile.preferences.desiredWorkType'],
 };
 

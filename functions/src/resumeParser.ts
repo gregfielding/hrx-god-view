@@ -149,24 +149,29 @@ function validateParsedResume(data: any): ParsedResume {
 // Remove global openai client initialization
 // const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Zod schemas for validation
+// Zod schemas — aligned 2026-08-25 to what the extraction prompt actually
+// returns (they previously mismatched on every parse: skills had no
+// source/confidence, years/current/isNative came back as strings, LinkedIn
+// URLs lack schemes, and the synthesized aiAnalysis writes zeros). Validation
+// stays fail-open (log + return raw) but should now normally PASS — a
+// console.error here means the prompt and schema drifted again.
 const ContactInfoSchema = z.object({
   name: z.string().min(1),
-  email: z.string().email().optional(),
+  email: z.string().optional(),
   phone: z.string().optional(),
   address: z.string().optional(),
-  linkedin: z.string().url().optional(),
-  website: z.string().url().optional(),
+  linkedin: z.string().optional(),
+  website: z.string().optional(),
 });
 
 const SkillSchema = z.object({
   name: z.string().min(1),
   canonicalId: z.string().optional(),
-  source: z.enum(['predefined', 'custom']),
+  source: z.enum(['predefined', 'custom']).optional(),
   category: z.enum(['technical', 'soft', 'language', 'certification', 'other']),
   level: z.enum(['beginner', 'intermediate', 'advanced', 'expert']).optional(),
-  yearsOfExperience: z.number().min(0).optional(),
-  confidence: z.number().min(0).max(1),
+  yearsOfExperience: z.union([z.number(), z.string()]).optional(),
+  confidence: z.number().min(0).max(1).optional(),
 });
 
 const EducationSchema = z.object({
@@ -186,7 +191,7 @@ const WorkExperienceSchema = z.object({
   location: z.string().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
-  current: z.boolean().optional(),
+  current: z.union([z.boolean(), z.string()]).optional(),
   description: z.string().optional(),
   responsibilities: z.array(z.string()).optional(),
   achievements: z.array(z.string()).optional(),
@@ -195,7 +200,7 @@ const WorkExperienceSchema = z.object({
 
 const CertificationSchema = z.object({
   name: z.string().min(1),
-  issuer: z.string().min(1),
+  issuer: z.string().optional(),
   dateObtained: z.string().optional(),
   expiryDate: z.string().optional(),
   credentialId: z.string().optional(),
@@ -203,8 +208,8 @@ const CertificationSchema = z.object({
 
 const LanguageSchema = z.object({
   language: z.string().min(1),
-  proficiency: z.enum(['basic', 'conversational', 'fluent', 'native']),
-  isNative: z.boolean().optional(),
+  proficiency: z.string(),
+  isNative: z.union([z.boolean(), z.string()]).optional(),
 });
 
 const ProjectSchema = z.object({
@@ -213,7 +218,7 @@ const ProjectSchema = z.object({
   technologies: z.array(z.string()).optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
-  url: z.string().url().optional(),
+  url: z.string().optional(),
 });
 
 const AwardSchema = z.object({
@@ -232,10 +237,11 @@ const VolunteerWorkSchema = z.object({
 });
 
 const AIAnalysisSchema = z.object({
-  overallScore: z.number().min(1).max(10),
+  // 0 = synthesized placeholder (generateAIAnalysis was deleted 2026-08-25).
+  overallScore: z.number().min(0).max(10),
   skillGaps: z.array(z.string()),
   recommendations: z.array(z.string()),
-  marketability: z.number().min(1).max(10),
+  marketability: z.number().min(0).max(10),
   yearsOfExperience: z.number().min(0),
   educationLevel: z.string(),
   keyStrengths: z.array(z.string()),
@@ -283,19 +289,14 @@ const ParsedResumeSchema = z.object({
   fileName: z.string().min(1),
   fileSize: z.number().min(0),
   uploadDate: z.date(),
+  // Was omitted while the object always sets it — Zod strips unknown keys,
+  // so a passing validation would have silently DROPPED storagePath and
+  // broken the duplicate-detection re-read (audit 2026-08-25).
+  storagePath: z.string().min(1),
   parsedData: ParsedResumeDataSchema,
   status: z.enum(['processing', 'completed', 'failed']),
   error: z.string().optional(),
   processingTime: z.number().min(0),
-  mergeProposal: z.object({
-    uploadId: z.string(),
-    userId: z.string(),
-    acceptedChanges: z.any(),
-    rejectedChanges: z.any(),
-    confidenceThreshold: z.number().min(0).max(1),
-    createdAt: z.date(),
-    reviewedAt: z.date().optional(),
-  }).optional(),
 });
 
 // Types for resume parsing with versioning support
@@ -342,17 +343,6 @@ export interface ParsedResume {
   status: 'processing' | 'completed' | 'failed';
   error?: string;
   processingTime: number;
-  mergeProposal?: MergeProposal;
-}
-
-export interface MergeProposal {
-  uploadId: string;
-  userId: string;
-  acceptedChanges: any;
-  rejectedChanges: any;
-  confidenceThreshold: number;
-  createdAt: Date;
-  reviewedAt?: Date;
 }
 
 export interface ContactInfo {
@@ -475,29 +465,6 @@ function calculateFileHash(buffer: Buffer): string {
 }
 
 /**
- * Geocode an address string to get coordinates
- */
-async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
-  try {
-    const response = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${process.env.GOOGLE_MAPS_API_KEY}`);
-    const data = await response.json();
-    
-    if (data.status === 'OK' && data.results && data.results.length > 0) {
-      const location = data.results[0].geometry.location;
-      return {
-        lat: location.lat,
-        lng: location.lng
-      };
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Geocoding failed:', error);
-    return null;
-  }
-}
-
-/**
  * Archive previous resumes when uploading new one
  */
 async function archivePreviousResumes(userId: string, newUploadId: string): Promise<void> {
@@ -599,9 +566,10 @@ function buildUserProfileMergePatch(
 
   const workExp = mapExperienceToWorkExperience(mergedData.experience);
   if (workExp.length > 0) {
+    // employmentHistory (a third identical copy) retired 2026-08-25 — its only
+    // readers fall back to workHistory first.
     patch.workExperience = workExp;
     patch.workHistory = workExp;
-    patch.employmentHistory = workExp;
   }
 
   if (Array.isArray(mergedData.education) && mergedData.education.length > 0) {
@@ -726,40 +694,7 @@ async function commitMerge(uid: string, uploadId: string, acceptedChanges: any =
   
   // Apply accepted changes with confidence-based merging
   const mergedData = await applyConfidenceBasedMerge(parsedData, acceptedChanges);
-  
-  // Generate resume URL and add to merged data (for in-memory / logging only — not written to user root)
-  try {
-    console.log('Generating resume download URL for storagePath:', parsedResume.storagePath);
-    const resumeUrl = await generateResumeDownloadUrl(parsedResume.storagePath);
-    console.log('Generated resume URL:', resumeUrl);
-    
-    mergedData.resumeUrl = resumeUrl;
-    mergedData.resumeFileName = parsedResume.fileName;
-    mergedData.resumeUploadDate = parsedResume.uploadDate;
-    
-    console.log('Resume URL added to merged data:', {
-      resumeUrl,
-      resumeFileName: parsedResume.fileName,
-      resumeUploadDate: parsedResume.uploadDate
-    });
-  } catch (urlError) {
-    console.error('Failed to generate resume URL:', {
-      error: urlError,
-      storagePath: parsedResume.storagePath,
-      fileName: parsedResume.fileName
-    });
-    
-    mergedData.resumeStoragePath = parsedResume.storagePath;
-    mergedData.resumeFileName = parsedResume.fileName;
-    mergedData.resumeUploadDate = parsedResume.uploadDate;
-    
-    console.log('Saved resume metadata without URL:', {
-      resumeStoragePath: parsedResume.storagePath,
-      resumeFileName: parsedResume.fileName,
-      resumeUploadDate: parsedResume.uploadDate
-    });
-  }
-  
+
   const existingUserSnap = await db.collection('users').doc(uid).get();
   const existingUserData = (existingUserSnap.data() ?? {}) as Record<string, any>;
   const userProfilePatch = buildUserProfileMergePatch(mergedData as Record<string, any>, existingUserData);
@@ -1892,277 +1827,5 @@ Generate a compelling bio that captures the essence of this professional's story
     throw error;
   }
 }
-
-/**
- * Update user profile with parsed resume data
- */
-async function updateUserProfile(userId: string, parsedData: any) {
-  const userRef = db.collection('users').doc(userId);
-  
-  const updates: any = {};
-  
-    // Update contact information
-    if (parsedData.contact.name) {
-      const nameParts = parsedData.contact.name.split(' ');
-      if (nameParts.length >= 2) {
-        updates.firstName = nameParts[0];
-        updates.lastName = nameParts.slice(1).join(' ');
-      }
-    }
-    
-    if (parsedData.contact.email) {
-      updates.email = parsedData.contact.email;
-    }
-    
-    if (parsedData.contact.phone) {
-      updates.phone = parsedData.contact.phone;
-    }
-    
-    // Geocode address if available for location-based job matching
-    if (parsedData.contact.address) {
-      try {
-        const coordinates = await geocodeAddress(parsedData.contact.address);
-        if (coordinates) {
-          updates.addressInfo = {
-            ...(updates.addressInfo || {}),
-            streetAddress: parsedData.contact.address,
-            homeLat: coordinates.lat,
-            homeLng: coordinates.lng,
-          };
-        }
-      } catch (error) {
-        console.warn('Failed to geocode address from resume:', error);
-      }
-    }
-  
-  // Update skills
-  if (parsedData.skills.length > 0) {
-    updates.skills = parsedData.skills.map((skill: Skill) => skill.name);
-  }
-  
-  // Update education
-  if (parsedData.education.length > 0) {
-    updates.education = parsedData.education;
-    
-    // Set highest education level
-    const highestEducation = getHighestEducationLevel(parsedData.education);
-    if (highestEducation) {
-      updates.educationLevel = highestEducation;
-    }
-  }
-  
-  // Update work experience
-  if (parsedData.experience.length > 0) {
-    updates.workHistory = parsedData.experience;
-    
-    // Calculate years of experience
-    const totalYears = calculateTotalExperience(parsedData.experience);
-    if (totalYears > 0) {
-      updates.yearsExperience = totalYears.toString();
-    }
-    
-    // Set current job title
-    const currentJob = parsedData.experience.find((exp: WorkExperience) => exp.current);
-    if (currentJob) {
-      updates.currentJobTitle = currentJob.jobTitle;
-    }
-  }
-  
-  // Update certifications
-  if (parsedData.certifications.length > 0) {
-    updates.certifications = parsedData.certifications;
-  }
-  
-  // Update languages
-  if (parsedData.languages.length > 0) {
-    updates.languages = parsedData.languages;
-  }
-  
-  // Update summary
-  if (parsedData.summary) {
-    updates.professionalSummary = parsedData.summary;
-  }
-  
-  // Apply updates if any
-  if (Object.keys(updates).length > 0) {
-    console.log('Updating user profile with:', JSON.stringify(updates, null, 2));
-    await userRef.update(updates);
-    console.log('User profile updated successfully');
-  } else {
-    console.log('No updates to apply to user profile');
-  }
-}
-
-/**
- * Get highest education level from education array
- */
-function getHighestEducationLevel(education: Education[]): string {
-  const levels = ['High School', "Associate's", "Bachelor's", "Master's", 'Doctorate'];
-  let highestIndex = -1;
-  
-  education.forEach(edu => {
-    const degreeLower = edu.degree.toLowerCase();
-    levels.forEach((level, index) => {
-      if (degreeLower.includes(level.toLowerCase()) && index > highestIndex) {
-        highestIndex = index;
-      }
-    });
-  });
-  
-  return highestIndex >= 0 ? levels[highestIndex] : '';
-}
-
-/**
- * Calculate total years of experience
- */
-function calculateTotalExperience(experience: WorkExperience[]): number {
-  let totalYears = 0;
-  
-  experience.forEach(exp => {
-    const startDate = new Date(exp.startDate);
-    const endDate = exp.current ? new Date() : new Date(exp.endDate);
-    const years = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
-    totalYears += Math.max(0, years);
-  });
-  
-  return Math.round(totalYears);
-}
-
-/**
- * Log AI action for analytics
- */
-async function logAiEvent(data: any) {
-  try {
-    await db.collection('aiLogs').add({
-      ...data,
-      timestamp: admin.firestore.FieldValue.serverTimestamp()
-    });
-  } catch (error) {
-    console.error('Failed to log AI action:', error);
-  }
-}
-
-/**
- * Get resume parsing status
- */
-export const getResumeParsingStatus = functions.https.onCall(async (request, context) => {
-  const { parsingId } = request.data;
-  
-  if (!request.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
-  }
-  
-  try {
-    const parsingDoc = await db.collection('resumeParsing').doc(parsingId).get();
-    if (!parsingDoc.exists) {
-      throw new functions.https.HttpsError('not-found', 'Parsing record not found');
-    }
-    
-    const parsingData = parsingDoc.data();
-    
-    if (parsingData?.status === 'completed') {
-      const parsedResumeDoc = await db.collection('parsedResumes').doc(parsingId).get();
-      if (parsedResumeDoc.exists) {
-        return {
-          status: 'completed',
-          data: parsedResumeDoc.data()
-        };
-      }
-    }
-    
-    return {
-      status: parsingData?.status || 'processing',
-      error: parsingData?.error
-    };
-    
-  } catch (error) {
-    throw new functions.https.HttpsError('internal', 'Failed to get parsing status');
-  }
-});
-
-/**
- * Get user's resume uploads with versioning
- */
-export const getUserResumeUploads = functions.https.onCall(async (request, context) => {
-  const { userId } = request.data;
-  
-  console.log('getUserResumeUploads called with userId:', userId);
-  
-  if (!request.auth) {
-    console.log('User not authenticated');
-    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
-  }
-  
-          try {
-            // Get the user's resume uploads from the subcollection
-            const userUploadsRef = db.collection('resumeUploads').doc(userId);
-            console.log('Checking user uploads ref:', userUploadsRef.path);
-            
-            const uploadsSnapshot = await userUploadsRef
-              .collection('uploads')
-              .orderBy('uploadDate', 'desc')
-              .get();
-    
-    console.log('Found uploads:', uploadsSnapshot.size);
-    uploadsSnapshot.docs.forEach((doc, index) => {
-      console.log(`Upload ${index + 1}:`, {
-        id: doc.id,
-        data: doc.data()
-      });
-    });
-    
-    const uploads = uploadsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-    
-    console.log('Returning uploads:', uploads);
-    return { uploads };
-    
-  } catch (error) {
-    console.error('Error getting resume uploads:', error);
-    // If there's an error (like permission denied), return empty array instead of throwing
-    // This prevents showing error messages for users who simply haven't uploaded resumes yet
-    return { uploads: [] };
-  }
-});
-
-/**
- * Get download URL for resume file viewing/downloading (Firebase token URL; no IAM signBlob).
- */
-export const getResumeSignedUrl = functions.https.onCall(async (request, context) => {
-  const { userId, uploadId } = request.data;
-  
-  if (!request.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
-  }
-  
-  try {
-    // Get upload record
-    const uploadDoc = await db.collection('resumeUploads').doc(userId)
-      .collection('uploads').doc(uploadId).get();
-    
-    if (!uploadDoc.exists) {
-      throw new functions.https.HttpsError('not-found', 'Resume upload not found');
-    }
-    
-    const uploadData = uploadDoc.data();
-    if (!uploadData?.storagePath) {
-      throw new functions.https.HttpsError('not-found', 'Storage path not found');
-    }
-    
-    const signedUrl = await getOrCreateFirebaseDownloadReadUrl(uploadData.storagePath);
-    
-    return { 
-      signedUrl,
-      fileName: uploadData.fileName,
-      fileSize: uploadData.sizeKB,
-      uploadDate: uploadData.uploadDate
-    };
-    
-  } catch (error) {
-    throw new functions.https.HttpsError('internal', 'Failed to generate signed URL');
-  }
-});
 
 /** @see ./getUserParsedResumes.ts — moved out of this module to avoid loading heavy deps for a small callable. */

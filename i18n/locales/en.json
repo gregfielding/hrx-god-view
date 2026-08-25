@@ -1068,7 +1068,19 @@
     "headshotSubtitle": "A clear photo helps managers recognize you on shift.",
     "headshotLaterHint": "You can add one later — a photo may be required before accepting shifts.",
     "takingYouHome": "Taking you to your home screen…",
-    "emailNeededForJob": "Required — we'll send updates about your application here."
+    "emailNeededForJob": "Required — we'll send updates about your application here.",
+    "stepPositionInterests": "Work interests",
+    "positionInterestsTitle": "What kind of work are you looking for?",
+    "positionInterestsSubtitle": "Pick as many as you like — we will match you with the right openings.",
+    "positionInterestsHint": "You can change these anytime in your profile.",
+    "positionInterest_janitorial": "Janitorial & Cleaning",
+    "positionInterest_food_service": "Food Service & Dining",
+    "positionInterest_events": "Events & Stadiums",
+    "positionInterest_warehouse": "Warehouse & Logistics",
+    "positionInterest_hospitality": "Hospitality & Hotels",
+    "positionInterest_general_labor": "General Labor",
+    "positionInterest_customer_service": "Customer Service",
+    "positionInterest_skilled_trades": "Skilled Trades"
   },
   "jobs": {
     "title": "Jobs",

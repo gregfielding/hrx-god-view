@@ -152,13 +152,7 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
     onParsingStatusChange?.(parsingStatus.status);
   }, [onParsingStatusChange, parsingStatus.status]);
 
-  const functions = getFunctions();
   const auth = getAuth();
-  const parseResume = httpsCallable(functions, 'parseResume');
-  const getResumeParsingStatus = httpsCallable(functions, 'getResumeParsingStatus');
-
-  void parseResume;
-  void getResumeParsingStatus;
 
   useEffect(() => () => {
     pendingPreviews.forEach((p) => URL.revokeObjectURL(p.url));
@@ -346,12 +340,15 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
         return;
       }
 
-      const oversized = files.find((file) => file.size > 25 * 1024 * 1024);
+      // 20MB, not 25 (2026-08-25): the base64-JSON transport inflates ~4/3,
+      // and Cloud Run rejects request bodies over 32MB before our handler
+      // runs — a 24-25MB file died with a generic failure.
+      const oversized = files.find((file) => file.size > 20 * 1024 * 1024);
       if (oversized) {
         setParsingStatus({
           status: 'error',
           progress: 0,
-          message: 'File too large. Please upload files smaller than 25MB each.',
+          message: 'File too large. Please upload files smaller than 20MB each.',
           error: 'File too large',
         });
         return;
@@ -551,7 +548,7 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
         )}
         
         <Typography variant="caption" color="text.secondary">
-          Maximum file size: 25MB each
+          Maximum file size: 20MB each
         </Typography>
       </Paper>
 

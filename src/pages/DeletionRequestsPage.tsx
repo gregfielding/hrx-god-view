@@ -69,6 +69,9 @@ interface DeletionRequestRow {
   hasPayrollHistory: boolean;
   /** SSN last-4 on file but NO pay records — deletable, just flag it. */
   hasSsnOnFileOnly: boolean;
+  /** Grace sweep stamps (auto-deletion pipeline, 2026-08-25). */
+  graceNoticeSentAt: Date | null;
+  scheduledDeletionAt: Date | null;
 }
 
 function toDate(v: unknown): Date | null {
@@ -117,6 +120,8 @@ const DeletionRequestsPage: React.FC = () => {
           processedBy: (x.processedBy as string) ?? null,
           processedAt: toDate(x.processedAt),
           note: (x.note as string) ?? null,
+          graceNoticeSentAt: toDate(x.graceNoticeSentAt),
+          scheduledDeletionAt: toDate(x.scheduledDeletionAt),
         };
       });
       const joined = await Promise.all(
@@ -271,6 +276,19 @@ const DeletionRequestsPage: React.FC = () => {
                       label={STATUS_CHIP[r.status].label}
                       color={STATUS_CHIP[r.status].color}
                     />
+                    {r.status === 'pending' && r.scheduledDeletionAt && (
+                      <Tooltip
+                        title={`Worker was notified${r.graceNoticeSentAt ? ` on ${r.graceNoticeSentAt.toLocaleDateString()}` : ''} — the nightly sweep deletes automatically after the grace period. Dismiss the request to cancel.`}
+                      >
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color="info"
+                          label={`Auto-deletes ${r.scheduledDeletionAt.toLocaleDateString()}`}
+                          sx={{ ml: 0.5 }}
+                        />
+                      </Tooltip>
+                    )}
                   </TableCell>
                   <TableCell>
                     {r.hasPayrollHistory ? (
