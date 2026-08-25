@@ -96,3 +96,4 @@ Load the files relevant to the task at hand; don't read all of them.
 - [everee environments and submit](reference_everee_environments_and_submit.md) — "Everee sandbox vs prod token model, where creds live, and how the CSV importer submits (P4 = contractor payables)"
 - [scratch scripts workflow](reference_scratch_scripts_workflow.md) — Operational scripts (migrations, backfills, one-shot sends) live in functions/.scratch/, are gitignored, and run locally with npx ts-node — the directory's tsconfig.json already includes ../shared for cross-imports
 - [tenant entity ids](reference_tenant_entity_ids.md) — Hardcoded production constants for the C1 Staffing tenant and its hiring entities — referenced in scripts, suppression logic, Everee routing, and deep links
+- [project_resume_pipeline.md](project_resume_pipeline.md) — resume parser state: 2026-08-25 fix round (fail-loud extraction, additive cert merge, storage lockdown, 1/3 AI spend cut) + ranked remaining debt
