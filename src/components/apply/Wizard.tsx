@@ -491,6 +491,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     location: string;
   } | null>(null);
 
+  // Previous render's current step — see the step-12 evict guard below.
+  const lastActualStepRef = useRef(0);
+
   // Steps 3 (E-Verify comfort), 10 (bio), and 11 (shift preferences) were
   // permanently cut 2026-08-25: staff never read them and no major gig app
   // asks at signup (E-Verify comfort belongs at the job-requirements gate,
@@ -689,7 +692,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         !hasValue(requirementsForm.customUniformRequirementsComfort)) ||
       ((posting?.showRequiredPpe || requiredPpe.length > 0) && !hasValue(requirementsForm.requiredPpeComfort)) ||
       !hasValue(requirementsForm.transportMethod);
-    if (!needsRequirementsStep) indices = indices.filter((i) => i !== 12);
+    // Never evict the final step while the worker is standing on it:
+    // answering its last question (e.g. tapping a transport chip) flips
+    // needsRequirementsStep false, and without this guard the recompute
+    // bounced them backwards to an earlier step mid-interaction.
+    if (!needsRequirementsStep && lastActualStepRef.current !== 12) {
+      indices = indices.filter((i) => i !== 12);
+    }
 
     if (indices.length === 0) {
       indices = [12];
@@ -698,6 +707,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   }, [posting, hiringEntityName, userProfile, formData, uid, requirements, auth.currentUser?.uid, jobId]);
 
   const actualStep = visibleStepIndices[Math.min(activeStep, visibleStepIndices.length - 1)] ?? 0;
+  // Previous render's current step, read by the visibleStepIndices memo above
+  // (safe: the memo re-runs on the formData change the guard cares about).
+  lastActualStepRef.current = actualStep;
   const isLastVisibleStep = activeStep === visibleStepIndices.length - 1;
 
   // Clamp activeStep when visible steps shrink (e.g. posting loads and we skip Preferences)
@@ -3637,8 +3649,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         >
           <Box
             sx={{
-              maxWidth: { xs: '100%', md: '760px' },
-              mx: { xs: 0, md: 'auto' },
+              maxWidth: { sm: 720 },
+              mx: 'auto',
             }}
           >
             <Typography variant={isMobile ? 'h6' : 'h5'} sx={{ fontWeight: 600, mb: 0.5 }}>
@@ -3668,24 +3680,27 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         </Box>
       )}
 
-      {/* Main content area - framed on desktop; no min height so buttons sit under form */}
+      {/* Main content area — worker-app canon (Greg 2026-08-25): same page
+          gutter + maxWidth as C1WorkerLayout, step content on a hairline card
+          like the jobs board / account pages. */}
       <Box
         sx={{
           display: 'flex',
           flexDirection: 'column',
-          maxWidth: { xs: '100%', md: '760px' },
-          mx: { xs: 0, md: 'auto' },
+          maxWidth: { sm: 720 },
+          mx: 'auto',
           width: '100%',
-          px: { xs: 0, md: 3 },
-          py: { xs: 0, md: 2 },
+          px: { xs: 2, sm: 3 },
+          py: { xs: 2, sm: 3 },
         }}
       >
         <Paper
-          elevation={isMobile ? 0 : 2}
+          elevation={0}
           sx={{
             display: 'flex',
             flexDirection: 'column',
-            borderRadius: { xs: 0, md: 2 },
+            borderRadius: '12px',
+            border: '1px solid #E9E9E5',
             overflow: 'hidden',
             backgroundColor: 'background.paper',
           }}
@@ -3700,7 +3715,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             sx={{
               mt: 2,
               mx: 0,
-              px: { xs: 1, md: 3 },
+              px: { xs: 2, md: 3 },
               py: 0,
               display: 'flex',
               flexDirection: 'column',

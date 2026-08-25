@@ -345,10 +345,8 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
             userId={userId}
             tenantId={tenantId}
             onResumeParsed={handleResumeParsed}
+            hideTitle
           />
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-            {t('apply.resumeFormats')}
-          </Typography>
         </Box>
       )}
     </Box>
