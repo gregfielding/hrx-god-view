@@ -77,7 +77,12 @@ embed collect it).
   auth, legacy branch neutralized, email optional) + AuthDialog Create tab (email/password now
   sign-in-only); /login/phone no-account → /c1/apply?phone= prefill. ⚠️ The OTP leg needs a human
   phone to E2E-test: claim path testable with any existing worker phone; CREATE path needs a
-  never-used number. Original design for reference: Wizard step 0: name + phone → OTP → (if phone already has an account →
+  never-used number. Refined same day (Greg): **conversion-first step 0** = first/last/phone/DOB + OTP gate ONLY
+  (fits one phone screen); email (optional) + address moved to step 1 POST-code — supersedes the
+  2026-08-07 address-at-creation rule (abandoned signups now leave claimable accounts; the
+  applyWizardReminder SMS chases completion). Language dropdown removed — the page EN|ES toggle
+  is saved server-side at signup. Apply shell runs the workerTheme (canon fonts/ink, quiet
+  EN|ES toggle, 760px form). Original design for reference: Wizard step 0: name + phone → OTP → (if phone already has an account →
   sign in, never create a second) → address/DOB/language → account exists with NO password. Email field
   optional. Same for AuthDialog (jobs-board) and group landing pages. This kills duplicates at the source.
 - **Slice 3 — Recovery + admin tools.** "New phone number?" flow (OTP on new number + recruiter approval or
