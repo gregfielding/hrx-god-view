@@ -68,6 +68,10 @@ interface JcRow {
   billedClasses: string[];
   expenses: number;
   expenseClasses: string[];
+  /** Real WC premium (entry rate × gross) — server-computed (FIN-2). */
+  wcPremium?: number;
+  /** Real employer taxes+contributions at the entity's Everee rate; null = unknown. */
+  taxBurden?: number | null;
 }
 
 interface ClassDetail {
@@ -83,6 +87,9 @@ interface BillingData {
   classDetail: Record<string, ClassDetail>;
   excludedEvereeTotal: number | null;
   unclassifiedExpenses: number | null;
+  /** FIN-2: real per-entity employer burden from Everee. */
+  burdenAvailable?: boolean;
+  burdenByEntity?: Record<string, { ratePct: number }>;
 }
 
 const JobCostingReportPage: React.FC = () => {
@@ -166,11 +173,19 @@ const JobCostingReportPage: React.FC = () => {
     [clientRows, joLabel],
   );
 
+  /** Real burden (Everee taxes + entry-level WC) when the server has it. */
+  const real = data?.burdenAvailable === true;
+
   const jcOf = (r: JcRow) => {
-    const burdenAmt = Math.round(r.pay * burden * 100) / 100;
+    const wcAmt = real ? Math.round((r.wcPremium ?? 0) * 100) / 100 : 0;
+    const taxAmt =
+      real && r.taxBurden != null
+        ? Math.round(r.taxBurden * 100) / 100
+        : Math.round(r.pay * burden * 100) / 100;
+    const burdenAmt = Math.round((wcAmt + taxAmt) * 100) / 100;
     const gp = Math.round((r.billed - r.pay - burdenAmt - r.expenses) * 100) / 100;
     const gpPct = r.billed > 0 ? (gp / r.billed) * 100 : null;
-    return { burdenAmt, gp, gpPct };
+    return { wcAmt, taxAmt, burdenAmt, gp, gpPct };
   };
 
   const detail = useMemo(() => {
@@ -230,16 +245,30 @@ const JobCostingReportPage: React.FC = () => {
               onChange={(e) => setEndDate(e.target.value)}
               InputLabelProps={{ shrink: true }}
             />
-            <Tooltip title="Estimated employer burden (payroll taxes + workers' comp) applied to payroll.">
-              <TextField
-                size="small"
-                label="Burden est."
-                value={burdenPct}
-                onChange={(e) => setBurdenPct(e.target.value)}
-                sx={{ width: 100 }}
-                InputProps={{ endAdornment: <InputAdornment position="end">%</InputAdornment> }}
-              />
-            </Tooltip>
+            {!real && (
+              <Tooltip title="Fallback estimate — shown only when real Everee burden is unavailable for this range.">
+                <TextField
+                  size="small"
+                  label="Burden est."
+                  value={burdenPct}
+                  onChange={(e) => setBurdenPct(e.target.value)}
+                  sx={{ width: 100 }}
+                  InputProps={{ endAdornment: <InputAdornment position="end">%</InputAdornment> }}
+                />
+              </Tooltip>
+            )}
+            {real && data?.burdenByEntity && (
+              <Tooltip title="Real employer burden from Everee (taxes + contributions ÷ wages) for this range, per entity; WC premium computed per entry from its class-code rate. 1099 entities carry no employer taxes.">
+                <Chip
+                  size="small"
+                  color="success"
+                  variant="outlined"
+                  label={`Everee burden: ${Object.entries(data.burdenByEntity)
+                    .map(([id, b]) => `${id.replace(/^c1_|_llc$/g, '').replace('_', ' ')} ${b.ratePct}%`)
+                    .join(' · ')}`}
+                />
+              </Tooltip>
+            )}
             <Button variant="contained" onClick={() => void load()} disabled={loading}>
               {loading ? 'Loading…' : 'Load'}
             </Button>
@@ -296,11 +325,16 @@ const JobCostingReportPage: React.FC = () => {
         <>
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
             {(() => {
-              const { burdenAmt, gp, gpPct } = jcOf(selected);
+              const { wcAmt, taxAmt, burdenAmt, gp, gpPct } = jcOf(selected);
               return [
                 { label: 'Billed', value: usd(selected.billed) },
                 { label: 'Payroll', value: usd(selected.pay) },
-                { label: `Burden est. (${burdenPct}%)`, value: usd(burdenAmt) },
+                ...(real
+                  ? [
+                      { label: 'WC premium', value: usd(wcAmt) },
+                      { label: 'Employer taxes (Everee)', value: usd(taxAmt) },
+                    ]
+                  : [{ label: `Burden est. (${burdenPct}%)`, value: usd(burdenAmt) }]),
                 { label: 'Expenses', value: usd(selected.expenses) },
                 { label: 'Gross profit', value: usd(gp) },
                 { label: 'GP %', value: gpPct == null ? '—' : `${gpPct.toFixed(1)}%` },
@@ -430,7 +464,8 @@ const JobCostingReportPage: React.FC = () => {
                     <TableCell sx={{ fontWeight: 600 }}>Job order</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 600 }}>Billed</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 600 }}>Payroll</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 600 }}>Burden est.</TableCell>
+                    {real && <TableCell align="right" sx={{ fontWeight: 600 }}>WC prem.</TableCell>}
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>{real ? 'Taxes' : 'Burden est.'}</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 600 }}>Expenses</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 600 }}>GP $</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 600 }}>GP %</TableCell>
@@ -438,7 +473,7 @@ const JobCostingReportPage: React.FC = () => {
                 </TableHead>
                 <TableBody>
                   {clientRows.map((r) => {
-                    const { burdenAmt, gp, gpPct } = jcOf(r);
+                    const { wcAmt, taxAmt, gp, gpPct } = jcOf(r);
                     return (
                       <TableRow key={r.label} hover sx={{ cursor: 'pointer' }} onClick={() => setJoLabel(r.label)}>
                         <TableCell>
@@ -449,7 +484,8 @@ const JobCostingReportPage: React.FC = () => {
                         </TableCell>
                         <TableCell align="right">{r.billed ? usd(r.billed) : '—'}</TableCell>
                         <TableCell align="right">{r.pay ? usd(r.pay) : '—'}</TableCell>
-                        <TableCell align="right">{burdenAmt ? usd(burdenAmt) : '—'}</TableCell>
+                        {real && <TableCell align="right">{wcAmt ? usd(wcAmt) : '—'}</TableCell>}
+                        <TableCell align="right">{taxAmt ? usd(taxAmt) : '—'}</TableCell>
                         <TableCell align="right">{r.expenses ? usd(r.expenses) : '—'}</TableCell>
                         <TableCell align="right" sx={{ color: gp < 0 ? 'error.main' : 'success.main', fontWeight: 600 }}>
                           {usd(gp)}

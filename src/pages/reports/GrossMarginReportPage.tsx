@@ -5,9 +5,11 @@
  * Bill side: live QBO invoices (line-level classes) for the range.
  * Pay side: the payroll cost report's own groups. Both come back from
  * one getPayrollCostReport call with includeBilling:true (level 7 —
- * the callable enforces it too). Burden is an adjustable estimate
- * applied to pay (employer taxes + WC), computed client-side so the
- * bookkeeper can tune it without re-querying.
+ * the callable enforces it too). Burden (FIN-2, Greg 2026-08-26): REAL
+ * lines — WC premium per entry (class-code rate × gross) + employer
+ * taxes/contributions at each entity's actual Everee rate for the range
+ * (1099 entities are correctly 0%). The manual % estimate remains only
+ * as a fallback when the Everee fetch is unavailable.
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -63,6 +65,10 @@ interface GmJoRow {
   hours: number;
   billed: number;
   billedClasses: string[];
+  /** Real WC premium (entry rate × gross) — server-computed. */
+  wcPremium?: number;
+  /** Real employer taxes+contributions (Everee entity rate × pay); null = rate unknown for a row entity. */
+  taxBurden?: number | null;
 }
 
 interface GmAccountRow {
@@ -73,6 +79,15 @@ interface GmAccountRow {
   invoiceCount: number;
   openBalance: number;
   pay: number;
+  wcPremium?: number;
+  taxBurden?: number | null;
+}
+
+interface EntityBurden {
+  wages: number;
+  employerTax: number;
+  contributions: number;
+  ratePct: number;
 }
 
 interface BillingData {
@@ -83,6 +98,11 @@ interface BillingData {
   entityFiltered?: boolean;
   byJobOrder: GmJoRow[];
   byAccount: GmAccountRow[];
+  /** FIN-2: real per-entity employer burden from Everee. */
+  burdenAvailable?: boolean;
+  burdenByEntity?: Record<string, EntityBurden>;
+  totalWcPremium?: number;
+  totalTaxBurden?: number | null;
 }
 
 function csvCell(v: unknown): string {
@@ -150,26 +170,43 @@ const GrossMarginReportPage: React.FC = () => {
     }
   };
 
+  /** Real burden (Everee taxes + entry-level WC) when the server has it;
+   *  the manual % estimate only as fallback. */
+  const real = billing?.burdenAvailable === true;
+
   const margins = useMemo(() => {
     if (!billing) return null;
-    const withMargin = <T extends { billed: number; pay: number }>(r: T) => {
-      const burdenAmt = Math.round(r.pay * burden * 100) / 100;
+    const withMargin = <T extends { billed: number; pay: number; wcPremium?: number; taxBurden?: number | null }>(
+      r: T,
+    ) => {
+      const wcAmt = real ? Math.round((r.wcPremium ?? 0) * 100) / 100 : 0;
+      const taxAmt =
+        real && r.taxBurden != null
+          ? Math.round(r.taxBurden * 100) / 100
+          : Math.round(r.pay * burden * 100) / 100;
+      const burdenAmt = Math.round((wcAmt + taxAmt) * 100) / 100;
       const gm = Math.round((r.billed - r.pay - burdenAmt) * 100) / 100;
       const gmPct = r.billed > 0 ? (gm / r.billed) * 100 : null;
-      return { ...r, burdenAmt, gm, gmPct };
+      return { ...r, wcAmt, taxAmt, burdenAmt, gm, gmPct };
     };
     const byAccount = billing.byAccount.map(withMargin);
     const byJobOrder = billing.byJobOrder.map(withMargin);
-    const totalBurden = Math.round(billing.totalPay * burden * 100) / 100;
+    const totalWc = real ? billing.totalWcPremium ?? 0 : 0;
+    const totalTax =
+      real && billing.totalTaxBurden != null
+        ? billing.totalTaxBurden
+        : Math.round(billing.totalPay * burden * 100) / 100;
+    const totalBurden = Math.round((totalWc + totalTax) * 100) / 100;
     const totalGm = Math.round((billing.totalBilled - billing.totalPay - totalBurden) * 100) / 100;
     const totalGmPct = billing.totalBilled > 0 ? (totalGm / billing.totalBilled) * 100 : null;
-    return { byAccount, byJobOrder, totalBurden, totalGm, totalGmPct };
-  }, [billing, burden]);
+    return { byAccount, byJobOrder, totalWc, totalTax, totalBurden, totalGm, totalGmPct };
+  }, [billing, burden, real]);
 
   const exportCsv = (): void => {
     if (!margins) return;
     const lines: string[] = [];
-    lines.push('Section,Label,Account/Customer,Billed,Payroll,Burden est,Gross margin $,Gross margin %,Invoices,Hours');
+    const burdenHead = real ? 'WC premium,Employer taxes (Everee)' : 'WC premium,Burden est';
+    lines.push(`Section,Label,Account/Customer,Billed,Payroll,${burdenHead},Gross margin $,Gross margin %,Invoices,Hours`);
     for (const r of margins.byAccount) {
       lines.push(
         [
@@ -178,7 +215,8 @@ const GrossMarginReportPage: React.FC = () => {
           r.customerName ?? '',
           r.billed,
           r.pay,
-          r.burdenAmt,
+          r.wcAmt,
+          r.taxAmt,
           r.gm,
           r.gmPct == null ? '' : r.gmPct.toFixed(1),
           r.invoiceCount,
@@ -194,7 +232,8 @@ const GrossMarginReportPage: React.FC = () => {
           r.accountName ?? '',
           r.billed,
           r.pay,
-          r.burdenAmt,
+          r.wcAmt,
+          r.taxAmt,
           r.gm,
           r.gmPct == null ? '' : r.gmPct.toFixed(1),
           '',
@@ -257,16 +296,30 @@ const GrossMarginReportPage: React.FC = () => {
               onChange={(e) => setEndDate(e.target.value)}
               InputLabelProps={{ shrink: true }}
             />
-            <Tooltip title="Estimated employer burden (payroll taxes + workers' comp) applied to payroll. Adjust to your blended rate.">
-              <TextField
-                size="small"
-                label="Burden est."
-                value={burdenPct}
-                onChange={(e) => setBurdenPct(e.target.value)}
-                sx={{ width: 110 }}
-                InputProps={{ endAdornment: <InputAdornment position="end">%</InputAdornment> }}
-              />
-            </Tooltip>
+            {!real && (
+              <Tooltip title="Fallback estimate — shown only when real Everee burden is unavailable for this range.">
+                <TextField
+                  size="small"
+                  label="Burden est."
+                  value={burdenPct}
+                  onChange={(e) => setBurdenPct(e.target.value)}
+                  sx={{ width: 110 }}
+                  InputProps={{ endAdornment: <InputAdornment position="end">%</InputAdornment> }}
+                />
+              </Tooltip>
+            )}
+            {real && billing?.burdenByEntity && (
+              <Tooltip title="Real employer burden from Everee (taxes + contributions ÷ wages) for this date range, per entity. 1099 entities carry no employer taxes. WC premium is computed per entry from its class-code rate.">
+                <Chip
+                  size="small"
+                  color="success"
+                  variant="outlined"
+                  label={`Everee burden: ${Object.entries(billing.burdenByEntity)
+                    .map(([id, b]) => `${id.replace(/^c1_|_llc$/g, '').replace('_', ' ')} ${b.ratePct}%`)
+                    .join(' · ')}`}
+                />
+              </Tooltip>
+            )}
             <Button variant="contained" onClick={() => void load()} disabled={loading}>
               {loading ? 'Loading…' : 'Load'}
             </Button>
@@ -299,7 +352,12 @@ const GrossMarginReportPage: React.FC = () => {
             {[
               { label: 'Billed', value: usd(billing.totalBilled) },
               { label: 'Payroll', value: usd(billing.totalPay) },
-              { label: `Burden est. (${burdenPct}%)`, value: usd(margins.totalBurden) },
+              ...(real
+                ? [
+                    { label: 'WC premium', value: usd(margins.totalWc) },
+                    { label: 'Employer taxes (Everee)', value: usd(margins.totalTax) },
+                  ]
+                : [{ label: `Burden est. (${burdenPct}%)`, value: usd(margins.totalBurden) }]),
               { label: 'Gross margin', value: usd(margins.totalGm) },
               { label: 'Margin %', value: pctFmt(margins.totalGmPct) },
             ].map((t) => (
@@ -333,7 +391,8 @@ const GrossMarginReportPage: React.FC = () => {
                       <TableCell sx={{ fontWeight: 600 }}>Client</TableCell>
                       <TableCell align="right" sx={{ fontWeight: 600 }}>Billed</TableCell>
                       <TableCell align="right" sx={{ fontWeight: 600 }}>Payroll</TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 600 }}>Burden est.</TableCell>
+                      {real && <TableCell align="right" sx={{ fontWeight: 600 }}>WC prem.</TableCell>}
+                      <TableCell align="right" sx={{ fontWeight: 600 }}>{real ? 'Taxes' : 'Burden est.'}</TableCell>
                       <TableCell align="right" sx={{ fontWeight: 600 }}>GM $</TableCell>
                       <TableCell align="right" sx={{ fontWeight: 600 }}>GM %</TableCell>
                       <TableCell align="right" sx={{ fontWeight: 600 }}>Invoices</TableCell>
@@ -352,7 +411,8 @@ const GrossMarginReportPage: React.FC = () => {
                         </TableCell>
                         <TableCell align="right">{r.billed ? usd(r.billed) : '—'}</TableCell>
                         <TableCell align="right">{r.pay ? usd(r.pay) : '—'}</TableCell>
-                        <TableCell align="right">{r.burdenAmt ? usd(r.burdenAmt) : '—'}</TableCell>
+                        {real && <TableCell align="right">{r.wcAmt ? usd(r.wcAmt) : '—'}</TableCell>}
+                        <TableCell align="right">{r.taxAmt ? usd(r.taxAmt) : '—'}</TableCell>
                         <TableCell align="right" sx={{ color: gmColor(r.gm), fontWeight: 600 }}>
                           {usd(r.gm)}
                         </TableCell>
@@ -379,7 +439,8 @@ const GrossMarginReportPage: React.FC = () => {
                       <TableCell sx={{ fontWeight: 600 }}>Account</TableCell>
                       <TableCell align="right" sx={{ fontWeight: 600 }}>Billed</TableCell>
                       <TableCell align="right" sx={{ fontWeight: 600 }}>Payroll</TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 600 }}>Burden est.</TableCell>
+                      {real && <TableCell align="right" sx={{ fontWeight: 600 }}>WC prem.</TableCell>}
+                      <TableCell align="right" sx={{ fontWeight: 600 }}>{real ? 'Taxes' : 'Burden est.'}</TableCell>
                       <TableCell align="right" sx={{ fontWeight: 600 }}>GM $</TableCell>
                       <TableCell align="right" sx={{ fontWeight: 600 }}>GM %</TableCell>
                       <TableCell align="right" sx={{ fontWeight: 600 }}>Hours</TableCell>
@@ -402,7 +463,8 @@ const GrossMarginReportPage: React.FC = () => {
                         <TableCell>{r.accountName ?? '—'}</TableCell>
                         <TableCell align="right">{r.billed ? usd(r.billed) : '—'}</TableCell>
                         <TableCell align="right">{r.pay ? usd(r.pay) : '—'}</TableCell>
-                        <TableCell align="right">{r.burdenAmt ? usd(r.burdenAmt) : '—'}</TableCell>
+                        {real && <TableCell align="right">{r.wcAmt ? usd(r.wcAmt) : '—'}</TableCell>}
+                        <TableCell align="right">{r.taxAmt ? usd(r.taxAmt) : '—'}</TableCell>
                         <TableCell align="right" sx={{ color: gmColor(r.gm), fontWeight: 600 }}>
                           {usd(r.gm)}
                         </TableCell>

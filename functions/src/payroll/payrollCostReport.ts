@@ -772,6 +772,79 @@ export async function buildEvereeRegister(
 }
 
 /* -------------------------------------------------------------------------
+ * Real employer burden per entity (FIN-2, Greg 2026-08-26): Everee's
+ * /integration/v1/expenses/by-date-range returns, per entity, actual
+ * wages + employer taxes + employer contributions for the earning-date
+ * range — the REAL burden rate that replaces the 12% slider in Gross
+ * Margin / Job Costing. 1099 entities correctly come back at 0% (no
+ * employer taxes on contractor pay). Buckets are per-dimension; we never
+ * stamped dimensions so today it's one bucket per entity — the totals
+ * are what matter here. Fail-soft per entity: an entity with no config
+ * or an API error is simply omitted (caller falls back to an estimate).
+ * ------------------------------------------------------------------------- */
+
+export interface EntityBurden {
+  wages: number;
+  employerTax: number;
+  contributions: number;
+  /** (employerTax + contributions) / wages, as a percent. */
+  ratePct: number;
+}
+
+export async function buildEvereeBurdenRates(
+  tenantId: string,
+  startDate: string,
+  endDate: string,
+): Promise<Record<string, EntityBurden>> {
+  const money = (v: unknown): number => {
+    const o = v as { amount?: unknown } | null | undefined;
+    const n = Number((o && typeof o === 'object' ? o.amount : v) ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const out: Record<string, EntityBurden> = {};
+  const entitiesSnap = await db.collection(`tenants/${tenantId}/entities`).get();
+  for (const entityDoc of entitiesSnap.docs) {
+    const entityId = entityDoc.id;
+    const entityName = trim(entityDoc.data().name) || entityId;
+    if (/sandbox/i.test(entityId) || /sandbox/i.test(entityName)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const config = await getEvereeConfigForEntity(tenantId, entityId);
+    if (!config) continue;
+    try {
+      let wages = 0;
+      let tax = 0;
+      let contrib = 0;
+      for (let page = 0; page < 10; page++) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = (await evereeRequest(
+          config,
+          'GET',
+          // ☠️ size caps at 100 — size=200 is a hard 400 from Everee.
+          `/integration/v1/expenses/by-date-range?min-earning-date=${startDate}&max-earning-date=${endDate}&page=${page}&size=100`,
+        )) as Record<string, any>;
+        const items = (res.items ?? []) as Array<Record<string, any>>;
+        for (const it of items) {
+          wages += money(it.totalWageAmount);
+          tax += money(it.totalEmployerTaxAmount);
+          contrib += money(it.totalEmployerContributionAmount);
+        }
+        const totalPages = Number(res.totalPages ?? 1) || 1;
+        if (items.length === 0 || page + 1 >= totalPages) break;
+      }
+      out[entityId] = {
+        wages: round2(wages),
+        employerTax: round2(tax),
+        contributions: round2(contrib),
+        ratePct: wages > 0 ? round2(((tax + contrib) / wages) * 100) : 0,
+      };
+    } catch {
+      // omitted — caller treats missing entity as burden-unknown
+    }
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------------------
  * Payroll Journal by QBO class (Greg 2026-08-19): the July wire-recon
  * engine (functions/.scratch/build-everee-wire-class-report.ts) as a
  * standing report — every Everee funding wire in range split across QBO
@@ -1711,6 +1784,10 @@ export const getPayrollCostReport = onCall(
       /** Customer PO numbers seen on the merged JOs. */
       poNumbers: string[];
       worksites: string[];
+      /** Real WC premium: Σ entry total × entry wcRate / 100 (same basis as the WC report). */
+      wcPremium: number;
+      /** Pay split by hiring entity — drives the real Everee burden line. */
+      payByEntity: Record<string, number>;
     }
     const classMap = new Map<string, ClassGroup & { workerSet: Set<string> }>();
     for (const r of rows) {
@@ -1731,6 +1808,8 @@ export const getPayrollCostReport = onCall(
           hours: 0,
           total: 0,
           pct: 0,
+          wcPremium: 0,
+          payByEntity: {},
           workerSet: new Set<string>(),
         };
         classMap.set(key, g);
@@ -1743,6 +1822,9 @@ export const getPayrollCostReport = onCall(
       g.entries += 1;
       g.hours = round2(g.hours + r.hours);
       g.total = round2(g.total + r.total);
+      g.wcPremium = round2(g.wcPremium + (r.total * (num(r.workersCompRate) || 0)) / 100);
+      const ent = r.hiringEntityId || 'unknown';
+      g.payByEntity[ent] = round2((g.payByEntity[ent] ?? 0) + r.total);
       g.workerSet.add(r.workerId);
     }
     const byJobOrder: ClassGroup[] = Array.from(classMap.values())
@@ -1813,10 +1895,27 @@ export const getPayrollCostReport = onCall(
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
       try {
         const wantExpenses = request.data?.includeExpenses === true;
-        const [agg, expAgg] = await Promise.all([
+        const [agg, expAgg, burdenByEntity] = await Promise.all([
           buildBillingAggregates(tenantId, startDate, endDate),
           wantExpenses ? buildExpenseAggregates(tenantId, startDate, endDate) : Promise.resolve(null),
+          // Real employer burden per entity (FIN-2). Fail-soft: {} means
+          // burden-unknown and the client falls back to its estimate.
+          buildEvereeBurdenRates(tenantId, startDate, endDate).catch(
+            () => ({}) as Record<string, EntityBurden>,
+          ),
         ]);
+        const burdenAvailable = Object.keys(burdenByEntity).length > 0;
+        /** Real burden dollars for a group's per-entity pay split — null when
+         *  ANY of the group's entities lacks an Everee-derived rate. */
+        const taxBurdenOf = (payByEntity: Record<string, number>): number | null => {
+          let sum = 0;
+          for (const [ent, pay] of Object.entries(payByEntity)) {
+            const b = burdenByEntity[ent];
+            if (!b) return null;
+            sum += (pay * b.ratePct) / 100;
+          }
+          return round2(sum);
+        };
 
         // Class ↔ job-order name matching, two passes. QBO class names
         // drift from JO names ("Venue Smart:Lollapalooza" vs JO
@@ -1923,6 +2022,8 @@ export const getPayrollCostReport = onCall(
             billedClasses,
             expenses: 0,
             expenseClasses: [] as string[],
+            wcPremium: g.wcPremium,
+            taxBurden: taxBurdenOf(g.payByEntity),
           };
         });
         // Pass 2: fuzzy — each unused class goes to the first (largest-pay,
@@ -1971,6 +2072,8 @@ export const getPayrollCostReport = onCall(
               billedClasses: [a.className],
               expenses: 0,
               expenseClasses: [],
+              wcPremium: 0,
+              taxBurden: 0,
             });
           }
         }
@@ -2033,6 +2136,8 @@ export const getPayrollCostReport = onCall(
                 billedClasses: [],
                 expenses: a.total,
                 expenseClasses: [a.className],
+                wcPremium: 0,
+                taxBurden: 0,
               });
             }
           }
@@ -2071,9 +2176,25 @@ export const getPayrollCostReport = onCall(
           invoiceCount: number;
           openBalance: number;
           pay: number;
+          wcPremium: number;
+          taxBurden: number | null;
+        }
+        // Per-account WC premium + entity pay split (same math as the JO groups).
+        const acctBurdenAgg = new Map<string, { wcPremium: number; payByEntity: Record<string, number> }>();
+        for (const r of rows) {
+          const key = r.accountId ?? 'unattributed';
+          let a = acctBurdenAgg.get(key);
+          if (!a) {
+            a = { wcPremium: 0, payByEntity: {} };
+            acctBurdenAgg.set(key, a);
+          }
+          a.wcPremium = round2(a.wcPremium + (r.total * (num(r.workersCompRate) || 0)) / 100);
+          const ent = r.hiringEntityId || 'unknown';
+          a.payByEntity[ent] = round2((a.payByEntity[ent] ?? 0) + r.total);
         }
         const rowsByAccount = new Map<string, AcctGmRow>();
         for (const g of byAccount) {
+          const ba = acctBurdenAgg.get(g.key);
           rowsByAccount.set(g.key, {
             accountId: g.key === 'unattributed' ? null : g.key,
             label: g.label,
@@ -2082,6 +2203,8 @@ export const getPayrollCostReport = onCall(
             invoiceCount: 0,
             openBalance: 0,
             pay: g.total,
+            wcPremium: ba?.wcPremium ?? 0,
+            taxBurden: ba ? taxBurdenOf(ba.payByEntity) : 0,
           });
         }
         const standaloneRows: AcctGmRow[] = [];
@@ -2120,6 +2243,8 @@ export const getPayrollCostReport = onCall(
               invoiceCount: c.invoiceCount,
               openBalance: c.openBalance,
               pay: 0,
+              wcPremium: 0,
+              taxBurden: 0,
             });
           }
         }
@@ -2205,6 +2330,16 @@ export const getPayrollCostReport = onCall(
           classDetail,
           byJobOrder: gmByJobOrder,
           byAccount: gmByAccount,
+          // Real employer burden (FIN-2): per-entity Everee actuals for the
+          // range. Rows carry wcPremium (entry-level) + taxBurden (entity
+          // rate × pay); the client shows real lines when available and
+          // falls back to its estimate slider when not.
+          burdenAvailable,
+          burdenByEntity,
+          totalWcPremium: round2(gmByJobOrder.reduce((s, r) => s + (r.wcPremium || 0), 0)),
+          totalTaxBurden: burdenAvailable
+            ? round2(gmByJobOrder.reduce((s, r) => s + (r.taxBurden ?? 0), 0))
+            : null,
         };
       } catch (err) {
         billingError = err instanceof Error ? err.message : String(err);
