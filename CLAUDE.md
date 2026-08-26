@@ -49,6 +49,19 @@ keep its README index current — that directory is the team's shared brain.
   person's pushed commits silently reverts their live features. Before any
   `firebase deploy`: `git pull`, confirm `git log origin/main..main` is
   empty or being pushed now, then build fresh and deploy.
+- **☠️ Hosting deploys also ship the CONFIG — preflight it (incident
+  2026-08-25).** A hosting deploy run from the wrong directory (or against
+  a minimal/`firebase init`'d firebase.json) publishes an EMPTY hosting
+  config: the SPA `**`→/index.html rewrite disappears and every deep link
+  and page refresh on hrxone.com serves the raw Firebase 404 (this took
+  production down for ~2h; found via Danny at 10:41 PM). Before EVERY
+  `firebase deploy --only hosting`, from the hrx-god-view repo root:
+  (1) `grep -c '"destination": "/index.html"' firebase.json` must be ≥ 1;
+  (2) after deploy, `curl -s -o /dev/null -w '%{http_code}' https://hrxone.com/jobs/job-orders`
+  must be `200` — if it's 404, the config was lost: redeploy from a
+  correct checkout immediately. Never run `firebase deploy` from any
+  directory other than the repo root, and never run `firebase init`.
+  See docs/claude/feedback_hosting_empty_config_incident.md.
 - Trunk-based on `main` with small, frequent commits is the default; use a
   feature branch + PR for large or risky changes.
 - Announce functions deploys to each other (two simultaneous deploys of

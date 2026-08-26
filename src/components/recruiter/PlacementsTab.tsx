@@ -3096,6 +3096,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       // `assignmentStatusByUserId` to 'cancelled', the load() effect
       // re-runs, and our same shape (Placed) is rebuilt deterministically
       // — no flicker.
+      // Reload the Worker Pool too (Danny 2026-08-25): the server reverts
+      // the application to 'submitted' on cancel, but the pool list was
+      // loaded earlier — without this bump the worker vanishes from the
+      // shift card AND the pool until a full page refresh, so recruiters
+      // couldn't re-place them (e.g. usher → ticket taker) without F5.
+      setPoolRefreshTick((n) => n + 1);
     } catch (err: any) {
       console.error('Error cancelling assignment:', err);
       setError(err?.message || 'Failed to cancel assignment');
@@ -3746,6 +3752,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         withAssignment.forEach((w) => next.delete(w.id));
         return next;
       });
+      // Same pool reload as the single-cancel path (Danny 2026-08-25).
+      setPoolRefreshTick((n) => n + 1);
     } catch (err: any) {
       console.error('Error bulk cancelling assignments:', err);
       setError(err?.message || 'Failed to cancel selected');
