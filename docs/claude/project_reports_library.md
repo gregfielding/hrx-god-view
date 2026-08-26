@@ -267,3 +267,19 @@ waiting (createQboClass/mapQboClass branches on savePayrollVenueMapping).
   $117.6k, rest awaiting carrier rates) — the 8040 Placeholders report is
   now the single reclassification queue, and it drains only when the Mass
   PN request lands coverage / broker supplies rates, not by data work.
+- **FIN-2 SHIPPED 2026-08-26 (commit 6d4a59f0): real burden in Gross
+  Margin + Job Costing.** The 12% slider is replaced by (a) WC premium per
+  row = Σ entry total × entry workersCompRate/100 (same basis as the WC
+  wage report — the WC backfill above is what made this line real), and
+  (b) employer taxes at each entity's ACTUAL Everee rate from
+  /integration/v1/expenses/by-date-range (taxes+contributions ÷ wages;
+  buildEvereeBurdenRates exported in payrollCostReport.ts). 1099 entities
+  are correctly 0% — the old slider burdened contractor pay too. Aug
+  1–26 verified live: Select 12.66%, Events 0%; WC premium $5,262.76 +
+  taxes $3,644.54 vs the slider's ~$40k — margin was understated ~$31k/mo.
+  Rows carry wcPremium/taxBurden; payload carries burdenAvailable/
+  burdenByEntity/totalWcPremium/totalTaxBurden; the manual % field
+  renders ONLY when Everee is unavailable (fail-soft fallback).
+  ☠️ expenses endpoint page size caps at 100 (size>100 = hard 400).
+  Next enhancement unchanged (P2.5): stamp dimensions on submissions to
+  get per-JO burden from Everee instead of entity-rate × pay.
