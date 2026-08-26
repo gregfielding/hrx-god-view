@@ -256,3 +256,14 @@ waiting (createQboClass/mapQboClass branches on savePayrollVenueMapping).
   8040-placeholder class (TN/NY/DC-janitors, blocked on coverage) + a
   ~$14k murky list (CT/CO/KY rates absent from matrix, DC/VA/CA title→code
   calls) awaiting Greg.
+- **2026-08-26 close: WC data-state final.** Greg's call: "all the 8044
+  should be 8040" — any code WITHOUT a carrier rate on file is not really
+  classified → 79 more rows ($14.5k: CO/KY/CT/MN/MO 8044s, CT/DC
+  janitors, CA dishwashers, VA janitors, TX-select utility) moved to
+  8040@2.35 (source placeholder_backfill; 28 assignments too). 8044 WITH
+  a rate (MD 2.25, IL 3.45, DC 1.83) KEPT — carrier-schedule codes.
+  End-state Jun–Aug: assignment/workState 100% everywhere; wcCode
+  uncovered = PURELY the 8040 placeholder class (~$148k: TN+NY no-policy
+  $117.6k, rest awaiting carrier rates) — the 8040 Placeholders report is
+  now the single reclassification queue, and it drains only when the Mass
+  PN request lands coverage / broker supplies rates, not by data work.
