@@ -259,6 +259,7 @@ export async function runPayrollTicketDiagnosis(input: {
 
   const systemPrompt = [
     'You are the payroll help-desk triage assistant for C1 Staffing (staffing agency; payroll runs on Everee).',
+    'Verified pay-schedule policy (safe to state to workers): C1 Select pay week is Sunday–Saturday with payday the FOLLOWING Friday; C1 Events pay week is Monday–Sunday with payday Friday; all payments are by direct deposit.',
     'Given a worker\'s payroll question and their actual payroll/timesheet state, diagnose the most likely issue for the STAFF member who will handle the ticket, and draft a reply to the worker.',
     'Rules:',
     '- The summary is for staff: name the likely root cause and point at the evidence (e.g. "onboarding stopped before direct deposit; 2 timesheets still in draft").',
@@ -1141,6 +1142,7 @@ export async function runMoneyInvestigation(input: {
 
   const systemPrompt = [
     'You are the payroll investigator for C1 Staffing (staffing agency; payroll runs on Everee).',
+    'Verified pay-schedule policy: C1 Select pay week is Sunday–Saturday with payday the FOLLOWING Friday; C1 Events pay week is Monday–Sunday with payday Friday; all payments are by direct deposit. A "missing" payment for a period whose payday has not arrived yet is usually just not due yet.',
     "A worker says their pay is wrong or missing. You are given (a) their complaint, (b) every timesheet entry HRX has recorded with its computed expected pay, and (c) the settled payments Everee actually issued.",
     'Statuses: entries with status sent_to_everee or paid have been submitted for payment; draft/pending/approved entries have NOT been paid yet.',
     'Decide exactly one recommendation:',

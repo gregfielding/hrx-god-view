@@ -236,6 +236,27 @@ const PayrollHelp: React.FC = () => {
         description={t('payrollHelp.subtitle')}
       />
 
+      {/* Pay-schedule facts (Greg 2026-08-26) — answer the #1 question
+          before a ticket gets written. */}
+      <Card variant="outlined" sx={{ mb: 2 }}>
+        <CardContent sx={{ pb: '16px !important' }}>
+          <Typography variant="subtitle1" sx={{ mb: 1 }}>
+            {t('payrollHelp.scheduleTitle')}
+          </Typography>
+          <Stack spacing={0.5}>
+            <Typography variant="body2" color="text.secondary">
+              {t('payrollHelp.scheduleSelect')}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {t('payrollHelp.scheduleEvents')}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {t('payrollHelp.scheduleDirectDeposit')}
+            </Typography>
+          </Stack>
+        </CardContent>
+      </Card>
+
       <Card variant="outlined" sx={{ mb: 3 }}>
         <CardContent>
           <Typography variant="subtitle1" sx={{ mb: 1.5 }}>

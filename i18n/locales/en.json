@@ -1981,6 +1981,10 @@
   "payrollHelp": {
     "title": "Payroll help",
     "subtitle": "Problem with your pay, direct deposit, or payroll setup? Tell us what happened and our team will get on it.",
+    "scheduleTitle": "When do I get paid?",
+    "scheduleSelect": "C1 Select: the pay week runs Sunday–Saturday, and payday is the following Friday.",
+    "scheduleEvents": "C1 Events: the pay week runs Monday–Sunday, and payday is Friday.",
+    "scheduleDirectDeposit": "All payments are made by direct deposit.",
     "newTicketHeading": "What's going on?",
     "newTicketPlaceholder": "Example: I worked Saturday but my pay looks short…",
     "myRequests": "My requests",

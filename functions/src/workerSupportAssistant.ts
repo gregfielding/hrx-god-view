@@ -66,7 +66,7 @@ const SUPPORT_KNOWLEDGE_V1: Record<SupportTopic, { summary: string; actions: str
   },
   pay_schedule_basics: {
     summary:
-      'Pay timing can depend on assignment, payroll cycle, and processing cutoff. Workers should review assignment/pay details in-app first, then contact recruiter/payroll if something seems incorrect.',
+      'C1 Select: the pay week runs Sunday through Saturday, and payday is the following Friday. C1 Events: the pay week runs Monday through Sunday, and payday is Friday. All payments are made by direct deposit. Workers should review Earnings/pay details in-app first, then use Payroll help if a payment looks late or incorrect.',
     actions: ['View assignments', 'Open inbox', 'Contact recruiter'],
   },
   dress_code_what_to_bring: {
