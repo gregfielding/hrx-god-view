@@ -240,3 +240,19 @@ waiting (createQboClass/mapQboClass branches on savePayrollVenueMapping).
   rebuild finance_week_rollups manually (nightly only covers trailing 6).
   Remaining data-quality queues are WC-code coverage (Aug Select, June
   Events), not attribution.
+- **2026-08-26 WC backfill (matrix + placeholder rules, Greg-approved):**
+  1,224 paid entries + 518 assignments stamped. Rules that are now
+  precedent: matrix is authority (exact state+title match overrides a
+  differing entry code — NC janitors 9014→9040, MO 9014@2.64); '*'
+  state-default rows fill empty codes (IL events janitors $52.8k →
+  9014@3.25); TN + NY have NO policy (the only true no-policy states —
+  workers_comp policy records are generic/not entity-scoped) → 8040@2.35
+  placeholder ($117.6k awaiting Mass PN coverage). Data-health wcCode
+  counts matrix-RESOLVABLE entries as covered even when the entry field is
+  empty — the backfill materialized those virtual resolutions onto the
+  rows. Gotchas: some JO worksiteAddress.state values are FULL NAMES
+  ("Missouri") — normalize before matrix lookup; TX's 9014@1.34 default is
+  EVENTS-scoped (select TX has no default). Remaining wcCode gaps =
+  8040-placeholder class (TN/NY/DC-janitors, blocked on coverage) + a
+  ~$14k murky list (CT/CO/KY rates absent from matrix, DC/VA/CA title→code
+  calls) awaiting Greg.
