@@ -49,6 +49,9 @@ interface Cell {
   evereeGross: number;
   evereePayments: number;
   offCycleTotal: number;
+  /** Register gross paid to workers with ZERO entry gross in the month —
+   *  the "paid directly inside Everee, outside HRX" class (June 2026 era). */
+  directPaidNoEntry: number;
 }
 
 function emptyCell(): Cell {
@@ -60,6 +63,7 @@ function emptyCell(): Cell {
     evereeGross: 0,
     evereePayments: 0,
     offCycleTotal: 0,
+    directPaidNoEntry: 0,
   };
 }
 
@@ -234,11 +238,19 @@ export async function buildDataHealthReport(input: {
   };
   const noAssignmentQueue: Array<Record<string, unknown>> = [];
 
+  // Entry gross per worker × month — lets the register loop classify
+  // payments to workers HRX never recorded (direct-in-Everee class).
+  const entryGrossByWorkerMonth = new Map<string, number>();
+
   for (const p of picked) {
     const c = cellFor(p.month, p.entityId);
     c.entryGross = round2(c.entryGross + p.gross);
     c.entryCount += 1;
     if (p.workerId) c.workers.add(p.workerId);
+    if (p.workerId) {
+      const wk = `${p.workerId}|${p.month}`;
+      entryGrossByWorkerMonth.set(wk, round2((entryGrossByWorkerMonth.get(wk) ?? 0) + p.gross));
+    }
 
     const a = p.assignmentId ? assignments.get(p.assignmentId) : undefined;
     const hasAssignment = Boolean(a);
@@ -284,6 +296,10 @@ export async function buildDataHealthReport(input: {
     const c = cellFor(month, entityId);
     c.evereeGross = round2(c.evereeGross + num(r.gross));
     c.evereePayments += 1;
+    const workerUid = trim(r.workerUid);
+    if (!workerUid || !entryGrossByWorkerMonth.has(`${workerUid}|${month}`)) {
+      c.directPaidNoEntry = round2(c.directPaidNoEntry + num(r.gross));
+    }
   }
 
   // ---- Off-cycle payments (explain part of the delta) ----------------------
@@ -321,6 +337,8 @@ export async function buildDataHealthReport(input: {
           entryCount: c.entryCount,
           workers: c.workers.size,
           offCycleTotal: c.offCycleTotal,
+          directPaidNoEntry: c.directPaidNoEntry,
+          residualUnexplained: round2(unexplained - c.directPaidNoEntry),
           unexplained,
           coveragePct: {
             assignment: pct(c.covered.assignment, c.entryGross),
@@ -350,6 +368,8 @@ export async function buildDataHealthReport(input: {
         evereeGross: round2(entities.reduce((s, e) => s + e.evereeGross, 0)),
         entryGross: round2(entities.reduce((s, e) => s + e.entryGross, 0)),
         offCycleTotal: round2(entities.reduce((s, e) => s + e.offCycleTotal, 0)),
+        directPaidNoEntry: round2(entities.reduce((s, e) => s + e.directPaidNoEntry, 0)),
+        residualUnexplained: round2(entities.reduce((s, e) => s + e.residualUnexplained, 0)),
         unexplained: round2(entities.reduce((s, e) => s + e.unexplained, 0)),
       },
     };
@@ -365,6 +385,7 @@ export async function buildDataHealthReport(input: {
     notes: [
       'Month buckets: Everee by pay-period end; entries/off-cycle by work date — period-boundary bleed shows as paired +/- residuals in adjacent months.',
       'unexplained = evereeGross − entryGross − offCycle: dollars Everee settled with no HRX entry behind them.',
+      "direct-paid = register gross to workers with ZERO entry gross in the month — the June-2026 'paid directly inside Everee' class (confirmed 2026-08-26: $139k of June's gap). residual = unexplained − direct-paid.",
       'Coverage percentages are gross-weighted (dollars, not row counts).',
     ],
   };

@@ -50,6 +50,8 @@ interface EntityRow {
   entryCount: number;
   workers: number;
   offCycleTotal: number;
+  directPaidNoEntry: number;
+  residualUnexplained: number;
   unexplained: number;
   coveragePct: Record<string, number>;
   coverageGapGross: Record<string, number>;
@@ -58,7 +60,14 @@ interface EntityRow {
 interface MonthBlock {
   month: string;
   entities: EntityRow[];
-  totals: { evereeGross: number; entryGross: number; offCycleTotal: number; unexplained: number };
+  totals: {
+    evereeGross: number;
+    entryGross: number;
+    offCycleTotal: number;
+    directPaidNoEntry: number;
+    residualUnexplained: number;
+    unexplained: number;
+  };
 }
 
 interface HealthData {
@@ -165,10 +174,15 @@ const DataHealthPage: React.FC = () => {
                       Everee settled {usd(m.totals.evereeGross)} · entries {usd(m.totals.entryGross)} · off-cycle{' '}
                       {usd(m.totals.offCycleTotal)}
                     </Typography>
+                    {m.totals.directPaidNoEntry > 0 && (
+                      <Tooltip title="Register gross paid to workers with no entries this month — the 'paid directly inside Everee, outside HRX' class.">
+                        <Chip size="small" color="warning" label={`direct-paid ${usd(m.totals.directPaidNoEntry)}`} />
+                      </Tooltip>
+                    )}
                     <Chip
                       size="small"
-                      color={Math.abs(m.totals.unexplained) < 1000 ? 'success' : 'error'}
-                      label={`unexplained ${usd(m.totals.unexplained)}`}
+                      color={Math.abs(m.totals.residualUnexplained) < 1000 ? 'success' : 'error'}
+                      label={`residual unexplained ${usd(m.totals.residualUnexplained)}`}
                     />
                   </Stack>
 
@@ -180,7 +194,12 @@ const DataHealthPage: React.FC = () => {
                           <TableCell align="right">Everee settled</TableCell>
                           <TableCell align="right">Entries</TableCell>
                           <TableCell align="right">Off-cycle</TableCell>
-                          <TableCell align="right">Unexplained</TableCell>
+                          <TableCell align="right">
+                            <Tooltip title="Paid directly inside Everee — no entries for the worker this month">
+                              <span>Direct-paid</span>
+                            </Tooltip>
+                          </TableCell>
+                          <TableCell align="right">Residual</TableCell>
                           {COVERAGE_FIELDS.map((f) => (
                             <TableCell key={f.key} align="right">
                               <Tooltip title={`Feeds: ${f.feeds}`}>
@@ -204,11 +223,14 @@ const DataHealthPage: React.FC = () => {
                             <TableCell align="right">{usd(e.evereeGross)}</TableCell>
                             <TableCell align="right">{usd(e.entryGross)}</TableCell>
                             <TableCell align="right">{usd(e.offCycleTotal)}</TableCell>
+                            <TableCell align="right" sx={{ color: e.directPaidNoEntry > 0 ? 'warning.main' : 'text.secondary' }}>
+                              {usd(e.directPaidNoEntry)}
+                            </TableCell>
                             <TableCell
                               align="right"
-                              sx={{ fontWeight: 700, color: Math.abs(e.unexplained) < 1000 ? 'success.main' : 'error.main' }}
+                              sx={{ fontWeight: 700, color: Math.abs(e.residualUnexplained) < 1000 ? 'success.main' : 'error.main' }}
                             >
-                              {usd(e.unexplained)}
+                              {usd(e.residualUnexplained)}
                             </TableCell>
                             {COVERAGE_FIELDS.map((f) => {
                               const p = e.coveragePct[f.key] ?? 0;
