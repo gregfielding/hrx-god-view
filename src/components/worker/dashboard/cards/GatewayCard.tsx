@@ -60,7 +60,7 @@ const GatewayCard: React.FC<GatewayCardProps> = ({ payload, onTap }) => {
             py: 1,
             bgcolor: GATEWAY_ACCENT,
             color: '#fff',
-            borderRadius: 2,
+            
             fontSize: '0.875rem',
             textTransform: 'none',
             fontWeight: 600,

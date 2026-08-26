@@ -41,4 +41,23 @@ Total company A/R at ship: $963,975.12 across 22 customers.
 each account's Invoicing tab — dashboard mapping-health chips show
 unmapped balances); Phase 4 webhooks, invoice creation from timesheets
 (assignment billRate feeds it), AI collections assistant.
+
+## RS3 Hospitality = Proof of the Pudding (audit 2026-08-19)
+
+Greg: ALL RS3 business belongs to the Proof of the Pudding account —
+every RS3 venue/JO is a Proof instance. Audit found HRX already
+consolidated (all 6 JOs, 47 assignments, 1,467 entries live under
+account jJ8cB1L9r5BfFl8LJOZ9 "Proof of the Pudding"; the "RS3" account
+BulbxRJVBVXFDOh9tNHo is an EMPTY child shell, zero references). QBO has
+NO "Proof of the Pudding" customer — the books use **QBO sub-customers**:
+parent 307 "RS3 Hospitality" (mapped to the Proof account) with
+sub-customers 58 "Dell Diamond", 270 "Kizer & Crystal", 271 "H-E-B
+Center" (`Job=true`, `ParentRef=307`). ☠️ The mapping model + every
+customerId-keyed read (account invoicing sync CustomerRef query, mapping
+health, gross-margin join) ignores QBO's parent/sub-customer hierarchy,
+so sub-customer invoices look unmapped/billed-only. Fix plan: cache
+ParentRef in qbo_customers, resolve customer FAMILY (self+descendants)
+everywhere a mapped customerId is used. CRM: "RS3 Strategic Hospitality"
+company (1 contact, Brenda Gomez) should merge into "Proof of the
+Pudding" company (11 contacts, Proof Texas deal).
 Related: [[project_expensify_card_pipeline]], [[project_assignment_backbone_review]].

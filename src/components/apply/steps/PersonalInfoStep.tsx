@@ -6,12 +6,18 @@ import { geocodeAddress } from '../../../utils/geocodeAddress';
 import { auth } from '../../../firebase';
 import { useT } from '../../../i18n';
 import { isValidUsPhone10 } from '../../../utils/usPhoneValidation';
-import { normalizeLast4SsnDigits } from '../../../utils/last4Ssn';
 
 type Props = {
   value: any;
   onChange: (v: any) => void;
   onPasswordChange?: (password: string, confirmPassword: string) => void;
+  /** Phone-first signup (Slice 2, 2026-08-25): account creation happens via
+   *  the PhoneSignupGate OTP — no password is ever collected. */
+  hidePasswordFields?: boolean;
+  /** Conversion-first step 0 (Greg 2026-08-25): only name + phone + DOB.
+   *  Email moves to the post-code step; language comes from the page's
+   *  EN|ES toggle (saved server-side at signup) — no dropdown. */
+  minimalPhoneFirst?: boolean;
   showAddressFields?: boolean;
 };
 
@@ -105,7 +111,7 @@ const formatDateForStorage = (dateString: string) => {
   return '';
 };
 
-const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, showAddressFields = false }) => {
+const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, showAddressFields = false, hidePasswordFields = false, minimalPhoneFirst = false }) => {
   const t = useT();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -498,14 +504,16 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             <TextField fullWidth required label={t('profile.lastName')} value={value.lastName || ''} onChange={(e) => handle('lastName', e.target.value)} />
           </ResumeSuggestionField>
         </Grid>
+        {!minimalPhoneFirst && (
         <Grid item xs={12} md={6}>
           <ResumeSuggestionField 
             isFromResume={isFieldFromResume('email')} 
             confidence={getFieldConfidence('email')}
           >
-            <TextField fullWidth required type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} />
+            <TextField fullWidth type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} helperText={t('phoneSignup.emailOptional')} />
           </ResumeSuggestionField>
         </Grid>
+        )}
         <Grid item xs={12} md={6}>
           <ResumeSuggestionField 
             isFromResume={isFieldFromResume('phone')} 
@@ -525,18 +533,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             />
           </ResumeSuggestionField>
         </Grid>
-        <Grid item xs={12} md={6}>
-          <TextField
-            fullWidth
-            label={t('apply.last4Ssn')}
-            helperText={t('apply.last4SsnHelper')}
-            inputMode="numeric"
-            autoComplete="off"
-            value={value.last4SSN || ''}
-            onChange={(e) => handle('last4SSN', normalizeLast4SsnDigits(e.target.value))}
-            inputProps={{ maxLength: 4, inputMode: 'numeric' as const }}
-          />
-        </Grid>
+        {!minimalPhoneFirst && (
         <Grid item xs={12} md={6}>
           <FormControl fullWidth>
             <InputLabel id="apply-preferred-language-mobile-label">{t('apply.preferredMessageLanguage')}</InputLabel>
@@ -551,6 +548,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             </Select>
           </FormControl>
         </Grid>
+        )}
         <Grid item xs={12} md={6}>
           <TextField 
             fullWidth 
@@ -619,14 +617,16 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                   <TextField fullWidth required label={t('profile.lastName')} value={value.lastName || ''} onChange={(e) => handle('lastName', e.target.value)} />
                 </ResumeSuggestionField>
               </Grid>
+              {!minimalPhoneFirst && (
               <Grid item xs={12} md={6}>
                 <ResumeSuggestionField 
                   isFromResume={isFieldFromResume('email')} 
                   confidence={getFieldConfidence('email')}
                 >
-                  <TextField fullWidth required type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} />
+                  <TextField fullWidth type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} helperText={t('phoneSignup.emailOptional')} />
                 </ResumeSuggestionField>
               </Grid>
+              )}
               <Grid item xs={12} md={6}>
                 <ResumeSuggestionField 
                   isFromResume={isFieldFromResume('phone')} 
@@ -649,18 +649,7 @@ label={t('profile.phone')}
                   />
                 </ResumeSuggestionField>
               </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label={t('apply.last4Ssn')}
-                  helperText={t('apply.last4SsnHelper')}
-                  inputMode="numeric"
-                  autoComplete="off"
-                  value={value.last4SSN || ''}
-                  onChange={(e) => handle('last4SSN', normalizeLast4SsnDigits(e.target.value))}
-                  inputProps={{ maxLength: 4, inputMode: 'numeric' as const }}
-                />
-              </Grid>
+              {!minimalPhoneFirst && (
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
                   <InputLabel id="apply-preferred-language-desktop-label">{t('apply.preferredMessageLanguage')}</InputLabel>
@@ -675,6 +664,7 @@ label={t('profile.phone')}
                   </Select>
                 </FormControl>
               </Grid>
+              )}
               <Grid item xs={12} md={6}>
                 <TextField 
                   fullWidth 
@@ -722,8 +712,9 @@ label={t('profile.dateOfBirth')}
         </Card>
       )}
 
-      {/* Password Fields - Only show if not authenticated */}
-      {!isAuthenticated && (
+      {/* Password Fields - Only show if not authenticated (and not the
+          phone-first signup flow, which never collects a password) */}
+      {!isAuthenticated && !hidePasswordFields && (
         <Box sx={{ mt: isMobile ? 2 : 3 }}>
           {isMobile ? (
             <>

@@ -1140,6 +1140,57 @@ async function safeMapPayables(
  * Everee surfaces a per-payment detail endpoint with deductions /
  * taxes / PDF link, this is the place to swap to it.
  */
+/** Money extractor for Everee's mixed shapes: number | {amount} | string. */
+function stmtAmount(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (v && typeof v === 'object') {
+    const a = (v as { amount?: unknown }).amount;
+    return stmtAmount(a);
+  }
+  return null;
+}
+
+function stmtLabel(raw: unknown, fallback: string): string {
+  const t = String(raw ?? '').trim();
+  if (!t) return fallback;
+  return t
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
+function mapStatementLines(
+  list: unknown,
+  labelKeys: string[],
+  fallback: string,
+): Array<{ label: string; amount: number | null }> {
+  if (!Array.isArray(list)) return [];
+  const out: Array<{ label: string; amount: number | null }> = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const labelRaw = labelKeys.map((k) => rec[k]).find((v) => typeof v === 'string' && String(v).trim());
+    const amount =
+      stmtAmount(rec.currentPeriodAmount) ?? stmtAmount(rec.amounts) ?? stmtAmount(rec.amount);
+    out.push({ label: stmtLabel(labelRaw, fallback), amount });
+  }
+  return out.filter((l) => l.amount !== null && l.amount !== 0);
+}
+
+/**
+ * Statement detail (Earnings v2, 2026-08-24): the base row comes from the
+ * pay-history mapper (consistent status/date semantics); line items come
+ * from the RAW /api/v2/payments record (earningList / taxList /
+ * contributionDeductionList + garnishments), which the list mapper drops.
+ * Ownership is enforced by matching `employee.externalWorkerId` against the
+ * caller's candidate keys — never serve another worker's statement.
+ * PDF: Everee's API doesn't expose a paystub URL today; `pdfUrl` stays null
+ * and the client shows "not available yet".
+ */
 export async function getPayStatement(
   tenantId: string,
   entityId: string,
@@ -1150,15 +1201,51 @@ export async function getPayStatement(
   const history = await getPayHistory(tenantId, entityId, userId);
   const match = history.items.find((it) => it.statementId === statementId);
   if (!match) return null;
-  // Earnings/deductions/taxes are not surfaced from the payable list
-  // alone — leave them null until the dedicated statement endpoint is
-  // wired. The panel handles null gracefully.
+
+  let raw: Record<string, unknown> | null = null;
+  try {
+    const config = await getEvereeConfigForEntity(tenantId, entityId);
+    if (config) {
+      const externalWorkerId = await resolveExternalWorkerId(tenantId, userId, config.evereeTenantId);
+      const candidateKeys = new Set([userId, externalWorkerId].filter(Boolean) as string[]);
+      const paymentId = statementId.replace(/^pmt_/, '');
+      const res = (await listPayments(config, {
+        pageSize: 500,
+        includeWorkersOnRegularPayCycle: true,
+      })) as { items?: Array<Record<string, unknown>> };
+      const found = (res.items ?? []).find((p) => String(p?.id ?? '') === paymentId) ?? null;
+      const owner = String(
+        ((found?.employee ?? {}) as Record<string, unknown>).externalWorkerId ?? '',
+      );
+      raw = found && candidateKeys.has(owner) ? found : null;
+    }
+  } catch (err) {
+    logger.warn('[getPayStatement] raw payment fetch failed', {
+      tenantId,
+      entityId,
+      userId,
+      statementId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  const earnings = raw ? mapStatementLines(raw.earningList, ['type', 'note'], 'Earnings') : [];
+  const taxes = raw ? mapStatementLines(raw.taxList, ['type', 'taxType', 'name'], 'Tax') : [];
+  const deductions = raw
+    ? [
+        ...mapStatementLines(raw.contributionDeductionList, ['type', 'name'], 'Deduction'),
+        ...mapStatementLines(raw.garnishmentList, ['type', 'name'], 'Garnishment'),
+      ]
+    : [];
+
   return {
     ...match,
+    gross: stmtAmount((raw as Record<string, unknown> | null)?.grossEarnings) ?? match.gross ?? null,
+    net: stmtAmount((raw as Record<string, unknown> | null)?.netEarnings) ?? match.net ?? null,
     pdfUrl: null,
-    earnings: null,
-    deductions: null,
-    taxes: null,
+    earnings: earnings.length ? earnings : null,
+    deductions: deductions.length ? deductions : null,
+    taxes: taxes.length ? taxes : null,
   };
 }
 

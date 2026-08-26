@@ -1,10 +1,8 @@
 import { onCall } from 'firebase-functions/v2/https';
-import { OpenAI } from 'openai';
+import { getClaudeChat } from './utils/claudeChat';
 import * as admin from 'firebase-admin';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || '',
-});
+const openai = getClaudeChat();
 
 export const enhanceContactWithAI = onCall({
   cors: true,
@@ -54,7 +52,7 @@ export const enhanceContactWithAI = onCall({
     Object.assign(enhancedData, serpResults);
 
     // 3. Use OpenAI to analyze and enhance the data
-    if (process.env.OPENAI_API_KEY) {
+    if (process.env.ANTHROPIC_API_KEY) {
       const aiEnhancedData = await enhanceWithOpenAI(currentContact, serpResults);
       Object.assign(enhancedData, aiEnhancedData);
     }
@@ -209,7 +207,7 @@ async function searchContactWithSerp(searchQuery: string, contact: any) {
 }
 
 async function enhanceWithOpenAI(contact: any, serpResults: any) {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!process.env.ANTHROPIC_API_KEY) {
     return {};
   }
 
@@ -322,7 +320,7 @@ async function findCompanyInformation(companyName: string, tenantId: string) {
 }
 
 async function generateProfessionalSummary(contact: any, enhancedData: any) {
-  if (!process.env.OPENAI_API_KEY) return null;
+  if (!process.env.ANTHROPIC_API_KEY) return null;
 
   try {
     const prompt = `Create a professional summary for this contact:

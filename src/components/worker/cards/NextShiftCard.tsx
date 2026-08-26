@@ -17,7 +17,7 @@ const NextShiftCard: React.FC<NextShiftCardProps> = ({ firstName, nextShift }) =
   const navigate = useNavigate();
 
   return (
-    <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+    <Card variant="outlined" sx={{ borderColor: 'divider' }}>
       <CardContent sx={{ py: 2.5, px: 2.5 }}>
         {firstName && (
           <Typography variant="body1" color="text.secondary" sx={{ mb: 1 }}>

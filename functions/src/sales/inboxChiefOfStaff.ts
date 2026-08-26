@@ -19,6 +19,7 @@
  * Shares the salesOutreachMailbox grant via gmailClientFor().
  */
 
+import { getClaudeChat } from '../utils/claudeChat';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
@@ -109,10 +110,8 @@ interface Classified {
 }
 
 async function classifyInboxMessage(input: { from: string; subject: string; body: string }): Promise<Classified> {
-  const apiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY unset');
-  const OpenAI = (await import('openai')).default;
-  const openai = new OpenAI({ apiKey });
+  // Claude-backed since 2026-08-21 (same chat.completions shape — utils/claudeChat).
+  const openai = getClaudeChat();
   const prompt = [
     `Triage one email from Greg Fielding's inbox (CEO of C1 Staffing, a national hourly staffing agency). Classify and, when a reply is needed, draft it.`,
     ``,
@@ -340,6 +339,75 @@ async function findDroppedBalls(gmail: gmail_v1.Gmail): Promise<DroppedBall[]> {
   return out.sort((a, b) => b.daysOld - a.daysOld);
 }
 
+/**
+ * Pending worker account-deletion requests (`account_deletion_requests`,
+ * filed from the worker app's About & Legal page). Nothing else notifies
+ * staff when one lands (Greg, 2026-08-24) — the brief is the alert.
+ * Returns null when the queue is empty so the brief stays tight.
+ */
+export async function buildDeletionRequestsSection(): Promise<string | null> {
+  const snap = await db
+    .collection('account_deletion_requests')
+    .where('status', '==', 'pending')
+    .limit(20)
+    .get();
+  if (snap.empty) return null;
+  const nowMs = Date.now();
+  const lines = await Promise.all(
+    snap.docs.map(async (d) => {
+      const x = d.data() as Record<string, unknown>;
+      const requestedAt = (x.requestedAt as admin.firestore.Timestamp | undefined)?.toMillis?.();
+      const daysOld = requestedAt ? Math.floor((nowMs - requestedAt) / 86400e3) : null;
+      let name = trim(x.email as string) || d.id;
+      let hasPayroll = false;
+      try {
+        const u = await db.collection('users').doc(d.id).get();
+        if (u.exists) {
+          const full = `${trim(u.get('firstName'))} ${trim(u.get('lastName'))}`.trim();
+          if (full) name = `${full} (${trim(x.email as string) || 'no email'})`;
+          const taxIdentity = u.get('taxIdentity') as Record<string, unknown> | undefined;
+          hasPayroll = Boolean(taxIdentity?.source === 'everee' || u.get('last4SSN') || u.get('evereeWorkerId'));
+        } else {
+          name = `${name} — account already deleted`;
+        }
+      } catch { /* keep the email/uid line */ }
+      const age = daysOld === null ? '' : daysOld === 0 ? ' — today' : ` — ${daysOld} day${daysOld === 1 ? '' : 's'} ago`;
+      return `• ${name}${age}${hasPayroll ? ' — HAS PAYROLL (retain, do not hard-delete)' : ''}`;
+    }),
+  );
+  return (
+    `ACCOUNT DELETION REQUESTS (${snap.size} pending):\n${lines.join('\n')}\n` +
+    `Review: https://hrxone.com/users/deletion-requests`
+  );
+}
+
+/**
+ * Open payroll help-desk tickets (worker is waiting on us). Waiting-on-worker
+ * and resolved tickets are omitted — the brief flags only what needs staff.
+ */
+export async function buildPayrollTicketsSection(): Promise<string | null> {
+  const snap = await db
+    .collection('payroll_tickets')
+    .where('status', '==', 'open')
+    .limit(20)
+    .get();
+  if (snap.empty) return null;
+  const nowMs = Date.now();
+  const lines = snap.docs.map((d) => {
+    const x = d.data() as Record<string, unknown>;
+    const diag = (x.diagnosis ?? null) as { category?: string; severity?: string } | null;
+    const createdMs = (x.createdAt as admin.firestore.Timestamp | undefined)?.toMillis?.();
+    const daysOld = createdMs ? Math.floor((nowMs - createdMs) / 86400e3) : null;
+    const age = daysOld === null ? '' : daysOld === 0 ? 'today' : `${daysOld}d old`;
+    const sev = diag?.severity === 'urgent' ? 'URGENT ' : '';
+    return `• ${sev}${trim(x.workerName) || trim(x.uid)} — "${trim(x.subject).slice(0, 70)}" (${diag?.category ?? 'untriaged'}, ${age})`;
+  });
+  return (
+    `PAYROLL TICKETS WAITING ON US (${snap.size}):\n${lines.join('\n')}\n` +
+    `Work the queue: https://hrxone.com/payroll-tickets`
+  );
+}
+
 export async function morningBriefCore(tenantId: string): Promise<{ sent: boolean }> {
   const client = await gmailClientFor(tenantId);
   if (!client) return { sent: false };
@@ -378,6 +446,22 @@ export async function morningBriefCore(tenantId: string): Promise<{ sent: boolea
     .slice(0, 8)
     .map((d) => `• ${trim(d.get('fullName'))} — ${trim(d.get('jobTitle'))} @ ${trim(d.get('companyName'))}`);
   if (hotLines.length) sections.push(`NEW HOT LEADS (24h):\n${hotLines.join('\n')}`);
+
+  // 3.5 Worker account-deletion requests (App Store compliance queue)
+  try {
+    const del = await buildDeletionRequestsSection();
+    if (del) sections.push(del);
+  } catch (e) {
+    logger.warn('morningBrief: deletion-requests scan failed', { e: String(e) });
+  }
+
+  // 3.6 Payroll help-desk tickets waiting on staff
+  try {
+    const pt = await buildPayrollTicketsSection();
+    if (pt) sections.push(pt);
+  } catch (e) {
+    logger.warn('morningBrief: payroll-tickets scan failed', { e: String(e) });
+  }
 
   // 4. Campaign pulse
   const bounced24 = await db.collection(`tenants/${tenantId}/crm_contacts`).where('emailBouncedAt', '>=', since).get();

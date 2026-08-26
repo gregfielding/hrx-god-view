@@ -1,6 +1,20 @@
 {
   "indexes": [
     {
+      "collectionGroup": "parsedResumes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "uploadDate",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "assignmentReadinessItems",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
@@ -1939,6 +1953,20 @@
         {
           "fieldPath": "rehireEligible",
           "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "timesheet_entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "workerId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "workDate",
+          "order": "DESCENDING"
         }
       ]
     }

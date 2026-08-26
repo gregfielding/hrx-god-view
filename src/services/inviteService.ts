@@ -40,7 +40,10 @@ export class InviteService {
   private inviteUserFunction: any;
 
   private constructor() {
-    // Initialize the Cloud Function callable
+    // ☠️ DEAD BACKEND (2026-08-25): the 'inviteUser' v1 function was deleted
+    // from Cloud Run (zero routed callers — only examples/InviteFlowExample
+    // ever used this service). Live invites go through 'inviteUserV2'. Any
+    // call through this service will fail with not-found.
     this.inviteUserFunction = httpsCallable(functions, 'inviteUser');
   }
 

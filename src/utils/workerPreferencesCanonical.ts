@@ -10,6 +10,7 @@ export const CANONICAL_PREFERENCE_KEYS = [
   'experienceCategories',
   'gigWorkInterestCategories',
   'openToGigWork',
+  'positionInterests',
 ] as const;
 
 export type CanonicalPreferenceKey = (typeof CANONICAL_PREFERENCE_KEYS)[number];

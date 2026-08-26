@@ -80,11 +80,13 @@ export async function loadWorkerDashboardActionItemsContext(
     backgroundChecks,
     everifyCases,
     prescreen,
+    payroll,
   ] = await Promise.all([
     loadPendingAssignments(db, tenantId, uid),
     loadBackgroundChecks(db, tenantId, uid),
     loadEverifyCases(db, tenantId, uid),
     loadPrescreenSignals(db, tenantId, uid),
+    loadPayrollOnboardingSignal(db, tenantId, uid),
   ]);
 
   const compliance = deriveWorkerComplianceSignals(backgroundChecks, everifyCases);
@@ -95,6 +97,7 @@ export async function loadWorkerDashboardActionItemsContext(
     pendingAssignments,
     tempworks,
     compliance,
+    payroll,
     prescreen: prescreen.signals,
     authAvatarUrl: options?.authAvatarUrl ?? null,
     tenantId,
@@ -229,6 +232,54 @@ async function loadEverifyCases(
 }
 
 // ---------------------------------------------------------------------------
+// Everee payroll-onboarding signal — V2 parity port of the legacy client
+// builder (2026-08-24). Completion truth lives on `status` and
+// `readinessMirror` (top-level onboardingComplete/onboardingStatus don't
+// exist on everee_workers docs); sandbox tenant 2320 and smokeData
+// linkages never nag a production worker.
+// ---------------------------------------------------------------------------
+
+export interface WorkerDashboardPayrollSignal {
+  incomplete: boolean;
+  evereeTenantId: string | null;
+}
+
+export async function loadPayrollOnboardingSignal(
+  db: admin.firestore.Firestore,
+  tenantId: string,
+  uid: string,
+): Promise<WorkerDashboardPayrollSignal> {
+  try {
+    const snap = await db
+      .collection(`tenants/${tenantId}/everee_workers`)
+      .where('firebaseUid', '==', uid)
+      .get();
+    for (const d of snap.docs) {
+      const x = d.data() as Record<string, unknown>;
+      if (x.smokeData === true) continue;
+      const tid = String(x.evereeTenantId ?? '');
+      if (!tid || tid === '2320') continue;
+      const mirror = (x.readinessMirror ?? null) as Record<string, unknown> | null;
+      const complete =
+        x.onboardingComplete === true ||
+        String(x.onboardingStatus || '').toUpperCase() === 'COMPLETE' ||
+        String(x.status || '').toLowerCase() === 'onboarding_complete' ||
+        mirror?.onboardingComplete === true ||
+        String(mirror?.onboardingStatus || '').toUpperCase() === 'COMPLETE' ||
+        Boolean(x.apiObservedOnboardingCompleteAt);
+      if (!complete) return { incomplete: true, evereeTenantId: tid };
+    }
+  } catch (err) {
+    logger.warn('workerDashboardActionItemsV1: everee_workers query failed', {
+      tenantId,
+      uid,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return { incomplete: false, evereeTenantId: null };
+}
+
+// ---------------------------------------------------------------------------
 // Compliance derivation — port of
 // `src/utils/workerComplianceActionDerivers.ts:deriveWorkerComplianceSignals`.
 // ---------------------------------------------------------------------------
@@ -291,6 +342,44 @@ function shouldShowApplicantPortalCta(rec: Record<string, unknown>): boolean {
   return Boolean(url);
 }
 
+/**
+ * A background check only drives worker-facing action items while it's
+ * current. Months-old error/awaiting records are ops debris (superseded
+ * orders, dead AccuSource links) — recruiters have their own queue for
+ * those (Greg, 2026-08-23). Mirrors
+ * `src/utils/workerComplianceActionDerivers.ts`.
+ */
+export const WORKER_COMPLIANCE_RECENCY_DAYS = 30;
+
+function tsToMillis(v: unknown): number | null {
+  if (!v) return null;
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === 'string') {
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : null;
+  }
+  const o = v as { toDate?: () => Date; seconds?: number; _seconds?: number };
+  if (typeof o.toDate === 'function') {
+    try {
+      return o.toDate().getTime();
+    } catch {
+      return null;
+    }
+  }
+  if (typeof o.seconds === 'number') return o.seconds * 1000;
+  if (typeof o._seconds === 'number') return o._seconds * 1000;
+  return null;
+}
+
+/** True unless the record provably went untouched for the recency window —
+ *  records without readable timestamps stay current (never hide a live check
+ *  on a parsing gap). */
+function isRecordCurrent(rec: Record<string, unknown>, nowMs: number): boolean {
+  const last = tsToMillis(rec.updatedAt) ?? tsToMillis(rec.createdAt);
+  if (last == null) return true;
+  return nowMs - last <= WORKER_COMPLIANCE_RECENCY_DAYS * 24 * 60 * 60 * 1000;
+}
+
 export function deriveWorkerComplianceSignals(
   backgroundChecks: Array<Record<string, unknown>>,
   everifyCases: Array<Record<string, unknown>>,
@@ -306,7 +395,9 @@ export function deriveWorkerComplianceSignals(
     if (EVERIFY_WORKER_ACTION_STATUSES.has(st)) everifyWorkerAction = true;
   }
 
+  const nowMs = Date.now();
   for (const c of backgroundChecks) {
+    if (!isRecordCurrent(c, nowMs)) continue;
     const hrx = String(c.hrxStatus || '').toLowerCase();
     if (hrx === 'error') {
       backgroundIssueAction = true;

@@ -44,12 +44,22 @@ async function backfillTenantSecurity(tenantId: string = DEFAULT_TENANT_ID) {
 
   console.log(`[backfillTenantSecurity] Found ${snapshot.size} users. Processing...`);
 
-  const batch = db.batch();
+  let currentBatch = db.batch();
   let counter = 0;
   let updated = 0;
   let skipped = 0;
+  const BATCH_SIZE = 500; // Firestore batch limit
 
-  snapshot.forEach((doc) => {
+  const commitBatch = async () => {
+    if (counter > 0) {
+      console.log(`[backfillTenantSecurity] Committing batch of ${counter} updates...`);
+      await currentBatch.commit();
+      counter = 0;
+      currentBatch = db.batch();
+    }
+  };
+
+  for (const doc of snapshot.docs) {
     const data = doc.data() || {};
     const userRef = doc.ref;
 
@@ -68,30 +78,24 @@ async function backfillTenantSecurity(tenantId: string = DEFAULT_TENANT_ID) {
       const updateData: any = {
         tenantIds,
       };
-      
+
       if (!data.activeTenantId) {
         updateData.activeTenantId = activeTenantId;
       }
 
-      batch.set(userRef, updateData, { merge: true });
+      currentBatch.set(userRef, updateData, { merge: true });
       counter += 1;
       updated += 1;
 
-      if (counter >= 500) {
-        // Firestore batch limit is 500
-        console.log(`[backfillTenantSecurity] Committing batch of ${counter} updates...`);
-        batch.commit();
-        counter = 0;
+      if (counter >= BATCH_SIZE) {
+        await commitBatch();
       }
     } else {
       skipped += 1;
     }
-  });
-
-  if (counter > 0) {
-    console.log(`[backfillTenantSecurity] Committing final batch of ${counter} updates...`);
-    await batch.commit();
   }
+
+  await commitBatch();
 
   console.log('[backfillTenantSecurity] DONE.');
   console.log({

@@ -106,7 +106,7 @@ const SmsWarningBanner: React.FC = () => {
     <Alert
       severity="warning"
       sx={{
-        borderRadius: 2,
+        
         border: '1px solid',
         borderColor: 'warning.light',
       }}

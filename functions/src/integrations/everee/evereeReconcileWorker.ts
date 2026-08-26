@@ -377,6 +377,47 @@ export async function reconcileWorkerInternal(
     return { ok: false, reason: 'unknown_error', syncSource, error: message.slice(0, 240) };
   }
 
+  // ── Write-through: tax identity last-4 from Everee (Greg 2026-08-21) ──
+  //
+  // The sign-up wizard no longer asks workers for the last 4 of their SSN
+  // ("we ask last-4, Everee asks the whole thing" — pointless double entry).
+  // Everee is the source: once payroll onboarding is complete the worker
+  // record carries `taxpayerIdentifierLast4`, which the mirror already
+  // captures. Stamp it onto users/{uid}.last4SSN so the existing readiness
+  // facts (workerHasTaxIdentityLast4 → profile readiness) keep working with
+  // no worker input. ONLY the last 4 ever leaves this function — never log
+  // or persist the full TIN. Best-effort: a failure here never fails the
+  // reconcile.
+  const last4 = String(mirror.taxpayerIdentifierLast4 ?? '').replace(/\D/g, '');
+  if (last4.length === 4) {
+    try {
+      const userRef = db().doc(`users/${userId}`);
+      const userSnap = await userRef.get();
+      const current = String(userSnap.get('last4SSN') ?? '').replace(/\D/g, '');
+      const currentSource = String(userSnap.get('taxIdentity')?.source ?? '');
+      if (userSnap.exists && (current !== last4 || currentSource !== 'everee')) {
+        await userRef.set(
+          {
+            last4SSN: last4,
+            taxIdentity: {
+              source: 'everee',
+              tinVerificationStatus: mirror.tinVerificationStatus ?? null,
+              syncedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+          },
+          { merge: true },
+        );
+        logger.info('[evereeReconcile] tax_identity_last4_mirrored', {
+          ...logCtx,
+          replacedSelfReported: current.length === 4 && current !== last4,
+        });
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      logger.warn('[evereeReconcile] tax_identity_write_failed', { ...logCtx, message: message.slice(0, 240) });
+    }
+  }
+
   // ── Audit write-through: I-9 Section 2 ──
   //
   // When the mirror reflects "employer signed in Everee", also stamp

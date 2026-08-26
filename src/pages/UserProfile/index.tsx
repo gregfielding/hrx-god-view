@@ -74,6 +74,7 @@ import { sanitizeWorkerNameParts } from '../../utils/profileDisplayName';
 import { getActiveOnboardingType, isOnboardingInProgress } from './utils/onboardingHelpers';
 import { getTaskCompletionPercentage, initializeOnboardingTasks } from './utils/onboardingTasks';
 import FavoriteButton from '../../components/FavoriteButton';
+import OpenPayrollTicketChip from '../../components/payroll/OpenPayrollTicketChip';
 import { useFavorites } from '../../hooks/useFavorites';
 import MissingHomeAddressAlert from '../../components/MissingHomeAddressAlert';
 
@@ -162,6 +163,14 @@ const UserProfilePage = () => {
   const [searchParams] = useSearchParams();
   const shouldAutoOpenHomeAddress = searchParams.get('editHomeAddress') === '1';
   const navigate = useNavigate();
+  // Internal-only surface (activity log, scoring, admin panels). Workers who
+  // reach this URL directly are sent to their own My Account view — the
+  // 2026-08-23 phone-login test showed a worker session rendering this page.
+  const viewerLevelNum = Number.parseInt(String(securityLevel ?? ''), 10);
+  const viewerIsStaff = !Number.isNaN(viewerLevelNum) && viewerLevelNum >= 5;
+  useEffect(() => {
+    if (user && !viewerIsStaff) navigate('/c1/workers/profile', { replace: true });
+  }, [user, viewerIsStaff, navigate]);
   const location = useLocation();
   const { isFavorite, toggleFavorite } = useFavorites('users');
 
@@ -1262,7 +1271,12 @@ const UserProfilePage = () => {
           specialTraining: data.specialTraining || '',
           resume: data.resume || null,
           education: data.education || [],
-          workExperience: data.workExperience || data.workHistory || [],
+          // Length-aware: phone signup seeds workHistory: [] (truthy empty),
+          // and writers don't always populate both names.
+          workExperience:
+            (Array.isArray(data.workExperience) && data.workExperience.length > 0
+              ? data.workExperience
+              : data.workHistory) || [],
           // New fields from the schema
           preferredName: data.preferredName || '',
           // Check both 'dob' and 'dateOfBirth' fields for backward compatibility
@@ -2703,9 +2717,9 @@ const UserProfilePage = () => {
                             if (resume.downloadUrl) {
                               window.open(resume.downloadUrl, '_blank');
                             } else if (resume.storagePath) {
-                              const encodedPath = encodeURIComponent(resume.storagePath);
-                              const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
-                              window.open(publicUrl, '_blank');
+                              // Authed token URL — resumes are no longer world-readable (2026-08-25).
+                              const url = await getDownloadURL(ref(storage, resume.storagePath));
+                              window.open(url, '_blank');
                             }
                           }}
                         >
@@ -2870,6 +2884,10 @@ const UserProfilePage = () => {
                               />
                             )}
 
+                        {canViewAdminContent && uid && activeTenant?.id && (
+                          <OpenPayrollTicketChip uid={uid} tenantId={activeTenant.id} />
+                        )}
+
                         {canViewAdminContent && (
                           <AiScoreGradeDisplay
                             scoreSummary={scoreSummary}
@@ -2939,9 +2957,9 @@ const UserProfilePage = () => {
                         if (resume.downloadUrl) {
                           window.open(resume.downloadUrl, '_blank');
                         } else if (resume.storagePath) {
-                          const encodedPath = encodeURIComponent(resume.storagePath);
-                          const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
-                          window.open(publicUrl, '_blank');
+                          // Authed token URL — resumes are no longer world-readable (2026-08-25).
+                          const url = await getDownloadURL(ref(storage, resume.storagePath));
+                          window.open(url, '_blank');
                         }
                       }}
                     >

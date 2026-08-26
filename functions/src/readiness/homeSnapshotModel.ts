@@ -173,7 +173,11 @@ function hasSkills(userDoc: Record<string, unknown>): boolean {
 }
 
 function hasResume(userDoc: Record<string, unknown>): boolean {
-  return Boolean((userDoc.resume as Record<string, unknown> | undefined)?.fileUrl || userDoc.resumeUrl);
+  // Canonical fields the parser actually writes (fileUrl/resumeUrl never
+  // existed — this read made EVERY worker's resume item show incomplete;
+  // fixed in the 2026-08-25 pipeline sweep).
+  const resume = (userDoc.resume ?? null) as Record<string, unknown> | null;
+  return Boolean(resume?.downloadUrl || resume?.storagePath || resume?.fileName);
 }
 
 function resolveChecklistStatus(userDoc: Record<string, unknown>, itemId: string): ReadinessChecklistStatus {

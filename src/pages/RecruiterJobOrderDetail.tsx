@@ -25,6 +25,7 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TableSortLabel,
   TableRow,
   Dialog,
   DialogTitle,
@@ -86,6 +87,7 @@ import {
   doc,
   getDoc,
   collection,
+  documentId,
   query,
   where,
   getDocs,
@@ -153,6 +155,7 @@ import { getOrComputeJobScoreSummary } from '../utils/jobScore';
 import { getOrComputeJobScoreSummaryV1, computeJobScoreSummaryV1 } from '../utils/jobScoreV1';
 import { getRequirementPackV1 } from '../data/jobRequirementPacksV1';
 import { isExcludedFromPlacementsApplicantPool, normalizeApplicationStatus } from '../utils/applicationStatusNormalize';
+import { latLngFromCandidates } from '../utils/geoDistance';
 import {
   countRecruiterLifecycleBuckets,
   deriveRecruiterLifecycleBucket,
@@ -264,6 +267,8 @@ type ApplicantsTableSortKey =
   | 'interview'
   | 'jobScore'
   | 'category_avg'
+  | 'status'
+  | 'level'
   | PrescreenCategoryId;
 
 // ApplicantsTable Component
@@ -388,6 +393,16 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [loading, setLoading] = useState(true);
   const [actionMenuAnchor, setActionMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const [applicantsSortBy, setApplicantsSortBy] = useState<ApplicantsTableSortKey>(null);
+  // JO worksite coords for the "X.X miles away" line (radius blast
+  // self-backfills worksiteCoordinates onto JOs it has run for).
+  const applicantsWorksiteCoords = React.useMemo(
+    () =>
+      latLngFromCandidates(
+        (jobOrder as unknown as Record<string, unknown> | null)?.worksiteCoordinates,
+        ((jobOrder as unknown as Record<string, unknown> | null)?.worksiteAddress as Record<string, unknown> | undefined)?.coordinates,
+      ),
+    [jobOrder],
+  );
   const [applicantsSortDirection, setApplicantsSortDirection] = useState<'asc' | 'desc'>('desc');
   /** Min average (current→snapshot); null = no filter. */
   const [categoryFilterMinAvg, setCategoryFilterMinAvg] = useState<number | null>(null);
@@ -565,12 +580,22 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       const applicationItems = rows.map((r) => ({ id: r.id, ...r.data })) as Array<Record<string, any> & { id: string }>;
       const userIds = Array.from(new Set(applicationItems.map((a) => a.userId).filter(Boolean)));
 
-      const usersRef = collection(db, 'users');
-      const usersSnap = await getDocs(usersRef);
+      // Perf (2026-08-25 — Danny's 60s spinner): this used to getDocs the
+      // ENTIRE root users collection (every tenant, ~hundreds of MB) and
+      // filter client-side. Chunked documentId-in fetches return only this
+      // job order's applicants — served by the automatic __name__ index.
       const userMap = new Map<string, any>();
-      usersSnap.docs.forEach((u) => {
-        if (userIds.includes(u.id)) userMap.set(u.id, u.data());
-      });
+      const USER_CHUNK = 30;
+      const userIdChunks: string[][] = [];
+      for (let i = 0; i < userIds.length; i += USER_CHUNK) {
+        userIdChunks.push(userIds.slice(i, i + USER_CHUNK));
+      }
+      const userSnaps = await Promise.all(
+        userIdChunks.map((chunk) =>
+          getDocs(query(collection(db, 'users'), where(documentId(), 'in', chunk))),
+        ),
+      );
+      userSnaps.forEach((s) => s.docs.forEach((u) => userMap.set(u.id, u.data())));
 
       const requirementPackId = (jobOrder as any)?.requirementPackId;
 
@@ -870,11 +895,17 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       if (!tenantId) return;
       
       try {
-        const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
+        // Perf (2026-08-25): only open JOs feed the Switch Job dropdown —
+        // filter server-side (single-field, auto-indexed) instead of
+        // downloading every job order ever created.
+        const jobOrdersRef = query(
+          collection(db, 'tenants', tenantId, 'job_orders'),
+          where('status', '==', 'open'),
+        );
         const jobOrdersSnapshot = await getDocs(jobOrdersRef);
         const jobOrdersData = jobOrdersSnapshot.docs
           .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter((jo: any) => jo.id !== jobOrderId && jo.status === 'open'); // Exclude current job order and only show open jobs
+          .filter((jo: any) => jo.id !== jobOrderId);
         
         setAvailableJobOrders(jobOrdersData);
       } catch (error) {
@@ -1029,12 +1060,42 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       });
       return data;
     }
+    if (applicantsSortBy === 'status' || applicantsSortBy === 'level') {
+      // Status sorts by the same label the cell displays (placement status
+      // wins over application status); Level sorts Candidates vs Applicants.
+      const statusLabelOf = (a: (typeof filteredByCategoryScores)[number]): string => {
+        const placementStatus = assignmentStatusByUserId.get(a.uid);
+        const isConfirmed = placementStatus && ['confirmed', 'active'].includes(placementStatus);
+        const isAssigned = placementStatus && ['proposed', 'accepted'].includes(placementStatus);
+        const isDeclined = placementStatus === 'declined';
+        const isCancelled = placementStatus === 'cancelled' || placementStatus === 'canceled';
+        const appStatus = (a.applicationStatus || 'submitted').toLowerCase();
+        return (
+          isConfirmed ? 'confirmed'
+          : isAssigned ? 'accepted'
+          : isDeclined ? 'declined'
+          : isCancelled && appStatus === 'submitted' ? 'submitted'
+          : isCancelled ? 'cancelled'
+          : appStatus
+        );
+      };
+      const data = [...filteredByCategoryScores];
+      data.sort((a, b) => {
+        const cmp =
+          applicantsSortBy === 'status'
+            ? statusLabelOf(a).localeCompare(statusLabelOf(b))
+            : Number(a.applicationData?.candidate === true) - Number(b.applicationData?.candidate === true);
+        return applicantsSortDirection === 'asc' ? cmp : -cmp;
+      });
+      return data;
+    }
     return filteredByCategoryScores;
   }, [
     filteredByCategoryScores,
     applicantsSortBy,
     applicantsSortDirection,
     categoryScoresCurrentByUserId,
+    assignmentStatusByUserId,
   ]);
 
   const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredByCategoryScores;
@@ -1923,11 +1984,43 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     Shift(s)
                   </TableCell>
                 ) : null}
-                <TableCell sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}>
-                  Status
+                <TableCell
+                  sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}
+                  sortDirection={applicantsSortBy === 'status' ? applicantsSortDirection : false}
+                >
+                  <TableSortLabel
+                    active={applicantsSortBy === 'status'}
+                    direction={applicantsSortBy === 'status' ? applicantsSortDirection : 'asc'}
+                    onClick={() => {
+                      if (applicantsSortBy === 'status') {
+                        setApplicantsSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+                      } else {
+                        setApplicantsSortBy('status');
+                        setApplicantsSortDirection('asc');
+                      }
+                    }}
+                  >
+                    Status
+                  </TableSortLabel>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}>
-                  Level
+                <TableCell
+                  sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}
+                  sortDirection={applicantsSortBy === 'level' ? applicantsSortDirection : false}
+                >
+                  <TableSortLabel
+                    active={applicantsSortBy === 'level'}
+                    direction={applicantsSortBy === 'level' ? applicantsSortDirection : 'asc'}
+                    onClick={() => {
+                      if (applicantsSortBy === 'level') {
+                        setApplicantsSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+                      } else {
+                        setApplicantsSortBy('level');
+                        setApplicantsSortDirection('desc');
+                      }
+                    }}
+                  >
+                    Level
+                  </TableSortLabel>
                 </TableCell>
                 <TableCell align="right" sx={{ fontWeight: 700, bgcolor: 'grey.50', textTransform: 'uppercase', fontSize: '0.75rem', py: 1.5 }}>
                   Actions
@@ -1980,6 +2073,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     formatDate={formatUserTableDate}
                     isFavorite={isFavorite}
                     toggleFavorite={toggleFavorite}
+                    worksiteCoords={applicantsWorksiteCoords}
                   />
                   <TableCell>
                     <Typography variant="body2">

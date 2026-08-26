@@ -588,11 +588,12 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
               ) : (
                 <Button
                   variant="contained"
+                  color="success"
                   disabled={disabled || isFull}
                   onClick={() => handleApply(shift.shiftId, item.type === 'day' ? item.date : undefined)}
-                  // Bumped from 140 to 160 to fit the longer "Apply for
-                  // Shift" / "Solicitar turno" labels without wrapping.
-                  sx={{ minWidth: 160 }}
+                  // Green apply CTA (Greg 2026-08-25) — matches the pay-rate
+                  // green; ink stays for nav, gold for selection.
+                  sx={{ minWidth: 160, fontWeight: 700 }}
                 >
                   {isFull ? t('jobs.shiftFull') : t('jobs.applyForShift')}
                 </Button>
@@ -615,8 +616,8 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
 
   return (
     <Box sx={{ mb: 3 }}>
-      <Typography variant="h6" fontWeight={700} gutterBottom>
-        Available Shifts
+      <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
+        {t('jobs.availableShifts')}
       </Typography>
       <Typography variant="body2" color="text.secondary" gutterBottom>
         {t('apply.availableShiftsInstruction')}
@@ -643,7 +644,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                   fontSize: '0.75rem',
                 }}
               >
-                Next Available Shift
+                {t('jobs.nextAvailableShift')}
               </Typography>
             )}
             {renderRow(item)}

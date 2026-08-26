@@ -1,9 +1,5 @@
 import * as functions from 'firebase-functions';
-// @ts-ignore
-import fetch, { RequestInit } from 'node-fetch';
-
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
+import { createChatCompletion } from './utils/claudeChat';
 
 export const devopsChat = functions.https.onRequest(async (req, res) => {
   if (req.method !== 'POST') {
@@ -24,15 +20,8 @@ export const devopsChat = functions.https.onRequest(async (req, res) => {
   };
 
   try {
-    const openaiRes = await fetch(OPENAI_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`
-      },
-      body: JSON.stringify(payload)
-    });
-    const data = await openaiRes.json();
+    // Claude-backed since 2026-08-21 (utils/claudeChat).
+    const data = await createChatCompletion(payload as any);
     const choices = (data as any).choices;
     const reply = choices?.[0]?.message?.content || 'No response from AI.';
     // Log request/response
@@ -42,6 +31,6 @@ export const devopsChat = functions.https.onRequest(async (req, res) => {
     res.json({ reply });
   } catch (err) {
     console.error('[DevOpsChat] Error:', err);
-    res.status(500).json({ reply: 'Error contacting OpenAI.' });
+    res.status(500).json({ reply: 'Error contacting the AI provider.' });
   }
 }); 

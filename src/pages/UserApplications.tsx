@@ -15,6 +15,7 @@ import { useT, getLanguage } from '../i18n';
 import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 import { extractDateFromShiftDate } from '../utils/gigShiftApplicationLimits';
 import WorkerApplicationListCard from '../components/worker/applications/WorkerApplicationListCard';
+import WorkerPageHeader from '../components/worker/WorkerPageHeader';
 
 /** Combine YYYY-MM-DD with optional time (HH:mm string or Timestamp) for list display. */
 function combineShiftDateAndTime(shiftDateStr: string, startTime: unknown): Date | null {
@@ -415,16 +416,14 @@ const UserApplications: React.FC<UserApplicationsProps> = ({ embedded = false })
   }
 
   return (
-    <Box sx={embedded ? {} : { maxWidth: 'lg', mx: 'auto', py: 2 }}>
+    <Box sx={embedded ? {} : {}}>
       {linkedApplicationMissing && (
         <Alert severity="warning" sx={{ mb: 2 }}>
           This item is unavailable. You can review your other applications below.
         </Alert>
       )}
       {!embedded && (
-        <Typography variant="h4" component="h1" sx={{ fontWeight: 600, mb: applications.length > 0 ? 2 : 0 }}>
-          {t('applications.title')}
-        </Typography>
+        <WorkerPageHeader title={t('applications.title')} backTo="/c1/workers/dashboard" />
       )}
       {applications.length === 0 ? (
         <Box sx={{ p: 4, textAlign: 'center' }}>

@@ -16,7 +16,7 @@ const WorkerDashboardActivity: React.FC = () => {
   const { items, loading } = useWorkerRecentActivity(user?.uid);
 
   return (
-    <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+    <Card variant="outlined" sx={{ borderColor: 'divider' }}>
       <CardContent>
         <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
           {t('dashboard.recentActivity')}

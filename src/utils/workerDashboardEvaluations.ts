@@ -25,9 +25,6 @@ export function evaluateResumeForPriorityStack(userDoc: Record<string, unknown> 
     'resume.downloadUrl': resumeObj.downloadUrl ?? null,
     'resume.fileName': resumeObj.fileName ?? null,
     'resume.storagePath': resumeObj.storagePath ?? null,
-    'resume.fileUrl': resumeObj.fileUrl ?? null,
-    resumeStoragePath: userDoc.resumeStoragePath ?? null,
-    resumeUrl: userDoc.resumeUrl ?? null,
   };
   return {
     hasStoredResume: userDocHasStoredResume(userDoc),

@@ -468,7 +468,11 @@ async function assertCanForceRefresh(
 export const syncWorkerDashboardActionItemsV1 = onCall(
   {
     region: REGION,
-    memory: '256MiB',
+    // cors: hrxone.com calls this on dashboard load when a worker has no
+    // snapshot yet (post-legacy-removal fallback, 2026-08-24). 512MiB per
+    // the project floor (256 OOMs on cold start).
+    cors: true,
+    memory: '512MiB',
     timeoutSeconds: 60,
   },
   async (request) => {

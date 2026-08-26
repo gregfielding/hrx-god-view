@@ -72,6 +72,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../../firebase';
+import PasteRosterDialog from './PasteRosterDialog';
 import { p } from '../../data/firestorePaths';
 import { getCalendarDayLocal } from '../../utils/dateUtils';
 import { normalizeAssignmentStatus } from '../../utils/assignmentStatusNormalize';
@@ -292,6 +293,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
    * previously-saved JO Detail filter prefs.
    */
   const [selectedShiftId, setSelectedShiftId] = useState<string>(persistedFilters.shiftId);
+  /** Paste Roster (spreadsheet bridge, 2026-08-24) — dialog open state. */
+  const [pasteRosterOpen, setPasteRosterOpen] = useState(false);
   // In drawer mode (`lockedShiftId`) the worker pool is always
   // scoped to a specific shift, so default the Workforce filter to
   // "Shift Applicants" rather than rehydrating from the JO Detail
@@ -490,10 +493,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                 userData.address?.state || 
                 '';
     
-    // Extract resume URL (could be in multiple places)
-    const resumeUrl = userData.resumeUrl || 
-                     userData.resume?.downloadUrl || 
-                     '';
+    const resumeUrl = userData.resume?.downloadUrl || '';
     const resume = userData.resume || null;
     
     // Extract skills and languages (ensure arrays of strings; profile data may
@@ -3096,6 +3096,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       // `assignmentStatusByUserId` to 'cancelled', the load() effect
       // re-runs, and our same shape (Placed) is rebuilt deterministically
       // — no flicker.
+      // Reload the Worker Pool too (Danny 2026-08-25): the server reverts
+      // the application to 'submitted' on cancel, but the pool list was
+      // loaded earlier — without this bump the worker vanishes from the
+      // shift card AND the pool until a full page refresh, so recruiters
+      // couldn't re-place them (e.g. usher → ticket taker) without F5.
+      setPoolRefreshTick((n) => n + 1);
     } catch (err: any) {
       console.error('Error cancelling assignment:', err);
       setError(err?.message || 'Failed to cancel assignment');
@@ -3746,6 +3752,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         withAssignment.forEach((w) => next.delete(w.id));
         return next;
       });
+      // Same pool reload as the single-cancel path (Danny 2026-08-25).
+      setPoolRefreshTick((n) => n + 1);
     } catch (err: any) {
       console.error('Error bulk cancelling assignments:', err);
       setError(err?.message || 'Failed to cancel selected');
@@ -4274,6 +4282,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       return;
     }
     // Optimistic immediately; the offer fires when the undo window closes.
+    // 60s → 10s (Danny via Greg, 2026-08-25): recruiters sat waiting out the
+    // window before they could confirm each worker.
     pendingHireShiftByWorkerRef.current.set(worker.id, targetShiftId);
     setPendingHireWorkerIds((prev) => new Set(prev).add(worker.id));
     const fire = () => {
@@ -4281,7 +4291,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       setUndoHireCount(pendingUndoHiresRef.current.size);
       void executeDelayedHire(worker, targetShiftId);
     };
-    const timer = setTimeout(fire, 60_000);
+    const timer = setTimeout(fire, 10_000);
     pendingUndoHiresRef.current.set(worker.id, { timer, fire });
     setUndoHireCount(pendingUndoHiresRef.current.size);
   };
@@ -4602,6 +4612,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                 ))}
               </Select>
             </FormControl>
+          )}
+          {showContent && shifts.length > 0 && (
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={!safeSelectedShiftId}
+              onClick={() => setPasteRosterOpen(true)}
+              sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              Paste roster
+            </Button>
           )}
           {/* Day picker — JO-wide (2026-05-23). Shows whenever the JO
               spans more than one calendar day, whether that's from a
@@ -5695,7 +5716,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         <Snackbar
           open={undoHireCount > 0}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-          message={`Hiring ${undoHireCount} worker${undoHireCount === 1 ? '' : 's'} — the offer text sends in 60 seconds`}
+          message={`Hiring ${undoHireCount} worker${undoHireCount === 1 ? '' : 's'} — the offer text sends in 10 seconds`}
           action={
             <Button color="secondary" size="small" onClick={undoAllPendingHires}>
               Undo
@@ -5849,6 +5870,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             setSelectedAssignmentWorkerIds(new Set());
             setBulkDrawerOpen(false);
           }}
+        />
+
+        {/* Paste Roster — spreadsheet bridge (2026-08-24). Assignments land
+            via placementsCreateAssignments, so the tab's live listeners pick
+            them up with no explicit refresh. */}
+        <PasteRosterDialog
+          open={pasteRosterOpen}
+          onClose={() => setPasteRosterOpen(false)}
+          tenantId={tenantId}
+          jobOrderId={jobOrderId}
+          shift={shifts.find((sh) => sh.id === safeSelectedShiftId) ?? null}
+          hiringEntityId={placementHiringEntityId ?? (jobOrder as { hiringEntityId?: string | null } | null)?.hiringEntityId ?? null}
+          customerAccount={
+            (jobOrder as { companyName?: string | null } | null)?.companyName ?? hiringEntityName ?? null
+          }
         />
       </Box>
   );

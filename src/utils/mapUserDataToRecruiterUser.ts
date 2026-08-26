@@ -90,6 +90,9 @@ export function mapUserDataToRecruiterUser(userId: string, userData: any, tenant
     aiJobFitScore: tenantData.aiJobFitScore ?? userData.aiJobFitScore,
     userGroupIds: tenantData.userGroupIds || userData.userGroupIds || [],
     skills: normalizedSkills,
+    // Geo passthrough — powers the "X.X miles away" line on applicant tables.
+    homeAddress: userData.homeAddress,
+    addressInfo: userData.addressInfo,
     city: userData.city || userData.address?.city || (userData.addressInfo && (userData.addressInfo as any).city) || '',
     state: (() => {
       const ai = userData.addressInfo && typeof userData.addressInfo === 'object' ? (userData.addressInfo as any) : null;

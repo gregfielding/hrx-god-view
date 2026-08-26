@@ -19,13 +19,13 @@
  */
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import OpenAI from 'openai';
+import { getClaudeChat } from '../utils/claudeChat';
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 const db = admin.firestore();
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
+const openai = getClaudeChat(); // Claude-backed since 2026-08-21 (lazy — no key read at import)
 
 const trim = (v: unknown): string => String(v ?? '').trim();
 

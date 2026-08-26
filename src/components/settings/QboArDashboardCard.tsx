@@ -44,7 +44,13 @@ interface AgedRow {
 
 /** Defensive parse of QBO's AgedReceivables report shape:
  *  Columns.Column[].ColTitle for headers; Rows.Row[] with either
- *  ColData[] (customer rows) or Summary.ColData (total rows). */
+ *  ColData[] (customer rows), Summary.ColData (total rows), or a NESTED
+ *  section (Header + Rows + Summary) for a parent customer with QBO
+ *  sub-customers — rendered as one family-total row named after the
+ *  parent (e.g. "RS3 Hospitality"), matching how sub-customers roll up
+ *  to their mapped account everywhere else (RS3=Proof, 2026-08-19).
+ *  Before this, section rows were swallowed by the ^total heuristic and
+ *  the table's rows silently summed short of the grand total. */
 function parseAgedReport(report: Record<string, any> | null): {
   headers: string[];
   rows: AgedRow[];
@@ -57,6 +63,18 @@ function parseAgedReport(report: Record<string, any> | null): {
   const rows: AgedRow[] = [];
   let totals: number[] | null = null;
   for (const r of rawRows) {
+    if (Array.isArray(r.Rows?.Row)) {
+      const name = String(r.Header?.ColData?.[0]?.value ?? '');
+      const sums = Array.isArray(r.Summary?.ColData) ? r.Summary.ColData : null;
+      if (sums) {
+        rows.push({
+          name: name || String(sums[0]?.value ?? '').replace(/^total\s*/i, ''),
+          values: sums.slice(1).map((c: Record<string, any>) => Number(c.value ?? 0) || 0),
+          isTotal: false,
+        });
+      }
+      continue;
+    }
     const colData = Array.isArray(r.ColData)
       ? r.ColData
       : Array.isArray(r.Summary?.ColData)
@@ -69,10 +87,18 @@ function parseAgedReport(report: Record<string, any> | null): {
     if (isTotal) totals = values;
     else rows.push({ name, values, isTotal: false });
   }
+  rows.sort((a, b) => (b.values[b.values.length - 1] ?? 0) - (a.values[a.values.length - 1] ?? 0));
   return { headers, rows, totals };
 }
 
-const QboArDashboardCard: React.FC = () => {
+interface QboArDashboardCardProps {
+  /** A/R report upgrade (Greg 2026-08-19): also compute DSO + payment
+   *  speed per client (live QBO queries — slower load, so opt-in;
+   *  the Invoicing page keeps the fast default). */
+  includeDso?: boolean;
+}
+
+const QboArDashboardCard: React.FC<QboArDashboardCardProps> = ({ includeDso = false }) => {
   const { activeTenant } = useAuth();
   const tenantId = activeTenant?.id ?? '';
   const [data, setData] = useState<Record<string, any> | null>(null);
@@ -85,15 +111,15 @@ const QboArDashboardCard: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const fn = httpsCallable(functions, 'getQboDashboard');
-      const res = await fn({ tenantId });
+      const fn = httpsCallable(functions, 'getQboDashboard', { timeout: 180000 });
+      const res = await fn({ tenantId, ...(includeDso ? { includeDso: true } : {}) });
       setData((res.data ?? null) as Record<string, any> | null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [tenantId]);
+  }, [tenantId, includeDso]);
 
   useEffect(() => {
     void load();
@@ -195,6 +221,71 @@ const QboArDashboardCard: React.FC = () => {
               </TableBody>
             </Table>
           </TableContainer>
+        )}
+
+        {/* DSO & payment speed (A/R report upgrade, opt-in). */}
+        {Array.isArray(data?.dso) && data.dso.length > 0 && (
+          <>
+            <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
+              DSO &amp; payment speed
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+              DSO = open A/R ÷ billed last 91 days × 91. Payment speed compares invoices issued the
+              last 91 days vs the 91 before — a red arrow means this client is paying slower.
+            </Typography>
+            <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow sx={{ bgcolor: 'grey.50' }}>
+                    <TableCell sx={{ fontWeight: 600 }}>Client</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>Open A/R</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>Billed (91d)</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>DSO</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>Avg days to pay</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>Trend</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {(data.dso as Array<Record<string, any>>).map((r) => (
+                    <TableRow key={String(r.customerId)} hover>
+                      <TableCell>{String(r.name)}</TableCell>
+                      <TableCell align="right">{usd(r.openBalance)}</TableCell>
+                      <TableCell align="right">{Number(r.billed91) ? usd(r.billed91) : '—'}</TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 600 }}>
+                        {r.dsoDays == null ? '—' : `${r.dsoDays}d`}
+                      </TableCell>
+                      <TableCell align="right">
+                        {r.avgDaysToPayRecent == null
+                          ? '—'
+                          : `${r.avgDaysToPayRecent}d (${r.paidCountRecent} inv)`}
+                      </TableCell>
+                      <TableCell
+                        align="right"
+                        sx={{
+                          fontWeight: 600,
+                          color:
+                            r.trendDays == null
+                              ? 'text.secondary'
+                              : Number(r.trendDays) > 0
+                                ? 'error.main'
+                                : 'success.main',
+                        }}
+                      >
+                        {r.trendDays == null
+                          ? '—'
+                          : `${Number(r.trendDays) > 0 ? '▲' : '▼'} ${Math.abs(Number(r.trendDays))}d`}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </>
+        )}
+        {typeof data?.dsoError === 'string' && data.dsoError && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            DSO unavailable: {data.dsoError}
+          </Alert>
         )}
 
         {/* Mapping health — the onboarding to-do list. */}

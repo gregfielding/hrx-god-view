@@ -18,8 +18,6 @@ import {
   useMediaQuery,
   Snackbar,
   Skeleton,
-  Menu,
-  MenuItem,
   Tooltip,
   Accordion,
   AccordionSummary,
@@ -46,7 +44,6 @@ import {
   ContentCopy as ContentCopyIcon,
   VerifiedUser as VerifiedIcon,
   Lock as LockIcon,
-  Language as LanguageIcon,
   Map as MapIcon,
   Checkroom as CheckroomIcon,
   Engineering as EngineeringIcon,
@@ -85,6 +82,7 @@ import { logAssignmentUpdateActivity } from '../utils/activityLogger';
 import { buildCanonicalWorkerProfileWritePatch } from '../utils/workerReadinessWriteModel';
 import { formatHourlyPayAmountForI18n } from '../utils/hourlyPayDisplay';
 import AuthDialog from '../components/AuthDialog';
+import { langToggleStyle } from './authMinimalStyles';
 import WorkerBottomSheet from '../components/worker/WorkerBottomSheet';
 
 const JobPostingDetail: React.FC = () => {
@@ -183,7 +181,6 @@ const JobPostingDetail: React.FC = () => {
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [applicationData, setApplicationData] = useState<any>(null);
-  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [guestLanguage, setGuestLanguage] = useGuestLanguage();
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -1672,7 +1669,7 @@ const JobPostingDetail: React.FC = () => {
       case 'offer':
         return {
           label: 'Accepted',
-          backgroundColor: '#2196F3', // Blue
+          backgroundColor: '#111111', // Ink (accent decision 2026-08-23)
           color: '#fff',
           cursor: 'default',
           pointerEvents: 'none' as const,
@@ -1680,7 +1677,7 @@ const JobPostingDetail: React.FC = () => {
       case 'accepted':
         return {
           label: 'accepted_special', // Special flag for custom UI
-          backgroundColor: '#2196F3', // Blue for Accepted button
+          backgroundColor: '#111111', // Ink (accent decision 2026-08-23)
           color: '#fff',
           cursor: 'default',
           pointerEvents: 'none' as const,
@@ -2768,18 +2765,31 @@ const JobPostingDetail: React.FC = () => {
     return JSON.parse(JSON.stringify(schema));
   };
 
-  const cardPadding = isMobile ? 1.5 : 2.5;
+  // Canon (2026-08-24): theme radius (12px) and a uniform 16px inset —
+  // the old borderRadius:3 resolved to 36px pills and doubled padding.
+  const cardPadding = 2;
   const cardBaseSx = {
     width: '100%',
     maxWidth: '100%',
     boxSizing: 'border-box',
     p: cardPadding,
-    borderRadius: 3,
     overflow: 'hidden',
   } as const;
 
   return (
-    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 0, pt: 2, px: { xs: 2, sm: 3 }, pb: showStickyApply ? 10 : 0 }}>
+    <Box
+      sx={{
+        maxWidth: 1200,
+        mx: 'auto',
+        p: 0,
+        pt: 1,
+        pb: showStickyApply ? 10 : 0,
+        // Guests render OUTSIDE C1WorkerLayout (no shell for logged-out
+        // visitors), so the page supplies its own gutter; signed-in workers
+        // already get it from the layout — padding here would double it.
+        px: user ? 0 : { xs: 2, sm: 3 },
+      }}
+    >
       {/* Google Jobs Structured Data */}
       <Helmet>
         <title>
@@ -2811,55 +2821,53 @@ const JobPostingDetail: React.FC = () => {
       )}
 
       {/* Top row: Back to Jobs Board + Language picker + Sign In or Create Account (when guest) */}
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 3 }}>
-        <Button
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/c1/jobs-board')}
-          size={isMobile ? 'small' : 'medium'}
-        >
-          {t('jobs.backToJobsBoard')}
-        </Button>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+        {/* C1 logo alone on the left as guest branding (Greg 2026-08-25);
+            it also taps back to the board. Guests only — signed-in workers
+            already get the logo from the C1WorkerLayout shell. The back
+            arrow lives on the right, between EN|ES and Sign In (Greg's
+            layout call). */}
+        {!user ? (
+          <Box
+            component="img"
+            src="/C1.png"
+            alt="C1 Staffing"
+            onClick={() => navigate('/c1/jobs-board')}
+            sx={{ height: { xs: 30, sm: 38 }, width: 'auto', objectFit: 'contain', cursor: 'pointer' }}
+            onError={(e: any) => {
+              e.currentTarget.style.display = 'none';
+            }}
+          />
+        ) : (
+          <Box />
+        )}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {/* Quiet EN | ES toggle — the standard guest language picker
+              (same as /login/phone and /apply, Greg 2026-08-25). */}
           {!user && (
-            <>
-              <Tooltip title={guestLanguage === 'es' ? t('nav.messageLanguageEs') : t('nav.messageLanguageEn')}>
-                <Box
-                  component="button"
-                  onClick={(e) => setLanguageMenuAnchorEl(e.currentTarget)}
-                  aria-label={t('nav.language')}
-                  sx={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 0.5,
-                    border: '1px solid',
-                    borderColor: 'divider',
-                    borderRadius: 1,
-                    px: 1,
-                    py: 0.75,
-                    bgcolor: 'background.paper',
-                    color: 'text.secondary',
-                    cursor: 'pointer',
-                    '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
-                  }}
-                >
-                  <LanguageIcon sx={{ fontSize: 20 }} />
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {guestLanguage === 'es' ? 'ES' : 'EN'}
-                  </Typography>
-                </Box>
-              </Tooltip>
-          </>
+            <Box sx={{ whiteSpace: 'nowrap', mr: 0.5 }}>
+              <button type="button" style={langToggleStyle(guestLanguage === 'en')} onClick={() => setGuestLanguage('en')}>EN</button>
+              <span style={{ color: '#ccc', margin: '0 8px' }}>|</span>
+              <button type="button" style={langToggleStyle(guestLanguage === 'es')} onClick={() => setGuestLanguage('es')}>ES</button>
+            </Box>
           )}
+          <IconButton
+            onClick={() => navigate('/c1/jobs-board')}
+            aria-label={t('jobs.backToJobsBoard')}
+            sx={{ color: 'text.secondary' }}
+          >
+            <ArrowBackIcon />
+          </IconButton>
           {!user && (
             <Button
               variant="contained"
               onClick={() => setAuthDialogOpen(true)}
-              size={isMobile ? 'small' : 'medium'}
+              size="small"
               sx={{
-                px: { xs: 1.5, sm: 2 },
-                py: { xs: 0.75, sm: 1 },
+                px: 2,
                 fontWeight: 600,
-                borderRadius: 2,
+                minHeight: 36,
+                borderRadius: 999,
                 textTransform: 'none',
                 whiteSpace: 'nowrap',
               }}
@@ -2869,35 +2877,6 @@ const JobPostingDetail: React.FC = () => {
           )}
         </Box>
       </Box>
-      {!user && (
-        <Menu
-          anchorEl={languageMenuAnchorEl}
-          open={Boolean(languageMenuAnchorEl)}
-          onClose={() => setLanguageMenuAnchorEl(null)}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-        >
-          <MenuItem
-            selected={guestLanguage === 'en'}
-            onClick={() => {
-              setLanguageMenuAnchorEl(null);
-              setGuestLanguage('en');
-            }}
-          >
-            {t('nav.englishEn')}
-          </MenuItem>
-          <MenuItem
-            selected={guestLanguage === 'es'}
-            onClick={() => {
-              setLanguageMenuAnchorEl(null);
-              setGuestLanguage('es');
-            }}
-          >
-            {t('nav.espanolEs')}
-          </MenuItem>
-        </Menu>
-      )}
-
       <AuthDialog
         open={authDialogOpen}
         onClose={() => setAuthDialogOpen(false)}
@@ -2906,27 +2885,12 @@ const JobPostingDetail: React.FC = () => {
       />
 
       {/* Hero header card */}
-      <Paper ref={heroHeaderRef} elevation={2} sx={{ ...cardBaseSx, mb: 2 }}>
+      <Paper ref={heroHeaderRef} elevation={2} sx={{ ...cardBaseSx, mb: 2, position: 'relative' }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 2 }}>
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1, mb: 1 }}>
-              <Typography component="h1" variant={isMobile ? 'h5' : 'h4'} sx={{ fontWeight: 700, fontSize: isMobile ? '1.35rem' : '1.5rem' }}>
-                {getJobPostingDisplayText(posting, 'postTitle', displayLanguage) || posting.postTitle}
-              </Typography>
-              <Tooltip title={t('jobs.copyLink')}>
-                <IconButton
-                  size="small"
-                  onClick={() => {
-                    navigator.clipboard.writeText(window.location.href);
-                    setShareSnackbarOpen(true);
-                  }}
-                  sx={{ color: 'text.secondary', flexShrink: 0 }}
-                  aria-label={t('jobs.copyLink')}
-                >
-                  <ContentCopyIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Box>
+            <Typography component="h1" variant="h5" sx={{ mb: 1 }}>
+              {getJobPostingDisplayText(posting, 'postTitle', displayLanguage) || posting.postTitle}
+            </Typography>
 
             {/* Client company name intentionally hidden on public job postings — */}
             {/* the tenant brand is shown at the top of the page; surfacing the */}
@@ -2942,7 +2906,7 @@ const JobPostingDetail: React.FC = () => {
                 sx={{
                   fontWeight: 800,
                   color: 'success.dark',
-                  fontSize: isMobile ? '1.5rem' : '1.75rem',
+                  fontSize: '1.25rem',
                   letterSpacing: '-0.02em',
                   mb: 1.5,
                   lineHeight: 1.2,
@@ -3033,6 +2997,24 @@ const JobPostingDetail: React.FC = () => {
             </Box>
           </Box>
 
+          {/* Copy-link pinned to the hero's bottom-right corner, opposite the
+              date chip (Greg 2026-08-25) — next to the title it read as part
+              of the job name, and inside the title column it can't reach the
+              card edge. */}
+          <Tooltip title={t('jobs.copyLink')}>
+            <IconButton
+              size="small"
+              onClick={() => {
+                navigator.clipboard.writeText(window.location.href);
+                setShareSnackbarOpen(true);
+              }}
+              sx={{ color: 'text.secondary', position: 'absolute', right: 10, bottom: 8 }}
+              aria-label={t('jobs.copyLink')}
+            >
+              <ContentCopyIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+
           {/*
             Primary actions / status block.
             For gigs, applying is always shift-by-shift — never via a generic
@@ -3115,11 +3097,12 @@ const JobPostingDetail: React.FC = () => {
                 <Button
                   variant="contained"
                   size="small"
+                  color="success"
                   onClick={handleApply}
                   sx={{
                     borderRadius: '999px',
                     px: 2,
-                    fontWeight: 600,
+                    fontWeight: 700,
                   }}
                 >
                   Apply Again
@@ -3134,8 +3117,6 @@ const JobPostingDetail: React.FC = () => {
                     sx={{
                       minWidth: isMobile ? 150 : 200,
                       py: isMobile ? 1 : 1.5,
-                      fontSize: isMobile ? '0.9rem' : '1.1rem',
-                      fontWeight: 'bold',
                       backgroundColor: statusButtonProps.backgroundColor,
                       color: statusButtonProps.color,
                       '&:hover': {
@@ -3192,11 +3173,12 @@ const JobPostingDetail: React.FC = () => {
               <Button
                 variant="contained"
                 size="small"
+                color="success"
                 onClick={handleApply}
                 sx={{
                   borderRadius: '999px',
                   px: 2,
-                  fontWeight: 600,
+                  fontWeight: 700,
                 }}
               >
                 {t('jobs.applyForJob')}
@@ -3212,11 +3194,23 @@ const JobPostingDetail: React.FC = () => {
             xs: '1fr',
             md: posting.jobType === 'gig' && dynamicShifts.length > 0 ? '1fr' : '2fr 1fr',
           },
-          gap: 3,
+          // One 16px grid (Greg 2026-08-25): the column's gap owns ALL
+          // vertical spacing between cards — cards carry no mb, so the gap
+          // stays identical from the hero to the last apply card.
+          gap: 2,
         }}
       >
         {/* Main Content */}
-        <Box sx={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
+        <Box
+          sx={{
+            width: '100%',
+            maxWidth: '100%',
+            boxSizing: 'border-box',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+          }}
+        >
           {/* About this Job — description with optional Read more */}
           {(() => {
             const rawDesc = getJobPostingDisplayText(posting, 'jobDescription', displayLanguage) || posting.jobDescription || '';
@@ -3227,12 +3221,12 @@ const JobPostingDetail: React.FC = () => {
             const showTruncated = isLong && !descriptionExpanded;
             const displayText = showTruncated ? localizedDesc.slice(0, charLimit) + '…' : localizedDesc;
             return (
-              <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
-                <CardContent sx={{ p: 0 }}>
-                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+              <Card sx={{ ...cardBaseSx }} elevation={2}>
+                <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                     {t('jobs.aboutThisJob')}
                   </Typography>
-                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>
                     {displayText || t('jobs.noDescriptionProvided')}
                   </Typography>
                   {isLong && (
@@ -3253,9 +3247,9 @@ const JobPostingDetail: React.FC = () => {
               2+ open shifts → let the applicant pick one (see `careerOpenShifts`); otherwise the original
               single-summary line. */}
           {posting.jobType === 'career' && careerOpenShifts.length > 1 ? (
-            <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
-              <CardContent sx={{ p: 0 }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+            <Card sx={{ ...cardBaseSx }} elevation={2}>
+              <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                   {t('jobs.availableShifts')}
                 </Typography>
                 <RadioGroup
@@ -3284,9 +3278,9 @@ const JobPostingDetail: React.FC = () => {
               </CardContent>
             </Card>
           ) : posting.jobType === 'career' && careerWeeklyScheduleSummary ? (
-            <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
-              <CardContent sx={{ p: 0 }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+            <Card sx={{ ...cardBaseSx }} elevation={2}>
+              <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                   {t('jobs.weeklySchedule')}
                 </Typography>
                 <Typography variant="body1" sx={{ lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
@@ -3298,9 +3292,9 @@ const JobPostingDetail: React.FC = () => {
 
           {/* Location — address, map preview, Get Directions, optional distance */}
           {(posting.worksiteAddress?.street || posting.worksiteAddress?.city || posting.worksiteAddress?.state) && (
-            <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
-              <CardContent sx={{ p: 0 }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+            <Card sx={{ ...cardBaseSx }} elevation={2}>
+              <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                   {t('jobs.location')}
                 </Typography>
                 {(() => {
@@ -3310,19 +3304,19 @@ const JobPostingDetail: React.FC = () => {
                   const mapsQuery = encodeURIComponent(addressStr || `${wa?.city} ${wa?.state}`.trim());
                   return (
                     <>
-                      <Typography variant="body1" sx={{ mb: 1 }}>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
                         {posting.worksiteName ? `${posting.worksiteName} — ` : ''}{addressStr || t('jobs.addressTbd')}
                       </Typography>
                       {addressStr && (
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center', mb: 2 }}>
                           <Button
-                            variant="contained"
+                            variant="text"
                             size="small"
                             startIcon={<DirectionsIcon />}
                             href={`https://www.google.com/maps/search/?api=1&query=${mapsQuery}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            sx={{ textTransform: 'none' }}
+                            sx={{ textTransform: 'none', px: 1, minHeight: 36, fontWeight: 600 }}
                           >
                             {t('assignment.openInGoogleMaps')}
                           </Button>
@@ -3371,9 +3365,9 @@ const JobPostingDetail: React.FC = () => {
             !showOfferResponseMinimalView &&
             showAssignmentInfoOnJobPosting) ? (
             <>
-              <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
-                <CardContent>
-                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+              <Card sx={{ ...cardBaseSx }} elevation={2}>
+                <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+                  <Typography variant="subtitle1" sx={{ mb: 1.5 }}>
                     {t('assignment.assignmentInfo')}
                   </Typography>
                   <Grid container spacing={3}>
@@ -3481,9 +3475,9 @@ const JobPostingDetail: React.FC = () => {
                   </Grid>
                 </CardContent>
               </Card>
-              <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
-                <CardContent>
-                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+              <Card sx={{ ...cardBaseSx }} elevation={2}>
+                <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+                  <Typography variant="subtitle1" sx={{ mb: 1.5 }}>
                     {t('assignment.mySchedule')}
                   </Typography>
                   <Stack spacing={2}>
@@ -3596,8 +3590,8 @@ const JobPostingDetail: React.FC = () => {
               Hidden for express-interest postings: they have no bookable dated
               shifts, so we show the generic Apply/Express-interest CTA instead. */}
           {posting.jobType === 'gig' && !isExpressInterest && (
-            <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
-              <CardContent sx={{ p: 0 }}>
+            <Card sx={{ ...cardBaseSx }} elevation={2}>
+              <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
                 {loadingShifts ? (
                   <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
                     <CircularProgress size={24} />
@@ -3679,8 +3673,8 @@ const JobPostingDetail: React.FC = () => {
             if (!hasAnyRequirement || missingCount === 0) return null;
             return (
               <Card sx={{ ...cardBaseSx }} elevation={2}>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
+                <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                     {t('jobs.requirements')}
                   </Typography>
 
@@ -3736,13 +3730,13 @@ const JobPostingDetail: React.FC = () => {
             <Card
               sx={{
                 ...cardBaseSx,
-                mb: 3,
+                mb: 2,
                 bgcolor: 'white',
               }}
               elevation={2}
             >
-              <CardContent sx={{ p: 0 }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
+              <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                   {statusButtonProps?.label === 'confirmed_special'
                     ? t('jobs.youveBeenHired')
                     : (statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode)
@@ -3764,7 +3758,7 @@ const JobPostingDetail: React.FC = () => {
                       <Typography variant="body2" color="text.secondary">
                         {t('jobs.openings')}
                       </Typography>
-                      <Typography variant="body1" fontWeight="medium">
+                      <Typography variant="body2" fontWeight="medium">
                         {posting.workersNeeded}
                       </Typography>
                     </Box>
@@ -3775,7 +3769,7 @@ const JobPostingDetail: React.FC = () => {
                       <Typography variant="body2" color="text.secondary">
                         {t('jobs.type')}
                       </Typography>
-                      <Typography variant="body1" fontWeight="medium">
+                      <Typography variant="body2" fontWeight="medium">
                         {posting.jobType === 'gig' ? t('jobs.gig') : t('jobs.career')}
                       </Typography>
                     </Box>
@@ -3790,7 +3784,7 @@ const JobPostingDetail: React.FC = () => {
                             ? t('jobs.estimatedStartDate')
                             : t('jobs.startDate')}
                       </Typography>
-                      <Typography variant="body1" fontWeight="medium">
+                      <Typography variant="body2" fontWeight="medium">
                         {formatDate(assignmentStartDate ?? posting.startDate)}
                       </Typography>
                     </Box>
@@ -3802,7 +3796,7 @@ const JobPostingDetail: React.FC = () => {
                         {t('jobs.weeklySchedule')}
                       </Typography>
                       <Typography
-                        variant="body1"
+                        variant="body2"
                         fontWeight="medium"
                         sx={{ textAlign: 'right', whiteSpace: 'pre-wrap' }}
                       >
@@ -3826,8 +3820,6 @@ const JobPostingDetail: React.FC = () => {
                       startIcon={assignmentDecisionLoading ? <CircularProgress size={20} color="inherit" /> : null}
                       sx={{
                         py: 1.5,
-                        fontSize: '1.1rem',
-                        fontWeight: 'bold',
                       }}
                     >
                       {assignmentDecisionLoading ? t('jobs.accepting') : t('jobs.acceptOfferCta')}
@@ -3855,8 +3847,6 @@ const JobPostingDetail: React.FC = () => {
                         fullWidth
                         sx={{
                           py: 1.5,
-                          fontSize: '1.1rem',
-                          fontWeight: 'bold',
                         }}
                       >
                         {t('assignment.viewAssignment')}
@@ -3869,8 +3859,9 @@ const JobPostingDetail: React.FC = () => {
                       variant="contained"
                       fullWidth
                       size="large"
+                      color="success"
                       onClick={handleApply}
-                      sx={{ mt: 3, py: 1.5 }}
+                      sx={{ mt: 3, py: 1.5, fontWeight: 700 }}
                     >
                       Apply Again
                     </Button>
@@ -3939,8 +3930,9 @@ const JobPostingDetail: React.FC = () => {
                     variant="contained"
                     fullWidth
                     size="large"
+                    color="success"
                     onClick={handleApply}
-                    sx={{ mt: 3, py: 1.5 }}
+                    sx={{ mt: 3, py: 1.5, fontWeight: 700 }}
                   >
                     {t('jobs.applyForJob')}
                   </Button>

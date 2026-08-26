@@ -1,11 +1,12 @@
 import { onRequest, onCall } from 'firebase-functions/v2/https';
 import fetch from 'node-fetch';
 import * as admin from 'firebase-admin';
+import { createChatCompletion } from './utils/claudeChat';
 import { AnalyzeResponse, ChatResponse } from './schemas/dealCoach';
 import { logger } from './utils/logger';
 import { getAiCacheDoc } from './utils/inMemoryCache';
 
-const OPENAI_KEY = process.env.OPENAI_API_KEY || (process.env.FUNCTIONS_EMULATOR ? 'test' : '');
+const OPENAI_KEY = process.env.ANTHROPIC_API_KEY || (process.env.FUNCTIONS_EMULATOR ? 'test' : ''); // Claude-backed since 2026-08-21 (name kept for minimal diff)
 
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -76,10 +77,7 @@ export const dealCoachAnalyze = onRequest({ cors: true, region: 'us-central1' },
     let result: any;
     const apiKey = OPENAI_KEY;
     if (apiKey) {
-      const r = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
+      const r = await createChatCompletion({
           model: 'gpt-5-mini',
           response_format: {
             type: 'json_schema',
@@ -119,9 +117,8 @@ export const dealCoachAnalyze = onRequest({ cors: true, region: 'us-central1' },
             { role: 'user', content: `Stage: ${stageKey}\nSnapshot: ${JSON.stringify(snapshot)}` }
           ],
           temperature: 0.3
-        })
       });
-      const data: any = await r.json();
+      const data: any = r;
       const raw = data?.choices?.[0]?.message?.content;
       try {
         result = JSON.parse(raw);
@@ -156,10 +153,7 @@ export const dealCoachChat = onRequest({ cors: true, region: 'us-central1' }, as
     let payload: any = { text: 'Okay — here are next steps.' };
     if (apiKey) {
       const system = 'You are the Deal Coach AI for live assistance. Answer concisely, propose a next best action, and—when asked—produce drafts tailored to the buyer persona. Only use facts from the provided snapshot and thread.';
-      const r = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
+      const r = await createChatCompletion({
           model: 'gpt-5-mini',
           response_format: { type: 'json_object' },
           messages: [
@@ -167,9 +161,8 @@ export const dealCoachChat = onRequest({ cors: true, region: 'us-central1' }, as
             { role: 'user', content: `Deal: ${dealId} | Stage: ${stageKey}\nInstruction: ${message}` }
           ],
           temperature: 0.3
-        })
       });
-      const data: any = await r.json();
+      const data: any = r;
       const raw = data?.choices?.[0]?.message?.content;
       try {
         const parsed = ChatResponse.parse(JSON.parse(raw));
@@ -434,23 +427,15 @@ export const dealCoachAnalyzeCallable = onCall({
     const apiKey = OPENAI_KEY;
     if (apiKey) {
       try {
-        const r = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            response_format: { type: 'json_object' },
-            messages: [
-              { role: 'system', content: system },
-              { role: 'user', content: `Stage: ${stageKey}\nSnapshot: ${JSON.stringify(snapshot)}` }
-            ],
-            temperature: 0.3
-          })
+        const r = await createChatCompletion({
+          model: 'gpt-4o-mini',
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: `Stage: ${stageKey}\nSnapshot: ${JSON.stringify(snapshot)}` }
+          ],
         });
-        const data: any = await r.json();
+        const data: any = r;
         const raw = data?.choices?.[0]?.message?.content;
         try {
           result = JSON.parse(raw);
@@ -496,7 +481,7 @@ export const dealCoachChatCallable = onCall({ cors: true }, async (request) => {
   try {
     const { dealId, stageKey, tenantId, userId, message, entityType, entityName, contactCompany, contactTitle } = request.data || {};
     if (!dealId || !stageKey || !tenantId || !message) throw new Error('Missing fields');
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.ANTHROPIC_API_KEY;
     let payload: any = { text: 'Okay — here are next steps.' };
     
     // 🎯 ENHANCED CONTEXT GATHERING
@@ -1042,10 +1027,7 @@ RESPONSE FORMAT:
         
         // Make OpenAI API call
         const userMessage = enhancedMessage || message;
-        const r = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-                  body: JSON.stringify({
+        const r = await createChatCompletion({
           model: 'gpt-5-mini',
           messages: [
             { role: 'system', content: system },
@@ -1053,10 +1035,9 @@ RESPONSE FORMAT:
           ],
           temperature: 0.7,
           max_completion_tokens: 1000
-        })
         });
         
-        const data: any = await r.json();
+        const data: any = r;
         const response = data?.choices?.[0]?.message?.content;
         
         if (response) {

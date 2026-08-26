@@ -21,6 +21,15 @@ const PLACEMENT_SMS_SECRETS = [
   TWILIO_A2P_CAMPAIGN,
 ];
 import { ensureWorkerOnboardingPipeline } from './onboarding/workerOnboardingPipeline';
+import {
+  buildHiringLifecycleOnStageUpdate,
+  applyHiringLifecycleTimestampMetadata,
+  type HiringLifecycleCore,
+} from './shared/hiringLifecyclePatch';
+import {
+  firestoreSafeHiringLifecycle,
+  hiringLifecycleCoreFromApplicationData,
+} from './shared/hiringLifecycleFirestore';
 import { filterDnrRecipients } from './dnr/filterDnrRecipients';
 import { ASSIGNMENT_STATUS_QUERY_LIVE, isAssignmentTerminalNormalized } from './utils/assignmentStatusNormalize';
 import { sendNotificationAndPush } from './messaging/unifiedWorkerNotifications';
@@ -37,6 +46,49 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
+
+/**
+ * Time-to-fill instrumentation (Greg 2026-08-25): stamp the hiring-lifecycle
+ * stage transition alongside application-status writes. Before this, NOTHING
+ * stamped `hired`/`onboarding` — the lifecycle timeline died at prescreen and
+ * applied→hired duration was underivable. Best-effort: a stamp failure must
+ * never fail the hire/confirm flow.
+ *
+ * Pass `nextLegacyStatus` for status-driven transitions ('accepted' → stage
+ * 'hired' via the canonical map), or `explicitCore` for stages beyond the
+ * status vocabulary (e.g. 'onboarding' when the pipeline starts).
+ */
+async function stampApplicationLifecycleStage(
+  applicationRef: FirebaseFirestore.DocumentReference,
+  opts: { nextLegacyStatus?: string; explicitCore?: HiringLifecycleCore },
+): Promise<void> {
+  try {
+    const snap = await applicationRef.get();
+    if (!snap.exists) return;
+    const previous = hiringLifecycleCoreFromApplicationData(snap.data() as Record<string, unknown>);
+    const core =
+      opts.explicitCore ??
+      buildHiringLifecycleOnStageUpdate({ nextLegacyStatus: String(opts.nextLegacyStatus ?? '') })
+        .hiringLifecycle;
+    const full = applyHiringLifecycleTimestampMetadata({
+      core,
+      previous,
+      nowIso: new Date().toISOString(),
+    });
+    await applicationRef.set({ hiringLifecycle: firestoreSafeHiringLifecycle(full) }, { merge: true });
+  } catch (e) {
+    logger.warn('placementsApi: lifecycle stamp failed', {
+      applicationPath: applicationRef.path,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+const ONBOARDING_LIFECYCLE_CORE: HiringLifecycleCore = {
+  stage: 'onboarding',
+  subStatus: 'worker_onboarding_pipeline_started',
+  nextAction: 'none',
+};
 
 // 'decline'       → recruiter-offer declined (legacy) → status 'declined'
 // 'worker_cancel' → worker pulled out themselves ("I can no longer work" /
@@ -568,6 +620,7 @@ async function resolveApplicationForAssignment(args: {
     };
     if (entityId != null) updateData.entityId = entityId;
     await existing.ref.set(updateData, { merge: true });
+    await stampApplicationLifecycleStage(existing.ref, { nextLegacyStatus: 'accepted' });
     return existing.id;
   }
 
@@ -589,6 +642,7 @@ async function resolveApplicationForAssignment(args: {
     createdBy,
     updatedBy: createdBy,
   });
+  await stampApplicationLifecycleStage(created, { nextLegacyStatus: 'accepted' });
 
   return created.id;
 }
@@ -1631,7 +1685,10 @@ export const respondToAssignment = onCall(
     if (applicationRef) {
       await applicationRef.set(
         {
-          status: 'confirmed',
+          // 'accepted' (canonical), not 'confirmed' — the old value was
+          // unrecognized by normalizeApplicationStatus, so hires counted as
+          // un-advanced applicants in funnel stats (fixed 2026-08-25).
+          status: 'accepted',
           confirmedAt: now,
           confirmedBy: uid,
           updatedAt: now,
@@ -1639,6 +1696,7 @@ export const respondToAssignment = onCall(
         },
         { merge: true },
       );
+      await stampApplicationLifecycleStage(applicationRef, { nextLegacyStatus: 'accepted' });
     }
     await ensureWorkerOnboardingPipeline({
       tenantId,
@@ -1649,6 +1707,9 @@ export const respondToAssignment = onCall(
       triggeredByUid: uid,
       triggerSource: 'worker_confirmation',
     });
+    if (applicationRef) {
+      await stampApplicationLifecycleStage(applicationRef, { explicitCore: ONBOARDING_LIFECYCLE_CORE });
+    }
     return { success: true, status: 'confirmed' };
   }
 
@@ -1855,7 +1916,8 @@ export const confirmAssignmentForWorker = onCall(
     if (applicationRef) {
       await applicationRef.set(
         {
-          status: 'confirmed',
+          // 'accepted' (canonical) — see the worker-confirm path above.
+          status: 'accepted',
           confirmedAt: now,
           confirmedBy: uid,
           updatedAt: now,
@@ -1864,6 +1926,7 @@ export const confirmAssignmentForWorker = onCall(
         },
         { merge: true },
       );
+      await stampApplicationLifecycleStage(applicationRef, { nextLegacyStatus: 'accepted' });
     }
     if (targetWorkerId) {
       await ensureWorkerOnboardingPipeline({
@@ -1876,6 +1939,9 @@ export const confirmAssignmentForWorker = onCall(
         triggerSource: 'recruiter_confirmation',
         suppressOutboundAutomation: jobOrderMuted,
       });
+      if (applicationRef) {
+        await stampApplicationLifecycleStage(applicationRef, { explicitCore: ONBOARDING_LIFECYCLE_CORE });
+      }
     }
     return { success: true, status: 'confirmed' };
   },
@@ -1965,6 +2031,7 @@ export const revertAssignmentDecline = onCall(
             },
             { merge: true },
           );
+          await stampApplicationLifecycleStage(applicationRef, { nextLegacyStatus: 'accepted' });
         }
       }
     }
@@ -2067,6 +2134,7 @@ export const revertAssignmentCancel = onCall(
             },
             { merge: true },
           );
+          await stampApplicationLifecycleStage(applicationRef, { nextLegacyStatus: 'accepted' });
         }
       }
     }

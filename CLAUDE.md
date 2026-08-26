@@ -38,6 +38,35 @@ keep its README index current — that directory is the team's shared brain.
   `stripUndefinedDeep` — naive undefined-strippers corrupt timestamps.
 - **Functions memory**: 512MiB minimum (256MiB OOMs on cold start).
 
+## Git workflow (two-person team — Greg + Mark, both using Claude)
+
+- **Pull before you start**: run `git pull` at the beginning of any session
+  that will edit code, and before starting a new piece of work.
+- **Push after you commit**: an unpushed commit exists only on one laptop —
+  the teammate can't see it and a lost machine loses it.
+- **☠️ Never deploy from a stale or unpushed tree.** Hosting deploys ship
+  the WHOLE bundle: deploying from a checkout that's missing the other
+  person's pushed commits silently reverts their live features. Before any
+  `firebase deploy`: `git pull`, confirm `git log origin/main..main` is
+  empty or being pushed now, then build fresh and deploy.
+- **☠️ Hosting deploys also ship the CONFIG — preflight it (incident
+  2026-08-25).** A hosting deploy run from the wrong directory (or against
+  a minimal/`firebase init`'d firebase.json) publishes an EMPTY hosting
+  config: the SPA `**`→/index.html rewrite disappears and every deep link
+  and page refresh on hrxone.com serves the raw Firebase 404 (this took
+  production down for ~2h; found via Danny at 10:41 PM). Before EVERY
+  `firebase deploy --only hosting`, from the hrx-god-view repo root:
+  (1) `grep -c '"destination": "/index.html"' firebase.json` must be ≥ 1;
+  (2) after deploy, `curl -s -o /dev/null -w '%{http_code}' https://hrxone.com/jobs/job-orders`
+  must be `200` — if it's 404, the config was lost: redeploy from a
+  correct checkout immediately. Never run `firebase deploy` from any
+  directory other than the repo root, and never run `firebase init`.
+  See docs/claude/feedback_hosting_empty_config_incident.md.
+- Trunk-based on `main` with small, frequent commits is the default; use a
+  feature branch + PR for large or risky changes.
+- Announce functions deploys to each other (two simultaneous deploys of
+  the same function can race).
+
 ## Memory policy (for Claude sessions)
 
 Ops/dev/institutional knowledge → `docs/claude/` in this repo (shared).

@@ -426,6 +426,11 @@ export function OverviewQualificationsCard({
                   <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                     <Typography variant="body2" component="span" sx={overviewProfileFieldValueSx}>
                       {c.label}
+                      {c.expirationDate ? (
+                        <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.75 }}>
+                          expires {c.expirationDate}
+                        </Typography>
+                      ) : null}
                     </Typography>
                     {c.fileUrl ? (
                       <Link
@@ -487,6 +492,54 @@ export function OverviewQualificationsCard({
               )}
             </Box>
           </Box>
+
+          {q.languageLabels.length > 0 ? (
+            <Box>
+              <Typography {...overviewSubsectionHeadingTypographyProps}>Languages</Typography>
+              <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.5} sx={{ mt: 0.5 }}>
+                {q.languageLabels.map((l, i) => (
+                  <Chip key={`lang-${i}-${l}`} label={l} size="small" variant="outlined" sx={overviewBodyChipSx} />
+                ))}
+              </Stack>
+            </Box>
+          ) : null}
+
+          {q.yearsExperience !== null || q.educationLevel ? (
+            <Box>
+              <Typography {...overviewSubsectionHeadingTypographyProps}>Experience summary</Typography>
+              <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0, mt: 0.5 }}>
+                {[
+                  q.yearsExperience !== null ? `${q.yearsExperience} year${q.yearsExperience === 1 ? '' : 's'} of experience` : null,
+                  q.educationLevel && q.educationLevel.toLowerCase() !== 'unknown' ? q.educationLevel : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </Typography>
+            </Box>
+          ) : null}
+
+          {q.applicationAnswers.length > 0 ? (
+            <Box>
+              <Typography {...overviewSubsectionHeadingTypographyProps}>Application answers</Typography>
+              <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                {q.applicationAnswers.map((a, i) => (
+                  <Box key={`ans-${i}-${a.label}`} sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, flexWrap: 'wrap' }}>
+                    <Typography variant="body2" component="span" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
+                      {a.label}:
+                    </Typography>
+                    <Typography variant="body2" component="span" sx={{ ...overviewProfileFieldValueSx, m: 0, fontWeight: 600 }}>
+                      {a.answer}
+                    </Typography>
+                    {a.date ? (
+                      <Typography variant="caption" color="text.secondary" component="span">
+                        ({a.date})
+                      </Typography>
+                    ) : null}
+                  </Box>
+                ))}
+              </Stack>
+            </Box>
+          ) : null}
 
           <Box>
             <Typography {...overviewSubsectionHeadingTypographyProps}>Availability and preferences</Typography>

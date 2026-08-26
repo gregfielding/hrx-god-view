@@ -171,11 +171,14 @@ function buildExtraPayables(args: {
         externalWorkerId: args.userId,
         label: dayLabel(base, args.eventLabel, args.workDate),
         type: kind.toLowerCase(),
-        // Reimbursements ship on Everee's native PER_DIEM code (Greg
-        // 2026-08-05 — stubs read "Per Diem"; matches the off-cycle path).
-        // The ::REIMBURSEMENT externalId kind is unchanged so idempotency
-        // and void retraction keep working.
-        payCode: kind === 'REIMBURSEMENT' ? 'PER_DIEM' : kind,
+        // Reimbursements ship on Everee's native REIMBURSEMENT code
+        // (2026-08-20): PER_DIEM turned out to be FICA-TAXED — Kiara
+        // Vaughn's $50 per diem netted $46.17 (exactly 7.65% withheld).
+        // REIMBURSEMENT is the non-taxable expense category, which is
+        // what these accountable-plan per-diems are. Stub label comes
+        // from the label string either way. The ::REIMBURSEMENT
+        // externalId kind is unchanged so idempotency + void keep working.
+        payCode: kind,
         timestamp: args.timestamp,
         amount: { amount: amount.toFixed(2), currency: 'USD' },
         payableModel: 'PRE_CALCULATED',

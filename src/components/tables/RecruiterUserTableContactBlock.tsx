@@ -18,6 +18,7 @@ import RecordHeaderLanguagePreferenceBadge from '../../pages/UserProfile/compone
 import RecordHeaderTransportMethodIcon from '../../pages/UserProfile/components/RecordHeaderTransportMethodIcon';
 import { recordHeaderTooltipComponentsProps } from '../../pages/UserProfile/components/recordHeaderStyles';
 import { PhoneVerifiedInlineCheck } from '../PhoneVerifiedInlineCheck';
+import { haversineMiles, latLngFromUser } from '../../utils/geoDistance';
 
 const copyIconButtonSx = {
   p: 0.125,
@@ -73,6 +74,9 @@ export type RecruiterUserTableContactBlockProps = {
   /** Optional uid -> display name map; surfaces the worker's Recruiter on a "Recruiter: <name>" line. */
   recruiterNameByUid?: Map<string, string>;
   formatDate: (d: unknown) => string;
+  /** When set, renders "X.X miles away" (worker home → this point) below
+   *  the icons row. Worker coords come from the user doc itself. */
+  worksiteCoords?: { lat: number; lng: number } | null;
 };
 
 const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockProps> = ({
@@ -81,6 +85,7 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
   groupTitleLookup,
   recruiterNameByUid,
   formatDate,
+  worksiteCoords,
 }) => {
   const userGroupIds = Array.isArray(user.userGroupIds) ? user.userGroupIds : [];
   const emailRaw = typeof user.email === 'string' ? user.email.trim() : '';
@@ -314,6 +319,23 @@ const RecruiterUserTableContactBlock: React.FC<RecruiterUserTableContactBlockPro
           <RecordHeaderTransportMethodIcon transportMethod={transportMethod} />
         </Box>
       </Box>
+
+      {(() => {
+        if (!worksiteCoords) return null;
+        const home = latLngFromUser(user as Record<string, unknown>);
+        if (!home) return null;
+        const miles = haversineMiles(home, worksiteCoords);
+        if (!Number.isFinite(miles) || miles > 3000) return null;
+        return (
+          <Typography
+            variant="caption"
+            display="block"
+            sx={{ ...tightCaptionSx, mt: 0.125, fontWeight: 700, color: 'primary.main' }}
+          >
+            {miles.toFixed(1)} miles away
+          </Typography>
+        );
+      })()}
 
       {recruiterName && (
         <Typography

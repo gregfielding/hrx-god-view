@@ -214,7 +214,11 @@ const QualificationsStep: React.FC<Props> = ({
         setWorkRows(rows);
         onChange({ ...value, workHistory: rows, _workHistoryPrefilled: true });
         await immediateUserUpdate({ workHistory: rows, workHistoryAutoFilledAt: serverTimestamp(), updatedAt: serverTimestamp() });
-      } catch {}
+      } catch (e) {
+        // Autofill is best-effort, but never swallow silently — a bare catch
+        // hid a missing rules entry + missing index for months (2026-08-25).
+        console.warn('parsedResumes work-history autofill failed:', e);
+      }
     };
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps

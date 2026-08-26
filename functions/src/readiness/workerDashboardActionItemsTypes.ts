@@ -20,6 +20,7 @@ export type WorkerDashboardActionItemId =
   | 're_enable_sms_notifications'
   | 'assignment_confirmation_required'
   | 'complete_tempworks_onboarding'
+  | 'complete_payroll_setup'
   | 'background_check_action_required'
   | 'background_check_issue_requires_action'
   | 'drug_screen_schedule_required'
@@ -88,6 +89,7 @@ export const WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES: Readonly<
   drug_screen_reschedule_required: 880,
   background_check_issue_requires_action: 860,
   complete_tempworks_onboarding: 800,
+  complete_payroll_setup: 760,
   background_check_action_required: 720,
   drug_screen_schedule_required: 700,
   confirm_date_of_birth: 650,

@@ -12,7 +12,7 @@ export interface WorkerStatusCardProps {
 }
 
 const WorkerStatusCard: React.FC<WorkerStatusCardProps> = ({ icon, title, stat, subtext, ctaLabel, ctaTo }) => (
-  <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none', height: '100%' }}>
+  <Card variant="outlined" sx={{  borderColor: 'divider', boxShadow: 'none', height: '100%' }}>
     <CardContent sx={{ py: 2, px: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
         <Box sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center' }}>{icon}</Box>

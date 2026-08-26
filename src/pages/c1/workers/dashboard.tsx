@@ -1,9 +1,11 @@
 /**
  * Worker Dashboard — /c1/workers/dashboard
- * Action items from buildWorkerDashboardActionItems; optional upcoming assignments; minimal bottom nav.
+ * Action items from the server snapshot (users/{uid}.workerDashboardActionItemsV1
+ * — the legacy in-browser builder was deleted 2026-08-24 once the snapshot
+ * pipeline reached parity); optional upcoming assignments; minimal bottom nav.
  */
 
-import React, { useCallback, useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { doc, getDoc, collection, query, where, getDocs, limit } from 'firebase/firestore';
 import {
   Box,
@@ -20,17 +22,9 @@ import { useNavigate } from 'react-router-dom';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
-import WorkerQuickNav from '../../../components/worker/WorkerQuickNav';
 import WorkerDashboardActionItems from '../../../components/worker/home/WorkerDashboardActionItems';
 import type { UpcomingShift } from '../../../components/worker/dashboard/WorkerDashboardHero';
-import { buildWorkerDashboardActionItems } from '../../../utils/workerDashboardActionItems';
-import { useWorkerAiPrescreenSurfaceSignals } from '../../../hooks/useWorkerAiPrescreenSurfaceSignals';
-import { deriveWorkerComplianceSignals } from '../../../utils/workerComplianceActionDerivers';
-import {
-  assignmentDocNeedsWorkerConfirmation,
-  readTempworksOnboardingFromUserDoc,
-  type WorkerDashboardJobSignals,
-} from '../../../utils/workerJobRequirementSignals';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   applyClientOnlyWorkerDashboardActionItemPersonalization,
   useWorkerDashboardActionItemsV1,
@@ -39,18 +33,6 @@ import {
 import { getLanguage, useT } from '../../../i18n';
 
 const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
-
-/**
- * Feature flag for the V2 server-written snapshot
- * (`users/{uid}.workerDashboardActionItemsV1`). When `true`, the dashboard
- * reads the snapshot via `useWorkerDashboardActionItemsV1`. When `false` (or
- * the snapshot is missing for this worker — no recompute has run yet), the
- * dashboard falls back to the legacy in-memory builder.
- *
- * See `docs/WORKER_ACTION_ITEMS_V2_CURSOR_BRIEF.md` §3 for the rollout plan.
- */
-const WORKER_DASHBOARD_ACTION_ITEMS_V2_ENABLED =
-  process.env.REACT_APP_WORKER_DASHBOARD_ACTION_ITEMS_V2 === 'true';
 
 function toStartAt(data: Record<string, unknown>): number {
   const startDate = data.startDate;
@@ -135,15 +117,7 @@ const WorkerDashboard: React.FC = () => {
   const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
   const [upcomingAssignments, setUpcomingAssignments] = useState<(UpcomingShift & { payRate?: number })[]>([]);
   const [assignmentsLoading, setAssignmentsLoading] = useState(true);
-  const [smsSnoozeTick, setSmsSnoozeTick] = useState(0);
-  const [jobContextTick, setJobContextTick] = useState(0);
-  const [jobSignals, setJobSignals] = useState<WorkerDashboardJobSignals | null>(null);
   const tenantId = activeTenant?.id ?? C1_TENANT_ID;
-
-  const { workerAiPrescreenItems, refreshPrescreenSignals } = useWorkerAiPrescreenSurfaceSignals(
-    tenantId,
-    user?.uid ?? null,
-  );
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -152,198 +126,42 @@ const WorkerDashboard: React.FC = () => {
     });
   }, [user?.uid]);
 
+  /** Post-action refresh — item mutations write the users doc, which the
+   *  server trigger turns into a fresh snapshot; the doc listener delivers
+   *  it. Only the local userDoc copy needs a re-read here. */
   const refreshAfterDashboardAction = useCallback(() => {
-    setSmsSnoozeTick((n) => n + 1);
-    setJobContextTick((n) => n + 1);
-    refreshPrescreenSignals();
     if (!user?.uid) return;
     void getDoc(doc(db, 'users', user.uid)).then((snap) => {
       setUserDoc(snap.exists() ? (snap.data() as Record<string, unknown>) : null);
     });
-  }, [user?.uid, refreshPrescreenSignals]);
+  }, [user?.uid]);
 
-  const smsSnoozedUntilMs = useMemo(() => {
-    if (!user?.uid) return 0;
-    try {
-      const raw = window.localStorage.getItem(`worker_sms_warning_dismiss_until_${user.uid}`);
-      const n = raw ? Number(raw) : 0;
-      return Number.isFinite(n) ? n : 0;
-    } catch {
-      return 0;
-    }
-  }, [user?.uid, smsSnoozeTick]);
 
+  const v1Snapshot = useWorkerDashboardActionItemsV1(user?.uid ?? null);
+
+  // Snapshot is the ONLY pipeline (legacy builder deleted 2026-08-24).
+  // A worker untouched since the rollout has no snapshot doc yet — ask the
+  // server for a one-shot recompute; the doc listener delivers the result.
+  const recomputeRequestedRef = useRef(false);
   useEffect(() => {
-    if (!user?.uid || !tenantId) {
-      setJobSignals(null);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
-        const aq = query(assignmentsRef, where('userId', '==', user.uid));
-        const snap = await getDocs(aq);
-        const pending: Array<{
-          assignmentId: string;
-          startAtMs: number;
-          endAtMs?: number;
-          jobPostId?: string;
-        }> = [];
-        const nowMs = Date.now();
-        const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-        snap.forEach((d) => {
-          const data = d.data() as Record<string, unknown>;
-          if (assignmentDocNeedsWorkerConfirmation(data)) {
-            const endAtMs = toEndAt(data);
-            // Surface the "confirm your shift" action item until 24h AFTER
-            // the shift ends; past that the unconfirmed offer is stale.
-            if (endAtMs && nowMs > endAtMs + TWENTY_FOUR_HOURS_MS) return;
-            pending.push({
-              assignmentId: d.id,
-              startAtMs: toStartAt(data),
-              endAtMs: endAtMs || undefined,
-              jobPostId: (data.jobPostId as string) || undefined,
-            });
-          }
-        });
-        // Everee payroll-onboarding state: incomplete if any employer
-        // linkage doc isn't COMPLETE yet. Surfaces the "Complete payroll
-        // setup" action item (workers can apply/work without finishing it).
-        let payrollOnboardingIncomplete = false;
-        let payrollOnboardingEvereeTenantId: string | null = null;
-        try {
-          const ewSnap = await getDocs(
-            query(
-              collection(db, 'tenants', tenantId, 'everee_workers'),
-              where('firebaseUid', '==', user.uid)
-            )
-          );
-          for (const d of ewSnap.docs) {
-            const x = d.data() as Record<string, unknown>;
-            const complete =
-              x.onboardingComplete === true ||
-              String(x.onboardingStatus || '').toUpperCase() === 'COMPLETE';
-            if (complete) continue;
-            payrollOnboardingIncomplete = true;
-            // Capture the Everee tenant id so the action item can deep-link
-            // straight to that employer's embed instead of the picker.
-            if (!payrollOnboardingEvereeTenantId) {
-              const tid = x.evereeTenantId;
-              const tidStr =
-                typeof tid === 'number' && Number.isFinite(tid)
-                  ? String(tid)
-                  : typeof tid === 'string'
-                    ? tid.trim()
-                    : '';
-              if (tidStr) payrollOnboardingEvereeTenantId = tidStr;
-            }
-          }
-        } catch (ewErr) {
-          console.warn('Dashboard: everee_workers query skipped', ewErr);
-        }
+    if (recomputeRequestedRef.current) return;
+    if (!user?.uid || !tenantId) return;
+    if (v1Snapshot.loading || v1Snapshot.items !== null) return;
+    recomputeRequestedRef.current = true;
+    const fn = httpsCallable(getFunctions(), 'syncWorkerDashboardActionItemsV1');
+    void fn({ uid: user.uid, tenantId }).catch(() => {
+      /* next users-doc write triggers the sync anyway */
+    });
+  }, [user?.uid, tenantId, v1Snapshot.loading, v1Snapshot.items]);
 
-        let bgRows: Record<string, unknown>[] = [];
-        let evRows: Record<string, unknown>[] = [];
-        try {
-          const [bgSnap, evSnap] = await Promise.all([
-            getDocs(
-              query(
-                collection(db, 'backgroundChecks'),
-                where('candidateId', '==', user.uid),
-                where('tenantId', '==', tenantId),
-                limit(25)
-              )
-            ),
-            getDocs(
-              query(
-                collection(db, 'tenants', tenantId, 'everify_cases'),
-                where('userId', '==', user.uid),
-                limit(25)
-              )
-            ),
-          ]);
-          bgRows = bgSnap.docs.map((d) => d.data() as Record<string, unknown>);
-          evRows = evSnap.docs.map((d) => d.data() as Record<string, unknown>);
-        } catch (complianceErr) {
-          console.warn('Dashboard: compliance queries skipped', complianceErr);
-        }
-        if (cancelled) return;
-        setJobSignals({
-          tenantId,
-          pendingAssignmentConfirmations: pending,
-          tempworks: readTempworksOnboardingFromUserDoc(userDoc),
-          payrollOnboardingIncomplete,
-          payrollOnboardingEvereeTenantId,
-          compliance: deriveWorkerComplianceSignals(bgRows, evRows),
-        });
-      } catch (err) {
-        console.error('Failed to load dashboard job signals:', err);
-        if (!cancelled) setJobSignals(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.uid, tenantId, jobContextTick, userDoc]);
-
-  const v1Snapshot = useWorkerDashboardActionItemsV1(
-    WORKER_DASHBOARD_ACTION_ITEMS_V2_ENABLED ? user?.uid ?? null : null,
-  );
-
-  const legacyActionItems = useMemo(
-    () =>
-      buildWorkerDashboardActionItems({
-        userDoc,
-        authAvatarUrl: avatarUrl || user?.photoURL || null,
-        smsSnoozedUntilMs,
-        jobSignals,
-        workerAiPrescreenItems,
-      }),
-    [userDoc, avatarUrl, user?.photoURL, smsSnoozedUntilMs, jobSignals, workerAiPrescreenItems]
-  );
-
-  /**
-   * Server snapshot when present, legacy builder otherwise. The fallback
-   * matters during rollout — the user-doc trigger only runs the first time
-   * a worker's user doc is touched after the deploy, so workers who
-   * haven't been written to recently won't have a snapshot for a few
-   * minutes / hours / days. We prefer "show legacy" over "show empty".
-   */
   const dashboardActionItems = useMemo(() => {
-    if (WORKER_DASHBOARD_ACTION_ITEMS_V2_ENABLED && v1Snapshot.items && user?.uid) {
-      const personalised = applyClientOnlyWorkerDashboardActionItemPersonalization(
-        v1Snapshot.items,
-        { uid: user.uid },
-      );
-      // eslint-disable-next-line no-console
-      console.debug('[WorkerDashboardActionItemsV2]', {
-        uid: user.uid,
-        source: 'snapshot',
-        itemCount: personalised.length,
-        rawCount: v1Snapshot.items.length,
-        inputsHash: v1Snapshot.inputsHash,
-        updatedAt: v1Snapshot.updatedAt?.toISOString?.() ?? null,
-      });
-      return workerDashboardActionItemsV1ToLegacy(personalised);
-    }
-    if (WORKER_DASHBOARD_ACTION_ITEMS_V2_ENABLED && user?.uid) {
-      // eslint-disable-next-line no-console
-      console.debug('[WorkerDashboardActionItemsV2]', {
-        uid: user.uid,
-        source: v1Snapshot.loading ? 'loading_fallback' : 'fallback',
-        itemCount: legacyActionItems.length,
-      });
-    }
-    return legacyActionItems;
-  }, [
-    legacyActionItems,
-    user?.uid,
-    v1Snapshot.items,
-    v1Snapshot.inputsHash,
-    v1Snapshot.updatedAt,
-    v1Snapshot.loading,
-  ]);
+    if (!user?.uid || !v1Snapshot.items) return [];
+    const personalised = applyClientOnlyWorkerDashboardActionItemPersonalization(
+      v1Snapshot.items,
+      { uid: user.uid },
+    );
+    return workerDashboardActionItemsV1ToLegacy(personalised);
+  }, [user?.uid, v1Snapshot.items, v1Snapshot.inputsHash]);
 
   useEffect(() => {
     if (!user?.uid || !tenantId) {
@@ -390,7 +208,7 @@ const WorkerDashboard: React.FC = () => {
   const showBottomNav = dashboardActionItems.length > 0;
 
   return (
-    <Box sx={{ maxWidth: 720, mx: 'auto', px: { xs: 2, sm: 3 }, pb: 4 }}>
+    <Box sx={{ maxWidth: 720, mx: 'auto', pb: 4 }}>
       <Stack spacing={{ xs: 3, sm: 3.5 }} sx={{ pt: { xs: 2, sm: 2.5 } }}>
         {user?.uid ? (
           <WorkerDashboardActionItems
@@ -406,7 +224,7 @@ const WorkerDashboard: React.FC = () => {
             <Typography
               variant="h5"
               component="h2"
-              sx={{ fontWeight: 700, letterSpacing: -0.02, mb: 1.5 }}
+              sx={{ mb: 1.5 }}
             >
               {t('dashboard.upcomingAssignments.title')}
             </Typography>
@@ -415,7 +233,7 @@ const WorkerDashboard: React.FC = () => {
               sx={{
                 border: '1px solid',
                 borderColor: 'divider',
-                borderRadius: 2,
+                
                 bgcolor: 'background.paper',
                 overflow: 'hidden',
               }}
@@ -464,7 +282,6 @@ const WorkerDashboard: React.FC = () => {
 
         {showBottomNav ? (
           <Box sx={{ pt: 1 }}>
-            <WorkerQuickNav />
           </Box>
         ) : null}
       </Stack>

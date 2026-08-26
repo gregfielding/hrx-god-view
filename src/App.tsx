@@ -24,6 +24,9 @@ const ChatGPT = lazy(() => import('./pages/TenantViews/ChatGPT'));
 const UserProfile = lazy(() => import('./pages/UserProfile'));
 const UserReadinessPage = lazy(() => import('./pages/UserReadinessPage'));
 const Login = lazy(() => import('./pages/Login'));
+// Phone (OTP) sign-in — alternate login layout under test (Greg 2026-08-21).
+const PhoneLoginPage = lazy(() => import('./pages/PhoneLoginPage'));
+const LoginGate = lazy(() => import('./pages/LoginGate'));
 const UserOnboarding = lazy(() => import('./pages/UserOnboarding'));
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { canAccessAccountInvoicingTab, canAccessGlobalInvoicing } from './utils/invoicingAccessControl';
@@ -113,6 +116,9 @@ const C1WorkerDashboard = lazy(() => import('./pages/c1/workers/dashboard'));
 const C1WorkerAssignments = lazy(() => import('./pages/c1/workers/assignments'));
 const C1WorkerProfile = lazy(() => import('./pages/c1/workers/profile'));
 const C1WorkerProfileSection = lazy(() => import('./pages/c1/workers/profileSection'));
+const C1WorkerProfileExperience = lazy(() => import('./pages/c1/workers/profileExperience'));
+const C1WorkerProfileAboutLegal = lazy(() => import('./pages/c1/workers/profileAboutLegal'));
+const C1WorkerDocuments = lazy(() => import('./pages/c1/workers/documents'));
 const C1WorkerMyEmployment = lazy(() => import('./pages/c1/workers/myEmployment'));
 const C1WorkerMyEmploymentDetail = lazy(() => import('./pages/c1/workers/myEmploymentDetail'));
 const C1WorkerScreening = lazy(() => import('./pages/c1/workers/screening'));
@@ -121,6 +127,9 @@ const C1WorkerNotifications = lazy(() => import('./pages/c1/workers/notification
 const WorkerPayrollIndex = lazy(() => import('./pages/c1/workers/WorkerPayrollIndex'));
 const WorkerPayrollEvereeTenant = lazy(() => import('./pages/c1/workers/WorkerPayrollEvereeTenant'));
 const WorkerAiPrescreenPage = lazy(() => import('./pages/c1/workers/WorkerAiPrescreenPage'));
+const C1WorkerPayrollHelp = lazy(() => import('./pages/c1/workers/payrollHelp'));
+const C1WorkerPayHistory = lazy(() => import('./pages/c1/workers/payHistory'));
+const PayrollTicketsPage = lazy(() => import('./pages/PayrollTicketsPage'));
 import OnboardingProfileForm from './components/OnboardingProfileForm';
 import OnboardingCompleteScreen from './components/OnboardingCompleteScreen';
 const Help = lazy(() => import('./pages/Help'));
@@ -176,10 +185,35 @@ const InviteUsersPage = lazy(() => import('./pages/InviteUsersPage'));
 const SavedSmartGroupDetailPage = lazy(() => import('./pages/SavedSmartGroupDetailPage'));
 const RecruiterUsers = lazy(() => import('./pages/RecruiterUsers'));
 const UsersLayout = lazy(() => import('./pages/UsersLayout'));
+const DeletionRequestsPage = lazy(() => import('./pages/DeletionRequestsPage'));
+const PhoneChangeRequestsPage = lazy(() => import('./pages/PhoneChangeRequestsPage'));
 const RecruiterAccountDetails = lazy(() => import('./pages/RecruiterAccountDetails'));
 const AccountLocationDetail = lazy(() => import('./pages/AccountLocationDetail'));
 const GlobalInvoicingPage = lazy(() => import('./pages/GlobalInvoicingPage'));
 const PayrollCostsPage = lazy(() => import('./pages/PayrollCostsPage'));
+const ReportsIndexPage = lazy(() => import('./pages/reports/ReportsIndexPage'));
+const ArAgingReportPage = lazy(() => import('./pages/reports/ArAgingReportPage'));
+const GrossMarginReportPage = lazy(() => import('./pages/reports/GrossMarginReportPage'));
+const JobCostingReportPage = lazy(() => import('./pages/reports/JobCostingReportPage'));
+const PayrollRegisterPage = lazy(() => import('./pages/reports/PayrollRegisterPage'));
+const PayrollJournalPage = lazy(() => import('./pages/reports/PayrollJournalPage'));
+const WcAuditReportPage = lazy(() => import('./pages/reports/WcAuditReportPage'));
+const WcCoveragePage = lazy(() => import('./pages/reports/WcCoveragePage'));
+const WeeklyTrendsPage = lazy(() => import('./pages/reports/WeeklyTrendsPage'));
+const I9StatusReportPage = lazy(() => import('./pages/reports/I9StatusReportPage'));
+const AcaLookbackReportPage = lazy(() => import('./pages/reports/AcaLookbackReportPage'));
+const TaxSickLeaveReportPage = lazy(() => import('./pages/reports/TaxSickLeaveReportPage'));
+const QboClassesPage = lazy(() => import('./pages/reports/QboClassesPage'));
+const CashFlowReportPage = lazy(() => import('./pages/reports/CashFlowReportPage'));
+const WcClassCodesReportPage = lazy(() =>
+  import('./pages/reports/WcLibraryReportPages').then((m) => ({ default: m.WcClassCodesReportPage })),
+);
+const WcWorksitesReportPage = lazy(() =>
+  import('./pages/reports/WcLibraryReportPages').then((m) => ({ default: m.WcWorksitesReportPage })),
+);
+const Wc8040ReportPage = lazy(() =>
+  import('./pages/reports/WcLibraryReportPages').then((m) => ({ default: m.Wc8040ReportPage })),
+);
 const FinancesBudgetingPage = lazy(() => import('./pages/FinancesBudgetingPage'));
 const SchedulingHealthPage = lazy(() => import('./pages/SchedulingHealthPage'));
 const WhosWorkingPage = lazy(() => import('./pages/WhosWorkingPage'));
@@ -259,17 +293,28 @@ function UsersRedirect() {
   return <Navigate to={`/users/${uid}`} replace />;
 }
 
-/** For /c1/users/:uid: workers (securityLevel null or 0–4) go to My Account; higher levels see UserProfile. */
+/** For any /users/:uid surface: workers (securityLevel null or 0–4) go to My
+ * Account; ONLY resolved staff (5+) see the internal UserProfile. Waits for
+ * auth to finish loading — the context's placeholder securityLevel briefly
+ * reads as staff, which leaked the admin view (activity log, scoring) to a
+ * worker on 2026-08-23. Unknown = worker, always. */
 function C1UserProfileOrRedirect() {
-  const { user, securityLevel } = useAuth();
+  const { user, securityLevel, loading } = useAuth();
+  if (loading) return <div />;
   const level = securityLevel != null ? Number.parseInt(String(securityLevel), 10) : 0;
-  const isWorker = Number.isNaN(level) || level <= 4;
-  if (user && isWorker) {
+  const isStaff = !Number.isNaN(level) && level >= 5;
+  if (user && !isStaff) {
     return <Navigate to="/c1/workers/profile" replace />;
   }
   return <UserProfile />;
 }
 
+
+/** /c1/workers/payroll/:id → /c1/workers/earnings/:id (P0 rename 2026-08-23). */
+function WorkerPayrollLegacyRedirect() {
+  const { evereeTenantId } = useParams();
+  return <Navigate to={`/c1/workers/earnings/${evereeTenantId ?? ''}`} replace />;
+}
 function UsersHubIndexRedirect() {
   return <Navigate to={getUsersIndexRedirectPath()} replace />;
 }
@@ -537,7 +582,11 @@ function App() {
   
   const routes = (
     <Routes>
-      <Route path="/login" element={<Login />} />
+      {/* Phone-first login (Greg 2026-08-25): /login = phone OTP screen, with
+          last-method memory bouncing email/password users to /login/email. */}
+      <Route path="/login" element={<LoginGate />} />
+      <Route path="/login/email" element={<Login />} />
+      <Route path="/login/phone" element={<PhoneLoginPage />} />
       <Route path="/crm/public" element={<PublicCRMView />} />
       <Route path="/setup-password" element={<SetupPassword />} />
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
@@ -568,6 +617,9 @@ function App() {
             <Route path="applications" element={<UserApplications />} />
             <Route path="applications/:applicationId" element={<UserApplications />} />
             <Route path="profile" element={<WorkerProfile />} />
+            {/* Static profile sub-pages MUST precede the :section matcher. */}
+            <Route path="profile/experience" element={<C1WorkerProfileExperience />} />
+            <Route path="profile/about" element={<C1WorkerProfileAboutLegal />} />
             <Route path="profile/:section" element={<C1WorkerProfileSection />} />
             <Route path="my-employment" element={<C1WorkerMyEmployment />} />
             <Route path="my-employment/:employmentId" element={<C1WorkerMyEmploymentDetail />} />
@@ -575,8 +627,12 @@ function App() {
             <Route path="prescreen" element={<WorkerAiPrescreenPage />} />
             <Route path="find-work" element={<Navigate to="/c1/jobs-board" replace />} />
             <Route path="job-readiness" element={<Navigate to="/c1/workers/dashboard#home-readiness-summary" replace />} />
-            <Route path="documents" element={<Navigate to="/c1/workers/profile" replace />} />
+            <Route path="documents" element={<C1WorkerDocuments />} />
             <Route path="support" element={<WorkerSupport />} />
+            <Route path="payroll-help" element={<C1WorkerPayrollHelp />} />
+            <Route path="pay-history" element={<WorkerRoute><C1WorkerPayHistory /></WorkerRoute>} />
+            <Route path="pay-history/:evereeTenantId/:statementId" element={<WorkerRoute><C1WorkerPayHistory /></WorkerRoute>} />
+            <Route path="payroll-help/:ticketId" element={<C1WorkerPayrollHelp />} />
             <Route path="settings" element={<Navigate to="/c1/workers/profile/app-language" replace />} />
             <Route path="notifications" element={<C1WorkerNotifications />} />
             {/*
@@ -590,8 +646,11 @@ function App() {
               honors that on successful auth (existing logic, ../pages/Login.tsx
               line 49-57). Workers and staff (level 5+) handled by WorkerRoute.
             */}
-            <Route path="payroll" element={<WorkerRoute><WorkerPayrollIndex /></WorkerRoute>} />
-            <Route path="payroll/:evereeTenantId" element={<WorkerRoute><WorkerPayrollEvereeTenant /></WorkerRoute>} />
+            {/* Earnings (P0 rename 2026-08-23) — old /payroll deep links redirect. */}
+            <Route path="earnings" element={<WorkerRoute><WorkerPayrollIndex /></WorkerRoute>} />
+            <Route path="earnings/:evereeTenantId" element={<WorkerRoute><WorkerPayrollEvereeTenant /></WorkerRoute>} />
+            <Route path="payroll" element={<Navigate to="/c1/workers/earnings" replace />} />
+            <Route path="payroll/:evereeTenantId" element={<WorkerPayrollLegacyRedirect />} />
             <Route path="inbox" element={<Navigate to="/c1/workers/notifications" replace />} />
             <Route path="inbox/:conversationId" element={<Navigate to="/c1/workers/notifications" replace />} />
           </Route>
@@ -601,7 +660,11 @@ function App() {
           <Route path="applications" element={<Navigate to="/c1/workers/applications" replace />} />
           <Route path="assignments" element={<MyAssignments />} />
           <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
-          <Route path="users/:uid/readiness" element={<UserReadinessPage />} />
+          <Route path="users/:uid/readiness" element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <UserReadinessPage />
+            </ProtectedRoute>
+          } />
           <Route path="users/:uid" element={<C1UserProfileOrRedirect />} />
         </Route>
         <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
@@ -668,8 +731,12 @@ function App() {
             <TenantUsers />
           </ProtectedRoute>
         } />
-        <Route path="users/:uid/readiness" element={<UserReadinessPage />} />
-        <Route path="users/:uid" element={<UserProfile />} />
+        <Route path="users/:uid/readiness" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <UserReadinessPage />
+          </ProtectedRoute>
+        } />
+        <Route path="users/:uid" element={<C1UserProfileOrRedirect />} />
         <Route path="users/:uid/onboarding" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <UserOnboarding />
@@ -770,7 +837,7 @@ function App() {
         </Route>
         <Route path="my-accounts" element={<Navigate to="/accounts/my" replace />} />
         <Route
-          path="finances-budgeting"
+          path="reports/finances-budgeting"
           element={
             <ProtectedRoute requiredSecurityLevel="5">
               <RecruiterAccessGuard>
@@ -779,6 +846,8 @@ function App() {
             </ProtectedRoute>
           }
         />
+        {/* Legacy URL — moved into the report library (Greg 2026-08-19). */}
+        <Route path="finances-budgeting" element={<Navigate to="/reports/finances-budgeting" replace />} />
         <Route
           path="scheduling-health"
           element={
@@ -799,16 +868,198 @@ function App() {
             </ProtectedRoute>
           }
         />
+        {/* Report library: /reports is the index, each report lives at
+            /reports/<slug> (registry: src/pages/reports/reportsRegistry.tsx). */}
         <Route
-          path="payroll-costs"
+          path="payroll-tickets"
           element={
-            <ProtectedRoute requiredSecurityLevel="6">
+            <ProtectedRoute requiredSecurityLevel="5">
               <RecruiterAccessGuard>
-                <PayrollCostsPage />
+                <PayrollTicketsPage />
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }
         />
+        <Route
+          path="reports"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <ReportsIndexPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/payroll"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <PayrollCostsPage report="payroll" />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/workers-comp"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <PayrollCostsPage report="workers-comp" />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        {['i9-status', 'aca-lookback', 'tax-liability'].map((slug) => (
+          <Route
+            key={slug}
+            path={`reports/${slug}`}
+            element={
+              <ProtectedRoute requiredSecurityLevel="6">
+                <RecruiterAccessGuard>
+                  {slug === 'i9-status' ? (
+                    <I9StatusReportPage />
+                  ) : slug === 'aca-lookback' ? (
+                    <AcaLookbackReportPage />
+                  ) : (
+                    <TaxSickLeaveReportPage />
+                  )}
+                </RecruiterAccessGuard>
+              </ProtectedRoute>
+            }
+          />
+        ))}
+        {(
+          [
+            ['wc-class-codes', WcClassCodesReportPage],
+            ['wc-worksites', WcWorksitesReportPage],
+            ['wc-8040', Wc8040ReportPage],
+          ] as Array<[string, React.LazyExoticComponent<React.FC>]>
+        ).map(([slug, Page]) => (
+          <Route
+            key={slug}
+            path={`reports/${slug}`}
+            element={
+              <ProtectedRoute requiredSecurityLevel="6">
+                <RecruiterAccessGuard>
+                  <Page />
+                </RecruiterAccessGuard>
+              </ProtectedRoute>
+            }
+          />
+        ))}
+        <Route
+          path="reports/wc-audit"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <WcAuditReportPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/wc-coverage"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <WcCoveragePage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/weekly-trends"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <WeeklyTrendsPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/payroll-journal"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <PayrollJournalPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/payroll-register"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <PayrollRegisterPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/job-costing"
+          element={
+            <ProtectedRoute requiredSecurityLevel="7">
+              <RecruiterAccessGuard>
+                <GlobalInvoicingGuard>
+                  <JobCostingReportPage />
+                </GlobalInvoicingGuard>
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/cash-flow"
+          element={
+            <ProtectedRoute requiredSecurityLevel="7">
+              <RecruiterAccessGuard>
+                <GlobalInvoicingGuard>
+                  <CashFlowReportPage />
+                </GlobalInvoicingGuard>
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/qbo-classes"
+          element={
+            <ProtectedRoute requiredSecurityLevel="7">
+              <RecruiterAccessGuard>
+                <GlobalInvoicingGuard>
+                  <QboClassesPage />
+                </GlobalInvoicingGuard>
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/gross-margin"
+          element={
+            <ProtectedRoute requiredSecurityLevel="7">
+              <RecruiterAccessGuard>
+                <GlobalInvoicingGuard>
+                  <GrossMarginReportPage />
+                </GlobalInvoicingGuard>
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/accounts-receivable"
+          element={
+            <ProtectedRoute requiredSecurityLevel="7">
+              <RecruiterAccessGuard>
+                <GlobalInvoicingGuard>
+                  <ArAgingReportPage />
+                </GlobalInvoicingGuard>
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        {/* Legacy URL — bookmarks/links keep working. */}
+        <Route path="payroll-costs" element={<Navigate to="/reports/payroll" replace />} />
         <Route
           path="screenings-queue"
           element={
@@ -889,6 +1140,8 @@ function App() {
           <Route path="all-smart-groups" element={<AllSmartGroupsPage hideHeader />} />
           <Route path="my-smart-groups" element={<MySmartGroupsListPage hideHeader />} />
           <Route path="my-smart-groups/:groupId" element={<SavedSmartGroupDetailPage hideHeader />} />
+          <Route path="deletion-requests" element={<DeletionRequestsPage />} />
+          <Route path="phone-changes" element={<PhoneChangeRequestsPage />} />
           <Route path=":uid/readiness" element={<UserReadinessPage />} />
           <Route path=":uid" element={<UserProfile />} />
         </Route>

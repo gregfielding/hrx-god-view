@@ -10,8 +10,6 @@ const STRING_KEYS = new Set([
   'city',
   'state',
   'zip',
-  'resumeUrl',
-  'resumeStoragePath',
 ]);
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

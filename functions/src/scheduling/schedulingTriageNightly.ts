@@ -33,7 +33,7 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
-import OpenAI from 'openai';
+import { getClaudeChat } from '../utils/claudeChat';
 import { applyShiftRequestCore } from '../integrations/indeedFlex/applyShiftRequest';
 import { pruneStaleShiftRequests } from '../integrations/indeedFlex/pruneStaleShiftRequests';
 
@@ -243,9 +243,9 @@ async function writeBrief(facts: {
   }
   const fallback = fallbackParts.join(' ') || 'Nothing needed attention overnight — schedules are clean.';
 
-  if (!process.env.OPENAI_API_KEY) return { brief: fallback, briefSource: 'fallback' };
+  if (!process.env.ANTHROPIC_API_KEY) return { brief: fallback, briefSource: 'fallback' };
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = getClaudeChat(); // Claude-backed since 2026-08-21
     const completion = await openai.chat.completions.create({
       model: 'gpt-5',
       // gpt-5 is a reasoning model — completion tokens are consumed by

@@ -2,7 +2,17 @@
  * Inputs for job-requirement dashboard action items (assignments, TempWorks, compliance flags).
  */
 
-import type { WorkerComplianceSignals } from './workerComplianceActionDerivers';
+/** Compliance flags shape — the legacy client deriver was deleted 2026-08-24
+ *  (the server mirror in workerDashboardActionItemsLoadContext.ts is the one
+ *  true implementation); the type lives on for jobSignals consumers. */
+export interface WorkerComplianceSignals {
+  backgroundApplicantAction: boolean;
+  backgroundIssueAction: boolean;
+  drugScheduleRequired: boolean;
+  drugRescheduleRequired: boolean;
+  everifyWorkerAction: boolean;
+  applicantPortalLink?: string;
+}
 
 function tempworksStartedTruthy(at: unknown): boolean {
   if (at == null || at === '') return false;

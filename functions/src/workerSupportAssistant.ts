@@ -1,7 +1,39 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
-import OpenAI from 'openai';
-import { getOpenAIKey } from './utils/secrets';
+import { getClaudeChat } from './utils/claudeChat';
+import {
+  createPayrollTicket,
+  replyPayrollTicket,
+  setPayrollTicketStatus,
+  setPayrollTicketLane,
+  sendPayrollLinkAction,
+  refreshEvereeAction,
+  investigatePayrollTicketAction,
+  authorizeCorrectionAction,
+  resolvePaidCorrectlyAction,
+  PAYROLL_SLACK_BOT_TOKEN,
+  TicketForbiddenError,
+  TicketNotFoundError,
+  TicketRateLimitedError,
+  type PayrollTicketStatus,
+  type PayrollLinkKind,
+} from './payroll/payrollTicketsCore';
+import { approvePhoneChange, rejectPhoneChange } from './phoneChangeCore';
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+} from './messaging/twilioSecrets';
+
+function toTicketHttpsError(e: unknown): HttpsError {
+  // ensureBooksAccess / the off-cycle path throw HttpsError directly — keep
+  // their codes (permission-denied, invalid-argument) instead of 'internal'.
+  if (e instanceof HttpsError) return e;
+  if (e instanceof TicketNotFoundError) return new HttpsError('not-found', e.message);
+  if (e instanceof TicketForbiddenError) return new HttpsError('permission-denied', e.message);
+  if (e instanceof TicketRateLimitedError) return new HttpsError('resource-exhausted', e.message);
+  return new HttpsError('internal', e instanceof Error ? e.message : String(e));
+}
 
 type SupportTopic =
   | 'shift_cancellation'
@@ -163,12 +195,149 @@ export const workerSupportAssistant = onCall(
   {
     cors: true,
     region: 'us-central1',
-    timeoutSeconds: 45,
-    memory: '256MiB',
+    // 120s: payroll-ticket creation runs the Claude diagnosis inline
+    // (Cloud Run cap — this callable hosts the help-desk actions too).
+    timeoutSeconds: 120,
+    // Twilio secrets for the urgent-ticket SMS alert (payrollTicketsCore).
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, PAYROLL_SLACK_BOT_TOKEN],
+    memory: '512MiB', // 256MiB OOM'd on cold start (267MiB) after the 2026-08-21 Claude migration
   },
-  async (request): Promise<SupportResponse> => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async (request): Promise<any> => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
+    }
+
+    // Payroll help-desk actions (Slice 1, 2026-08-24) share this callable —
+    // the project is AT the Cloud Run function cap, so no new functions.
+    const action = String((request.data as Record<string, unknown> | undefined)?.action || '').trim();
+    if (action === 'payroll_create_ticket') {
+      const tenantId = String(request.data?.tenantId || '').trim();
+      const text = String(request.data?.text || '').trim();
+      if (!tenantId || !text) throw new HttpsError('invalid-argument', 'tenantId and text are required.');
+      if (text.length > 2000) throw new HttpsError('invalid-argument', 'Message is too long.');
+      try {
+        return await createPayrollTicket({ uid: request.auth.uid, tenantId, text, channel: 'app' });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_reply') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const text = String(request.data?.text || '').trim();
+      if (!ticketId || !text) throw new HttpsError('invalid-argument', 'ticketId and text are required.');
+      if (text.length > 2000) throw new HttpsError('invalid-argument', 'Message is too long.');
+      try {
+        return await replyPayrollTicket({ actorUid: request.auth.uid, ticketId, text });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_set_lane') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const lane = String(request.data?.lane || '').trim() as 'fix_it' | 'money';
+      if (!ticketId || !lane) throw new HttpsError('invalid-argument', 'ticketId and lane are required.');
+      try {
+        return await setPayrollTicketLane({ actorUid: request.auth.uid, ticketId, lane });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_action_send_link') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const kind = String(request.data?.kind || '').trim();
+      if (!ticketId || !['onboarding', 'bank_update', 'portal'].includes(kind)) {
+        throw new HttpsError('invalid-argument', 'ticketId and a valid kind are required.');
+      }
+      try {
+        return await sendPayrollLinkAction({
+          actorUid: request.auth.uid,
+          ticketId,
+          kind: kind as PayrollLinkKind,
+        });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_investigate') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      if (!ticketId) throw new HttpsError('invalid-argument', 'ticketId is required.');
+      try {
+        return await investigatePayrollTicketAction({ actorUid: request.auth.uid, ticketId });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_authorize_correction') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const amount = Number(request.data?.amount) || 0;
+      const workDate = String(request.data?.workDate || '').trim();
+      const entityId = String(request.data?.entityId || '').trim();
+      if (!ticketId || amount <= 0 || !workDate || !entityId) {
+        throw new HttpsError('invalid-argument', 'ticketId, amount, workDate, and entityId are required.');
+      }
+      try {
+        return await authorizeCorrectionAction({
+          actorUid: request.auth.uid,
+          actorToken: request.auth.token as never,
+          ticketId,
+          amount,
+          workDate,
+          hours: Number(request.data?.hours) || 0,
+          hourlyRate: Number(request.data?.hourlyRate) || 0,
+          entityId,
+          notes: String(request.data?.notes || '').trim() || undefined,
+          overrideDuplicateWarning: request.data?.overrideDuplicateWarning === true,
+        });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_resolve_paid_correctly') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const text = String(request.data?.text || '').trim();
+      if (!ticketId || !text) throw new HttpsError('invalid-argument', 'ticketId and text are required.');
+      if (text.length > 2000) throw new HttpsError('invalid-argument', 'Message is too long.');
+      try {
+        return await resolvePaidCorrectlyAction({ actorUid: request.auth.uid, ticketId, text });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_action_refresh_everee') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      if (!ticketId) throw new HttpsError('invalid-argument', 'ticketId is required.');
+      try {
+        return await refreshEvereeAction({ actorUid: request.auth.uid, ticketId });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+    if (action === 'payroll_set_status') {
+      const ticketId = String(request.data?.ticketId || '').trim();
+      const status = String(request.data?.status || '').trim() as PayrollTicketStatus;
+      const note = String(request.data?.note || '').trim() || undefined;
+      if (!ticketId || !status) throw new HttpsError('invalid-argument', 'ticketId and status are required.');
+      try {
+        return await setPayrollTicketStatus({ actorUid: request.auth.uid, ticketId, status, note });
+      } catch (e) {
+        throw toTicketHttpsError(e);
+      }
+    }
+
+    // Phone-change recovery approvals (Slice 3, 2026-08-25) — staff-only,
+    // reviewed at /users/phone-changes; same callable for the same cap reason.
+    if (action === 'phone_change_approve') {
+      const requestId = String(request.data?.requestId || '').trim();
+      const uid = String(request.data?.uid || '').trim();
+      if (!requestId || !uid) throw new HttpsError('invalid-argument', 'requestId and uid are required.');
+      return approvePhoneChange({ actorUid: request.auth.uid, requestId, uid });
+    }
+    if (action === 'phone_change_reject') {
+      const requestId = String(request.data?.requestId || '').trim();
+      const note = String(request.data?.note || '').trim() || undefined;
+      if (!requestId) throw new HttpsError('invalid-argument', 'requestId is required.');
+      return rejectPhoneChange({ actorUid: request.auth.uid, requestId, note });
     }
 
     const { question, tenantId } = (request.data || {}) as SupportRequest;
@@ -180,8 +349,7 @@ export const workerSupportAssistant = onCall(
       throw new HttpsError('invalid-argument', 'Question is too long.');
     }
 
-    const apiKey = await getOpenAIKey(tenantId);
-    if (!apiKey) {
+    if (!process.env.ANTHROPIC_API_KEY) {
       throw new HttpsError('failed-precondition', 'Support assistant is not configured.');
     }
 
@@ -208,19 +376,21 @@ export const workerSupportAssistant = onCall(
       '["Contact recruiter","Open inbox","View assignments","Open profile"]',
     ].join('\n\n');
 
-    const openai = new OpenAI({ apiKey });
+    // Claude-backed since 2026-08-21 (was OpenAI Responses API) — utils/claudeChat.
+    const openai = getClaudeChat();
 
     try {
-      const completion = await openai.responses.create({
-        model: 'gpt-5-mini',
-        input: [
+      const completion = await openai.chat.completions.create({
+        model: 'claude-opus-5',
+        messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        max_output_tokens: 400,
+        response_format: { type: 'json_object' },
+        max_completion_tokens: 400,
       });
 
-      const text = (completion.output_text || '').trim();
+      const text = (completion.choices?.[0]?.message?.content || '').trim();
       if (!text) {
         logger.warn('workerSupportAssistant.empty_response', {
           uid: request.auth.uid,

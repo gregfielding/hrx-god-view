@@ -297,13 +297,8 @@ export async function generateMenuItems(
         icon: 'how_to_reg',
         accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
       }]),
-      // Finances & Budgeting: internal team (security levels 5, 6, 7)
-      ...([{
-        text: 'Finances and Budgeting',
-        to: '/finances-budgeting',
-        icon: 'bar_chart',
-        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
-      }]),
+      // Finances & Budgeting moved into the report library
+      // (/reports/finances-budgeting, Greg 2026-08-19) — no sidebar item.
       // Global Invoicing (sidebar): security level 7 only – all accounts, reporting, create invoices
       ...([{
         text: 'Invoicing',
@@ -311,12 +306,20 @@ export async function generateMenuItems(
         icon: 'attach_money',
         accessRoles: ['tenant_7'],
       }]),
-      // Payroll Costs: dollars sent to Everee by job order / account /
-      // submission day (wire splits for the bookkeeper). Levels 6-7.
+      // Payroll help desk — worker payroll tickets + AI diagnosis
+      // (Slice 1, Greg 2026-08-24). Recruiters see their workers' issues.
       ...([{
-        text: 'Payroll Costs',
-        to: '/payroll-costs',
-        icon: 'receipt_long',
+        text: 'Payroll Help Desk',
+        to: '/payroll-tickets',
+        icon: 'support_agent',
+        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
+      }]),
+      // Reports: payroll costs, workers' comp, and future reporting
+      // surfaces (renamed from Payroll Costs, Greg 2026-08-19). Levels 6-7.
+      ...([{
+        text: 'Reports',
+        to: '/reports',
+        icon: 'assessment',
         accessRoles: ['tenant_6', 'tenant_7'],
       }]),
       // Workers Comp (hidden from main sidebar — still under Settings → Operations → Workers Comp)

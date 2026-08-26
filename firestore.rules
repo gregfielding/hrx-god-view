@@ -2,6 +2,73 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Account deletion REQUESTS (worker Profile → About & Legal, 2026-08-23).
+    // Workers create exactly one request for themselves; immutable from the
+    // client after creation (support processes it server-side / manually).
+    // Payroll help desk (2026-08-24): tickets are written ONLY through the
+    // workerSupportAssistant callable (admin SDK) — clients read, never write.
+    // Workers see their own tickets; staff (HRX or level 5+ on the ticket's
+    // tenant) see the queue.
+    match /payroll_tickets/{ticketId} {
+      allow read: if request.auth != null && (
+        resource.data.uid == request.auth.uid ||
+        isHRX() ||
+        hasSecurityLevel(resource.data.tenantId, 5)
+      );
+      allow create, update, delete: if false;
+      match /messages/{messageId} {
+        allow read: if request.auth != null && (
+          get(/databases/$(database)/documents/payroll_tickets/$(ticketId)).data.uid == request.auth.uid ||
+          isHRX() ||
+          hasSecurityLevel(get(/databases/$(database)/documents/payroll_tickets/$(ticketId)).data.tenantId, 5)
+        );
+        allow create, update, delete: if false;
+      }
+      // Staff-only: the AI's internal triage notes + unsent draft replies.
+      // The worker can read their ticket doc, but never this.
+      match /private/{docId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasSecurityLevel(get(/databases/$(database)/documents/payroll_tickets/$(ticketId)).data.tenantId, 5)
+        );
+        allow create, update, delete: if false;
+      }
+    }
+
+    // Phone-change recovery queue (Slice 3, 2026-08-25). Created server-side
+    // by checkOtp's phoneChange leg; staff review at /users/phone-changes and
+    // approve/reject through workerSupportAssistant actions. Contains old/new
+    // phone numbers — staff eyes only, all writes server-side.
+    match /phone_change_requests/{requestId} {
+      allow read: if request.auth != null && (
+        isHRX() ||
+        hasSecurityLevel(resource.data.tenantId, 5)
+      );
+      allow create, update, delete: if false;
+    }
+
+    // Parsed résumés — server-written by parseResumeHttp. Workers read their
+    // own (wizard work-history autofill in QualificationsStep); this rule was
+    // missing since launch, so the autofill silently permission-denied
+    // (résumé sweep 2026-08-25). Requires the userId+uploadDate index.
+    match /parsedResumes/{docId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create, update, delete: if false;
+    }
+
+    match /account_deletion_requests/{uid} {
+      allow create: if request.auth != null && request.auth.uid == uid;
+      allow read: if request.auth != null && (request.auth.uid == uid || isHRX());
+      // HRX processes requests from /users/deletion-requests: status +
+      // audit fields only — the original request fields stay immutable.
+      allow update: if isHRX() &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'processedBy', 'processedAt', 'note']) &&
+        request.resource.data.status in ['pending', 'completed', 'dismissed'];
+      allow delete: if false;
+    }
+
+
     // ============================================================================
     // PHASE 2 - CLAIMS-BASED AUTHORIZATION (NEW)
     // ============================================================================
@@ -255,6 +322,15 @@ service cloud.firestore {
       // entries that haven't been shipped to Everee. Computed fields
       // (totalRegularHours, totalOTHours, ...), payRate, billRate,
       // status, and Everee response data all stay server-only.
+      // FIN-1 weekly financial rollups (2026-08-25): server-computed
+      // aggregates (pay/bill/margin per week×entity×account×JO). Books-band
+      // read (level ≥ 6, same bar as the finance reports); all writes are
+      // admin-SDK from the rollup rebuild.
+      match /finance_week_rollups/{rollupId} {
+        allow read: if request.auth != null && (isHRX() || hasSecurityLevel(tenantId, 6));
+        allow create, update, delete: if false;
+      }
+
       match /timesheet_entries/{entryId} {
         // Read mirrors the assignments pattern: HRX, tenant role claim,
         // tenant assignment, securityLevel >= 5 (recruiter band), and
@@ -801,13 +877,21 @@ service cloud.firestore {
     // ============================================================================
     
     // --- USERS ---
+    // 2026-08-25 PII lockdown: this block used to end with
+    //   allow read: if isAuthenticated() && request.auth.uid != null;
+    // (plus an isAssignedToTenant branch and hasCRMAccess(), which is itself
+    // `isAuthenticated() || ...`), so ANY signed-in worker could get AND list
+    // all ~14k user docs — phone, address, DOB. Reads are now owner · HRX ·
+    // tenant Admin · platform staff (securityLevel >= 5). isPlatformStaff()
+    // is CALLER-centric — it never touches resource.data — so every staff
+    // list-query shape (tenantIds.{T}.securityLevel IN, documentId() IN
+    // chunks, recruiter/crm_sales flag filters, unfiltered directory scans)
+    // stays provable. Workers keep exactly their own doc.
     match /users/{userId} {
       allow read, write: if isAuthenticated() && request.auth.uid == userId;
       allow read, write: if isHRX();
-      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
       allow read: if isAuthenticated() && isTenantAdmin(resource.data.tenantId);
-      // Allow users to read other users who belong to the same tenant (for salespeople functionality)
-      allow read: if isAuthenticated() && hasCRMAccess() && belongsToSameTenant(resource.data);
+      allow read: if isAuthenticated() && isPlatformStaff();
       // Allow high-security-level users to update user profiles
       allow write: if isAuthenticated() && isHighSecurityLevel();
       // Recruiters / tenant staff (security >= 4 in the target tenant) may set only `avatar` on
@@ -819,9 +903,7 @@ service cloud.firestore {
           (resource.data.activeTenantId == null && resource.data.tenantId != null && hasSecurityLevel(resource.data.tenantId, 4))
         ) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['avatar']);
-      // Unified Association Service access for salespeople
-      allow read: if isAuthenticated() && request.auth.uid != null;
-      
+
       // --- USER FOLLOWED COMPANIES ---
       match /followedCompanies/{companyId} {
         allow read, write: if isAuthenticated() && request.auth.uid == userId;
@@ -2776,6 +2858,30 @@ service cloud.firestore {
             )
           )
         );
+    }
+
+    // Caller-centric "is internal staff" check for the root users collection
+    // (2026-08-25). Staff = securityLevel >= 5 resolved from, in order: the
+    // caller's root-level `securityLevel`, their tenantIds-map entry for
+    // their own home tenant (activeTenantId, else legacy tenantId), or
+    // custom claims for that tenant. Deliberately never reads resource.data,
+    // so staff LIST queries of any shape are provable. Claims alone are NOT
+    // sufficient signal platform-wide (most staff have none — no claims-sync
+    // trigger exists), which is why the doc-based branches lead.
+    function isPlatformStaff() {
+      let u = getUser();
+      let home = u != null ? (u.activeTenantId != null ? u.activeTenantId : u.tenantId) : null;
+      let rootLevel = (u != null && u.securityLevel != null)
+        ? (u.securityLevel is string ? int(u.securityLevel) : u.securityLevel)
+        : null;
+      let mapLevel = (u != null && home != null &&
+        u.tenantIds != null && u.tenantIds is map &&
+        home in u.tenantIds && u.tenantIds[home].securityLevel != null)
+          ? (u.tenantIds[home].securityLevel is string ? int(u.tenantIds[home].securityLevel) : u.tenantIds[home].securityLevel)
+          : null;
+      return (rootLevel != null && rootLevel >= 5) ||
+        (mapLevel != null && mapLevel >= 5) ||
+        (home != null && hasSecurityLevelFromClaims(home, 5));
     }
 
     // Check if user has at least the specified security level for the tenant

@@ -65,7 +65,7 @@ const WorkerDocumentCard: React.FC<WorkerDocumentCardProps> = ({
     <Card
       variant="outlined"
       sx={{
-        borderRadius: 2,
+        
         borderColor: 'divider',
         boxShadow: 'none',
       }}

@@ -71,7 +71,6 @@ export const JOB_ORDER_DETAIL_TAB_STRIP: ReadonlyArray<{ key: JobOrderDetailTabK
   // any stored localStorage values don't break — they just aren't
   // reachable from the strip until we re-enable them.
   // { key: 'cascading_data', label: 'Cascading Data' },
-  // { key: 'hiring', label: 'Hiring' },
   // { key: 'defaults', label: 'Defaults' },
   { key: 'staff_instructions', label: 'Staff Instructions' },
   { key: 'jobs_board', label: 'Jobs Board' },
@@ -80,6 +79,9 @@ export const JOB_ORDER_DETAIL_TAB_STRIP: ReadonlyArray<{ key: JobOrderDetailTabK
   // key stays `shift_setup` for storage / URL backward-compat.
   { key: 'shift_setup', label: 'Shifts' },
   { key: 'applications', label: 'Applications' },
+  // Un-hidden 2026-08-25 (Greg): the only funnel-conversion view in the
+  // product was reachable solely by typing `?tab=hiring`.
+  { key: 'hiring', label: 'Hiring' },
   { key: 'placements', label: 'Placements' },
   { key: 'assignments', label: 'Assignments' },
   { key: 'notes', label: 'Notes' },

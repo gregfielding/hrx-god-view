@@ -7,11 +7,10 @@ import { Box, Typography, Tabs, Tab, Alert, Paper } from '@mui/material';
 import { useAuth } from '../../../contexts/AuthContext';
 import OnboardingItemsTab from './OnboardingItemsTab';
 import OnboardingDocumentsTab from './OnboardingDocumentsTab';
-import WCClassCodesTab from './WCClassCodesTab';
-import WcWorksitesTab from './WcWorksitesTab';
-import Wc8040PlaceholdersTab from './Wc8040PlaceholdersTab';
 
-export type OnboardingLibraryTab = 'items' | 'documents' | 'packages' | 'wc-codes' | 'wc-worksites' | 'wc-8040';
+// WC Class Codes / WC Worksites / 8040 Placeholders moved to the report
+// library (/reports/wc-class-codes|wc-worksites|wc-8040, Greg 2026-08-19).
+export type OnboardingLibraryTab = 'items' | 'documents' | 'packages';
 
 const OnboardingLibraryPage: React.FC = () => {
   const { activeTenant } = useAuth();
@@ -37,9 +36,6 @@ const OnboardingLibraryPage: React.FC = () => {
           <Tab label="Items" value="items" />
           <Tab label="Documents" value="documents" />
           <Tab label="Packages" value="packages" />
-          <Tab label="WC Class Codes" value="wc-codes" />
-          <Tab label="WC Worksites" value="wc-worksites" />
-          <Tab label="8040 Placeholders" value="wc-8040" />
         </Tabs>
 
         {activeTab === 'items' && <OnboardingItemsTab tenantId={tenantId} />}
@@ -48,15 +44,6 @@ const OnboardingLibraryPage: React.FC = () => {
           <Alert severity="info">
             Packages — Build requirement packages from library items. Coming next.
           </Alert>
-        )}
-        {activeTab === 'wc-codes' && tenantId && (
-          <WCClassCodesTab tenantId={tenantId} />
-        )}
-        {activeTab === 'wc-worksites' && tenantId && (
-          <WcWorksitesTab tenantId={tenantId} />
-        )}
-        {activeTab === 'wc-8040' && tenantId && (
-          <Wc8040PlaceholdersTab tenantId={tenantId} />
         )}
       </Paper>
     </Box>

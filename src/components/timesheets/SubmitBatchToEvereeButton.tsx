@@ -89,6 +89,18 @@ interface ApprovedSummary {
   totalGrossPay: number;
 }
 
+/** One row the open-dialog verification pass dropped because its LIVE
+ *  status is no longer 'approved' (2026-08-20 Greg+Mark simultaneous
+ *  submits: the grid is a snapshot, so a dialog built from it can offer
+ *  entries someone else already sent — the server rejects the whole
+ *  batch and the error reads like a bug). */
+interface DroppedEntry {
+  entryId: string;
+  workerName: string;
+  workDate: string;
+  status: string;
+}
+
 function summarizeApproved(rows: TimesheetGridRow[]): ApprovedSummary {
   const entryIds: string[] = [];
   const workerIds = new Set<string>();
@@ -178,6 +190,12 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Live re-check of the selection, run when the dialog opens. null while
+   *  checking or if the check failed (then we fall back to the grid's
+   *  summary and let the server validate). */
+  const [verified, setVerified] = useState<ApprovedSummary | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [dropped, setDropped] = useState<DroppedEntry[]>([]);
   const [result, setResult] = useState<{
     batchId: string;
     enqueued: number;
@@ -210,18 +228,96 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
           ? 'No approved entries in the current view.'
           : `Submit ${approvedCount} approved ${approvedCount === 1 ? 'entry' : 'entries'} to Everee.`;
 
+  /**
+   * Re-fetch every candidate entry's CURRENT status when the dialog
+   * opens, drop anything no longer 'approved' (already sent by the
+   * other operator, flipped to error, un-approved…), and rebuild the
+   * totals from live data. The server still validates on create — this
+   * just stops simultaneous Greg+Mark submits from reading as errors.
+   */
+  const verifySelection = async (entryIds: string[]): Promise<void> => {
+    if (!tenantId || entryIds.length === 0) return;
+    setVerifying(true);
+    setVerified(null);
+    setDropped([]);
+    try {
+      const snaps = await Promise.all(
+        entryIds.map((id) =>
+          getDoc(doc(db, 'tenants', tenantId, 'timesheet_entries', id)).catch(() => null),
+        ),
+      );
+      const fresh: ApprovedSummary = {
+        entryIds: [],
+        workerIds: new Set<string>(),
+        totalRegularHours: 0,
+        totalOTHours: 0,
+        totalGrossPay: 0,
+      };
+      const droppedNow: DroppedEntry[] = [];
+      for (let i = 0; i < snaps.length; i++) {
+        const s = snaps[i];
+        if (!s || !s.exists()) {
+          droppedNow.push({ entryId: entryIds[i], workerName: '(unknown)', workDate: '', status: 'missing' });
+          continue;
+        }
+        const ed = s.data() as any;
+        const status = String(ed?.status ?? '');
+        if (status !== 'approved') {
+          droppedNow.push({
+            entryId: entryIds[i],
+            workerName: String(ed?.workerName || ed?.userName || ed?.workerId || '(unknown)'),
+            workDate: String(ed?.workDate ?? ''),
+            status,
+          });
+          // Heal the stale grid row too — the live state is authoritative.
+          if (mergeEntryUpdate) mergeEntryUpdate(entryIds[i], { status });
+          continue;
+        }
+        fresh.entryIds.push(entryIds[i]);
+        if (ed?.workerId) fresh.workerIds.add(String(ed.workerId));
+        const payRate = Number(ed?.payRate ?? 0);
+        const reg = Number(ed?.totalRegularHours ?? 0);
+        const ot = Number(ed?.totalOTHours ?? 0);
+        const dt = Number(ed?.totalDoubleTimeHours ?? 0);
+        const meal = Number(ed?.mealBreakPenaltyHours ?? 0);
+        const rest = Number(ed?.restBreakPenaltyHours ?? 0);
+        const tips = Number(ed?.tips ?? 0);
+        const bonus = Number(ed?.bonusAmount ?? 0);
+        fresh.totalRegularHours += reg;
+        fresh.totalOTHours += ot;
+        fresh.totalGrossPay +=
+          reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + meal * payRate + rest * payRate + tips + bonus;
+      }
+      setVerified(fresh);
+      setDropped(droppedNow);
+    } catch {
+      // Verification is best-effort — on failure the server-side
+      // validation still protects; we just lose the nicer UX.
+      setVerified(null);
+      setDropped([]);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   const handleClickOpen = (): void => {
     setError(null);
     setResult(null);
     setDialogOpen(true);
+    void verifySelection(summary.entryIds);
   };
   const handleClose = (): void => {
     if (submitting) return;
     setDialogOpen(false);
   };
 
+  /** What actually submits: the live-verified subset when available,
+   *  else the grid snapshot (server validates either way). */
+  const active = verified ?? summary;
+
   const handleConfirm = async (): Promise<void> => {
     if (!tenantId || !filter || !scope || !hiringEntityId) return;
+    if (active.entryIds.length === 0) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -229,7 +325,7 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
       const createRes = await createTimesheetBatch({
         tenantId,
         hiringEntityId,
-        entryIds: summary.entryIds,
+        entryIds: active.entryIds,
         scope,
       });
       const batchId = createRes.data.batchId;
@@ -245,9 +341,9 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
       // and surface anything with an active error message.
       const errorDetails: EntryErrorDetail[] = [];
       const preflightErrors = submitRes.data.preflightErrorCount ?? 0;
-      if (preflightErrors > 0 || submitRes.data.enqueuedEntryCount < summary.entryIds.length) {
+      if (preflightErrors > 0 || submitRes.data.enqueuedEntryCount < active.entryIds.length) {
         const snaps = await Promise.all(
-          summary.entryIds.map((id) =>
+          active.entryIds.map((id) =>
             getDoc(doc(db, 'tenants', tenantId, 'timesheet_entries', id)).catch(() => null),
           ),
         );
@@ -260,7 +356,7 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
           // Show anything with an active error OR status=error that doesn't carry a message
           if (errMsg || errCode || ed?.status === 'error') {
             errorDetails.push({
-              entryId: summary.entryIds[i],
+              entryId: active.entryIds[i],
               workerName: ed?.workerName || ed?.userName || ed?.workerId || '(unknown worker)',
               workDate: ed?.workDate || '',
               errorCode: String(errCode || (ed?.status === 'error' ? 'error' : '')),
@@ -286,7 +382,7 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
       // sentToEvereeAt), so this is just an early UI render of
       // what's about to land in Firestore anyway.
       if (mergeEntryUpdate) {
-        for (const entryId of summary.entryIds) {
+        for (const entryId of active.entryIds) {
           mergeEntryUpdate(entryId, { status: 'sent_to_everee' });
         }
       }
@@ -320,9 +416,34 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
         <DialogContent dividers>
           {!result && (
             <Stack spacing={2}>
+              {verifying && (
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <CircularProgress size={14} />
+                  <Typography variant="caption" color="text.secondary">
+                    Confirming current entry statuses…
+                  </Typography>
+                </Stack>
+              )}
+              {dropped.length > 0 && (
+                <Alert severity="info">
+                  <Typography variant="caption">
+                    <strong>{dropped.length}</strong> entr{dropped.length === 1 ? 'y' : 'ies'} changed
+                    since this page loaded and {dropped.length === 1 ? 'was' : 'were'} excluded
+                    {(() => {
+                      const byStatus = new Map<string, number>();
+                      for (const d of dropped) byStatus.set(d.status, (byStatus.get(d.status) ?? 0) + 1);
+                      return ` (${Array.from(byStatus.entries())
+                        .map(([s, n]) => `${n} ${s === 'sent_to_everee' ? 'already submitted' : s}`)
+                        .join(', ')})`;
+                    })()}
+                    . Usually this means the other operator just submitted them. The totals below
+                    are only what will actually submit.
+                  </Typography>
+                </Alert>
+              )}
               <Typography variant="body2">
-                You&apos;re about to submit <strong>{approvedCount}</strong> approved
-                {' '}entr{approvedCount === 1 ? 'y' : 'ies'} to Everee for payment processing.
+                You&apos;re about to submit <strong>{active.entryIds.length}</strong> approved
+                {' '}entr{active.entryIds.length === 1 ? 'y' : 'ies'} to Everee for payment processing.
               </Typography>
               <Box
                 sx={{
@@ -334,19 +455,27 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
                 }}
               >
                 <Stack spacing={0.5}>
-                  <SummaryLine label="Workers" value={String(summary.workerIds.size)} />
+                  <SummaryLine label="Workers" value={String(active.workerIds.size)} />
                   <SummaryLine
                     label="Regular hours"
-                    value={summary.totalRegularHours.toFixed(2)}
+                    value={active.totalRegularHours.toFixed(2)}
                   />
-                  <SummaryLine label="OT hours" value={summary.totalOTHours.toFixed(2)} />
+                  <SummaryLine label="OT hours" value={active.totalOTHours.toFixed(2)} />
                   <Divider sx={{ my: 0.5 }} />
                   <SummaryLine
                     label="Approx gross pay"
-                    value={formatMoney(summary.totalGrossPay)}
+                    value={formatMoney(active.totalGrossPay)}
                   />
                 </Stack>
               </Box>
+              {!verifying && active.entryIds.length === 0 && (
+                <Alert severity="warning">
+                  <Typography variant="caption">
+                    Nothing left to submit — every selected entry has already been submitted or
+                    changed status. Close this dialog; the grid has been updated.
+                  </Typography>
+                </Alert>
+              )}
               <Alert severity="info">
                 <Typography variant="caption">
                   Once submitted, entries flip to <strong>sent_to_everee</strong> and become
@@ -428,10 +557,16 @@ const SubmitBatchToEvereeButton: React.FC<SubmitBatchToEvereeButtonProps> = ({
                 onClick={handleConfirm}
                 variant="contained"
                 color="primary"
-                disabled={submitting || !canSubmit || !hiringEntityId}
+                disabled={
+                  submitting || verifying || !canSubmit || !hiringEntityId || active.entryIds.length === 0
+                }
                 startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : null}
               >
-                {submitting ? 'Submitting…' : 'Submit to Everee'}
+                {submitting
+                  ? 'Submitting…'
+                  : verifying
+                    ? 'Checking…'
+                    : `Submit ${active.entryIds.length > 0 ? active.entryIds.length + ' ' : ''}to Everee`}
               </Button>
             </>
           )}

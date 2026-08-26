@@ -95,6 +95,10 @@ export interface WorkerDashboardActionItemsModelInput {
   /** Pre-derived TempWorks signals. `undefined` when not required. */
   tempworks?: WorkerDashboardTempworksSignals;
 
+  /** Everee payroll-onboarding state (V2 parity port, 2026-08-24).
+   *  `undefined` on old snapshots — treated as not-incomplete. */
+  payroll?: { incomplete: boolean; evereeTenantId: string | null };
+
   /** Pre-derived background / drug / E-Verify flags. */
   compliance: WorkerDashboardComplianceSignals;
 
@@ -486,6 +490,25 @@ function buildJobItems(input: WorkerDashboardActionItemsModelInput): InternalIte
     });
   }
 
+  // Everee payroll onboarding incomplete — workers can apply/work without
+  // finishing it, so this is a non-blocking "important" nudge. Deep-links
+  // to that employer's embed when the Everee tenant id is known.
+  if (input.payroll?.incomplete) {
+    const evTid = input.payroll.evereeTenantId;
+    out.push({
+      id: 'complete_payroll_setup',
+      category: 'important',
+      titleKey: 'dashboard.actionItems.payrollSetupTitle',
+      descriptionKey: 'dashboard.actionItems.payrollSetupDescription',
+      primaryLabelKey: 'dashboard.actionItems.payrollSetupPrimary',
+      primaryKind: 'navigate',
+      href: evTid ? `/c1/workers/earnings/${evTid}` : '/c1/workers/earnings',
+      priorityScore: scoreForId('complete_payroll_setup'),
+      sourceReason: 'Everee payroll onboarding incomplete',
+      qaEvaluatedFields: { evereeTenantId: evTid ?? null },
+    });
+  }
+
   // Re-emit prescreen items with the score table applied (web V1 used a
   // separate sortOrder; we normalise to `priorityScore` here so all
   // downstream sorting is uniform).
@@ -565,24 +588,10 @@ function buildProfileItems(input: WorkerDashboardActionItemsModelInput): Interna
 
   const out: InternalItem[] = [];
 
-  if (!workerHasTaxIdentityLast4(userDoc)) {
-    out.push({
-      id: 'add_tax_identity_last4',
-      category: 'important',
-      _profileTier: 'important',
-      titleKey: 'dashboard.actionItems.taxLast4Title',
-      descriptionKey: 'dashboard.actionItems.taxLast4Description',
-      primaryLabelKey: 'dashboard.actionItems.taxLast4Primary',
-      primaryKind: 'navigate',
-      href: WORKER_PERSONAL_DETAILS_HREF,
-      priorityScore: scoreForId('add_tax_identity_last4'),
-      sourceReason: 'Important: last 4 SSN/ITIN missing',
-      qaEvaluatedFields: {
-        last4SSN: userDoc ? normalizeLast4SsnDigits(userDoc.last4SSN) : '',
-        hasLast4: false,
-      },
-    });
-  }
+  // 'add_tax_identity_last4' retired 2026-08-21 (Greg): workers are no longer
+  // asked for the last 4 of their SSN — it is mirrored from Everee after
+  // payroll onboarding (evereeReconcileWorker). Keeping the id in the
+  // union/score table so old snapshots still type-check.
 
   if (!isWorkerHomeAddressComplete(userDoc)) {
     out.push({
@@ -667,8 +676,24 @@ function buildProfileItems(input: WorkerDashboardActionItemsModelInput): Interna
     });
   }
 
-  return out;
+  return out.filter((i) => !PROFILE_NAG_IDS.has(i.id));
 }
+
+// ── Work-only feed (Greg 2026-08-23, worker-app redesign P0) ──
+// The Home feed carries ONLY work: applications, assignments, pay, and
+// compliance that blocks a booked shift. Profile-completeness nags moved to
+// the Profile page's completeness meter. Native apps read the same snapshot,
+// so this rule is enforced here (server) and mirrored in the legacy client
+// builder until that path is deleted.
+const PROFILE_NAG_IDS = new Set([
+  'confirm_date_of_birth',
+  'verify_phone_number',
+  'confirm_home_address',
+  'add_profile_photo',
+  'add_emergency_contact',
+  're_enable_sms_notifications',
+  'sms_opt_in',
+]);
 
 const TIER_ORDER: Record<WorkerDashboardProfileTierOrder, number> = {
   important: 0,
@@ -689,7 +714,9 @@ export function buildWorkerDashboardActionItemsSnapshot(
 ): WorkerDashboardActionItemsSnapshotPayload {
   const profileItems = buildProfileItems(input);
   const jobItems = buildJobItems(input);
-  const all: InternalItem[] = [...jobItems, ...profileItems];
+  // Work-only feed choke point (see PROFILE_NAG_IDS above) — covers every
+  // builder branch, including the phone-gate early return.
+  const all: InternalItem[] = [...jobItems, ...profileItems].filter((i) => !PROFILE_NAG_IDS.has(i.id));
 
   all.sort((a, b) => {
     const scoreDiff = b.priorityScore - a.priorityScore;

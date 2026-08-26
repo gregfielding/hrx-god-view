@@ -1,6 +1,6 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import OpenAI from 'openai';
+import { getClaudeChat, type ChatMessageLike } from './utils/claudeChat';
 import { withIdempotency } from './middleware/aiGuard';
 import { logger } from './utils/logger';
 
@@ -8,7 +8,7 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
+const openai = getClaudeChat();
 
 export const app_ai_generateResponse = onCall({ 
   cors: true, 
@@ -26,7 +26,7 @@ export const app_ai_generateResponse = onCall({
     const logicalInput = { conversationId, prompt, model, temperature, maxTokens };
 
     const result = await withIdempotency('app_ai_generateResponse.v1', logicalInput, 60, async () => {
-      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      const messages: ChatMessageLike[] = [
         {
           role: 'system',
           content:

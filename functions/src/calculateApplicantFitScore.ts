@@ -1,10 +1,9 @@
 import * as admin from 'firebase-admin';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { defineString } from 'firebase-functions/params';
+import { createChatCompletion } from './utils/claudeChat';
 
 // Define OpenAI API key parameter
-const openaiApiKey = defineString('OPENAI_API_KEY');
 
 /**
  * Applicant Fit Score AI Function
@@ -238,42 +237,30 @@ Education: ${userData.education?.[0]?.degree || 'None'}
 Output JSON only: {"score": 0-100, "reasoning": "1 sentence max"}`;
 
   try {
-    // Use Firebase Functions parameter for API key
-    const apiKey = openaiApiKey.value();
+    // Claude-backed since 2026-08-21 (utils/claudeChat).
+    const apiKey = process.env.ANTHROPIC_API_KEY;
     
     if (!apiKey) {
       console.error('OpenAI API key not configured');
       return { score: 50, reasoning: 'API key not configured, using default score' };
     }
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini', // Cheapest model, good for scoring
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a recruiter scoring applicant-job fit. Return only JSON.'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 100
-      })
+    const data = await createChatCompletion({
+      model: 'claude-opus-5',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a recruiter scoring applicant-job fit. Return only JSON.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      response_format: { type: 'json_object' },
+      max_tokens: 100
     });
 
-    if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.statusText}`);
-    }
-
-    const data = await response.json();
     const content = data.choices[0].message.content;
     const result = JSON.parse(content);
     

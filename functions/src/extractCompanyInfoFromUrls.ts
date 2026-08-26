@@ -1,15 +1,12 @@
 import { onCall } from 'firebase-functions/v2/https';
 import { defineString } from 'firebase-functions/params';
-import { OpenAI } from 'openai';
+import { getClaudeChat } from './utils/claudeChat';
 import * as admin from 'firebase-admin';
 
 // Define config parameters
-const openaiApiKey = defineString('OPENAI_API_KEY');
 const serpApiKey = defineString('SERP_API_KEY');
 
-const openai = new OpenAI({
-  apiKey: openaiApiKey.value() || '',
-});
+const openai = getClaudeChat();
 
 interface CompanyExtractionResult {
   companyId: string;
@@ -216,7 +213,7 @@ async function extractCompanyInfoFromUrl(url: string) {
     }
 
     // Strategy 3: Use AI to analyze and enhance the data
-    if (openaiApiKey.value()) {
+    if (process.env.ANTHROPIC_API_KEY) {
       const aiInfo = await enhanceWithAI(url, results);
       Object.assign(results, aiInfo);
     }

@@ -10,6 +10,7 @@
  * `everee_workers/{entityId}__{uid}` (worker-readable). Stale `evereeWorkerIds` entries with no such hire are hidden.
  */
 
+import { t } from '../../../i18n';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   collection,
@@ -23,6 +24,12 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { Box, Button, Card, CardActionArea, CircularProgress, Stack, Typography } from '@mui/material';
 import { db } from '../../../firebase';
+import { Chip, Divider } from '@mui/material';
+import {
+  USD,
+  useWorkerEmployerLinkages,
+  useWorkerPayHistory,
+} from '../../../hooks/useWorkerPayHistory';
 import { useAuth } from '../../../contexts/AuthContext';
 import { getWorkerPayrollLanding } from '../../../utils/workerPayrollRouting';
 import {
@@ -38,6 +45,8 @@ import {
 interface EvereeEntityInfo {
   label: string;
   kind: PayrollWorkerKind;
+  /** HRX entity id (e.g. c1_select_llc) — needed for evereeGetPayHistory. */
+  entityId?: string;
 }
 
 function useEvereeEntityInfos(
@@ -75,7 +84,7 @@ function useEvereeEntityInfos(
             payrollWorkerClassification: data.payrollWorkerClassification,
             workerType: data.workerType,
           });
-          next[tid] = { label, kind };
+          next[tid] = { label, kind, entityId: top?.id };
         }
       } catch {
         evereeTenantIds.forEach((tid) => {
@@ -227,10 +236,12 @@ const WorkerPayrollIndex: React.FC = () => {
   const idsForLabels =
     landing.kind === 'picker' ? landing.evereeTenantIds : landing.kind === 'redirect' ? [landing.evereeTenantId] : [];
   const { infos, loading: labelsLoading } = useEvereeEntityInfos(scopeTenantId, idsForLabels);
+  const { linkages: payLinkages } = useWorkerEmployerLinkages(scopeTenantId, uid);
+  const { rows: payRows, loading: payLoading } = useWorkerPayHistory(scopeTenantId, payLinkages, 10);
 
   useEffect(() => {
     if (landing.kind === 'redirect') {
-      navigate(`/c1/workers/payroll/${encodeURIComponent(landing.evereeTenantId)}`, { replace: true });
+      navigate(`/c1/workers/earnings/${encodeURIComponent(landing.evereeTenantId)}`, { replace: true });
     }
   }, [landing, navigate]);
 
@@ -264,9 +275,9 @@ const WorkerPayrollIndex: React.FC = () => {
 
   if (landing.kind === 'empty') {
     return (
-      <Box sx={{ p: 3, maxWidth: 560 }}>
-        <Typography variant="h6" gutterBottom>
-          Payroll
+      <Box sx={{ maxWidth: 560 }}>
+        <Typography variant="h5" component="h1" gutterBottom>
+          {t('nav.payroll')}
         </Typography>
         <Typography variant="body2" color="text.secondary" paragraph>
           No payroll account yet — contact your recruiter if you were expecting access.
@@ -279,12 +290,12 @@ const WorkerPayrollIndex: React.FC = () => {
   }
 
   return (
-    <Box sx={{ p: 3, maxWidth: 720 }}>
-      <Typography variant="h6" gutterBottom>
-        Payroll
+    <Box>
+      <Typography variant="h5" component="h1">
+        {t('nav.payroll')}
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Choose your employer to open payroll onboarding or your portal.
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>
+        {t('earnings.chooseEmployer')}
       </Typography>
       {labelsLoading ? (
         <CircularProgress size={28} />
@@ -297,10 +308,10 @@ const WorkerPayrollIndex: React.FC = () => {
             return (
               <Card key={tid} variant="outlined">
                 <CardActionArea
-                  onClick={() => navigate(`/c1/workers/payroll/${encodeURIComponent(tid)}`)}
+                  onClick={() => navigate(`/c1/workers/earnings/${encodeURIComponent(tid)}`)}
                   sx={{ p: 2, alignItems: 'flex-start' }}
                 >
-                  <Typography variant="subtitle1" fontWeight={600}>
+                  <Typography variant="subtitle1">
                     {label}
                   </Typography>
                   {description ? (
@@ -314,6 +325,80 @@ const WorkerPayrollIndex: React.FC = () => {
           })}
         </Stack>
       )}
+      {/* Native pay history (Earnings v1, 2026-08-24). */}
+      {(payLoading || payRows.length > 0) && (
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="subtitle1" sx={{ mb: 1 }}>
+            {t('earnings.recentPay')}
+          </Typography>
+          <Card variant="outlined">
+            {payLoading && payRows.length === 0 ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                <CircularProgress size={22} />
+              </Box>
+            ) : (
+              <Stack divider={<Divider />}>
+                {payRows.map((r) => (
+                  <Stack
+                    key={r.statementId}
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="space-between"
+                    sx={{ px: 2, py: 1.5, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
+                    spacing={1}
+                    onClick={() =>
+                      navigate(
+                        `/c1/workers/pay-history/${encodeURIComponent(r.evereeTenantId)}/${encodeURIComponent(r.statementId)}`,
+                      )
+                    }
+                  >
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                        {r.gross != null ? USD.format(r.gross) : '—'}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" noWrap display="block">
+                        {[r.payDate, r.employerLabel].filter(Boolean).join(' · ')}
+                      </Typography>
+                    </Box>
+                    <Chip
+                      size="small"
+                      label={
+                        r.status === 'PAID'
+                          ? t('earnings.statusPaid')
+                          : r.status === 'ERROR' || r.status === 'RETURNED'
+                            ? t('earnings.statusIssue')
+                            : t('earnings.statusPending')
+                      }
+                      color={
+                        r.status === 'PAID'
+                          ? 'success'
+                          : r.status === 'ERROR' || r.status === 'RETURNED'
+                            ? 'error'
+                            : 'default'
+                      }
+                      variant={r.status === 'PAID' ? 'filled' : 'outlined'}
+                    />
+                  </Stack>
+                ))}
+              </Stack>
+            )}
+          </Card>
+          {payRows.length > 0 && (
+            <Button variant="text" onClick={() => navigate('/c1/workers/pay-history')} sx={{ mt: 1, px: 0 }}>
+              {t('earnings.viewAll')} →
+            </Button>
+          )}
+        </Box>
+      )}
+
+      {/* Payroll help desk entry (Slice 1, 2026-08-24). */}
+      <Button
+        variant="text"
+        onClick={() => navigate('/c1/workers/payroll-help')}
+        sx={{ mt: 3, px: 0 }}
+      >
+        {t('payrollHelp.entryTitle')} →
+      </Button>
     </Box>
   );
 };

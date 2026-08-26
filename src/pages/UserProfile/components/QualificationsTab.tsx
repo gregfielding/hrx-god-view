@@ -91,14 +91,8 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
         (typeof workEligibilityAttestation.requireSponsorship === 'boolean' ||
           typeof data.requireSponsorship === 'boolean');
       const resumeObj = data.resume || {};
-      const hasResumeUrl = Boolean(
-        resumeObj.downloadUrl ||
-          resumeObj.fileName ||
-          resumeObj.storagePath ||
-          data.resumeStoragePath ||
-          data.resumeUrl
-      );
-      setResumeUrl(resumeObj.downloadUrl || data.resumeUrl || null);
+      const hasResumeUrl = Boolean(resumeObj.downloadUrl || resumeObj.fileName || resumeObj.storagePath);
+      setResumeUrl(resumeObj.downloadUrl || null);
       const resumeComplete = hasResumeUrl;
       const certificationsComplete = certificationsArray.length > 0;
       const educationComplete = educationArray.length > 0;

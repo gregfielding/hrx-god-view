@@ -18,7 +18,7 @@ import {
 } from '@mui/material';
 import IconButton from '@mui/material/IconButton';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
@@ -532,21 +532,12 @@ const MyEmploymentDetailPage: React.FC = () => {
   };
 
   return (
-    <Container maxWidth="sm" sx={{ py: 2 }}>
+    <Box>
       <Stack spacing={2}>
-        <Stack direction="row" alignItems="center" spacing={0.5}>
-          <IconButton size="small" onClick={() => navigate('/c1/workers/profile')} aria-label={t('common.back')}>
-            <ArrowBackIcon />
-          </IconButton>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ cursor: 'pointer' }}
-            onClick={() => navigate('/c1/workers/profile')}
-          >
-            {t('workerEmploymentHub.detailBackToList')}
-          </Typography>
-        </Stack>
+        <WorkerPageHeader
+          title={t('workerEmploymentHub.myEmploymentTitle')}
+          backTo="/c1/workers/profile"
+        />
 
         {readiness.status !== 'ready' && readinessBannerMessage[readiness.status] && (
           <Alert
@@ -586,13 +577,13 @@ const MyEmploymentDetailPage: React.FC = () => {
         {!showWorkerEmploymentHub && !pathLoading && workerBuckets && (
           <>
             {pathRelationshipHistorical ? (
-              <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
+              <Alert severity="info" variant="outlined" sx={{ }}>
                 {t('workerEmploymentDetail.historicalPathAlertShort')}
               </Alert>
             ) : null}
 
             <Stack id="worker-employment-bridge-stack" spacing={2}>
-              <Card id="worker-employment-bridge-identity" variant="outlined" sx={{ borderRadius: 2 }}>
+              <Card id="worker-employment-bridge-identity" variant="outlined" sx={{ }}>
                 <CardContent>
                   <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
                     {t('workerEmploymentDetail.bridgeSectionIdentity')}
@@ -623,7 +614,7 @@ const MyEmploymentDetailPage: React.FC = () => {
                 </CardContent>
               </Card>
 
-              <Card variant="outlined" sx={{ borderRadius: 2 }}>
+              <Card variant="outlined" sx={{ }}>
                 <CardContent>
                   <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
                     {t('workerEmploymentDetail.bridgeSectionPayroll')}
@@ -654,7 +645,7 @@ const MyEmploymentDetailPage: React.FC = () => {
                 </CardContent>
               </Card>
 
-              <Card variant="outlined" sx={{ borderRadius: 2 }}>
+              <Card variant="outlined" sx={{ }}>
                 <CardContent>
                   <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
                     {t('workerEmploymentDetail.bridgeSectionScreening')}
@@ -689,7 +680,7 @@ const MyEmploymentDetailPage: React.FC = () => {
           </>
         )}
       </Stack>
-    </Container>
+    </Box>
   );
 };
 

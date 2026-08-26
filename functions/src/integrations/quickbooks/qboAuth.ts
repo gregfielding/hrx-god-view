@@ -318,6 +318,33 @@ export async function qboEntityUpdate(
   return json;
 }
 
+/** CREATE a QBO entity (POST without operation=update) — e.g. a new
+ *  Class for the classes-and-mapping report (Greg 2026-08-19). */
+export async function qboEntityCreate(
+  tenantId: string,
+  entityName: string,
+  entity: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const { accessToken, realmId } = await getQboAccessToken(tenantId);
+  const url = `${API_BASE}/${realmId}/${entityName.toLowerCase()}?minorversion=${MINOR_VERSION}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(entity),
+  });
+  const intuitTid = res.headers.get('intuit_tid') ?? 'n/a';
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    logger.error('[qbo] entity create failed', { status: res.status, intuitTid, entityName });
+    throw new Error(`QBO ${entityName} create ${res.status} (intuit_tid=${intuitTid}): ${JSON.stringify(json).slice(0, 500)}`);
+  }
+  return json;
+}
+
 /** Upload a file and attach it to an entity (QBO Attachable, multipart
  *  upload endpoint). ADDITIVE — uploading twice attaches the file twice;
  *  callers must dedupe (the Expensify write-back keeps a ledger). */

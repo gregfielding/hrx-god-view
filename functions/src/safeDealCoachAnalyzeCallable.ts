@@ -1,3 +1,4 @@
+import { createChatCompletion } from './utils/claudeChat';
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { SafeFunctionUtils, CostTracker } from './utils/safeFunctionTemplate';
@@ -217,9 +218,9 @@ async function callOpenAISafely(system: string, snapshot: any, entityType: strin
   SafeFunctionUtils.checkSafetyLimits();
   CostTracker.trackOperation('callOpenAISafely', 0.05); // Estimate $0.05 per OpenAI call
 
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    console.warn('OpenAI API key not configured, returning default response');
+    console.warn('LLM API key not configured, returning default response');
     return { summary: `Summary for ${entityType}.`, suggestions: [] };
   }
 
@@ -233,32 +234,22 @@ async function callOpenAISafely(system: string, snapshot: any, entityType: strin
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), SAFE_CONFIG.OPENAI_TIMEOUT_MS);
 
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json', 
-          'Authorization': `Bearer ${apiKey}` 
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini', // Use more cost-effective model
+      // Claude-backed since 2026-08-21 (utils/claudeChat); the SDK has its
+      // own request timeout, the AbortController here only bounds the race.
+      const data: any = await Promise.race([
+        createChatCompletion({
+          model: 'claude-opus-5',
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: system },
             { role: 'user', content: `Stage: ${snapshot.stage}\nSnapshot: ${JSON.stringify(snapshot)}` }
           ],
-          temperature: 0.3,
-          max_tokens: 1000 // Limit token usage for cost control
+          max_tokens: 1000
         }),
-        signal: controller.signal
-      });
+        new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('LLM call timed out')))),
+      ]);
 
       clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
-      }
-
-      const data: any = await response.json();
       const raw = data?.choices?.[0]?.message?.content;
       
       if (!raw) {

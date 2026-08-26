@@ -9,7 +9,7 @@ export function buildRecordHeaderAddressLines(data: Record<string, unknown>): { 
   const streetLine = [street, unit].filter(Boolean).join(', ');
   const cityVal = String(data.city ?? ai.city ?? ad.city ?? '').trim();
   const stateVal = String(data.state ?? ai.state ?? ad.state ?? '').trim();
-  const zip = String(ai.zip ?? ai.zipCode ?? ad.zipCode ?? ad.zip ?? '').trim();
+  const zip = String(ai.zip ?? ai.zipCode ?? ad.zipCode ?? ad.zip ?? data.zipCode ?? '').trim();
   const cityStateZip = [cityVal, stateVal, zip].filter(Boolean).join(', ');
 
   if (streetLine && cityStateZip) {

@@ -1,12 +1,8 @@
 import { onCall } from 'firebase-functions/v2/https';
-import { OpenAI } from 'openai';
+import { getClaudeChat } from './utils/claudeChat';
 import { defineString } from 'firebase-functions/params';
 
-const openaiApiKey = defineString('OPENAI_API_KEY');
-
-const openai = new OpenAI({
-  apiKey: openaiApiKey.value(),
-});
+const openai = getClaudeChat();
 
 interface FindSimilarCompaniesData {
   companyName: string;

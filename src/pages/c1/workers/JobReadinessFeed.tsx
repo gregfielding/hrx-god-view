@@ -987,7 +987,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
           <LinearProgress
             variant="determinate"
             value={(currentWizardStep / TOTAL_WIZARD_STEPS) * 100}
-            sx={{ height: 8, borderRadius: 2 }}
+            sx={{ height: 8, }}
           />
         </Box>
         <Fade in={!hideIntentBlock} timeout={300}>
@@ -1082,7 +1082,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
 
         {showProfilePhotoStep && (
           <Fade in timeout={280}>
-            <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+            <Card variant="outlined" sx={{ borderColor: 'divider' }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
                   {t('jobReadiness.addProfilePhoto')}
@@ -1162,7 +1162,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
 
         {showResumeStep && (
           <Fade in timeout={280}>
-            <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+            <Card variant="outlined" sx={{ borderColor: 'divider' }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
                   {t('jobReadiness.resumePromptTitle')}
@@ -1254,7 +1254,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
         {/* full card behavior intact. */}
         {showWorkAuthorizationStep && !WORK_AUTH_NARRATIVE_DISABLED && (
           <Fade in timeout={280}>
-            <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+            <Card variant="outlined" sx={{ borderColor: 'divider' }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
                   {t('jobReadiness.workAuthorizationTitle')}
@@ -1354,7 +1354,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
 
         {showCertificationsStep && (
           <Fade in timeout={280}>
-            <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+            <Card variant="outlined" sx={{ borderColor: 'divider' }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
                   {t('profile.certifications')}
@@ -1449,7 +1449,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
 
         {showSkillsStep && (
           <Fade in timeout={280}>
-            <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+            <Card variant="outlined" sx={{ borderColor: 'divider' }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
                   {t('apply.stepSkills')}
@@ -1512,7 +1512,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                   {t('jobReadiness.impactWeightedProgress')}
                 </Typography>
               </Stack>
-              <LinearProgress variant="determinate" value={engine.readinessScorePercent} sx={{ height: 9, borderRadius: 2 }} />
+              <LinearProgress variant="determinate" value={engine.readinessScorePercent} sx={{ height: 9, }} />
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
                 {engine.readinessScoreSummary}
               </Typography>
@@ -1558,7 +1558,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                 </Box>
               </Fade>
             ) : (
-              <Box sx={{ p: 2, border: '1px dashed', borderColor: 'divider', borderRadius: 2 }}>
+              <Box sx={{ p: 2, border: '1px dashed', borderColor: 'divider', }}>
                 <Typography variant="body2" color="text.secondary">
                   {t('jobReadiness.allSetForNow')}
                 </Typography>

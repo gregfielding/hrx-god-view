@@ -1,15 +1,13 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { OpenAI } from 'openai';
+import { getClaudeChat } from './utils/claudeChat';
 import { logger } from './utils/logger';
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 const db = admin.firestore();
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || (process.env.FUNCTIONS_EMULATOR ? 'test' : ''),
-});
+const openai = getClaudeChat();
 
 export const createFeedbackCampaign = onCall(async (request) => {
   const data = request.data;

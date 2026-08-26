@@ -5,7 +5,7 @@ import { fetchAndNormalize, fetchBestGuessUrls } from './utils/serp';
 import { logEnrichmentEvent } from './utils/logging';
 import { logger } from './utils/logger';
 import { CompanyEnrichmentSchema, CompanyEnrichmentVersionMetaSchema, CompanyEnrichment } from './schemas/companyEnrichment';
-import OpenAI from 'openai';
+import { getClaudeChat } from './utils/claudeChat';
 import { getOpenAIKey, getClearbitKey, getApolloKey } from './utils/secrets';
 import { generateEmbedding } from './utils/embeddings';
 import { fetchClearbitCompany, bucketEmployeesToSize } from './utils/clearbit';
@@ -48,7 +48,7 @@ function removeUndefinedValues(obj: any): any {
 
 type Mode = 'full' | 'metadata' | 'apollo-only';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
+const openai = getClaudeChat();
 
 // Secrets used by enrichment pipeline (Apollo optional augmentation)
 const APOLLO_API_KEY = defineSecret('APOLLO_API_KEY');
@@ -647,7 +647,7 @@ export const enrichCompanyOnDemand = onCall({
   try {
     console.log('enrichCompanyOnDemand:start', { tenantId, companyId, mode: desiredMode, force: !!force });
     // Resolve key from env or Firestore
-    let apiKey = process.env.OPENAI_API_KEY;
+    let apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) apiKey = await getOpenAIKey(tenantId);
     if (apiKey) (openai as any).apiKey = apiKey;
     console.log('enrichCompanyOnDemand:key_present', { present: !!(openai as any).apiKey });

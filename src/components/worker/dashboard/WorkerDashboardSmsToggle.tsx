@@ -23,7 +23,7 @@ const WorkerDashboardSmsToggle: React.FC<WorkerDashboardSmsToggleProps> = ({
   if (smsEnabled) return null;
 
   return (
-    <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+    <Card variant="outlined" sx={{ borderColor: 'divider' }}>
       <CardContent sx={{ py: 1.5, px: 2.5 }}>
         <Box
           sx={{

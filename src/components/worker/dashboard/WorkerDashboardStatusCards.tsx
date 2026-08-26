@@ -92,7 +92,7 @@ const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
         const hideMetric = 'metricHidden' in c && c.metricHidden;
         return (
           <Grid item xs={6} md={3} key={c.label}>
-            <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+            <Card variant="outlined" sx={{ borderColor: 'divider' }}>
               <CardActionArea onClick={() => navigate(c.to)} sx={{ display: 'block' }}>
                 <CardContent sx={{ py: 2, px: 2 }}>
                   <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: 18, fontWeight: 600 }}>

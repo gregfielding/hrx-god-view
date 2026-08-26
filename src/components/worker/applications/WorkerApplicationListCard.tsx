@@ -47,7 +47,7 @@ const WorkerApplicationListCard: React.FC<WorkerApplicationListCardProps> = ({
     variant="outlined"
     onClick={onCardClick}
     sx={{
-      borderRadius: 2,
+      
       borderColor: 'divider',
       boxShadow: 'none',
       cursor: 'pointer',

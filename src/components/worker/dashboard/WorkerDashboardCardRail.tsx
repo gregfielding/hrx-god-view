@@ -190,7 +190,7 @@ const WorkerDashboardCardRail: React.FC<WorkerDashboardCardRailProps> = ({
             py: 1,
             mx: 0,
             '&::-webkit-scrollbar': { height: 4 },
-            '&::-webkit-scrollbar-thumb': { borderRadius: 2, bgcolor: 'action.selected' },
+            '&::-webkit-scrollbar-thumb': {  bgcolor: 'action.selected' },
           }}
         >
           {cards.map((payload, i) => (

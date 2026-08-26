@@ -244,9 +244,6 @@ export function extractProfileReadinessSourceSignals(userDoc: Record<string, unk
       downloadUrl: resume.downloadUrl ?? null,
       fileName: resume.fileName ?? null,
       storagePath: resume.storagePath ?? null,
-      fileUrl: resume.fileUrl ?? null,
-      resumeUrl: userDoc.resumeUrl ?? null,
-      resumeStoragePath: userDoc.resumeStoragePath ?? null,
     },
   };
 }

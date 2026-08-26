@@ -36,3 +36,27 @@ Workers' comp classification build-out. Two collections: `tenants/{t}/workers_co
 **WC-E letter WATCH (2026-08-14):** Greg is drafting/sending the consolidated InSource letter himself. WATCH the inbox (chief-of-staff brief will surface it) for InSource's response and process it against the ask list: (1) July restatement + CO-misfiled-as-DC correction, (2) Ohio BWC (monopolistic state), (3) Select coverage asks CO/KY/MO/TX/MN/FL 8044-class + NC/TX/FL/VA 9014 + replace 8040 placeholder in 26 states, (4) Events coverage NY/DC/CT, (5) Events home-vs-work-state billing correction (HRX work-state report is the evidence), (6) **current location/worksite schedule if one exists** → load into `workers_comp_policy_locations` (collection exists, EMPTY; setWorkersCompPolicyLocation callable) so HRX can flag off-policy sites; if state-rated-only, record that in the memory. Response also unblocks WC-D (keep-or-retire off-policy matrix rows). The original "C1 Client Report - Sub Client History.xlsx" (2026-07-28) is gone from disk; the policy schedule is reconstructable from the matrix (source ^carrier_report|^cort_scoped_mirror, 73 rows — rebuilt CSV sent to Greg 2026-08-14).
 
 **Canonical WC picker (Greg directive 2026-08-05 evening, commit eabe08be):** `src/components/workersComp/WcCodeSelect.tsx` is THE reusable WC class-code field — matrix by worksite state + hiring entity (entity-scoped rows win over generic, 8040 always offered @ synthetic $2.35, rate follows the pick via `onChange(code, rate)`, free-typing allowed). Adopted: EditWorkersCompDialog, FixAssignmentDialog, JobOrderForm (career + gig-position WC fields — picking a code auto-fills the rate field). STILL TO MIGRATE: CsvTimesheetImport inline WC cells, WorkersCompMonthlyCard assign dropdowns. ⚠️ DC bug fixed same day (7cd9bc06): normalizeUsStateCode (server functions/src/recruiter/usStateNormalize.ts + client mirror) had 50 states but NO DC → every DC matrix rate lookup silently failed (code changes kept stale rates); DC added to both maps + resolveMatrixRate prices 8040 even with no state; 14 mispriced rows swept (.scratch/sweep-reprice-wc-mismatch.ts), 21 needs_wc rows chain-completed (.scratch/sweep-needswc-chain-complete.ts).
+
+## 2026-08-25 — coverage dashboard live + two data migrations (Greg approved)
+
+- Coverage dashboard /reports/wc-coverage + Mass PN export shipped (see
+  commit e0848b8d). First run showed $1.02M "no policy record" exposure —
+  which was a RECORDS gap: `workers_comp` (policy headers) was completely
+  empty.
+- **Policy-record seed**: 44 (entity,state) records created from the
+  carrier's own insured-worksite schedule (workers_comp_policy_locations),
+  carrier InSource, active, `source: 'derived_from_policy_locations_
+  2026-08-25'` — ☠️ effective/expiration dates + policy numbers are EMPTY
+  (unknown; get from broker and fill in Settings → Workers' Comp; empty
+  dates count as always-covering in the coverage engine until then).
+- **True residual exposure: $132,650/90d in states NOT on the carrier
+  schedule** — C1 Events: TN $62.1k, NY $55.5k, CT $4.9k, DC $2.4k, VA
+  $0.6k; C1 Select: WI $7.1k (WI is on EVENTS' schedule, not Select's —
+  the per-entity distinction matters). These are exactly the Mass PN rows
+  the dashboard now exports.
+- **Bill-rate backfill** (FIN-1 follow-through): 3,761 timesheet entries
+  since June stamped with billRate via assignment (3,029) → JO position
+  (700) → account flat markup (29); marker `billRateBackfill`. 44 entries
+  /$7.2k unresolvable; 4 skipped (bill < pay suspicious). Accrual
+  coverage 45% → **99%**; window truth: pay $1.019M, bill $1.315M,
+  ~22.5% gross margin.

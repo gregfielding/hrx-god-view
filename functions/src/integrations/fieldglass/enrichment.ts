@@ -18,7 +18,8 @@
  * `response_format: json_object`, tolerant JSON parse).
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
+import { getClaudeChat } from '../../utils/claudeChat';
 
 /** Everything we try to pull off a job_posting_detail.do page. All
  *  optional — pages vary and the extractor omits what it can't see. */
@@ -102,7 +103,8 @@ export interface OpenAILike {
 let cached: OpenAILike | null = null;
 export function defaultOpenAI(): OpenAILike {
   if (cached) return cached;
-  cached = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' }) as OpenAILike;
+  // Claude-backed (2026-08-21) — same chat.completions shape, see utils/claudeChat.
+  cached = getClaudeChat() as unknown as OpenAILike;
   return cached;
 }
 

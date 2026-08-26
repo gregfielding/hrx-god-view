@@ -72,6 +72,8 @@ import { deleteField, doc, getDoc, setDoc, serverTimestamp } from 'firebase/fire
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material';
 import { db } from '../../../firebase';
+import { t } from '../../../i18n';
+import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
 import { useAuth } from '../../../contexts/AuthContext';
 import {
   evereeCreateOnboardingSession,
@@ -923,11 +925,11 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        height: 'calc(100vh - 120px)',
+        height: 'calc(100vh - 170px)',
         minHeight: 480,
-        p: 1,
       }}
     >
+      <WorkerPageHeader title={t('nav.payroll')} backTo="/c1/workers/earnings" />
       <Box
         component="iframe"
         ref={iframeRef}

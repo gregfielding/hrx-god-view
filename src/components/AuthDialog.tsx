@@ -35,6 +35,7 @@ import {
   updateProfile
 } from 'firebase/auth';
 import { auth, db } from '../firebase';
+import PhoneSignupGate from './apply/PhoneSignupGate';
 import { sendPasswordReset } from '../services/sendPasswordResetCallable';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { logSMSConsent, getUserAgent } from '../utils/consentLogging';
@@ -295,9 +296,10 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
 
   const handleKeyPress = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter') {
-      if (activeTab === 0) {
-        handleSignUp();
-      } else {
+      // Create tab: account creation goes through PhoneSignupGate ONLY
+      // (Slice 4, 2026-08-25) — Enter used to leak into the legacy
+      // email+password handleSignUp and mint a passworded worker.
+      if (activeTab !== 0) {
         handleSignIn();
       }
     }
@@ -745,7 +747,9 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
           </Alert>
         )}
 
-        <form onSubmit={activeTab === 0 ? handleSignUp : handleSignIn}>
+        {/* Create tab has NO form-submit path — PhoneSignupGate owns account
+            creation (Slice 4); only the Sign In tab submits. */}
+        <form onSubmit={activeTab === 0 ? (e) => e.preventDefault() : handleSignIn}>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 2 : 2.5 }}>
             {activeTab === 0 && (
               <>
@@ -779,6 +783,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
               </>
             )}
 
+            {activeTab === 1 && (
             <TextField
               ref={emailRef}
               fullWidth
@@ -794,7 +799,9 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
                 startAdornment: <EmailIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />
               }}
             />
+            )}
 
+            {activeTab === 1 && (
             <TextField
               fullWidth
               label={t.password}
@@ -821,10 +828,11 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
                   </InputAdornment>
                 )
               }}
-              helperText={activeTab === 0 ? t.passwordHint : ''}
+              helperText={''}
             />
+            )}
 
-            {activeTab === 0 && (
+            {false && (
               <TextField
                 fullWidth
                 label={t.confirmPassword}
@@ -891,6 +899,25 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
                 size={isMobile ? 'medium' : 'medium'}
                 placeholder={t.phonePlaceholder}
                 helperText={t.phoneHelp}
+              />
+            )}
+
+            {/* Phone-first account creation (Slice 2, 2026-08-25): OTP gate
+                replaces email+password signup — see PhoneSignupGate. */}
+            {activeTab === 0 && agreedToTerms && smsConsent && (
+              <PhoneSignupGate
+                firstName={firstName}
+                lastName={lastName}
+                phone={phone}
+                signupSource="jobs_board_dialog"
+                onAuthed={() => {
+                  try {
+                    onAuthSuccess();
+                  } catch {
+                    /* caller callback errors must not strand the dialog */
+                  }
+                  onClose();
+                }}
               />
             )}
 
@@ -994,14 +1021,11 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
           >
             {t.cancel}
           </Button>
+          {activeTab === 1 && (
           <Button
-            onClick={activeTab === 0 ? handleSignUp : handleSignIn}
+            onClick={handleSignIn}
             variant="contained"
-            disabled={
-              loading || 
-              recaptchaLoading || 
-              (activeTab === 0 && (!agreedToTerms || !smsConsent || !firstName.trim() || !lastName.trim() || !email.trim() || !password.trim() || !phone.trim() || password !== confirmPassword))
-            }
+            disabled={loading || recaptchaLoading}
             startIcon={(loading || recaptchaLoading) ? <CircularProgress size={20} /> : null}
             fullWidth={isMobile}
             sx={{ 
@@ -1009,8 +1033,9 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
               py: isMobile ? 1.5 : undefined
             }}
           >
-            {recaptchaLoading ? t.verifying : loading ? t.pleaseWait : (activeTab === 0 ? t.createAccount : t.signIn)}
+            {recaptchaLoading ? t.verifying : loading ? t.pleaseWait : t.signIn}
           </Button>
+          )}
         </Box>
 
         {/* Optional statement for SMS consent */}

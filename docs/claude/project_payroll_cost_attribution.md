@@ -40,3 +40,35 @@ Greg's accounting problem (2026-07-27): money wired to Everee has no per-job-ord
 **Known gaps (Greg acknowledged):** direct payments made inside Everee (outside HRX) appear in no log (⇒ mitigated go-forward by off-cycle feature above); June is a mess pre-tagging.
 
 **Next phases:** P3 = June backfill / venue→JO mapping for the unattributed bucket + reconcile Everee-direct payments (via /api/v2/payments — but see [[reference-everee-environments-and-submit]] wire gotchas: external-worker-id filter silently ignored). P4 = QBO auto-journal: match tag JO name → QBO class, post split journal entries against the wire — AFTER Tabitha validates a month of the manual split worksheets. Related: [[project-qbo-invoicing]], [[feature-ts1-phase4-state]].
+
+## Expediting stuck W-2 wages (2026-08-20, VenueSmart travelers)
+
+Timesheet submits create **worked shifts** for W-2 hourly (payables only
+for extras) — shifts pay on the weekly cycle, whose run FINALIZES the
+Wednesday morning it pays (~9AM PT). Shifts submitted minutes after
+finalize wait a full week. To pay them same-day:
+1. ☠️ **A payable alone never surfaces as a payment** — you MUST call
+   `requestPayablePayout(cfg, {externalIds, includeWorkersOnRegularPayCycle:
+   true})` after creating payables; it groups them into a Needs-Approval
+   payment (import path does this — submitImportTimesheetBatch).
+2. payCode: **BONUS** (Everee rejects custom codes on /api/v2/payables
+   even after provisionCustomPayCodes reports CREATED — the codes exist
+   for the dashboard, not the API; 2026-08-05 + re-confirmed 2026-08-20);
+   label "Wages — Shift ending YYYY-MM-DD (missed pay-run cutoff)" keeps
+   stubs honest + wire-class attribution working; timestamp = work date.
+3. **Delete the worked shifts** so no future run double-pays; shifts in
+   an approved period 400 ("can no longer be modified") — retry with
+   `deleteWorkedShift(cfg, id, {correctionAuthorized: true})` which
+   succeeds.
+4. Coverage check before converting: parse recent payments'
+   earningList notes for "Shift ending YYYY-MM-DD" per
+   employee.externalWorkerId — timestamps lie (the run absorbs
+   submissions up to the minute it processes).
+5. Payments land status=CALCULATED → someone must APPROVE on the Everee
+   Payments page (10AM PT cutoff for same-day arrival).
+Scripts: functions/.scratch/expedite-stuck-shifts.ts (+ retry/stamp
+companions, 2026-08-20). Also ☠️ Everee's PER_DIEM earning code is
+FICA-TAXED ($50→$46.17); FIXED 2026-08-20 — import extras + off-cycle
+per-diems now ship payCode REIMBURSEMENT (non-taxable). Historical
+PER_DIEM-coded earnings were shorted 7.65% (workers) + employer FICA
+match overpaid; remediation via Everee support or top-up payables.

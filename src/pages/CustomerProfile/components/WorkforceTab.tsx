@@ -129,6 +129,9 @@ const WorkforceTab: React.FC<WorkforceTabProps> = ({ tenantId, ...props }) => {
     form.firstName &&
     form.lastName &&
     form.email &&
+    // Slice 4 (2026-08-25): workers sign in by phone OTP — a 10-digit mobile
+    // number is required or the server rejects the invite.
+    form.phone.replace(/\D/g, '').length >= 10 &&
     form.locationIds.length > 0 &&
     form.departmentId
   );

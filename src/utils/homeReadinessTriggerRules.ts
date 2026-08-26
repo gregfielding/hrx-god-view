@@ -41,8 +41,11 @@ const RECOMPUTE_PATH_PREFIXES = [
   'certifications',
   'workerProfile.skills',
   'skills',
-  'resume.fileUrl',
-  'resumeUrl',
+  // Keep in sync with functions/src/readiness/homeSnapshotTriggerStub.ts —
+  // the parser writes downloadUrl/storagePath/fileName, not fileUrl.
+  'resume.downloadUrl',
+  'resume.storagePath',
+  'resume.fileName',
 ];
 
 const ITEM_TO_LAUNCH_STEP: Record<string, HomeReadinessLaunchStep> = {

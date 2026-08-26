@@ -87,10 +87,24 @@ service firebase.storage {
 
     // Resume upload access
     match /resumes/{userId}/{fileName} {
+      // Staff check: HRX role, top-level securityLevel 5+, or C1-tenant
+      // securityLevel 5+ (levels are stored as strings or numbers). Rules
+      // OR-absorbs errors, so a missing field just fails that clause.
+      function resumeStaffReadOk() {
+        let u = firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+        return u.role == 'HRX'
+          || u.securityLevel in ['5', '6', '7', 5, 6, 7]
+          || u.tenantIds['BCiP2bQ9CgVOCTfV6MhD'].securityLevel in ['5', '6', '7', 5, 6, 7];
+      }
       // Allow authenticated users to upload/delete their own resumes
       allow write, delete: if request.auth != null && request.auth.uid == userId;
-      // Public read access for resumes (since they're made public)
-      allow read: if true;
+      // Owner + staff only (2026-08-25) — resumes were world-readable before.
+      // The token download URLs the parser stores on users.resume.downloadUrl
+      // keep working regardless of rules; SDK getDownloadURL covers the rest.
+      allow read: if request.auth != null && (
+        request.auth.uid == userId ||
+        resumeStaffReadOk()
+      );
     }
 
     // User certification uploads

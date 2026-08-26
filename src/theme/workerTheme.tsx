@@ -26,20 +26,58 @@ export const workerDesignTokens = {
 export function getWorkerTheme() {
   return createTheme(getBaseTheme(), {
     palette: {
+      // Accent decision (Greg approved 2026-08-23): ink primary + C1 gold
+      // highlight — no blue on worker surfaces. Blue is the admin brand;
+      // the worker app is monochrome ink with the brand gold reserved for
+      // selected states and the notification badge (gold can't carry text
+      // on white, so it always pairs with ink ON it, never AS type).
+      primary: {
+        main: '#111111',
+        dark: '#000000',
+        light: '#3A3A3A',
+        contrastText: '#FFFFFF',
+      },
+      secondary: {
+        main: '#FFC700',
+        dark: '#E6B300',
+        light: '#FFD84D',
+        contrastText: '#111111',
+      },
+      text: {
+        // Ink, not slate (P1 theme pass — phone-login language).
+        primary: '#16181A',
+        secondary: '#6B6B6B',
+      },
       background: {
-        default: '#F7F9FC',
+        // Warm near-white (P1 theme pass 2026-08-23, phone-login language) —
+        // the old #F7F9FC read blue and made every card float on a tint.
+        default: '#FAFAF8',
         paper: '#FFFFFF',
       },
     },
     typography: {
+      // System stack (phone-login language) — no webfont download, native feel.
       fontFamily:
-        '"Inter", "SF Pro Text", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif',
+        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      h5: { fontWeight: 650, letterSpacing: '-0.01em', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      h6: { fontWeight: 650, letterSpacing: '-0.01em', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      h1: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      h2: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      h3: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      h4: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      subtitle1: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif', color: '#16181A' },
+      subtitle2: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif', color: '#16181A' },
+      body2: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      caption: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+      overline: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
       body1: {
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
         fontSize: 16,
         fontWeight: 400,
         lineHeight: 1.5,
       },
       button: {
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
         textTransform: 'none' as const,
         fontWeight: 600,
         fontSize: 15,
@@ -58,12 +96,31 @@ export function getWorkerTheme() {
       MuiCard: {
         styleOverrides: {
           root: {
-            transition: `box-shadow 120ms ${motionEasing}, border-color 120ms ${motionEasing}, transform 150ms ${motionEasing}`,
+            // Phone-login language: hairline border, no shadow, quieter radius.
+            borderRadius: t.radius.md,
+            border: '1px solid #E9E9E5',
+            // The base (admin) theme pads every Card 24px; on worker screens that
+            // stacked with CardContent's 16px into 40px insets. CardContent alone
+            // owns the padding here.
+            padding: 0,
+            boxShadow: 'none',
+            transition: `border-color 120ms ${motionEasing}, transform 150ms ${motionEasing}`,
+            '&:hover': { boxShadow: 'none' },
             '&:active': { transform: 'scale(0.985)' },
             '&.worker-hero-card': {
               borderRadius: t.radius.lg,
-              padding: 36,
+              padding: 24,
             },
+          },
+        },
+      },
+      MuiCardContent: {
+        styleOverrides: {
+          root: {
+            // Uniform card inset (the old mix of 18–24px + a 0px last-child
+            // from the base theme made every page's cards inset differently).
+            padding: 16,
+            '&:last-child': { paddingBottom: 16 },
           },
         },
       },
@@ -78,12 +135,52 @@ export function getWorkerTheme() {
       },
       MuiButton: {
         styleOverrides: {
+          containedPrimary: {
+            // Phone-login language: the one solid button is ink, not blue.
+            backgroundColor: '#111111',
+            color: '#FFFFFF',
+            '&:hover': { backgroundColor: '#000000' },
+          },
           root: {
             fontSize: 15,
             minHeight: 44,
             transition: `transform 150ms ${motionEasing}, box-shadow 120ms ${motionEasing}`,
             '&:active': { transform: 'scale(0.98)' },
           },
+          // Base theme uses a 2px outline — too heavy against hairline cards.
+          outlined: {
+            borderWidth: 1.5,
+            '&:hover': { borderWidth: 1.5 },
+          },
+          // Kill the base theme's blue hover glow on contained buttons.
+          contained: {
+            '&:hover': { boxShadow: 'none' },
+          },
+          // Compact rows (inline actions, dialogs): keep a real tap target
+          // but drop the visual weight.
+          sizeSmall: {
+            fontSize: 14,
+            minHeight: 36,
+            padding: '4px 12px',
+          },
+        },
+      },
+      MuiChip: {
+        styleOverrides: {
+          // Chips are metadata, not buttons — one size down from the base
+          // theme so they never compete with row text.
+          root: {
+            height: 26,
+            fontSize: 12,
+            fontWeight: 600,
+          },
+          sizeSmall: {
+            height: 22,
+            fontSize: 11,
+          },
+          // Base theme hard-codes blue for colorPrimary — worker canon is ink.
+          colorPrimary: { backgroundColor: '#111111', color: '#FFFFFF' },
+          colorSecondary: { backgroundColor: '#FFC700', color: '#111111' },
         },
       },
       MuiIconButton: {
@@ -103,11 +200,12 @@ export function getWorkerTheme() {
             paddingLeft: 16,
             paddingRight: 16,
             '&.Mui-selected': {
-              backgroundColor: 'rgba(74, 144, 226, 0.1)',
-              borderLeft: '4px solid #1F6FC9',
+              // C1 gold selected state (accent decision 2026-08-23).
+              backgroundColor: 'rgba(255, 199, 0, 0.14)',
+              borderLeft: '4px solid #FFC700',
               paddingLeft: 12,
               '&:hover': {
-                backgroundColor: 'rgba(74, 144, 226, 0.12)',
+                backgroundColor: 'rgba(255, 199, 0, 0.2)',
               },
             },
           },
@@ -132,8 +230,9 @@ export function getWorkerTheme() {
               borderRadius: t.radius.md,
               minHeight: 44,
               '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+                // Ink focus ring (accent decision 2026-08-23 — no blue).
                 borderWidth: 2,
-                borderColor: '#4A90E2',
+                borderColor: '#111111',
               },
             },
           },
@@ -143,6 +242,10 @@ export function getWorkerTheme() {
         styleOverrides: {
           root: {
             minHeight: 48,
+          },
+          // Base theme hard-codes a blue indicator — ink on worker surfaces.
+          indicator: {
+            backgroundColor: '#111111',
           },
         },
       },
@@ -158,8 +261,11 @@ export function getWorkerTheme() {
       MuiAppBar: {
         styleOverrides: {
           root: {
-            boxShadow: t.shadow.card,
-            borderBottom: '1px solid rgba(0,0,0,0.06)',
+            // Flat, full-width hairline bar (the base MuiPaper radius was
+            // rounding it into a floating card).
+            borderRadius: 0,
+            boxShadow: 'none',
+            borderBottom: '1px solid #E9E9E5',
           },
         },
       },

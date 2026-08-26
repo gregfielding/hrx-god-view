@@ -56,6 +56,7 @@ import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { evereeRequest } from '../integrations/everee/evereeHttp';
 import { listPayables } from '../integrations/everee/evereePayables';
 import { finalizeTimesheetBatch } from './finalizeTimesheetBatch';
+import { maybeRunDailyFinanceRollups } from './financeWeekRollups';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -464,6 +465,18 @@ export const reconcileTimesheetBatchesCron = onSchedule(
       durationMs: Date.now() - startedAt,
       ...summary,
     });
+
+    // FIN-1 weekly rollups (Greg 2026-08-25) ride this finance cron behind a
+    // once-per-day function_runs claim — the 15-minute cadence only pays the
+    // rebuild cost on the first run each UTC day. Isolated: rollup failures
+    // never fail the reconcile sweep.
+    try {
+      await maybeRunDailyFinanceRollups('BCiP2bQ9CgVOCTfV6MhD');
+    } catch (err) {
+      logger.error('[reconcileTimesheetBatchesCron] finance_rollups_failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
   },
 );
 

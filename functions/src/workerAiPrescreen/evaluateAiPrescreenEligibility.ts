@@ -66,14 +66,7 @@ export function userDocHasBasicLocation(userDoc: Record<string, unknown> | null 
 export function userDocHasStoredResume(userDoc: Record<string, unknown> | null | undefined): boolean {
   if (!userDoc || typeof userDoc !== 'object') return false;
   const resumeObj = (userDoc.resume || {}) as Record<string, unknown>;
-  return Boolean(
-    resumeObj.downloadUrl ||
-      resumeObj.fileName ||
-      resumeObj.storagePath ||
-      resumeObj.fileUrl ||
-      userDoc.resumeStoragePath ||
-      userDoc.resumeUrl,
-  );
+  return Boolean(resumeObj.downloadUrl || resumeObj.fileName || resumeObj.storagePath);
 }
 
 /**

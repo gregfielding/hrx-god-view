@@ -473,6 +473,82 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
         </CardContent>
       </Card>
 
+      {/* Signup & consent provenance (2026-08-25): everything the phone-first
+          funnel stamps that had no admin surface — signup source, agreement
+          stamps, phone history. Read-only. */}
+      <Card variant="outlined">
+        <CardContent sx={{ py: 1.5, px: 1.5 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
+            Signup &amp; consent
+          </Typography>
+          {lastUserDoc ? (
+            <Stack spacing={1.25}>
+              <Box>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  Signup
+                </Typography>
+                <Typography variant="body2">
+                  {[
+                    String(lastUserDoc.signupSource || lastUserDoc.source || '') || 'unknown source',
+                    lastUserDoc.signupGroupId ? `group ${String(lastUserDoc.signupGroupId)}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  Agreements
+                </Typography>
+                <Typography variant="body2">
+                  {(() => {
+                    const ua = (lastUserDoc.userAgreements || {}) as Record<
+                      string,
+                      { version?: string; timestamp?: string; agreed?: boolean; acknowledged?: boolean }
+                    >;
+                    const fmt = (label: string, k: string) => {
+                      const a = ua[k];
+                      if (!a || (a.agreed !== true && a.acknowledged !== true)) return `${label}: —`;
+                      const when = a.timestamp ? new Date(a.timestamp) : null;
+                      const dateStr = when && !Number.isNaN(when.getTime()) ? when.toLocaleDateString() : '';
+                      return `${label}: ${a.version || 'yes'}${dateStr ? ` (${dateStr})` : ''}`;
+                    };
+                    return [
+                      fmt('Terms', 'termsOfUse'),
+                      fmt('SMS consent', 'smsConsent'),
+                      fmt('Privacy', 'privacyPolicy'),
+                    ].join(' · ');
+                  })()}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  Phone history
+                </Typography>
+                <Typography variant="body2">
+                  {(() => {
+                    const prev = Array.isArray(lastUserDoc.previousPhones)
+                      ? (lastUserDoc.previousPhones as unknown[]).map((v) => String(v)).filter(Boolean)
+                      : [];
+                    const lastSignIn = lastUserDoc.lastPhoneSignInAt as { toDate?: () => Date } | undefined;
+                    const lastSignInStr = lastSignIn?.toDate
+                      ? lastSignIn.toDate().toLocaleString()
+                      : null;
+                    const parts = [
+                      prev.length > 0 ? `Previous numbers: ${prev.join(', ')}` : 'No previous numbers',
+                      lastSignInStr ? `Last phone sign-in: ${lastSignInStr}` : null,
+                    ].filter(Boolean);
+                    return parts.join(' · ');
+                  })()}
+                </Typography>
+              </Box>
+            </Stack>
+          ) : (
+            <Typography variant="body2">Loading…</Typography>
+          )}
+        </CardContent>
+      </Card>
+
       {/* 3. Admin account controls */}
       <Card variant="outlined">
         <CardContent sx={{ px: 1, py: 2 }}>

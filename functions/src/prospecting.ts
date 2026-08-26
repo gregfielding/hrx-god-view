@@ -1,7 +1,8 @@
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
-import { getApolloKey, getOpenAIKey } from './utils/secrets';
+import { getApolloKey } from './utils/secrets';
+import { getClaudeChat } from './utils/claudeChat';
 import { apolloCompanyByDomain, apolloPeopleSearch, apolloContactEnrichment } from './utils/apollo';
 import { logger } from './utils/logger';
 
@@ -103,12 +104,8 @@ function extractJsonObject(text: string): any | undefined {
 
 // Parse natural language prompt into structured filters
 async function parsePrompt(prompt: string, tenantId: string): Promise<ParsedPrompt> {
-  const openai = require('openai');
-  const apiKey = await getOpenAIKey(tenantId);
-  if (!apiKey) {
-    throw new Error('OpenAI API key not configured');
-  }
-  const client = new openai.OpenAI({ apiKey });
+  // Claude-backed since 2026-08-21 (same chat.completions shape — utils/claudeChat).
+  const client = getClaudeChat();
 
   const systemPrompt = `You are an AI assistant that parses natural language prospecting requests into structured data. Extract the following information:
 
@@ -158,12 +155,8 @@ Return a JSON object with these fields.`;
 
 // Score prospects based on staffing fit and call priority
 async function scoreProspects(contacts: any[], tenantId: string): Promise<ProspectingResult[]> {
-  const openai = require('openai');
-  const apiKey = await getOpenAIKey(tenantId);
-  if (!apiKey) {
-    throw new Error('OpenAI API key not configured');
-  }
-  const client = new openai.OpenAI({ apiKey });
+  // Claude-backed since 2026-08-21 (same chat.completions shape — utils/claudeChat).
+  const client = getClaudeChat();
 
   const results: ProspectingResult[] = [];
   const BATCH_SIZE = 5; // Process 5 contacts at a time

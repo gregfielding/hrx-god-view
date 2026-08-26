@@ -370,7 +370,9 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
   }>>(user.additionalDocuments || []);
 
   // Education & Work Experience (using existing components)
-  const [employmentHistory, setEmploymentHistory] = useState<any[]>(user.employmentHistory || []);
+  const [employmentHistory, setEmploymentHistory] = useState<any[]>(
+    user.workHistory || user.employmentHistory || [],
+  );
   const [education, setEducation] = useState<any[]>(user.education || []);
 
   // AI-Generated Insights
@@ -531,10 +533,11 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
       updates.education = parsedData.education;
     }
     
-    // Update work experience if parsed
+    // Update work experience if parsed. workHistory is the read path here
+    // (employmentHistory, a third identical copy, retired 2026-08-25).
     if (parsedData.experience && parsedData.experience.length > 0) {
       setEmploymentHistory([...employmentHistory, ...parsedData.experience]);
-      updates.employmentHistory = parsedData.experience;
+      updates.workHistory = parsedData.experience;
     }
     
     // Update certifications if parsed

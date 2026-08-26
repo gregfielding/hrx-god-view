@@ -13,10 +13,10 @@ import {
 } from '@mui/material';
 import LanguageIcon from '@mui/icons-material/Language';
 import { useGuestLanguage } from '../hooks/useGuestLanguage';
+import { langToggleStyle } from './authMinimalStyles';
 import { useT, setLanguage } from '../i18n';
 
 const Terms: React.FC = () => {
-  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [guestLanguage, setGuestLanguage] = useGuestLanguage();
   const t = useT();
 
@@ -27,54 +27,12 @@ const Terms: React.FC = () => {
   return (
     <Container maxWidth="md" sx={{ py: 5, pb: 10, pt: 2 }}>
       {/* Language picker - 16px padding above (pt: 2) */}
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-        <Tooltip title={guestLanguage === 'es' ? t('nav.messageLanguageEs') : t('nav.messageLanguageEn')}>
-          <Box
-            component="button"
-            onClick={(e) => setLanguageMenuAnchorEl(e.currentTarget)}
-            aria-label={t('nav.language')}
-            sx={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 0.5,
-              border: '1px solid',
-              borderColor: 'divider',
-              borderRadius: 1,
-              px: 1,
-              py: 0.75,
-              bgcolor: 'background.paper',
-              color: 'text.secondary',
-              cursor: 'pointer',
-              '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
-            }}
-          >
-            <LanguageIcon sx={{ fontSize: 20 }} />
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-              {guestLanguage === 'es' ? 'ES' : 'EN'}
-            </Typography>
-          </Box>
-        </Tooltip>
+      {/* Quiet EN | ES — the standard guest language toggle (2026-08-25). */}
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2, whiteSpace: 'nowrap' }}>
+        <button type="button" style={langToggleStyle(guestLanguage === 'en')} onClick={() => setGuestLanguage('en')}>EN</button>
+        <span style={{ color: '#ccc', margin: '0 8px' }}>|</span>
+        <button type="button" style={langToggleStyle(guestLanguage === 'es')} onClick={() => setGuestLanguage('es')}>ES</button>
       </Box>
-      <Menu
-        anchorEl={languageMenuAnchorEl}
-        open={Boolean(languageMenuAnchorEl)}
-        onClose={() => setLanguageMenuAnchorEl(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-      >
-        <MenuItem
-          selected={guestLanguage === 'en'}
-          onClick={() => { setLanguageMenuAnchorEl(null); setGuestLanguage('en'); }}
-        >
-          {t('nav.englishEn')}
-        </MenuItem>
-        <MenuItem
-          selected={guestLanguage === 'es'}
-          onClick={() => { setLanguageMenuAnchorEl(null); setGuestLanguage('es'); }}
-        >
-          {t('nav.espanolEs')}
-        </MenuItem>
-      </Menu>
 
       {/* Header */}
       <Box component="header" sx={{ mb: 3 }}>

@@ -14,16 +14,15 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { sendPasswordReset } from '../../../services/sendPasswordResetCallable';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { setLanguage, useT } from '../../../i18n';
 import WorkerBasicIdentityCard from '../../../components/worker/profile/WorkerBasicIdentityCard';
+import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
 import EligibilityModal from '../../../components/EligibilityModal';
 import WorkEligibilityStep from '../../../components/apply/steps/WorkEligibilityStep';
 import { deriveWorkEligibilityFromAttestation } from '../../../types/workEligibility';
@@ -354,21 +353,6 @@ const WorkerProfileSection: React.FC = () => {
     await persistPreferences(industryPrefs, next);
   };
 
-  const handlePasswordReset = async () => {
-    const email = String(userDoc?.email || user?.email || '').trim();
-    if (!email) {
-      setSaveError(t('profile.noEmailFound'));
-      return;
-    }
-    setSaveError(null);
-    setSaveMessage(null);
-    try {
-      await sendPasswordReset(email);
-      setSaveMessage(t('profile.passwordResetEmailSent', { email }));
-    } catch {
-      setSaveError(t('profile.unableToSendPasswordReset'));
-    }
-  };
 
   const updateAccountSettings = async (next: {
     preferredLanguage?: 'en' | 'es';
@@ -435,30 +419,28 @@ const WorkerProfileSection: React.FC = () => {
 
   if (!SECTION_META[activeSection]) {
     return (
-      <Container maxWidth="md" sx={{ py: 2 }}>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/c1/workers/profile')} sx={{ mb: 2 }}>
-          {t('profile.backToProfile')}
-        </Button>
-        <Alert severity="warning">{t('profile.sectionUnavailable')}</Alert>
-      </Container>
+      <Box>
+        <Stack spacing={3}>
+          <WorkerPageHeader title={t('profile.backToProfile')} backTo="/c1/workers/profile" />
+          <Alert severity="warning">{t('profile.sectionUnavailable')}</Alert>
+        </Stack>
+      </Box>
     );
   }
 
   return (
-    <Container maxWidth="md" sx={{ py: 2 }}>
-      <Stack spacing={2}>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/c1/workers/profile')} sx={{ alignSelf: 'flex-start' }}>
-          {t('profile.backToProfile')}
-        </Button>
-
-        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-          <CardContent>
-            <Typography variant="h5" sx={{ fontWeight: 700 }}>
-              {t(sectionMeta.titleKey)}
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              {activeSection === 'skills' ? t('profile.workerSkillsPageHelper') : t(sectionMeta.descriptionKey)}
-            </Typography>
+    <Box>
+      <Stack spacing={3}>
+        <Box>
+          <WorkerPageHeader
+            title={t(sectionMeta.titleKey)}
+            backTo="/c1/workers/profile"
+            description={
+              activeSection === 'skills'
+                ? t('profile.workerSkillsPageHelper')
+                : t(sectionMeta.descriptionKey)
+            }
+          />
             {activeSection === 'skills' ? (
               <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                 {skillsCount === 0
@@ -484,8 +466,7 @@ const WorkerProfileSection: React.FC = () => {
                 </Button>
               </Stack>
             ) : null}
-          </CardContent>
-        </Card>
+        </Box>
 
         {saveMessage ? <Alert severity="success">{saveMessage}</Alert> : null}
         {saveError ? <Alert severity="error">{saveError}</Alert> : null}
@@ -510,7 +491,7 @@ const WorkerProfileSection: React.FC = () => {
         )}
 
         {activeSection === 'preferences' && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent>
               <Stack spacing={2}>
                 <Box>
@@ -557,7 +538,7 @@ const WorkerProfileSection: React.FC = () => {
         )}
 
         {activeSection === 'bio' && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent>
               <BioStep
                 value={{
@@ -609,7 +590,7 @@ const WorkerProfileSection: React.FC = () => {
         )}
 
         {activeSection === 'languages' && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent>
               <Stack spacing={1.5}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
@@ -637,7 +618,7 @@ const WorkerProfileSection: React.FC = () => {
         )}
 
         {activeSection === 'app-language' && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent>
               <Stack spacing={2}>
                 <Box>
@@ -696,15 +677,14 @@ const WorkerProfileSection: React.FC = () => {
         )}
 
         {activeSection === 'reset-password' && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent>
               <Stack spacing={1.5}>
+                {/* Slice 4 (2026-08-25): workers have no passwords — the
+                    reset button is gone; sign-in is phone OTP at /login. */}
                 <Typography variant="body2" color="text.secondary">
-                  {t('profile.resetPasswordEmailHelp')}
+                  {t('profile.phoneSignInHelp')}
                 </Typography>
-                <Button variant="contained" onClick={handlePasswordReset} sx={{ alignSelf: 'flex-start' }}>
-                  {t('profile.sendPasswordResetEmailButton')}
-                </Button>
                 <Button color="error" variant="outlined" onClick={() => void logout()} sx={{ alignSelf: 'flex-start' }}>
                   {t('nav.logOut')}
                 </Button>
@@ -731,7 +711,7 @@ const WorkerProfileSection: React.FC = () => {
         needDOB={false}
         needPhone
       />
-    </Container>
+    </Box>
   );
 };
 

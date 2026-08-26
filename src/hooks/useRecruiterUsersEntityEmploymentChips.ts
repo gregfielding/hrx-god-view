@@ -103,9 +103,12 @@ export function useRecruiterUsersEntityEmploymentChips(
         const chunks = chunkIds(ids, FIRESTORE_IN_MAX);
         const coll = collection(db, p.entityEmployments(tenantId));
 
-        for (const chunk of chunks) {
-          const q = query(coll, where('userId', 'in', [...chunk]));
-          const snap = await getDocs(q);
+        // Perf (2026-08-25): chunks fired in parallel — the serial for-await
+        // loops added ⌈N/30⌉ round trips each to the Applications tab load.
+        const eeSnaps = await Promise.all(
+          chunks.map((chunk) => getDocs(query(coll, where('userId', 'in', [...chunk])))),
+        );
+        eeSnaps.forEach((snap) => {
           snap.docs.forEach((docSnap) => {
             const uid = String((docSnap.data() as Record<string, unknown>).userId || '').trim();
             if (!uid) return;
@@ -114,13 +117,15 @@ export function useRecruiterUsersEntityEmploymentChips(
             if (!rawByUser.has(uid)) rawByUser.set(uid, []);
             rawByUser.get(uid)!.push({ id: docSnap.id, data: docSnap.data() as Record<string, unknown> });
           });
-        }
+        });
 
         const woByUser = new Map<string, WorkerOnboardingPipeline[]>();
-        for (const chunk of chunks) {
-          const woSnap = await getDocs(
-            query(collection(db, p.workerOnboarding(tenantId)), where('userId', 'in', [...chunk])),
-          );
+        const woSnaps = await Promise.all(
+          chunks.map((chunk) =>
+            getDocs(query(collection(db, p.workerOnboarding(tenantId)), where('userId', 'in', [...chunk]))),
+          ),
+        );
+        woSnaps.forEach((woSnap) => {
           woSnap.docs.forEach((d) => {
             const uid = String((d.data() as Record<string, unknown>).userId || '').trim();
             if (!uid) return;
@@ -128,7 +133,7 @@ export function useRecruiterUsersEntityEmploymentChips(
             if (!woByUser.has(uid)) woByUser.set(uid, []);
             woByUser.get(uid)!.push(pipe);
           });
-        }
+        });
 
         const breakdownOut = new Map<string, RecruiterUserEmploymentBreakdownContext | null>();
 

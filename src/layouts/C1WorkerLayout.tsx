@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Box, Container, ThemeProvider } from '@mui/material';
-import WorkerNav from '../components/worker/WorkerNav';
+import WorkerBottomTabs from '../components/worker/WorkerBottomTabs';
 import WorkerAppBar from '../components/worker/WorkerAppBar';
 import WorkerPageTransition from '../components/worker/WorkerPageTransition';
 import { useAuth } from '../contexts/AuthContext';
@@ -30,10 +30,9 @@ const C1WorkerLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) 
   return (
     <ThemeProvider theme={workerTheme}>
       <WorkerToastProvider>
-        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', bgcolor: '#F7F9FC' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', bgcolor: 'background.default' }}>
           <WorkerAppBar />
           <Box sx={{ display: 'flex', flex: 1, minHeight: 0 }}>
-            <WorkerNav />
             <Container
               component="main"
               sx={{
@@ -45,8 +44,10 @@ const C1WorkerLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) 
                 minWidth: 0,
                 py: 3,
                 px: { xs: 2, sm: 3 },
+                // Clear the fixed bottom tab bar (56px + iOS safe area).
+                pb: 'calc(80px + env(safe-area-inset-bottom))',
                 overflow: 'auto',
-                maxWidth: { sm: 880 },
+                maxWidth: { sm: 720 },
                 borderRadius: 0,
                 /** Keep main (incl. page transition transforms) below WorkerNav drawer stacking (z-index). */
                 position: 'relative',
@@ -57,6 +58,7 @@ const C1WorkerLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) 
               <WorkerPageTransition>{children ?? <Outlet />}</WorkerPageTransition>
             </Container>
           </Box>
+          <WorkerBottomTabs />
         </Box>
       </WorkerToastProvider>
     </ThemeProvider>

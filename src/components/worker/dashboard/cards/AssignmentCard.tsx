@@ -67,7 +67,7 @@ const AssignmentCard: React.FC<AssignmentCardProps> = ({ payload, onTap }) => {
             py: 1,
             bgcolor: contrast,
             color: '#fff',
-            borderRadius: 2,
+            
             fontSize: '0.875rem',
             textTransform: 'none',
             fontWeight: 600,

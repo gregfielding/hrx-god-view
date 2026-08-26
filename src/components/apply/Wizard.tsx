@@ -5,9 +5,6 @@ import {
   Button,
   Divider,
   Stack,
-  Step,
-  StepLabel,
-  Stepper,
   Typography,
   Alert,
   Snackbar,
@@ -43,7 +40,6 @@ import { db } from '../../firebase';
 
 import PersonalInfoStep from './steps/PersonalInfoStep';
 import AddressStep from './steps/AddressStep';
-import EVerifyComfortStep from './steps/EVerifyComfortStep';
 import {
   getEffectiveJobOrderField,
   type JobOrderForEffectiveRead,
@@ -51,14 +47,19 @@ import {
 import WorkEligibilityStep from './steps/WorkEligibilityStep';
 import { isWorkAuthCollectionDisabled } from '../../utils/workAuthCollectionFlag';
 import ProfilePictureStep from './steps/ProfilePictureStep';
+import PhoneSignupGate from '../apply/PhoneSignupGate';
 import ResumeStep from './steps/ResumeStep';
 import SkillsStep from './steps/SkillsStep';
 import EducationStep from './steps/EducationStep';
 import WorkExperienceStep from './steps/WorkExperienceStep';
-import BioStep from './steps/BioStep';
-import JobPreferencesStep from './steps/JobPreferencesStep';
 import RequirementsAcknowledgementStep from './steps/RequirementsAcknowledgementStep';
-import MilestoneProgress from '../common/MilestoneProgress';
+import PositionInterestsStep from './steps/PositionInterestsStep';
+import {
+  logApplyStepViewed,
+  logApplyStepCompleted,
+  logApplyAbandoned,
+  logApplyCompleted,
+} from '../../utils/applyWizardAnalytics';
 import EligibilityModal from '../../components/EligibilityModal';
 import { geocodeAddress, geocodeAddressDetailed } from '../../utils/geocodeAddress';
 import {
@@ -78,12 +79,12 @@ import { getRequirementPackV1 } from '../../data/jobRequirementPacksV1';
 import { computeJobScoreSummaryV1 } from '../../utils/jobScoreV1';
 import { getUserScore } from '../../utils/scoreSummary';
 import { useT } from '../../i18n';
-import { buildCanonicalWorkerProfileWritePatch } from '../../utils/workerReadinessWriteModel';
+import { buildCanonicalWorkerProfileWritePatch, expandDottedKeys } from '../../utils/workerReadinessWriteModel';
 import { buildCanonicalHomeAddressFromWizardPersonal } from '../../utils/buildCanonicalHomeAddress';
 import { isApplyHomeAddressValid } from '../../utils/applyHomeAddressValid';
 import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroupAutoAdd';
 import { isValidUsPhone10, normalizeUsPhoneDigits } from '../../utils/usPhoneValidation';
-import { normalizeLast4SsnDigits, isEmptyOrValidLast4Ssn } from '../../utils/last4Ssn';
+import { normalizeLast4SsnDigits } from '../../utils/last4Ssn';
 import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 import { mergeResolvedHiringInterview } from '../../utils/mergeResolvedHiringInterview';
 import {
@@ -134,6 +135,21 @@ const toDobString = (val: unknown): string => {
   return '';
 };
 
+/** 18+ gate (W-2 staffing): iso YYYY-MM-DD in, sane 18-100 age out. */
+const isAdultDob = (iso: string): boolean => {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return false;
+  const dobDate = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(dobDate.getTime())) return false;
+  const now = new Date();
+  let age = now.getFullYear() - dobDate.getFullYear();
+  const beforeBirthday =
+    now.getMonth() < dobDate.getMonth() ||
+    (now.getMonth() === dobDate.getMonth() && now.getDate() < dobDate.getDate());
+  if (beforeBirthday) age -= 1;
+  return age >= 18 && age <= 100;
+};
+
 // Firestore does not allow `undefined` anywhere in a document (including nested objects).
 // This helper removes undefined values deeply while preserving non-plain objects (Dates, Timestamps, FieldValue, etc).
 const deepStripUndefined = (value: any): any => {
@@ -170,7 +186,26 @@ const stepKeys = [
   'apply.stepBio',
   'apply.stepPreferences',
   'apply.stepRequirements',
+  'apply.stepPositionInterests',
 ];
+
+/** Stable analytics ids per actual-step index (GA4 funnel, 2026-08-25). */
+const STEP_IDS: Record<number, string> = {
+  0: 'personal_info',
+  1: 'address',
+  2: 'resume',
+  3: 'everify_comfort',
+  4: 'work_eligibility',
+  5: 'profile_picture',
+  6: 'skills',
+  7: 'education',
+  8: 'licenses_certifications',
+  9: 'work_experience',
+  10: 'bio',
+  11: 'preferences',
+  12: 'requirements',
+  13: 'position_interests',
+};
 const detectDefaultLanguage = (): 'en' | 'es' => {
   if (typeof navigator === 'undefined') return 'en';
   return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
@@ -207,14 +242,7 @@ const toStringList = (value: unknown): string[] =>
     : [];
 
 const hasResumeData = (resume: any): boolean =>
-  Boolean(
-    resume?.fileName ||
-      resume?.storagePath ||
-      resume?.downloadUrl ||
-      resume?.fileUrl ||
-      resume?.resumeUrl ||
-      resume?.parsed
-  );
+  Boolean(resume?.fileName || resume?.storagePath || resume?.downloadUrl || resume?.parsed);
 
 /** Skill labels from structured resume parse (same shapes as resumeParser `skills` array). */
 function parsedResumeSkillNames(resume: any): string[] {
@@ -362,6 +390,21 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     }
   }, [searchParams]);
 
+  // Phone prefill from the login page's "no account → sign up" handoff
+  // (Slice 2): /c1/apply?phone=5551234567 seeds the personal form so the
+  // worker only types their number once.
+  useEffect(() => {
+    try {
+      const qp = String(searchParams.get('phone') || '').replace(/\D/g, '').slice(-10);
+      if (qp.length === 10 && !String((formData.personal as any)?.phone || '').trim()) {
+        persist({ personal: { ...(formData.personal || {}), phone: qp } });
+      }
+    } catch {
+      /* prefill is best-effort */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   // Extract selected shifts from query params (for Gig jobs)
   // Support both 'shifts' (comma-separated) and 'shiftId' (single shift)
   const selectedShifts = useMemo(() => {
@@ -482,16 +525,40 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     location: string;
   } | null>(null);
 
-  // Step indices: 2 = Resume (after address); 3 = E-Verify comfort (generic /c1/apply only; job applies use requirements when eVerifyRequired).
+  // Previous render's current step — see the step-12 evict guard below.
+  const lastActualStepRef = useRef(0);
+
+  // Signup-funnel analytics (2026-08-25) — GA4 events, best-effort only.
+  const funnelStartRef = useRef(Date.now());
+  const viewedKeyRef = useRef('');
+  const submittedRef = useRef(false);
+  const abandonCtxRef = useRef<{ lastStepId: string; stepIndex: number }>({ lastStepId: '', stepIndex: 0 });
+
+  // Steps 3 (E-Verify comfort), 10 (bio), and 11 (shift preferences) were
+  // permanently cut 2026-08-25: staff never read them and no major gig app
+  // asks at signup (E-Verify comfort belongs at the job-requirements gate,
+  // bios come from resumes, availability comes from shift acceptance).
   const visibleStepIndices = useMemo(() => {
-    const all = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-    let indices = jobId ? all.filter((i) => i !== 3) : [...all];
+    // 13 (position interests) sits between experience and requirements —
+    // generic signups only, filtered below for job applications.
+    const all = [0, 1, 2, 4, 5, 6, 7, 8, 9, 13, 12];
+    let indices = [...all];
+
+    // Position interests: job applicants already told us the position by
+    // applying; workers who answered before are never re-asked (nested +
+    // dotted + top-level reads — setDoc dotted-key corruption legacy).
+    const existingInterests =
+      (userProfile as any)?.workerProfile?.preferences?.positionInterests ??
+      (userProfile as any)?.['workerProfile.preferences.positionInterests'] ??
+      (userProfile as any)?.positionInterests;
+    const interestsAnswered =
+      Array.isArray(existingInterests) && existingInterests.length > 0;
+    if ((Boolean(jobId) || interestsAnswered) && lastActualStepRef.current !== 13) {
+      indices = indices.filter((i) => i !== 13);
+    }
 
     if (hiringEntityName && /C1 Events LLC/i.test(hiringEntityName)) {
       indices = indices.filter((i) => i !== 4);
-    }
-    if (posting?.jobType === 'gig') {
-      indices = indices.filter((i) => i !== 11);
     }
 
     const isAuthenticated = Boolean(auth.currentUser?.uid || uid);
@@ -521,10 +588,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
     const hasValue = (v: unknown) => String(v || '').trim().length > 0;
 
+    // Email dropped from the step-0 completeness test (phone-first signup,
+    // 2026-08-25) — it's optional and lives on step 1 now; requiring it here
+    // would bounce authed workers back to a step that no longer shows it.
     const personalComplete = Boolean(
       String(personal.firstName || profile.firstName || '').trim() &&
         String(personal.lastName || profile.lastName || '').trim() &&
-        String(personal.email || profile.email || '').trim() &&
         String(personal.phone || profile.phone || profile.phoneE164 || '').trim() &&
         String(personal.dob || profile.dob || profile.dateOfBirth || '').trim()
     );
@@ -546,10 +615,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         homeLat !== undefined &&
         homeLng !== undefined
     );
-    if (isAuthenticated && addressComplete) indices = indices.filter((i) => i !== 1);
-
-    if (!jobId && isAuthenticated && hasValue(requirementsForm.eVerifyComfort)) {
-      indices = indices.filter((i) => i !== 3);
+    // Job applications REQUIRE an email (Greg 2026-08-25) — recruiters and
+    // application updates need a channel beyond SMS, and Everee needs one at
+    // hire. General signup keeps it optional (conversion-first).
+    const emailOnFile = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+      String(personal.email || profile.email || '').trim(),
+    );
+    if (isAuthenticated && addressComplete && (!jobId || emailOnFile)) {
+      indices = indices.filter((i) => i !== 1);
     }
 
     // W.3 — when the work-auth collection flag is on (default), step 4
@@ -572,7 +645,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     );
     if (hasProfilePhoto) indices = indices.filter((i) => i !== 5);
 
-    const hasResume = hasResumeData(resume) || hasResumeData(profile.resume) || Boolean(profile.resumeUrl);
+    const hasResume = hasResumeData(resume) || hasResumeData(profile.resume);
     if (hasResume) indices = indices.filter((i) => i !== 2);
 
     const requiredSkills = toStringList(
@@ -650,28 +723,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       indices = indices.filter((i) => i !== 9);
     }
 
-    const professionalBioText = String(
-      (formData.bio || {}).professionalBio || profile.professionalBio || ''
-    ).trim();
-    if (professionalBioText.length > 0) indices = indices.filter((i) => i !== 10);
-
-    const prefsForm = formData.preferences || {};
-    const prefsProfile = profile.preferences || {};
-    const preferencesCaptured =
-      (typeof prefsForm.targetPay === 'number' && !Number.isNaN(prefsForm.targetPay)) ||
-      (typeof prefsForm.shift === 'string' && prefsForm.shift.trim().length > 0) ||
-      (Array.isArray(prefsForm.shiftPreferences) && prefsForm.shiftPreferences.length > 0) ||
-      (typeof prefsForm.availableToStartDate === 'string' &&
-        prefsForm.availableToStartDate.trim().length > 0) ||
-      (typeof prefsForm.availabilityNotes === 'string' &&
-        prefsForm.availabilityNotes.trim().length > 0) ||
-      (typeof prefsProfile.targetPay === 'number' && !Number.isNaN(prefsProfile.targetPay)) ||
-      (typeof prefsProfile.shift === 'string' && prefsProfile.shift.trim().length > 0) ||
-      (Array.isArray(prefsProfile.shiftPreferences) && prefsProfile.shiftPreferences.length > 0);
-    if (posting?.jobType !== 'gig' && preferencesCaptured) {
-      indices = indices.filter((i) => i !== 11);
-    }
-
     const needsDrug = Boolean(posting?.showDrugScreening || posting?.drugScreeningRequired);
     const needsBackground = Boolean(posting?.showBackgroundChecks || posting?.backgroundCheckRequired);
     const needsEVerifyOnPosting = Boolean(posting?.eVerifyRequired);
@@ -704,7 +755,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         !hasValue(requirementsForm.customUniformRequirementsComfort)) ||
       ((posting?.showRequiredPpe || requiredPpe.length > 0) && !hasValue(requirementsForm.requiredPpeComfort)) ||
       !hasValue(requirementsForm.transportMethod);
-    if (!needsRequirementsStep) indices = indices.filter((i) => i !== 12);
+    // Never evict the final step while the worker is standing on it:
+    // answering its last question (e.g. tapping a transport chip) flips
+    // needsRequirementsStep false, and without this guard the recompute
+    // bounced them backwards to an earlier step mid-interaction.
+    if (!needsRequirementsStep && lastActualStepRef.current !== 12) {
+      indices = indices.filter((i) => i !== 12);
+    }
 
     if (indices.length === 0) {
       indices = [12];
@@ -713,21 +770,128 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   }, [posting, hiringEntityName, userProfile, formData, uid, requirements, auth.currentUser?.uid, jobId]);
 
   const actualStep = visibleStepIndices[Math.min(activeStep, visibleStepIndices.length - 1)] ?? 0;
+
+  // Funnel: one step_viewed per (position, step) pair; remembers the last view
+  // so the unmount cleanup can attribute the abandonment.
+  useEffect(() => {
+    const stepId = STEP_IDS[actualStep] ?? String(actualStep);
+    const key = `${activeStep}:${stepId}`;
+    if (viewedKeyRef.current === key) return;
+    viewedKeyRef.current = key;
+    abandonCtxRef.current = { lastStepId: stepId, stepIndex: activeStep };
+    logApplyStepViewed({
+      stepId,
+      stepIndex: activeStep,
+      totalSteps: visibleStepIndices.length,
+      jobId: jobId || null,
+      signupSource: signupGroupId ? 'apply_group_landing' : 'apply_landing',
+      authed: Boolean(auth.currentUser?.uid || uid),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actualStep, activeStep, visibleStepIndices.length]);
+
+  // Funnel: abandonment on unmount without a submit.
+  useEffect(() => {
+    return () => {
+      if (submittedRef.current) return;
+      const ctx = abandonCtxRef.current;
+      if (!ctx.lastStepId) return;
+      logApplyAbandoned({ lastStepId: ctx.lastStepId, stepIndex: ctx.stepIndex });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Previous render's current step, read by the visibleStepIndices memo above
+  // (safe: the memo re-runs on the formData change the guard cares about).
+  lastActualStepRef.current = actualStep;
   const isLastVisibleStep = activeStep === visibleStepIndices.length - 1;
 
-  // Grouped progress: Getting started (0-5 incl. resume, everify, work auth, photo), Qualifications (6-8), Experience (9-10), Prefs (11), Final (12)
-  const progressGroupIndex = (step: number) =>
-    step <= 5 ? 0 : step <= 8 ? 1 : step <= 10 ? 2 : step === 11 ? 3 : 4;
-  const progressGroupLabels = [
-    t('apply.progressPersonal'),
-    t('apply.progressSkills'),
-    t('apply.progressExperience'),
-    t('apply.progressVerification'),
-    t('apply.progressFinal'),
-  ];
-  const progressCompleted = progressGroupIndex(actualStep);
-  const progressTotal = 5;
-  const steps = progressGroupLabels;
+  // Auto-skipped steps eat their save-on-Next writes (the DOB bug's sibling,
+  // found 2026-08-25): the address step filters itself out the moment the
+  // picked address lands in formData, so its exit write never ran and the
+  // profile kept NO address — every later apply re-asked it. Persist the
+  // address the moment it's complete for an authed user whose profile
+  // doesn't have one yet.
+  const addressPersistRef = useRef(false);
+  useEffect(() => {
+    const authedUid = auth.currentUser?.uid || uid;
+    if (!authedUid || addressPersistRef.current) return;
+    const p = (formData.personal || {}) as Record<string, any>;
+    const complete = Boolean(
+      String(p.street || '').trim() &&
+        String(p.city || '').trim() &&
+        String(p.state || '').trim() &&
+        String(p.zip || '').trim() &&
+        p.homeLat !== undefined &&
+        p.homeLng !== undefined,
+    );
+    if (!complete) return;
+    const prof = (userProfile || {}) as Record<string, any>;
+    const profileHasAddress = Boolean(
+      String(prof.addressInfo?.streetAddress || '').trim() &&
+        prof.addressInfo?.homeLat !== undefined &&
+        prof.addressInfo?.homeLng !== undefined,
+    );
+    addressPersistRef.current = true;
+    if (profileHasAddress) return;
+    const update: Record<string, any> = {
+      updatedAt: serverTimestamp(),
+      address: {
+        street: String(p.street).trim(),
+        ...(p.unit ? { unit: String(p.unit).trim() } : {}),
+        city: String(p.city).trim(),
+        state: String(p.state).trim(),
+        zipCode: String(p.zip).trim(),
+        coordinates: { lat: Number(p.homeLat), lng: Number(p.homeLng) },
+      },
+      city: String(p.city).trim(),
+      state: String(p.state).trim(),
+      zipCode: String(p.zip).trim(),
+      homeLat: Number(p.homeLat),
+      homeLng: Number(p.homeLng),
+      addressInfo: {
+        streetAddress: String(p.street).trim(),
+        ...(p.unit ? { unitNumber: String(p.unit).trim() } : {}),
+        city: String(p.city).trim(),
+        state: String(p.state).trim(),
+        zip: String(p.zip).trim(),
+        homeLat: Number(p.homeLat),
+        homeLng: Number(p.homeLng),
+      },
+    };
+    setDoc(doc(db, 'users', authedUid), update, { merge: true }).catch(() => {
+      addressPersistRef.current = false;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.personal, userProfile, uid]);
+
+  // Persist the email the moment it's valid (same auto-skip lesson as the
+  // address/DOB: once address+email are complete, step 1 filters itself out
+  // and its save-on-Next never runs). Debounced; only fills a profile that
+  // doesn't have an email yet.
+  const emailPersistedRef = useRef('');
+  useEffect(() => {
+    const authedUid = auth.currentUser?.uid || uid;
+    if (!authedUid) return;
+    const typed = String((formData.personal as any)?.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(typed)) return;
+    if (typed === emailPersistedRef.current) return;
+    if (String(userProfile?.email || '').trim()) {
+      emailPersistedRef.current = typed;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      emailPersistedRef.current = typed;
+      setDoc(
+        doc(db, 'users', authedUid),
+        { email: typed, updatedAt: serverTimestamp() },
+        { merge: true },
+      ).catch(() => {
+        emailPersistedRef.current = '';
+      });
+    }, 800);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.personal, userProfile, uid]);
 
   // Clamp activeStep when visible steps shrink (e.g. posting loads and we skip Preferences)
   useEffect(() => {
@@ -1255,58 +1419,61 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       (preferences as any).shift = posting.shift[0];
     }
 
-    // Requirements prefill from user profile - only prefill once on initial load
-    // This prevents overwriting user input when they're actively editing
+    // Requirements prefill from user profile — FIELD-LEVEL and always-on
+    // (Greg 2026-08-25): the old all-or-nothing gate skipped the whole merge
+    // when the draft had ANY answer, so profile-known answers ("I have a
+    // car", "I can lift 50 lbs") never reached the form and got re-asked.
+    // Existing form values always win; profile answers only fill gaps.
+    // Reads legacy top-level fields plus the canonical workerAttestations map
+    // (both the real nested map and the literal dotted keys the pre-fix
+    // setDoc writes left on older docs).
     const existingRequirements = currentFormData.requirements || {};
-    const hasExistingRequirements =
-      Object.keys(existingRequirements).length > 0 &&
-      (existingRequirements.drugScreeningComfort ||
-        existingRequirements.backgroundScreeningComfort ||
-        existingRequirements.eVerifyComfort ||
-        existingRequirements.transportMethod ||
-        existingRequirements.languagesComfort ||
-        existingRequirements.physicalRequirementsComfort ||
-        existingRequirements.uniformRequirementsComfort ||
-        existingRequirements.customUniformRequirementsComfort ||
-        existingRequirements.requiredPpeComfort ||
-        (existingRequirements.additionalScreenings &&
-          Object.keys(existingRequirements.additionalScreenings).length > 0));
+    const attestOf = (legacy: string, leaf: string): string =>
+      String(
+        userProfile[legacy] ??
+          userProfile.workerAttestations?.[leaf] ??
+          (userProfile as Record<string, unknown>)['workerAttestations.' + leaf] ??
+          '',
+      );
 
-    // Only prefill if there's no existing requirements data and we haven't prefilled yet
-    if (!hasExistingRequirements && !prefilledRef.current) {
+    {
       const requirementsPrefill = {
         ...existingRequirements,
         drugScreeningComfort:
-          existingRequirements.drugScreeningComfort || userProfile.comfortablePassDrug || '',
+          existingRequirements.drugScreeningComfort || attestOf('comfortablePassDrug', 'drugScreeningWillingness'),
         drugExplanation:
-          existingRequirements.drugExplanation || userProfile.passDrugExplanation || '',
+          existingRequirements.drugExplanation || attestOf('passDrugExplanation', 'drugScreeningNotes'),
         backgroundScreeningComfort:
           existingRequirements.backgroundScreeningComfort ||
-          userProfile.comfortablePassBackground ||
-          '',
+          attestOf('comfortablePassBackground', 'backgroundCheckWillingness'),
         backgroundExplanation:
-          existingRequirements.backgroundExplanation || userProfile.passBackgroundExplanation || '',
+          existingRequirements.backgroundExplanation || attestOf('passBackgroundExplanation', 'backgroundCheckNotes'),
         additionalScreenings: {
           ...existingRequirements.additionalScreenings,
         },
-        eVerifyComfort: existingRequirements.eVerifyComfort || userProfile.comfortableEVerify || '',
-        transportMethod: existingRequirements.transportMethod || userProfile.transportMethod || '',
+        eVerifyComfort:
+          existingRequirements.eVerifyComfort || attestOf('comfortableEVerify', 'eVerifyWillingness'),
+        transportMethod:
+          existingRequirements.transportMethod ||
+          userProfile.transportMethod ||
+          userProfile.workerProfile?.preferences?.transportMethod ||
+          '',
         languagesComfort:
-          existingRequirements.languagesComfort || userProfile.comfortableWithLanguages || '',
+          existingRequirements.languagesComfort ||
+          attestOf('comfortableWithLanguages', 'languageRequirementWillingness'),
         physicalRequirementsComfort:
           existingRequirements.physicalRequirementsComfort ||
-          userProfile.comfortableWithPhysicalRequirements ||
-          '',
+          attestOf('comfortableWithPhysicalRequirements', 'physicalRequirementWillingness'),
         uniformRequirementsComfort:
           existingRequirements.uniformRequirementsComfort ||
-          userProfile.comfortableWithUniformRequirements ||
+          attestOf('comfortableWithUniformRequirements', 'uniformRequirementWillingness') ||
           '',
         customUniformRequirementsComfort:
           existingRequirements.customUniformRequirementsComfort ||
-          userProfile.comfortableWithCustomUniformRequirements ||
-          '',
+          attestOf('comfortableWithCustomUniformRequirements', 'customUniformRequirementWillingness'),
         requiredPpeComfort:
-          existingRequirements.requiredPpeComfort || userProfile.comfortableWithRequiredPpe || '',
+          existingRequirements.requiredPpeComfort ||
+          attestOf('comfortableWithRequiredPpe', 'requiredPpeWillingness'),
       };
 
       // Prefill additional screenings from user profile with dynamic field names
@@ -1344,6 +1511,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         );
       }
 
+      const requirementsChanged =
+        JSON.stringify(requirementsPrefill) !== JSON.stringify(existingRequirements);
+
+      if (!prefilledRef.current) {
       // Only prefill if formData doesn't already have meaningful data
       // This prevents overwriting user input after account creation
       const hasExistingPersonalData =
@@ -1400,6 +1571,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         if (hasPersistedName || !missingCriticalNames) {
           personalPrefilledRef.current = true;
         }
+      }
+      } else if (requirementsChanged) {
+        // Field-level top-up only: a profile answer that arrived after the
+        // first prefill fills a still-empty form field — never overwrites.
+        persist({ requirements: requirementsPrefill });
       }
     }
   }, [userProfile, posting]);
@@ -1470,6 +1646,15 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       if (leavingActualStep === 8) {
         setHasMissingRequiredCerts(false);
       }
+      if (leavingActualStep !== undefined) {
+        logApplyStepCompleted({
+          stepId: STEP_IDS[leavingActualStep] ?? String(leavingActualStep),
+          stepIndex: prev,
+          totalSteps: visibleStepIndices.length,
+          jobId: jobId || null,
+          signupSource: signupGroupId ? 'apply_group_landing' : 'apply_landing',
+        });
+      }
       try {
         localStorage.setItem(stepStorageKey, newStep.toString());
       } catch (error) {
@@ -1477,7 +1662,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       }
       return newStep;
     });
-  }, [stepStorageKey, visibleStepIndices]);
+  }, [stepStorageKey, visibleStepIndices, jobId, signupGroupId]);
 
   const retreatStep = useCallback(() => {
     setActiveStep((prev) => {
@@ -1632,11 +1817,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           setSaving(false);
           return;
         }
-        if (!isEmptyOrValidLast4Ssn(formData?.personal?.last4SSN)) {
-          alert(t('apply.last4SsnInvalid'));
-          setSaving(false);
-          return;
-        }
+        // Last-4 SSN is no longer asked at sign-up (Greg 2026-08-21) — it is
+        // mirrored from Everee after payroll onboarding (evereeReconcileWorker).
         // Address is part of account creation now — no account exists
         // without a verified, geocoded home address (Greg 2026-08-07).
         if (!isApplyHomeAddressValid(formDataRef.current?.personal || formData?.personal || {})) {
@@ -1681,6 +1863,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       }
       // Create account after Personal Info step if not authenticated
       if (actualStep === 0 && !auth.currentUser) {
+        // Phone-first signup (Slice 2, 2026-08-25): accounts are created ONLY
+        // by the PhoneSignupGate OTP flow — Continue is disabled until then,
+        // so this legacy email/password branch must never run again.
+        alert(t('phoneSignup.fillNamePhone'));
+        setSaving(false);
+        return;
+        // eslint-disable-next-line no-unreachable
         const email = String(formData?.personal?.email || '').trim();
         if (!email) {
           alert(t('apply.enterEmail'));
@@ -2091,17 +2280,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Object.keys(update).length > 1) {
             await setDoc(userRef, update, { merge: true });
           }
-        } else if (actualStep === 3) {
-          // Generic apply: E-Verify comfort (persisted live via EVerifyComfortStep; sync to user on Next)
-          const r = formData.requirements || {};
-          const ev = String(r.eVerifyComfort || '').trim();
-          if (ev) {
-            await setDoc(
-              userRef,
-              buildCanonicalWorkerProfileWritePatch({ comfortableEVerify: ev, updatedAt: serverTimestamp() }),
-              { merge: true },
-            );
-          }
         } else if (actualStep === 4) {
           // Work Eligibility → save attestation (not a document) + legacy workEligibility
           // Prefer ref so Skip EEO + Next in one tick sees cleared optional fields
@@ -2144,7 +2322,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const update: any = { updatedAt: serverTimestamp() };
           if (p.profilePicture) update.avatar = p.profilePicture;
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         } else if (actualStep === 6) {
           // Skills → save skills, certifications, languages to profile
@@ -2154,7 +2332,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Array.isArray(q.certifications)) update.certifications = q.certifications;
           if (Array.isArray(q.languages)) update.languages = normalizeLanguageList(q.languages);
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         } else if (actualStep === 7) {
           // Education → save education to profile
@@ -2162,7 +2340,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const update: any = { updatedAt: serverTimestamp() };
           if (Array.isArray(q.education)) update.education = q.education;
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         } else if (actualStep === 8) {
           // Licenses and Certifications → save certifications to profile
@@ -2170,7 +2348,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const update: any = { updatedAt: serverTimestamp() };
           if (Array.isArray(q.certifications)) update.certifications = q.certifications;
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         } else if (actualStep === 9) {
           // Work Experience → save work experience to profile
@@ -2182,7 +2360,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             update.workHistory = q.workExperience; // Also save to workHistory for backward compatibility
           }
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
+          }
+        } else if (actualStep === 13) {
+          // Position interests → canonical preferences (stable category keys)
+          const interests = Array.isArray(formData.positionInterests)
+            ? formData.positionInterests
+            : [];
+          if (interests.length > 0) {
+            const update: any = { updatedAt: serverTimestamp(), positionInterests: interests };
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         } else if (actualStep === 10) {
           // Bio → save professional bio to profile
@@ -2205,7 +2392,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Array.isArray(update.preferences.shiftPreferences)) {
             update['preferences.shiftPreferences'] = update.preferences.shiftPreferences;
           }
-          await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+          await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
         } else if (actualStep === 12) {
           // Requirements → save screening responses and availability to user profile
           const r = formData.requirements || {};
@@ -2260,7 +2447,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
 
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+            await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(update)), { merge: true });
           }
         }
       }
@@ -2796,7 +2983,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         }
       }
 
-      await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(profileUpdate), { merge: true });
+      await setDoc(userRef, expandDottedKeys(buildCanonicalWorkerProfileWritePatch(profileUpdate)), { merge: true });
 
       // Create final submitted application in tenants/{tenantId}/applications
       try {
@@ -2916,7 +3103,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               preferences: prefs?.shiftPreferences
                 ? { ...prefs, shiftPreferences: prefs.shiftPreferences }
                 : userData.preferences,
-              resume: formData?.requirements?.uploaded ?? userData.resume,
+              resume: formData?.resume?.fileName || formData?.resume?.parsed ? formData.resume : userData.resume,
               languages: qual.languages ?? userData.languages,
             };
             const packV1 = getRequirementPackV1(requirementPackId);
@@ -3006,7 +3193,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             skills: qual.skills ?? userData.skills,
             workExperience: qual.workExperience ?? userData.workExperience ?? userData.workHistory,
             workHistory: qual.workExperience ?? userData.workHistory,
-            resume: formData?.requirements?.uploaded ?? userData.resume,
+            resume: formData?.resume?.fileName || formData?.resume?.parsed ? formData.resume : userData.resume,
             addressInfo: mergedAddressInfo,
             city: addrSrc.city ?? userData.city,
             state: addrSrc.state ?? userData.state,
@@ -3271,6 +3458,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       }
 
       // Show confirmation screen instead of redirecting immediately
+      submittedRef.current = true;
+      logApplyCompleted({
+        totalSteps: visibleStepIndices.length,
+        durationMs: Date.now() - funnelStartRef.current,
+        jobId: jobId || null,
+        signupSource: signupGroupId ? 'apply_group_landing' : 'apply_landing',
+      });
       setSubmittedSuccess(true);
       setSaving(false);
       return;
@@ -3290,58 +3484,69 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const renderStep = () => {
     switch (actualStep) {
       case 0:
-        // Home address is collected AT account creation (Greg 2026-08-07:
-        // "users without an address are nearly worthless") — an account can
-        // no longer exist without a verified, geocoded address. Reuses the
-        // maintained AddressStep (manual entry + server-side geocode), NOT
-        // PersonalInfoStep's legacy showAddressFields (client-side geocode
-        // is REQUEST_DENIED on the browser key — the July footgun).
+        // Conversion-first step 0 (Greg 2026-08-25, supersedes the 2026-08-07
+        // address-at-creation rule): ONLY name + phone + DOB, then the OTP
+        // gate — fewest possible fields before the account exists. Email and
+        // address move to step 1 (post-code); an abandoned signup still
+        // leaves a claimable account, and the applyWizardReminder SMS nudges
+        // completion. Language comes from the page's EN|ES toggle (saved
+        // server-side at signup) — no dropdown.
         return (
           <>
             <PersonalInfoStep
               value={formData.personal || {}}
               onChange={(v) => persist({ personal: v })}
-              onPasswordChange={(pwd, confirmPwd) => {
-                setPassword(pwd);
-                setConfirmPassword(confirmPwd);
-              }}
+              hidePasswordFields
+              minimalPhoneFirst
               showAddressFields={false}
             />
-            <Box sx={{ mt: 3 }}>
-              <AddressStep
-                value={formData.personal || {}}
-                onChange={(v) => persist({ personal: v })}
+            {/* Phone-first account creation (Slice 2, 2026-08-25): the gate
+                claims an existing account by phone or mints a passwordless
+                one server-side. Continue stays disabled until authenticated. */}
+            {!auth.currentUser && (
+              <PhoneSignupGate
+                firstName={String((formData.personal as any)?.firstName || '')}
+                lastName={String((formData.personal as any)?.lastName || '')}
+                phone={String((formData.personal as any)?.phone || '')}
+                dob={String((formData.personal as any)?.dob || '')}
+                dobRequired
+                signupSource={signupGroupId ? 'apply_group_landing' : 'apply_landing'}
+                signupGroupId={signupGroupId || null}
+                jobContext={{
+                  tenantId: tenantId || null,
+                  tenantSlug: tenantSlug ? String(tenantSlug).trim() : null,
+                  jobId: jobId ? String(jobId).trim() : null,
+                }}
               />
-            </Box>
+            )}
           </>
         );
       case 1:
+        // Post-code step: optional email + home address (Greg 2026-08-25).
         return (
-          <AddressStep value={formData.personal || {}} onChange={(v) => persist({ personal: v })} />
+          <>
+            <Box sx={{ mb: 3 }}>
+              <TextField
+                fullWidth
+                type="email"
+                required={Boolean(jobId)}
+                label={t('profile.email')}
+                value={String((formData.personal as any)?.email || '')}
+                onChange={(e) =>
+                  persist({ personal: { ...(formData.personal || {}), email: e.target.value } })
+                }
+                helperText={jobId ? t('apply.emailNeededForJob') : t('phoneSignup.emailOptional')}
+              />
+            </Box>
+            <AddressStep value={formData.personal || {}} onChange={(v) => persist({ personal: v })} />
+          </>
         );
       case 2:
         return (
-          <Box>
-            <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
-              {t('apply.profileImprovementOptional')}
-            </Typography>
-            <ResumeStep
-              value={{ ...(formData.resume || {}), userId: uid || '' }}
-              onChange={(v) => persist({ resume: v })}
-              tenantId={tenantId}
-            />
-          </Box>
-        );
-      case 3:
-        return (
-          <EVerifyComfortStep
-            variant="generic"
-            value={String((formData.requirements || {}).eVerifyComfort || '')}
-            onChange={(comfort) =>
-              persist({
-                requirements: { ...(formData.requirements || {}), eVerifyComfort: comfort },
-              })
-            }
+          <ResumeStep
+            value={{ ...(formData.resume || {}), userId: uid || '' }}
+            onChange={(v) => persist({ resume: v })}
+            tenantId={tenantId}
           />
         );
       case 4:
@@ -3358,7 +3563,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             value={formData.profilePicture || {}}
             onChange={(v) => persist({ profilePicture: v })}
             userId={auth.currentUser?.uid || uid || undefined}
-            onSkip={handleNext}
           />
         );
       case 6:
@@ -3424,26 +3628,30 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           />
           </Box>
         );
-      case 10:
+      case 13:
         return (
-          <BioStep
-            value={formData.bio || {}}
-            onChange={(v) => persist({ bio: v })}
-            jobPosting={posting}
+          <PositionInterestsStep
+            value={Array.isArray(formData.positionInterests) ? formData.positionInterests : []}
+            onChange={(next) => {
+              persist({ positionInterests: next });
+              // Persist at the moment of entry (auto-skip write-eater class):
+              // when 13 is the LAST visible step the button is handleSubmit,
+              // not handleNext, so the on-Next save never runs.
+              const authedUid = auth.currentUser?.uid || uid;
+              if (authedUid) {
+                void setDoc(
+                  doc(db, 'users', authedUid),
+                  expandDottedKeys(
+                    buildCanonicalWorkerProfileWritePatch({
+                      positionInterests: next,
+                      updatedAt: serverTimestamp(),
+                    }),
+                  ),
+                  { merge: true },
+                ).catch((e) => console.warn('positionInterests persist failed:', e));
+              }
+            }}
           />
-        );
-      case 11:
-        return (
-          <Box>
-            <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
-              {t('apply.profileImprovementOptional')}
-            </Typography>
-            <JobPreferencesStep
-            value={formData.preferences || {}}
-            onChange={(v) => persist({ preferences: v })}
-            jobPosting={posting}
-          />
-          </Box>
         );
       case 12:
         return (
@@ -3559,16 +3767,18 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     if (!p) return false;
     const firstName = typeof p.firstName === 'string' ? p.firstName.trim() : '';
     const lastName = typeof p.lastName === 'string' ? p.lastName.trim() : '';
-    const email = typeof p.email === 'string' ? p.email.trim() : '';
     const phone = String(p.phone ?? '').trim();
     const dob = toDobString(p.dob);
+    // Email is OPTIONAL since phone-first signup (Slice 2, 2026-08-25) —
+    // Everee collects it later when payroll actually needs it. Workers must
+    // be 18+ (W-2 staffing; Greg 2026-08-25) — checked here and server-side.
     return !!(
       firstName &&
       lastName &&
-      email &&
       isValidUsPhone10(phone) &&
       dob &&
-      dob.length >= 10
+      dob.length >= 10 &&
+      isAdultDob(dob)
     );
   })();
 
@@ -3608,15 +3818,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   const applicationsPath = tenantSlug ? `/${tenantSlug}/applications` : '/c1/applications';
   const jobsBoardPath = tenantSlug ? `/${tenantSlug}/jobs-board` : '/c1/jobs-board';
-  // Worker payroll lives under the c1 slug regardless of which tenant the
-  // application was for — it's a fixed worker-facing surface backed by
-  // `WorkerPayrollIndex` (auto-redirects to the Everee embed when there's
-  // exactly one provisioned employer; falls back to a "no payroll yet" /
-  // dashboard link when Everee hasn't provisioned yet, e.g. because the
-  // background hire-automation trigger hasn't fired before this redirect
-  // lands). Confirmed with Greg 2026-05-08: always `c1`.
-  const payrollPath = '/c1/workers/payroll';
-
   if (submittedSuccess) {
     // Came from JobPostingDetail's per-shift Apply (returnTo=/c1/jobs-board/
     // {postId}) → bounce straight back to the shift list so they can apply
@@ -3638,32 +3839,22 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       );
     }
 
-    // Group / auto-hire apply (no returnTo): DON'T force them into Everee
-    // payroll. Workers kept thinking onboarding was required before they
-    // could pick up shifts. Show a clear choice — find shifts now, or set
-    // up payroll — and make it explicit payroll can be finished later
-    // (it's also surfaced as a dashboard action item).
+    // Group / auto-hire apply (no returnTo): the worker is signed in now, so
+    // land them in the real app chrome (bottom nav, dashboard action items —
+    // payroll setup, headshot, etc.) instead of a dead-end card under the
+    // signup header (Greg 2026-08-25).
     return (
       <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
-        <Paper elevation={0} sx={{ maxWidth: 480, mx: 'auto', mt: { xs: 4, md: 6 }, p: 3, textAlign: 'center' }}>
-          <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
-            {t('apply.hiredTitle')}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
-            {t('apply.hiredPayrollOptional')}
-          </Typography>
-          <Stack spacing={1.25} sx={{ mb: 1.5 }}>
-            <Button variant="contained" size="large" fullWidth onClick={() => navigate(jobsBoardPath)}>
-              {t('apply.findShifts')}
-            </Button>
-            <Button variant="outlined" size="large" fullWidth onClick={() => navigate(payrollPath)}>
-              {t('apply.setUpPayroll')}
-            </Button>
-          </Stack>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-            {t('apply.payrollLaterHint')}
-          </Typography>
-        </Paper>
+        <PostSubmitRedirect
+          to="/c1/workers/dashboard"
+          delayMs={1500}
+          headlineKey="apply.hiredTitle"
+          subheadKey="apply.takingYouHome"
+          helperKey="apply.payrollLaterHint"
+          applicationsPath={applicationsPath}
+          jobsBoardPath={jobsBoardPath}
+          t={t}
+        />
       </Box>
     );
   }
@@ -3705,8 +3896,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         >
           <Box
             sx={{
-              maxWidth: { xs: '100%', md: '1200px' },
-              mx: { xs: 0, md: 'auto' },
+              maxWidth: { sm: 720 },
+              mx: 'auto',
             }}
           >
             <Typography variant={isMobile ? 'h6' : 'h5'} sx={{ fontWeight: 600, mb: 0.5 }}>
@@ -3736,59 +3927,45 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         </Box>
       )}
 
-      {/* Main content area - framed on desktop; no min height so buttons sit under form */}
+      {/* Main content area — worker-app canon (Greg 2026-08-25): same page
+          gutter + maxWidth as C1WorkerLayout, step content on a hairline card
+          like the jobs board / account pages. */}
       <Box
         sx={{
           display: 'flex',
           flexDirection: 'column',
-          maxWidth: { xs: '100%', md: '1200px' },
-          mx: { xs: 0, md: 'auto' },
+          maxWidth: { sm: 720 },
+          mx: 'auto',
           width: '100%',
-          px: { xs: 0, md: 3 },
-          py: { xs: 0, md: 2 },
+          // Phones: full-bleed card so content sits on the same 16px edge as
+          // the page/posting headers — the gutter+card+content insets were
+          // stacking to 32px+ (Greg 2026-08-25). Tablet+ keeps the card.
+          px: { xs: 0, sm: 3 },
+          py: { xs: 0, sm: 3 },
         }}
       >
         <Paper
-          elevation={isMobile ? 0 : 2}
+          elevation={0}
           sx={{
             display: 'flex',
             flexDirection: 'column',
-            borderRadius: { xs: 0, md: 2 },
+            borderRadius: { xs: 0, sm: '12px' },
+            border: { xs: 'none', sm: '1px solid #E9E9E5' },
             overflow: 'hidden',
             backgroundColor: 'background.paper',
           }}
         >
-          {/* Full-bleed sticky progress under top bar (grouped: Personal, Skills, Experience, Verification, Final) */}
-          <MilestoneProgress
-            total={progressTotal}
-            completed={progressCompleted}
-            labels={steps}
-            sticky="top"
-            onJump={undefined}
-            sx={{ px: { xs: 2, md: 3 }, py: 1 }}
-          />
           {saving && (
             <Box sx={{ mb: 2 }} aria-live="polite" aria-atomic>
               <LinearProgress />
             </Box>
           )}
 
-          {/* Keep stepper for structure but hide visually to reduce clutter (a11y preserved) */}
-          <Box sx={{ display: { xs: 'none', md: 'none' } }} aria-hidden>
-            <Stepper activeStep={activeStep} alternativeLabel>
-              {steps.map((label) => (
-                <Step key={label}>
-                  <StepLabel>{label}</StepLabel>
-                </Step>
-              ))}
-            </Stepper>
-          </Box>
-
           <Box
             sx={{
               mt: 2,
               mx: 0,
-              px: { xs: 1, md: 3 },
+              px: { xs: 2, md: 3 },
               py: 0,
               display: 'flex',
               flexDirection: 'column',
@@ -3820,82 +3997,33 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               <Button onClick={handleBack} disabled={activeStep === 0}>
                 {t('apply.back')}
               </Button>
-              {actualStep === 5 ? (
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  flexWrap="wrap"
-                  justifyContent="flex-end"
-                  sx={{ flex: 1, minWidth: 0 }}
-                >
-                  <Button
-                    variant="outlined"
-                    onClick={isLastVisibleStep ? handleSubmit : handleNext}
-                    disabled={saving}
-                  >
-                    {t('apply.addPhotoLater')}
-                  </Button>
-                  <Button
-                    variant="contained"
-                    onClick={isLastVisibleStep ? handleSubmit : handleNext}
-                    disabled={saving}
-                  >
-                    {t('apply.continueWithoutPhoto')}
-                  </Button>
-                </Stack>
-              ) : actualStep === 2 ? (
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  flexWrap="wrap"
-                  justifyContent="flex-end"
-                  sx={{ flex: 1, minWidth: 0 }}
-                >
-                  <Button
-                    variant="outlined"
-                    onClick={isLastVisibleStep ? handleSubmit : handleNext}
-                    disabled={saving}
-                  >
-                    {t('apply.addResumeLater')}
-                  </Button>
-                  <Button
-                    variant="contained"
-                    onClick={isLastVisibleStep ? handleSubmit : handleNext}
-                    disabled={saving}
-                  >
-                    {t('apply.continueWithoutResume')}
-                  </Button>
-                </Stack>
-              ) : (
-                <Button
-                  variant="contained"
-                  onClick={isLastVisibleStep ? handleSubmit : handleNext}
-                  disabled={
-                    (isLastVisibleStep &&
-                      actualStep === 12 &&
-                      (missing.drug ||
-                        missing.background ||
-                        missing.everify ||
-                        missing.additional.length > 0)) ||
-                    (actualStep === 0 &&
-                      (!personalValid ||
-                        !addressValid ||
-                        (!auth.currentUser &&
-                          (password.length < 6 || password !== confirmPassword)))) ||
-                    (actualStep === 1 && !addressValid) ||
-                    (actualStep === 3 &&
-                      !String(formData?.requirements?.eVerifyComfort || '').trim()) ||
-                    (actualStep === 4 && formData?.eligibility?.workAuthorized !== true) ||
-                    saving
-                  }
-                >
-                  {isLastVisibleStep
-                    ? t('apply.submitApplication')
-                    : actualStep === 8 && hasMissingRequiredCerts
-                    ? t('apply.skipForNow')
-                    : t('apply.next')}
-                </Button>
-              )}
+              <Button
+                variant="contained"
+                onClick={isLastVisibleStep ? handleSubmit : handleNext}
+                disabled={
+                  (isLastVisibleStep &&
+                    actualStep === 12 &&
+                    (missing.drug ||
+                      missing.background ||
+                      missing.everify ||
+                      missing.additional.length > 0)) ||
+                  (actualStep === 0 && (!personalValid || !auth.currentUser)) ||
+                  (actualStep === 1 &&
+                    (!addressValid ||
+                      (Boolean(jobId) &&
+                        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+                          String((formData.personal as any)?.email || userProfile?.email || '').trim(),
+                        )))) ||
+                  (actualStep === 4 && formData?.eligibility?.workAuthorized !== true) ||
+                  saving
+                }
+              >
+                {isLastVisibleStep
+                  ? t('apply.submitApplication')
+                  : actualStep === 2 || actualStep === 5 || (actualStep === 8 && hasMissingRequiredCerts)
+                  ? t('apply.skipForNow')
+                  : t('apply.next')}
+              </Button>
             </Stack>
           </Box>
         </Paper>

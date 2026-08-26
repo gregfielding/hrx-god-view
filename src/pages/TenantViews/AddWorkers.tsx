@@ -34,8 +34,10 @@ const AddWorkers: React.FC = () => {
     dateOfBirth: '',
     gender: '',
     
-    // Employment Classification
-    securityLevel: '5',
+    // Employment Classification. '2' = worker tier (was a hidden hardcoded
+    // '5', which is STAFF — isStaff/books gates treat ≥5 as staff; Greg
+    // 2026-08-25). There is no UI selector for this field.
+    securityLevel: '2',
     employmentType: 'Full-Time',
     jobTitle: '',
     departmentId: '',
@@ -70,6 +72,12 @@ const AddWorkers: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  // CSV bulk import DISABLED (Greg 2026-08-25): it minted workers with
+  // securityLevel '5' (staff tier — isStaff/books gates treat ≥5 as staff)
+  // and allowed empty phones (OTP-unreachable accounts, Slice 4). The
+  // payload below is corrected to '2', so flipping this flag re-enables a
+  // fixed version — but confirm the tiering with Greg first.
+  const CSV_IMPORT_ENABLED = false;
   const [importMode, setImportMode] = useState<'form' | 'csv'>('form');
   const [showCSVUpload, setShowCSVUpload] = useState(false);
   const [isStaffingCompany, setIsStaffingCompany] = useState(false);
@@ -253,7 +261,7 @@ const AddWorkers: React.FC = () => {
         phone: '',
         dateOfBirth: '',
         gender: '',
-        securityLevel: '5',
+        securityLevel: '2', // worker tier — see the comment on initial state
         employmentType: 'Full-Time',
         jobTitle: '',
         departmentId: '',
@@ -313,7 +321,8 @@ const AddWorkers: React.FC = () => {
             jobTitle: worker.jobTitle || '',
             department: worker.departmentId || '',
             locationIds: worker.locationId ? [worker.locationId] : [],
-            securityLevel: '5',
+            // '2' = worker tier (was '5', which is STAFF — Greg 2026-08-25).
+            securityLevel: '2',
             role: 'Tenant',
             tenantId: tenantId,
             // Additional fields
@@ -360,7 +369,7 @@ const AddWorkers: React.FC = () => {
       pb: 2,
     }}>
       {/* Mode Selection Pills - Inbox Standard Style */}
-      {!showForm && !showCSVUpload && (
+      {CSV_IMPORT_ENABLED && !showForm && !showCSVUpload && (
         <Box sx={{ display: 'flex', gap: 1, mb: 3 }}>
           <Button
             onClick={() => setImportMode('form')}
@@ -455,8 +464,8 @@ const AddWorkers: React.FC = () => {
         </Box>
       )}
 
-      {/* CSV Upload Mode */}
-      {importMode === 'csv' && (
+      {/* CSV Upload Mode — unreachable while CSV_IMPORT_ENABLED is false */}
+      {CSV_IMPORT_ENABLED && importMode === 'csv' && (
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
           {!showCSVUpload ? (
             <Button

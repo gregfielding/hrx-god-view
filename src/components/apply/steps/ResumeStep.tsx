@@ -66,8 +66,6 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
     return () => unsubscribe();
   }, [user?.uid]);
 
-  const getResumeSignedUrl = httpsCallable(functions, 'getResumeSignedUrl');
-
   const handleViewResume = async () => {
     if (!currentResume) {
       setError(t('apply.noResumeToView'));
@@ -84,11 +82,11 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         return;
       }
       
-      // Use public URL directly (since file is made public)
+      // Resumes are owner/staff-read only now (storage.rules 2026-08-25) —
+      // fetch an authed token URL via the SDK instead of a public URL.
       if (currentResume.storagePath) {
-        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(currentResume.storagePath)}?alt=media`;
-        logger.debug('Using public URL:', publicUrl);
-        window.open(publicUrl, '_blank');
+        const url = await getDownloadURL(storageRef(storage, currentResume.storagePath));
+        window.open(url, '_blank');
         return;
       }
       
@@ -120,12 +118,11 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         return;
       }
       
-      // Use public URL directly (since file is made public)
+      // Authed token URL via SDK (rules tightened 2026-08-25).
       if (currentResume.storagePath) {
-        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(currentResume.storagePath)}?alt=media`;
-        logger.debug('Using public URL for download:', publicUrl);
+        const url = await getDownloadURL(storageRef(storage, currentResume.storagePath));
         const link = document.createElement('a');
-        link.href = publicUrl;
+        link.href = url;
         link.download = currentResume.fileName;
         document.body.appendChild(link);
         link.click();
@@ -141,51 +138,21 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
   };
 
   const handleResumeParsed = (parsed: any) => {
-    // Extract contact information and map to form fields
+    // resumeSuggestions/resumeConfidence maps removed 2026-08-25: they were
+    // written into formData.resume while their only consumer read
+    // formData.personal — dead since day one, and step order (personal is
+    // step 0, resume step 2) makes the "from resume" badges moot anyway.
     const contact = parsed?.contact || {};
-    const resumeSuggestions: Record<string, boolean> = {};
-    const resumeConfidence: Record<string, number> = {};
-    
-    // Map resume fields to form fields
-    if (contact.name) {
-      const nameParts = contact.name.split(' ');
-      if (nameParts.length >= 2) {
-        resumeSuggestions.firstName = true;
-        resumeSuggestions.lastName = true;
-        resumeConfidence.firstName = 0.9;
-        resumeConfidence.lastName = 0.9;
-      }
-    }
-    
-    if (contact.email) {
-      resumeSuggestions.email = true;
-      resumeConfidence.email = 0.95;
-    }
-    
-    if (contact.phone) {
-      resumeSuggestions.phone = true;
-      resumeConfidence.phone = 0.85;
-    }
-    
-    if (contact.address) {
-      resumeSuggestions.street = true;
-      resumeConfidence.street = 0.8;
-      // Note: Coordinates will be geocoded on the backend during resume parsing
-    }
-    
-    // Update the form with parsed data and suggestion metadata
     const updatedValue = {
       ...(value || {}),
       parsed,
-      resumeSuggestions,
-      resumeConfidence,
       // Pre-fill form fields from resume
       firstName: contact.name ? contact.name.split(' ')[0] : value?.firstName,
       lastName: contact.name ? contact.name.split(' ').slice(1).join(' ') : value?.lastName,
       email: contact.email || value?.email,
       phone: contact.phone || value?.phone,
     };
-    
+
     onChange(updatedValue);
     setShowUpload(false);
   };
@@ -250,8 +217,11 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
 
   return (
     <Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>
-        {t('apply.uploadResume')}
+      <Typography variant="h6" sx={{ mb: 0.5 }}>
+        {t('apply.resumeTitle')}
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        {t('apply.resumeSubtitle')}
       </Typography>
 
       {error && (
@@ -316,19 +286,6 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         </Card>
       )}
 
-      {!currentResume && !loading && userId && (
-        <>
-          <Alert severity="info" sx={{ mb: 1 }}>
-            {t('apply.resumeOptional')}
-          </Alert>
-          <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-            <Button variant="text" size="small" onClick={() => onChange?.({ ...(value || {}), skipped: true })} aria-label={t('apply.skipForNow')}>
-              {t('apply.skipForNow')}
-            </Button>
-          </Stack>
-        </>
-      )}
-
       {currentResume && !showUpload && (
         <Alert severity="success" sx={{ mb: 2 }}>
           {t('apply.resumeUploaded')} {formatDate(currentResume.timestamp)} -{' '}
@@ -355,10 +312,8 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
             userId={userId}
             tenantId={tenantId}
             onResumeParsed={handleResumeParsed}
+            hideTitle
           />
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            {t('apply.acceptedFormats')}
-          </Typography>
         </Box>
       )}
     </Box>

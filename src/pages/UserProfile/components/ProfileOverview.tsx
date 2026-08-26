@@ -724,9 +724,9 @@ const transportOptions: Array<{
               unitNumber: addressInfoData.unitNumber || addressInfoData.addressLine2 || addressData.unit || '',
               city: addressInfoData.city || addressData.city || data.city || '',
               state: addressInfoData.state || addressData.state || data.state || '',
-              zip: addressInfoData.zip || addressInfoData.zipCode || addressInfoData.postalCode || addressData.zipCode || addressData.zip || '',
-              homeLat: addressInfoData.homeLat ?? coordinatesData.lat ?? null,
-              homeLng: addressInfoData.homeLng ?? coordinatesData.lng ?? null,
+              zip: addressInfoData.zip || addressInfoData.zipCode || addressInfoData.postalCode || addressData.zipCode || addressData.zip || data.zipCode || '',
+              homeLat: addressInfoData.homeLat ?? coordinatesData.lat ?? data.homeLat ?? null,
+              homeLng: addressInfoData.homeLng ?? coordinatesData.lng ?? data.homeLng ?? null,
               workLat: addressInfoData.workLat ?? null,
               workLng: addressInfoData.workLng ?? null,
               currentLat: addressInfoData.currentLat ?? null,
@@ -1063,8 +1063,14 @@ const transportOptions: Array<{
           console.log(`⚠️ Updated ${field} to ${toSave} in direct field only (tenantIds structure missing)`);
         }
       } else {
-        // Normal field update (for non-tenant-dependent fields)
-        await updateDoc(userRef, { [field]: toSave, updatedAt: new Date() });
+        // Normal field update (for non-tenant-dependent fields).
+        // DOB is split-brain across the codebase: phone signup writes `dob`,
+        // admin edits wrote only `dateOfBirth` — keep both in sync here.
+        await updateDoc(userRef, {
+          [field]: toSave,
+          ...(field === 'dateOfBirth' ? { dob: toSave } : {}),
+          updatedAt: new Date(),
+        });
       }
     } catch (err) {
       console.error('Error updating field', field, err);
