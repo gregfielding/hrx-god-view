@@ -322,6 +322,15 @@ service cloud.firestore {
       // entries that haven't been shipped to Everee. Computed fields
       // (totalRegularHours, totalOTHours, ...), payRate, billRate,
       // status, and Everee response data all stay server-only.
+      // FIN-1 weekly financial rollups (2026-08-25): server-computed
+      // aggregates (pay/bill/margin per week×entity×account×JO). Books-band
+      // read (level ≥ 6, same bar as the finance reports); all writes are
+      // admin-SDK from the rollup rebuild.
+      match /finance_week_rollups/{rollupId} {
+        allow read: if request.auth != null && (isHRX() || hasSecurityLevel(tenantId, 6));
+        allow create, update, delete: if false;
+      }
+
       match /timesheet_entries/{entryId} {
         // Read mirrors the assignments pattern: HRX, tenant role claim,
         // tenant assignment, securityLevel >= 5 (recruiter band), and

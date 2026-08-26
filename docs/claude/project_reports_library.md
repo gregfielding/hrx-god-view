@@ -165,3 +165,32 @@ Unbilled/WIP report = HELD by Greg for now.
 JO-creation hook yet. Greg + Mark will define per-client/job-order/
 worksite rules and exceptions first. The building blocks are live and
 waiting (createQboClass/mapQboClass branches on savePayrollVenueMapping).
+
+## FIN-1 — weekly finance rollups (SHIPPED 2026-08-25, Greg's forecasting keystone)
+
+- `tenants/{t}/finance_week_rollups/{week__entity__account__jo}` — nightly
+  server-built aggregates (functions/src/payroll/financeWeekRollups.ts):
+  hours, payGross (cost-report math, same status filter so numbers tie),
+  billGross = hours × the entry `billRate` snapshot (ACCRUAL revenue — the
+  field every entry carried and nothing ever read), marginGross,
+  billMissingPayGross/-Entries (honest coverage), tips/bonus/premiums,
+  distinct workers, denormalized account/JO names. Account resolves
+  entry.accountId → jo.recruiterAccountId (import rows carry empty
+  accountId). Delete-then-write per week range = idempotent rebuilds.
+- Host: reconcileTimesheetBatchesCron (15-min finance cron) behind a
+  once-per-day `function_runs/financeWeekRollups_{day}` claim; trailing
+  6-week rebuild catches late edits/status flips. Backfilled 2026-06→now
+  (199 docs, ~8k entries).
+- Consumer: /reports/weekly-trends ('weekly-trends', Forecast & budgeting,
+  level 6) — per-week bill/pay/margin/hours + per-account window totals +
+  the coverage banner. Rules: finance_week_rollups read = books band ≥6.
+- ☠️ First live insight: bill-rate coverage is only ~45% of pay gross —
+  CSV-import entries mostly have NO billRate snapshot (VenueSmart shows a
+  phantom -$489k margin). Before trusting accrual revenue for forecasting,
+  backfill entry billRate from account pricing (AccountPositionPricing
+  markup/billRate chain) — needs Greg's go, it's a historical-entry
+  migration. Recent placement-flow weeks are well covered (8/10 week: 20%
+  margin, $3.8k uncovered).
+- Next: FIN-2 wire Everee burden endpoint (/integration/v1/expenses/
+  by-date-range) into the rollups per entity-week → replaces the 12%
+  slider with actuals.

@@ -17,6 +17,7 @@ import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
 import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import GppMaybeOutlinedIcon from '@mui/icons-material/GppMaybeOutlined';
+import TimelineOutlinedIcon from '@mui/icons-material/TimelineOutlined';
 import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
 import EventAvailableOutlinedIcon from '@mui/icons-material/EventAvailableOutlined';
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
@@ -130,6 +131,15 @@ export const REPORTS: ReportDef[] = [
     category: 'Forecast & budgeting',
     minLevel: 7,
     icon: <WaterfallChartOutlinedIcon />,
+  },
+  {
+    slug: 'weekly-trends',
+    title: 'Weekly Trends',
+    description:
+      'Accrual bill vs pay per week from the nightly finance rollups — revenue from our own bill-rate snapshots (no QBO matching), margin and hours trends with no range ceiling, plus per-account window totals.',
+    category: 'Forecast & budgeting',
+    minLevel: 6,
+    icon: <TimelineOutlinedIcon />,
   },
   {
     slug: 'finances-budgeting',
