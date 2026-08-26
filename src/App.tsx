@@ -198,6 +198,7 @@ const JobCostingReportPage = lazy(() => import('./pages/reports/JobCostingReport
 const PayrollRegisterPage = lazy(() => import('./pages/reports/PayrollRegisterPage'));
 const PayrollJournalPage = lazy(() => import('./pages/reports/PayrollJournalPage'));
 const WcAuditReportPage = lazy(() => import('./pages/reports/WcAuditReportPage'));
+const WcCoveragePage = lazy(() => import('./pages/reports/WcCoveragePage'));
 const I9StatusReportPage = lazy(() => import('./pages/reports/I9StatusReportPage'));
 const AcaLookbackReportPage = lazy(() => import('./pages/reports/AcaLookbackReportPage'));
 const TaxSickLeaveReportPage = lazy(() => import('./pages/reports/TaxSickLeaveReportPage'));
@@ -952,6 +953,16 @@ function App() {
             <ProtectedRoute requiredSecurityLevel="6">
               <RecruiterAccessGuard>
                 <WcAuditReportPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/wc-coverage"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <WcCoveragePage />
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }

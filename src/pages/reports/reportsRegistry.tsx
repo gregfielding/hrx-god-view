@@ -16,6 +16,7 @@ import CalculateOutlinedIcon from '@mui/icons-material/CalculateOutlined';
 import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
 import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
+import GppMaybeOutlinedIcon from '@mui/icons-material/GppMaybeOutlined';
 import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
 import EventAvailableOutlinedIcon from '@mui/icons-material/EventAvailableOutlined';
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
@@ -138,6 +139,15 @@ export const REPORTS: ReportDef[] = [
     category: 'Forecast & budgeting',
     minLevel: 5,
     icon: <InsightsOutlinedIcon />,
+  },
+  {
+    slug: 'wc-coverage',
+    title: 'WC Coverage Gaps',
+    description:
+      "Where we're missing coverage, with dollars attached: payroll in states with no policy on file or outside a policy window, unresolved and 8040-placeholder payroll, codes without rates, and live assignments heading into next cycle uncoded.",
+    category: "Workers' comp & insurance",
+    minLevel: 6,
+    icon: <GppMaybeOutlinedIcon />,
   },
   {
     slug: 'wc-audit',

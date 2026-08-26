@@ -140,6 +140,55 @@ const WcAuditReportPage: React.FC = () => {
       .sort((a, b) => a.state.localeCompare(b.state));
   }, [data]);
 
+  /** Insurer workbook (Greg 2026-08-25) — the audit package as tabs. */
+  const exportXlsx = async (): Promise<void> => {
+    if (!data) return;
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    const sheet = (name: string, rows: (string | number)[][]): void => {
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = rows[0]?.map((_, i) => ({
+        wch: Math.max(...rows.map((r) => String(r[i] ?? '').length), 8) + 2,
+      }));
+      XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+    };
+    sheet('Summary', [
+      ['WC Premium Audit Package'],
+      ['Entity', data.entityName],
+      ['Policy period', `${data.startDate} to ${data.endDate}`],
+      [],
+      ['Unresolved gross (no code)', Number((data.unresolvedGross ?? 0).toFixed(2))],
+    ]);
+    sheet('State x Code', [
+      ['State', 'Class code', 'Rate', 'Gross payroll', 'OT excess', 'Tips', 'Auditable payroll', 'Reimbursements (excluded)', 'Hours', 'Workers', 'Premium (gross)', 'Premium (auditable)'],
+      ...data.rows.map((r) => [
+        r.state,
+        r.code,
+        r.rate ?? '',
+        r.gross,
+        r.otExcess,
+        r.tips,
+        r.auditable,
+        r.reimbursements,
+        r.hours,
+        r.workers,
+        r.premium ?? '',
+        r.premiumAuditable ?? '',
+      ]),
+    ]);
+    sheet('By month', [
+      ['Month', 'Gross', 'OT excess', 'Tips', 'Auditable', 'Reimbursements (excluded)', 'Hours'],
+      ...data.byMonth.map((m) => [m.month, m.gross, m.otExcess, m.tips, m.auditable, m.reimbursements, m.hours]),
+    ]);
+    if (data.unresolved.length > 0) {
+      sheet('Unresolved', [
+        ['State', 'Job title', 'Gross payroll', 'Entries', 'Workers'],
+        ...data.unresolved.map((u) => [u.state, u.jobTitle, u.gross, u.entries, u.workers]),
+      ]);
+    }
+    XLSX.writeFile(wb, `wc-audit-${entityId}-${startDate}-to-${endDate}.xlsx`);
+  };
+
   const exportCsv = (): void => {
     if (!data) return;
     const lines: string[] = [];
@@ -210,7 +259,15 @@ const WcAuditReportPage: React.FC = () => {
             <Button variant="contained" onClick={() => void load()} disabled={loading || !entityId}>
               {loading ? 'Loading…' : 'Generate'}
             </Button>
-            <Button variant="outlined" startIcon={<FileDownloadIcon />} onClick={exportCsv} disabled={!data}>
+            <Button
+              variant="outlined"
+              startIcon={<FileDownloadIcon />}
+              onClick={() => void exportXlsx()}
+              disabled={!data}
+            >
+              Export Excel
+            </Button>
+            <Button variant="text" size="small" onClick={exportCsv} disabled={!data}>
               Export audit package (CSV)
             </Button>
           </Stack>

@@ -24,6 +24,7 @@ import * as admin from 'firebase-admin';
 import { qboQuery, qboEntityCreate } from '../integrations/quickbooks/qboAuth';
 import { evereeRequest } from '../integrations/everee/evereeHttp';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
+import { buildWcCoverageReport } from '../workersComp/coverageGaps';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -2552,10 +2553,25 @@ export const getWorkersCompMonthlyReport = onCall(
     const rangeStart = trim(request.data?.startDate);
     const rangeEnd = trim(request.data?.endDate);
     const rangeMode = /^\d{4}-\d{2}-\d{2}$/.test(rangeStart) && /^\d{4}-\d{2}-\d{2}$/.test(rangeEnd);
-    if (!tenantId || !hiringEntityId || (!rangeMode && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month))) {
+    // Coverage-gap mode (Greg 2026-08-25): cross-entity "where are we missing
+    // coverage" — no hiringEntityId; defaults to the trailing 90 days.
+    const coverageMode = request.data?.coverage === true;
+    if (!tenantId || (!coverageMode && !hiringEntityId) || (!coverageMode && !rangeMode && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month))) {
       throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, and month (YYYY-MM) or startDate+endDate are required.');
     }
     await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+
+    if (coverageMode) {
+      const end = rangeMode ? rangeEnd : new Date().toISOString().slice(0, 10);
+      const start = rangeMode
+        ? rangeStart
+        : new Date(Date.now() - 90 * 24 * 3600e3).toISOString().slice(0, 10);
+      const days = (Date.parse(end) - Date.parse(start)) / 86400000;
+      if (days < 0 || days > 400) {
+        throw new HttpsError('invalid-argument', 'Coverage range must be 0-400 days.');
+      }
+      return buildWcCoverageReport({ tenantId, startDate: start, endDate: end });
+    }
 
     let startDate: string;
     let endDate: string;

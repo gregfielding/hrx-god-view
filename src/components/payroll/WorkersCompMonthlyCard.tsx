@@ -269,6 +269,98 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
     }
   };
 
+  /**
+   * Insurer workbook (Greg 2026-08-25): multi-sheet XLSX replacing the
+   * hand-rolled CSV — one sheet per section so InSource gets tabs, not a
+   * blank-line-delimited text blob. Sheet layout mirrors the CSV sections
+   * that were already being uploaded monthly.
+   */
+  const exportXlsx = async (): Promise<void> => {
+    if (!report) return;
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    const sheet = (name: string, rows: (string | number)[][]): void => {
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = rows[0]?.map((_, i) => ({
+        wch: Math.max(...rows.map((r) => String(r[i] ?? '').length), 8) + 2,
+      }));
+      XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+    };
+
+    sheet('Summary', [
+      ["Workers' Comp Payroll Report"],
+      ['Entity', report.entityName],
+      ['Month', report.month],
+      [],
+      ['Classified gross', Number(report.totalGross.toFixed(2))],
+      ['Premium', Number(report.totalPremium.toFixed(2))],
+      ['Unresolved gross', Number(report.unresolvedGross.toFixed(2))],
+      ['8040 placeholder gross', Number((report.placeholderGross ?? 0).toFixed(2))],
+      ['Off-cycle (unclassified)', Number(report.offCycleTotal.toFixed(2))],
+      ['GRAND TOTAL', Number(report.grandTotal.toFixed(2))],
+    ]);
+
+    sheet('Rates', [
+      ['State', 'Class code', 'Rate', 'Hours', 'Gross payroll', 'Premium', 'Workers'],
+      ...report.rows.map((r) => [
+        r.state,
+        r.code,
+        r.rate ?? '',
+        r.hours,
+        Number(r.gross.toFixed(2)),
+        r.premium != null ? Number(r.premium.toFixed(2)) : '',
+        r.workers,
+      ]),
+      ['TOTAL', '', '', '', Number(report.totalGross.toFixed(2)), Number(report.totalPremium.toFixed(2)), ''],
+    ]);
+
+    if (report.unresolved.length > 0) {
+      sheet('Unresolved', [
+        ['State', 'Job title', 'Gross payroll', 'Workers'],
+        ...report.unresolved.map((u) => [u.state, u.jobTitle, Number(u.gross.toFixed(2)), u.workers]),
+        ['TOTAL', '', Number(report.unresolvedGross.toFixed(2)), ''],
+      ]);
+    }
+    if ((report.placeholders?.length ?? 0) > 0) {
+      sheet('8040 Placeholder', [
+        ['State', 'Job title', 'Location', 'Hours', 'Gross payroll', 'Came from', 'Workers'],
+        ...report.placeholders.map((g) => [
+          g.state,
+          g.jobTitle,
+          g.venue,
+          g.hours,
+          Number(g.gross.toFixed(2)),
+          g.via,
+          g.workers,
+        ]),
+        ['TOTAL', '', '', '', Number(report.placeholderGross.toFixed(2)), '', ''],
+      ]);
+    }
+    if ((report.locations?.length ?? 0) > 0) {
+      sheet('Locations', [
+        ['State', 'Location', 'Address', 'Hours', 'Gross payroll', 'Classes', 'On policy'],
+        ...report.locations.map((l) => [
+          l.state,
+          l.name,
+          l.address ?? '',
+          l.hours,
+          Number(l.gross.toFixed(2)),
+          l.codes.join(' '),
+          l.onPolicy == null ? 'not reviewed' : l.onPolicy ? 'yes' : 'NO',
+        ]),
+      ]);
+    }
+    if (report.offCycle.length > 0) {
+      sheet('Off-cycle', [
+        ['Work date', 'Worker', 'Reason', 'Amount'],
+        ...report.offCycle.map((p) => [p.workDate, p.workerName, p.reasonLabel, Number(p.total.toFixed(2))]),
+        ['TOTAL', '', '', Number(report.offCycleTotal.toFixed(2))],
+      ]);
+    }
+
+    XLSX.writeFile(wb, `WC-Report_${report.entityName.replace(/\s+/g, '-')}_${report.month}.xlsx`);
+  };
+
   const exportCsv = (): void => {
     if (!report) return;
     const lines: string[] = [];
@@ -366,10 +458,18 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
           <Button
             variant="outlined"
             startIcon={<FileDownloadIcon />}
+            onClick={() => void exportXlsx()}
+            disabled={!report || report.rows.length === 0}
+          >
+            Export Excel
+          </Button>
+          <Button
+            variant="text"
+            size="small"
             onClick={exportCsv}
             disabled={!report || report.rows.length === 0}
           >
-            Export CSV
+            CSV
           </Button>
         </Stack>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
