@@ -1,0 +1,9 @@
+# no ssn collection by design
+
+> HRX deliberately does NOT collect a worker's full SSN anywhere in the app (sign-up, apply wizard, profile) — this is a liability/privacy decision by Greg Fielding, not a gap. Sensitive payroll data (full SSN/TIN) is handled entirely by Everee.
+
+Raised directly in the 2026-08-21 Systems & Process meeting: Rosa Govea asked about collecting full SSNs during initial worker sign-up (presumably to reduce a later manual step). Greg Fielding explicitly declined — the company avoids holding full SSNs to minimize liability and privacy exposure, relying on Everee's onboarding to capture and store that data securely instead. HRX only ever stores/displays the last-4 (matches the existing `taxpayerIdentifierLast4` pattern already used elsewhere, e.g. Everee worker records — see the Kiara Vaughn Everee lookups in this session's history, which show `taxpayerIdentifierLast4` but never a full TIN).
+
+**Why this matters:** without this context, a future "improve the apply wizard" or "reduce onboarding friction" pass could easily conclude "let's just collect the SSN up front to save a step" — that would directly reverse a deliberate compliance decision, not fix an oversight.
+
+**How to apply:** never add a full-SSN/TIN input field anywhere in `src/` (apply wizard, admin worker creation, profile forms). If a workflow seems to need the full number, the answer is routing the worker through Everee's own onboarding/hosted flow (see `evereeGetHostedOnboardingUrl`, `evereeCreateOnboardingSession` in `functions/src/integrations/everee/`), not adding a field to HRX's own forms. This pairs with the existing [[feedback_pii_csvs_at_repo_root]] rule (never let SSN-bearing data land in git) — same underlying compliance posture, applied at the collection point instead of the storage point.

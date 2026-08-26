@@ -19,6 +19,11 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   FormControl,
   InputLabel,
   MenuItem,
@@ -114,6 +119,9 @@ const WorkerPaymentsTab: React.FC<Props> = ({ uid, tenantId, workerDisplayName, 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [dupWarning, setDupWarning] = useState<DuplicateWarning | null>(null);
+  const [voidTarget, setVoidTarget] = useState<HistoryRow | null>(null);
+  const [voiding, setVoiding] = useState(false);
+  const [voidError, setVoidError] = useState<string | null>(null);
 
   const canSend = viewerSecurityLevel >= 6;
 
@@ -274,6 +282,23 @@ const WorkerPaymentsTab: React.FC<Props> = ({ uid, tenantId, workerDisplayName, 
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const confirmVoid = async () => {
+    if (!tenantId || !voidTarget) return;
+    setVoiding(true);
+    setVoidError(null);
+    try {
+      const fn = httpsCallable(functions, 'voidOffCyclePayment');
+      await fn({ tenantId, paymentId: voidTarget.id });
+      setVoidTarget(null);
+      setSuccess(`Voided the ${usd(voidTarget.total)} payment — it will not be paid.`);
+      await loadHistory();
+    } catch (err) {
+      setVoidError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setVoiding(false);
     }
   };
 
@@ -456,6 +481,7 @@ const WorkerPaymentsTab: React.FC<Props> = ({ uid, tenantId, workerDisplayName, 
                     <TableCell align="right">Hours</TableCell>
                     <TableCell align="right">Total</TableCell>
                     <TableCell>Status</TableCell>
+                    <TableCell />
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -470,10 +496,25 @@ const WorkerPaymentsTab: React.FC<Props> = ({ uid, tenantId, workerDisplayName, 
                       <TableCell>
                         <Chip
                           size="small"
-                          label={h.status === 'sent_to_everee' ? 'Sent' : h.status}
-                          color={h.status === 'sent_to_everee' || h.status === 'paid' ? 'success' : h.status === 'error' ? 'error' : 'default'}
+                          label={h.status === 'sent_to_everee' ? 'Sent' : h.status === 'voided' ? 'Voided' : h.status}
+                          color={
+                            h.status === 'sent_to_everee' || h.status === 'paid'
+                              ? 'success'
+                              : h.status === 'error'
+                                ? 'error'
+                                : h.status === 'voided'
+                                  ? 'warning'
+                                  : 'default'
+                          }
                           title={h.errorMessage ?? undefined}
                         />
+                      </TableCell>
+                      <TableCell align="right">
+                        {h.status === 'sent_to_everee' && canSend && (
+                          <Button size="small" color="error" onClick={() => { setVoidError(null); setVoidTarget(h); }}>
+                            Undo
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -483,6 +524,31 @@ const WorkerPaymentsTab: React.FC<Props> = ({ uid, tenantId, workerDisplayName, 
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={Boolean(voidTarget)} onClose={() => (voiding ? null : setVoidTarget(null))}>
+        <DialogTitle>Undo this payment?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This will pull the {voidTarget ? usd(voidTarget.total) : ''} payment
+            {voidTarget?.reasonLabel ? ` (${voidTarget.reasonLabel})` : ''} back from Everee before it
+            pays out. If Everee has already settled it, this will be refused — that case needs a
+            manual correction instead of an undo.
+          </DialogContentText>
+          {voidError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {voidError}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setVoidTarget(null)} disabled={voiding}>
+            Cancel
+          </Button>
+          <Button variant="contained" color="error" onClick={() => void confirmVoid()} disabled={voiding}>
+            {voiding ? <CircularProgress size={20} /> : 'Undo payment'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

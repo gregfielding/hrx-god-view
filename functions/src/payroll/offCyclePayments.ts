@@ -21,8 +21,10 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
+import { logger } from 'firebase-functions/v2';
+
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
-import { createPayable, requestPayablePayout, EvereeEarningType } from '../integrations/everee/evereePayables';
+import { createPayable, requestPayablePayout, getPayable, deletePayable, EvereeEarningType } from '../integrations/everee/evereePayables';
 import { resolveEvereeWorkerTypeForOnCall } from '../integrations/everee/evereeEntityWorkerType';
 import { ensureBooksAccess } from './payrollCostReport';
 
@@ -503,5 +505,137 @@ export const createOffCyclePayment = onCall(
       overrideDuplicateWarning: request.data?.overrideDuplicateWarning === true,
       actorUid: request.auth?.uid ?? null,
     });
+  },
+);
+
+/** True when the error looks like Everee's "already gone" 404 — treat as
+ *  success rather than failing the whole void on a stale reference. Mirrors
+ *  revertSentTimesheetEntryToDraftCallable's isNotFoundError. */
+function isNotFoundError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /\b404\b|not[_ ]?found/i.test(msg);
+}
+
+/** True when Everee reports this payable as actually settled — the one
+ *  case a void must refuse (money already moved; needs a real correction,
+ *  not a delete). Everything else (PROCESSING, an error state like the
+ *  Kiara Vaughn $487.98 payment stuck on Everee's null-pay-date bug,
+ *  unrequested, etc.) hasn't disbursed yet and is safe to delete. */
+function looksSettled(payable: unknown): boolean {
+  const status = (payable as Record<string, unknown> | null | undefined)?.paymentStatus;
+  return /^(paid|succeeded|completed|settled)$/i.test(String(status ?? ''));
+}
+
+/**
+ * voidOffCyclePayment — undo an off-cycle payment sent from
+ * createOffCyclePayment (the "Send payment" panel on a worker's profile,
+ * or the Payroll Costs dialog), while it's still safe to: catches a wrong
+ * amount or wrong worker before Everee actually settles the money.
+ *
+ * Unlike the timesheet grid's revertSentTimesheetEntryToDraftCallable
+ * (which trusts a local `status === 'paid'` flag kept in sync by a
+ * reconciler cron), off-cycle payments have no equivalent local paid-
+ * tracking — so this does a live GET against each payable right before
+ * deleting, and refuses the whole operation if ANY of them already show
+ * a settled paymentStatus. Fail-closed: an unrecognized/unexpected status
+ * is treated as NOT settled only if it isn't in the settled-pattern list
+ * above — Everee's own DELETE call is the final authority either way (a
+ * 400/409 from Everee on a too-late payable surfaces as a real error here,
+ * not a silent no-op).
+ *
+ * Same permission gate as the rest of this module (books-level access).
+ */
+export const voidOffCyclePayment = onCall(
+  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 60, cors: true },
+  async (request) => {
+    const tenantId = trim(request.data?.tenantId);
+    const paymentId = trim(request.data?.paymentId);
+    if (!tenantId || !paymentId) {
+      throw new HttpsError('invalid-argument', 'tenantId and paymentId are required.');
+    }
+    await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+
+    const docRef = db.collection(`tenants/${tenantId}/offcycle_payments`).doc(paymentId);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      throw new HttpsError('not-found', `Off-cycle payment ${paymentId} not found.`);
+    }
+    const data = snap.data() ?? {};
+    const status = trim(data.status);
+    if (status === 'voided') {
+      throw new HttpsError('failed-precondition', 'This payment has already been voided.');
+    }
+    if (status !== 'sent_to_everee') {
+      throw new HttpsError('failed-precondition', `Payment status is '${status}', not 'sent_to_everee' — nothing to void.`);
+    }
+
+    const hiringEntityId = trim(data.hiringEntityId);
+    if (!hiringEntityId) {
+      throw new HttpsError('failed-precondition', 'Payment is missing hiringEntityId.');
+    }
+    const config = await getEvereeConfigForEntity(tenantId, hiringEntityId);
+    if (!config?.evereeTenantId) {
+      throw new HttpsError('failed-precondition', 'Entity is not configured for Everee.');
+    }
+
+    const payables = Array.isArray((data.everee as Record<string, unknown> | undefined)?.payables)
+      ? ((data.everee as Record<string, unknown>).payables as Array<{ externalId?: string }>)
+      : [];
+    const externalIds = payables.map((p) => trim(p?.externalId)).filter(Boolean);
+    if (externalIds.length === 0) {
+      throw new HttpsError('failed-precondition', 'No Everee payable is recorded on this payment — nothing to void.');
+    }
+
+    // Live-check every leg before deleting anything — refuse the whole
+    // operation if even one has already settled.
+    for (const externalId of externalIds) {
+      let live: unknown;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        live = await getPayable(config, externalId);
+      } catch (e) {
+        if (isNotFoundError(e)) continue; // already gone — fine, nothing to check
+        throw new HttpsError('internal', `Failed to check payable ${externalId} before voiding: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      if (looksSettled(live)) {
+        throw new HttpsError(
+          'failed-precondition',
+          `This payment has already been paid by Everee (${externalId}) — voiding would desync real money from the record. This needs a manual correction, not an undo.`,
+        );
+      }
+    }
+
+    let deletedCount = 0;
+    let alreadyGoneCount = 0;
+    for (const externalId of externalIds) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await deletePayable(config, externalId);
+        deletedCount++;
+      } catch (e) {
+        if (isNotFoundError(e)) {
+          alreadyGoneCount++;
+        } else {
+          logger.error('[voidOffCyclePayment] deletePayable failed', {
+            tenantId,
+            paymentId,
+            externalId,
+            err: e instanceof Error ? e.message : String(e),
+          });
+          throw new HttpsError('internal', `Failed to void Everee payable ${externalId}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+
+    const actorUid = request.auth?.uid ?? null;
+    await docRef.update({
+      status: 'voided',
+      voidedBy: actorUid,
+      voidedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    logger.info('[voidOffCyclePayment] voided', { tenantId, paymentId, actorUid, deletedCount, alreadyGoneCount });
+
+    return { ok: true, id: paymentId, deletedCount, alreadyGoneCount };
   },
 );

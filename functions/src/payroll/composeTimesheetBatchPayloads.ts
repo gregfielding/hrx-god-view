@@ -353,14 +353,22 @@ export function composeW2AdditionalPayables(input: ComposeBatchInput): CreatePay
 export function composeContractorPayable(input: ComposeBatchInput): CreatePayableInput {
   const e = input.entry;
   const otHours = (e.totalFlsaOTHours ?? 0) + (e.totalNonFlsaOTHours ?? 0);
-  const hourlyPay =
-    (nonNegative(e.totalRegularHours) +
-      nonNegative(otHours) +
-      nonNegative(e.totalDoubleTimeHours)) *
-    e.payRate;
+  const totalHours =
+    nonNegative(e.totalRegularHours) + nonNegative(otHours) + nonNegative(e.totalDoubleTimeHours);
+  const hourlyPay = totalHours * e.payRate;
   const premiumPay =
     (nonNegative(e.mealBreakPenaltyHours) + nonNegative(e.restBreakPenaltyHours)) * e.payRate;
   const gross = hourlyPay + nonNegative(e.bonusAmount) + premiumPay;
+
+  // Contractor payables carry no native hours field on Everee's stub (unlike
+  // the W-2 worked-shift API, which renders "Wages (N hrs @ $X)" from
+  // structured fullyClassifiedHours) — the ENTIRE stub line is whatever we
+  // put in `label`, so hours must be embedded here or the worker never sees
+  // them. Mirrors the CSV-import path's dayLabel() hours suffix (Greg
+  // surfaced this gap for C1 Events LLC / Proof of the Pudding, same client
+  // as the tips-splitting fix above).
+  const hoursSuffix =
+    totalHours > 0 ? ` (${Math.round(totalHours * 100) / 100} hrs @ $${e.payRate.toFixed(2)})` : '';
 
   return {
     externalId: buildPayableExternalId({
@@ -370,7 +378,7 @@ export function composeContractorPayable(input: ComposeBatchInput): CreatePayabl
       kind: 'CONTRACTOR',
     }),
     externalWorkerId: input.externalWorkerId,
-    label: withLabelPrefix(input.labelPrefix, 'Contractor pay'),
+    label: withLabelPrefix(input.labelPrefix, `Contractor pay${hoursSuffix}`),
     type: 'contractor',
     payCode: 'CONTRACTOR',
     timestamp: input.shiftStartEpochSeconds,
@@ -427,8 +435,18 @@ function nonNegative(n: number | undefined): number {
  *  Everee's label length limit is undocumented. */
 export function withLabelPrefix(prefix: string | undefined, label: string): string {
   const p = (prefix ?? '').trim();
-  if (!p) return label;
-  return `${p} · ${label}`.slice(0, 120);
+  if (!p) return label.slice(0, 120);
+  const suffix = ` · ${label}`;
+  const combined = `${p}${suffix}`;
+  if (combined.length <= 120) return combined;
+  // Truncate the PREFIX, not the label, when the combined string is too
+  // long — the label (e.g. "Contractor pay (6.5 hrs @ $18.00)" or "Tips")
+  // is the essential, specific part of the stub line; a long attribution
+  // prefix is contextual and safe to trim first. A naive end-slice here
+  // was silently dropping the hours suffix for long-prefixed clients
+  // (Proof of the Pudding / C1 Events LLC — Greg 2026-08-26).
+  const maxPrefixLen = Math.max(0, 120 - suffix.length);
+  return `${p.slice(0, maxPrefixLen)}${suffix}`;
 }
 
 interface MakePayableArgs {
