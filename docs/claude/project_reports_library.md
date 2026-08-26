@@ -216,3 +216,27 @@ waiting (createQboClass/mapQboClass branches on savePayrollVenueMapping).
   assignment.
 - Doctrine: fix upstream queues here (materialize assignments — never
   read-time patches), and every downstream report corrects itself.
+- **2026-08-26 drain: unassigned paid payroll = $0.** The whole
+  no-assignment queue (~$66k) was materialized in one day: Select $21.5k
+  (Maryland/Hanover 2-JO CORT pair, Woodbridge, PA Convention Center,
+  Chicago ORS Nasco, NorCal + Colorado Domino's, Gaylord) and Events
+  $44.9k (FIFA Dallas/NY/KC, MN Yacht Club, COTA, Electric Forest, Obama
+  Library). Conventions that worked: follow the jobOrderId ALREADY STAMPED
+  on each row (site→JO ambiguity resolves itself — every site's rows
+  pointed at exactly one JO); stamp ONLY missing fields on settled rows
+  (assignmentId/account — never money fields); assignment id =
+  `<openShiftId|jo_<joId>>__<uid>`, retro flags per
+  feedback_assignment_point_of_truth.md. **New defect class found:
+  DANGLING assignmentIds** — paid rows stamped with assignment ids that
+  were never created (7 rows/$1.2k); data-health counts them uncovered
+  because it resolves the DOC, not the field — fix by creating the doc AT
+  the referenced id (or repointing to the worker's real assignment and
+  widening its date window). Per-show COTA JOs (#462-464 Toto/Simple
+  Plan/Kesha) follow the VenueSmart family convention (Janitors and
+  Cleaners, 16/20, WC 9014@1.34); "COTA Home Office" rows ride the
+  umbrella JO 8nrUOK7bK2DWDgupx6gC via a timesheet_site_mappings doc
+  (connect_team__cota_home_office) so future Connecteam imports
+  auto-resolve. After any backfill touching weeks older than ~6 weeks,
+  rebuild finance_week_rollups manually (nightly only covers trailing 6).
+  Remaining data-quality queues are WC-code coverage (Aug Select, June
+  Events), not attribution.
