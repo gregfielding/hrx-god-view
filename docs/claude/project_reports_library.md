@@ -283,3 +283,16 @@ waiting (createQboClass/mapQboClass branches on savePayrollVenueMapping).
   ☠️ expenses endpoint page size caps at 100 (size>100 = hard 400).
   Next enhancement unchanged (P2.5): stamp dimensions on submissions to
   get per-JO burden from Everee instead of entity-rate × pay.
+- **☠️ Phantom "Venue Smart, LLC" account (fixed 2026-08-26):** the whole
+  VenueSmart JO family (53 JOs — Lollapalooza, FIFA, Bonnaroo, every COTA
+  show) carried accountName "Venue Smart, LLC" + accountId/companyId
+  NHc6r1yOVUK6aOqt0EQH, which is a COMPANY id with NO accounts doc — the
+  only real account is **Venuesmart LLC National (m1JEJs8YPohuXTQVjVQp)**.
+  Reports resolving names via the accounts collection showed "—", and
+  new JOs/venue-mappings cloned from family members inherited the phantom
+  (that's how the COTA backfill picked it up). Repointed everywhere: 53
+  job_orders (recruiterAccountId/accountId/accountName), 23
+  payroll_venue_mappings, 23 assignments, 30 entries, 1
+  timesheet_site_mapping. Rule: when cloning a JO's shape, take the
+  account from jo.recruiterAccountId AND VERIFY the accounts doc exists —
+  never trust jo.accountId/companyId/accountName.
