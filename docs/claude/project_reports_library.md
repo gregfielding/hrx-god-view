@@ -194,3 +194,25 @@ waiting (createQboClass/mapQboClass branches on savePayrollVenueMapping).
 - Next: FIN-2 wire Everee burden endpoint (/integration/v1/expenses/
   by-date-range) into the rollups per entity-week → replaces the 12%
   slider with actuals.
+
+## Data Health — the reconciliation spine (SHIPPED 2026-08-26, Greg's "most upstream place")
+
+- /reports/data-health ('data-health', Payroll category, level 7) —
+  buildDataHealthReport (functions/src/payroll/dataHealthReport.ts) via
+  getPayrollCostReport({dataHealth:true}). Per month × entity:
+  Everee-settled gross (reuses buildEvereeRegister — now exported — the
+  wire-recon truth built for the bookkeeper) vs HRX entry gross, off-cycle
+  itemized, UNEXPLAINED residual = money Everee settled with no entry
+  behind it; then gross-weighted %-of-dollars coverage for assignment /
+  JO / account / billRate / workState / wcCode / wcRate.
+- Month buckets: register by periodEnd, entries by workDate — boundary
+  bleed shows as paired ± residuals (July Events +$20k vs Select −$13.8k).
+- First run findings (Jun→Aug 26): **June unexplained $163.7k** (the
+  pre-tagging hole — real missing entries, mostly Events), July nets
+  ±$6.4k (clean), August MTD $115k (import lag, expect to shrink as CSVs
+  land). Coverage post-backfills is 93-100% nearly everywhere; residual
+  queues: June Events wcCode 66.8%, June Select assignment 19.5% (small $),
+  Aug Select wcCode 59.1%, "Maryland Warehouse" csv rows with no
+  assignment.
+- Doctrine: fix upstream queues here (materialize assignments — never
+  read-time patches), and every downstream report corrects itself.

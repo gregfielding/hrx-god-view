@@ -25,6 +25,7 @@ import { qboQuery, qboEntityCreate } from '../integrations/quickbooks/qboAuth';
 import { evereeRequest } from '../integrations/everee/evereeHttp';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { buildWcCoverageReport } from '../workersComp/coverageGaps';
+import { buildDataHealthReport } from './dataHealthReport';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -585,7 +586,7 @@ interface RegisterRow {
   depositStatus: string | null;
 }
 
-async function buildEvereeRegister(
+export async function buildEvereeRegister(
   tenantId: string,
   startDate: string,
   endDate: string,
@@ -1393,6 +1394,14 @@ export const getPayrollCostReport = onCall(
       throw new HttpsError('invalid-argument', `Date range must be 0-${MAX_RANGE_DAYS} days.`);
     }
     await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+
+    // Data Health / Reconciliation spine (Greg 2026-08-26): Everee-settled
+    // vs entry gross per month × entity + gross-weighted field coverage.
+    // Level 7 — same bar as the register it reconciles against.
+    if (request.data?.dataHealth === true) {
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      return buildDataHealthReport({ tenantId, startDate, endDate });
+    }
 
     // Entries in range. Single-field range on workDate is auto-indexed;
     // status + entity filters applied in memory.

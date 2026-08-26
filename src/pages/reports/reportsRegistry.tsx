@@ -18,6 +18,7 @@ import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import GppMaybeOutlinedIcon from '@mui/icons-material/GppMaybeOutlined';
 import TimelineOutlinedIcon from '@mui/icons-material/TimelineOutlined';
+import MonitorHeartOutlinedIcon from '@mui/icons-material/MonitorHeartOutlined';
 import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
 import EventAvailableOutlinedIcon from '@mui/icons-material/EventAvailableOutlined';
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
@@ -77,6 +78,15 @@ export const REPORTS: ReportDef[] = [
     category: "Workers' comp & insurance",
     minLevel: 6,
     icon: <HealthAndSafetyOutlinedIcon />,
+  },
+  {
+    slug: 'data-health',
+    title: 'Data Health',
+    description:
+      'The reconciliation spine: Everee-settled dollars vs HRX entries per month × entity (unexplained residual highlighted), plus gross-weighted coverage of every field the financial and WC reports depend on. Fix here first — every report downstream corrects itself.',
+    category: 'Payroll',
+    minLevel: 7,
+    icon: <MonitorHeartOutlinedIcon />,
   },
   {
     slug: 'payroll-register',

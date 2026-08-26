@@ -200,6 +200,7 @@ const PayrollJournalPage = lazy(() => import('./pages/reports/PayrollJournalPage
 const WcAuditReportPage = lazy(() => import('./pages/reports/WcAuditReportPage'));
 const WcCoveragePage = lazy(() => import('./pages/reports/WcCoveragePage'));
 const WeeklyTrendsPage = lazy(() => import('./pages/reports/WeeklyTrendsPage'));
+const DataHealthPage = lazy(() => import('./pages/reports/DataHealthPage'));
 const I9StatusReportPage = lazy(() => import('./pages/reports/I9StatusReportPage'));
 const AcaLookbackReportPage = lazy(() => import('./pages/reports/AcaLookbackReportPage'));
 const TaxSickLeaveReportPage = lazy(() => import('./pages/reports/TaxSickLeaveReportPage'));
@@ -974,6 +975,16 @@ function App() {
             <ProtectedRoute requiredSecurityLevel="6">
               <RecruiterAccessGuard>
                 <WeeklyTrendsPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/data-health"
+          element={
+            <ProtectedRoute requiredSecurityLevel="7">
+              <RecruiterAccessGuard>
+                <DataHealthPage />
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }
