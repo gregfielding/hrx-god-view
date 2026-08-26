@@ -2822,13 +2822,28 @@ const JobPostingDetail: React.FC = () => {
 
       {/* Top row: Back to Jobs Board + Language picker + Sign In or Create Account (when guest) */}
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 2 }}>
-        <IconButton
-          onClick={() => navigate('/c1/jobs-board')}
-          aria-label={t('jobs.backToJobsBoard')}
-          sx={{ color: 'text.secondary', ml: -1 }}
-        >
-          <ArrowBackIcon />
-        </IconButton>
+        {/* Back stays far-left (universal placement); the C1 logo rides next
+            to it as persistent guest branding (Greg 2026-08-25) and is
+            itself a tap-target back to the board. */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <IconButton
+            onClick={() => navigate('/c1/jobs-board')}
+            aria-label={t('jobs.backToJobsBoard')}
+            sx={{ color: 'text.secondary', ml: -1 }}
+          >
+            <ArrowBackIcon />
+          </IconButton>
+          <Box
+            component="img"
+            src="/C1.png"
+            alt="C1 Staffing"
+            onClick={() => navigate('/c1/jobs-board')}
+            sx={{ height: { xs: 30, sm: 38 }, width: 'auto', objectFit: 'contain', cursor: 'pointer' }}
+            onError={(e: any) => {
+              e.currentTarget.style.display = 'none';
+            }}
+          />
+        </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           {/* Quiet EN | ES toggle — the standard guest language picker
               (same as /login/phone and /apply, Greg 2026-08-25). */}

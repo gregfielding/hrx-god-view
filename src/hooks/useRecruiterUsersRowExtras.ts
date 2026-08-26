@@ -99,14 +99,19 @@ export function useRecruiterUsersRowExtras(userIds: readonly string[]): {
       const noteMap = new Map<string, RecruiterUserLatestNotePreview>();
       const intMap = new Map<string, RecruiterUserLatestInterviewPreview>();
 
-      await Promise.all(
-        ids.map(async (uid) => {
-          const [note, interview] = await Promise.all([fetchLatestNote(uid), fetchLatestInterviewMeta(uid)]);
-          if (cancelled) return;
-          if (note) noteMap.set(uid, note);
-          if (interview) intMap.set(uid, interview);
-        }),
-      );
+      // Perf (2026-08-25): cap fan-out — an uncapped Promise.all fired 2×N
+      // simultaneous subcollection queries (600 for a 300-applicant JO).
+      const BATCH = 20;
+      for (let i = 0; i < ids.length && !cancelled; i += BATCH) {
+        await Promise.all(
+          ids.slice(i, i + BATCH).map(async (uid) => {
+            const [note, interview] = await Promise.all([fetchLatestNote(uid), fetchLatestInterviewMeta(uid)]);
+            if (cancelled) return;
+            if (note) noteMap.set(uid, note);
+            if (interview) intMap.set(uid, interview);
+          }),
+        );
+      }
 
       if (!cancelled) {
         setLatestNoteByUserId(noteMap);

@@ -296,9 +296,10 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
 
   const handleKeyPress = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter') {
-      if (activeTab === 0) {
-        handleSignUp();
-      } else {
+      // Create tab: account creation goes through PhoneSignupGate ONLY
+      // (Slice 4, 2026-08-25) — Enter used to leak into the legacy
+      // email+password handleSignUp and mint a passworded worker.
+      if (activeTab !== 0) {
         handleSignIn();
       }
     }
@@ -746,7 +747,9 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
           </Alert>
         )}
 
-        <form onSubmit={activeTab === 0 ? handleSignUp : handleSignIn}>
+        {/* Create tab has NO form-submit path — PhoneSignupGate owns account
+            creation (Slice 4); only the Sign In tab submits. */}
+        <form onSubmit={activeTab === 0 ? (e) => e.preventDefault() : handleSignIn}>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 2 : 2.5 }}>
             {activeTab === 0 && (
               <>

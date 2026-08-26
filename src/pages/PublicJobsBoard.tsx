@@ -30,8 +30,6 @@ import {
   Drawer,
   useMediaQuery,
   useTheme,
-  Menu,
-  Tooltip,
 } from '@mui/material';
 import {
   Search,
@@ -61,6 +59,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { JobsBoardService, JobsBoardPost } from '../services/recruiter/jobsBoardService';
 import { useAuth } from '../contexts/AuthContext';
 import { useGuestLanguage } from '../hooks/useGuestLanguage';
+import { langToggleStyle } from './authMinimalStyles';
 import { useFavorites, useFavoritesFilter } from '../hooks/useFavorites';
 import { useT, setLanguage, useLanguage } from '../i18n';
 import { getJobPostingDisplayText } from '../utils/jobPostingI18n';
@@ -222,7 +221,6 @@ const PublicJobsBoard: React.FC = () => {
     needPhone: false,
     jobId: null as string | null
   });
-  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [guestLanguage, setGuestLanguage] = useGuestLanguage();
   const t = useT();
   const displayLanguage = useLanguage();
@@ -1494,9 +1492,10 @@ const PublicJobsBoard: React.FC = () => {
     <>
       {/* Only show header for non-logged-in users */}
       {!user && (
-        <Box sx={{ mb: 4 }}>
+        // One 16px grid (Greg 2026-08-25): tighter title→search gap.
+        <Box sx={{ mb: 2 }}>
           {/* Header with logo, title, and auth button */}
-          <Box sx={{ mb: 2 }}>
+          <Box>
             {/* First row: Logo and Sign In button */}
             <Box sx={{ 
               display: 'flex', 
@@ -1524,86 +1523,40 @@ const PublicJobsBoard: React.FC = () => {
                 />
               )}
               
-              {/* Language picker + Sign In or Create Account - Top right */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Tooltip title={guestLanguage === 'es' ? 'Idioma: Español' : 'Language: English'}>
-                  <Box
-                    component="button"
-                    onClick={(e) => setLanguageMenuAnchorEl(e.currentTarget)}
-                    aria-label={guestLanguage === 'es' ? 'Idioma' : 'Language'}
-                    sx={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 0.5,
-                      border: '1px solid',
-                      borderColor: 'divider',
-                      borderRadius: 1,
-                      px: 1,
-                      py: 0.75,
-                      bgcolor: 'background.paper',
-                      color: 'text.secondary',
-                      cursor: 'pointer',
-                      '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
-                    }}
-                  >
-                    <Language sx={{ fontSize: 20 }} />
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {guestLanguage === 'es' ? 'ES' : 'EN'}
-                    </Typography>
-                  </Box>
-                </Tooltip>
+              {/* Quiet EN | ES + compact Sign In — the standard guest header
+                  (Greg 2026-08-25, matches /login and the posting page). */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                <Box sx={{ whiteSpace: 'nowrap' }}>
+                  <button type="button" style={langToggleStyle(guestLanguage === 'en')} onClick={() => setGuestLanguage('en')}>EN</button>
+                  <span style={{ color: '#ccc', margin: '0 8px' }}>|</span>
+                  <button type="button" style={langToggleStyle(guestLanguage === 'es')} onClick={() => setGuestLanguage('es')}>ES</button>
+                </Box>
                 <Button
                   variant="contained"
                   onClick={() => setAuthDialogOpen(true)}
-                  size={isMobile ? 'small' : 'medium'}
+                  size="small"
                   sx={{
-                    px: { xs: 1.5, sm: 3 },
-                    py: { xs: 0.75, sm: 1.5 },
+                    px: 2,
                     fontWeight: 600,
-                    borderRadius: 2,
+                    minHeight: 36,
+                    borderRadius: 999,
                     textTransform: 'none',
-                    fontSize: { xs: '0.75rem', sm: '1rem' },
-                    whiteSpace: 'nowrap'
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  Sign In or Create Account
+                  {guestLanguage === 'es' ? 'Iniciar sesión' : 'Sign In'}
                 </Button>
               </Box>
             </Box>
-            <Menu
-              anchorEl={languageMenuAnchorEl}
-              open={Boolean(languageMenuAnchorEl)}
-              onClose={() => setLanguageMenuAnchorEl(null)}
-              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-              transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-            >
-              <MenuItem
-                selected={guestLanguage === 'en'}
-                onClick={() => {
-                  setLanguageMenuAnchorEl(null);
-                  setGuestLanguage('en');
-                }}
-              >
-                English (EN)
-              </MenuItem>
-              <MenuItem
-                selected={guestLanguage === 'es'}
-                onClick={() => {
-                  setLanguageMenuAnchorEl(null);
-                  setGuestLanguage('es');
-                }}
-              >
-                Español (ES)
-              </MenuItem>
-            </Menu>
-            
+
             {/* Second row: Main Page Title */}
             <Typography 
               variant="h3" 
               sx={{ 
                 fontWeight: 700,
                 fontSize: { xs: '1.25rem', sm: '2rem', md: '3rem' }, // Smaller on mobile
-                lineHeight: { xs: 1.3, sm: 1.2 }
+                lineHeight: { xs: 1.3, sm: 1.2 },
+                mt: 0.75,
               }}
             >
               {isC1Route ? t('nav.findWork') : t('jobs.findMoreWork')}

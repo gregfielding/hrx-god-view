@@ -22,6 +22,7 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { setLanguage } from '../i18n';
 import { useGuestLanguage } from '../hooks/useGuestLanguage';
+import { useWebOtpAutofill } from '../hooks/useWebOtpAutofill';
 
 type Lang = 'en' | 'es';
 const COPY: Record<Lang, Record<string, string>> = {
@@ -235,8 +236,15 @@ const PhoneLoginPage: React.FC = () => {
     }
   };
 
-  const verifyCode = async () => {
-    if (code.length !== 6) {
+  // Android one-tap code autofill (WebOTP); auto-verifies on receipt.
+  useWebOtpAutofill(step === 'code', (otp) => {
+    setCode(otp);
+    void verifyCode(otp);
+  });
+
+  const verifyCode = async (codeOverride?: string) => {
+    const codeToUse = codeOverride ?? code;
+    if (codeToUse.length !== 6) {
       setError(t.badCode);
       return;
     }
@@ -244,7 +252,7 @@ const PhoneLoginPage: React.FC = () => {
     setError('');
     setRawError('');
     try {
-      const r = await httpsCallable<unknown, Record<string, unknown>>(fns, 'checkOtp')({ phoneE164: e164, code, signIn: true });
+      const r = await httpsCallable<unknown, Record<string, unknown>>(fns, 'checkOtp')({ phoneE164: e164, code: codeToUse, signIn: true });
       await handleResolution(r.data);
     } catch (e) {
       setError(mapError(e));

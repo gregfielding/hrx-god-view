@@ -739,8 +739,8 @@
     "sectionLanguagesDescription": "Add languages once and avoid duplicates.",
     "sectionAppLanguageTitle": "Communication Preferences",
     "sectionAppLanguageDescription": "Manage app language, text alerts, and notification settings.",
-    "sectionResetPasswordTitle": "Reset password",
-    "sectionResetPasswordDescription": "Update your sign-in password.",
+    "sectionResetPasswordTitle": "Sign-in & security",
+    "sectionResetPasswordDescription": "How you sign in, and logging out.",
     "hubProfileComplete": "Profile complete",
     "hubSectionsProgress": "{complete} of {total} sections complete",
     "hubEmploymentNeedTenant": "Employment will appear here once you’re linked to a C1 entity.",
@@ -875,7 +875,8 @@
     "aboutDeleteSecondary": "Request permanent deletion of your account.",
     "aboutDeleteRequested": "Deletion requested — our team will contact you.",
     "aboutDeleteExplainer": "This sends a deletion request to our team. Records we are legally required to keep (like payroll and tax records) are retained for the required period; everything else is removed. We will confirm by text or email.",
-    "aboutDeleteConfirm": "Request deletion"
+    "aboutDeleteConfirm": "Request deletion",
+    "phoneSignInHelp": "You sign in with your mobile number — we text you a code. No password needed."
   },
   "apply": {
     "availableShifts": "Available Shifts",

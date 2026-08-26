@@ -87,6 +87,7 @@ import {
   doc,
   getDoc,
   collection,
+  documentId,
   query,
   where,
   getDocs,
@@ -579,12 +580,22 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       const applicationItems = rows.map((r) => ({ id: r.id, ...r.data })) as Array<Record<string, any> & { id: string }>;
       const userIds = Array.from(new Set(applicationItems.map((a) => a.userId).filter(Boolean)));
 
-      const usersRef = collection(db, 'users');
-      const usersSnap = await getDocs(usersRef);
+      // Perf (2026-08-25 — Danny's 60s spinner): this used to getDocs the
+      // ENTIRE root users collection (every tenant, ~hundreds of MB) and
+      // filter client-side. Chunked documentId-in fetches return only this
+      // job order's applicants — served by the automatic __name__ index.
       const userMap = new Map<string, any>();
-      usersSnap.docs.forEach((u) => {
-        if (userIds.includes(u.id)) userMap.set(u.id, u.data());
-      });
+      const USER_CHUNK = 30;
+      const userIdChunks: string[][] = [];
+      for (let i = 0; i < userIds.length; i += USER_CHUNK) {
+        userIdChunks.push(userIds.slice(i, i + USER_CHUNK));
+      }
+      const userSnaps = await Promise.all(
+        userIdChunks.map((chunk) =>
+          getDocs(query(collection(db, 'users'), where(documentId(), 'in', chunk))),
+        ),
+      );
+      userSnaps.forEach((s) => s.docs.forEach((u) => userMap.set(u.id, u.data())));
 
       const requirementPackId = (jobOrder as any)?.requirementPackId;
 
@@ -884,11 +895,17 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       if (!tenantId) return;
       
       try {
-        const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
+        // Perf (2026-08-25): only open JOs feed the Switch Job dropdown —
+        // filter server-side (single-field, auto-indexed) instead of
+        // downloading every job order ever created.
+        const jobOrdersRef = query(
+          collection(db, 'tenants', tenantId, 'job_orders'),
+          where('status', '==', 'open'),
+        );
         const jobOrdersSnapshot = await getDocs(jobOrdersRef);
         const jobOrdersData = jobOrdersSnapshot.docs
           .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter((jo: any) => jo.id !== jobOrderId && jo.status === 'open'); // Exclude current job order and only show open jobs
+          .filter((jo: any) => jo.id !== jobOrderId);
         
         setAvailableJobOrders(jobOrdersData);
       } catch (error) {

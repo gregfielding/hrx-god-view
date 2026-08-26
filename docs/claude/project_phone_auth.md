@@ -251,3 +251,45 @@ Greg watched a full production signup and cut the wizard to what staffing ops ac
   admin edit in ProfileOverview). The client homeReadinessModel checklist
   that lacks it appears to have zero render sites (dead model) — don't
   extend it without checking for a consumer first.
+
+## Slice 4 — worker passwords retired (SHIPPED 2026-08-25)
+
+- **inviteUserV2 / resendInviteV2**: worker invites (securityLevel ≤ 4, or a
+  non-numeric label like 'Worker' — WorkforceTab sends that literal) REQUIRE
+  a valid mobile number, get NO password link (link = hrxone.com/login), get
+  an invite SMS, and the doc is stamped phoneE164 + normalized
+  securityLevel '2' (staff-default footgun guard). Staff invites keep the
+  password link — now on hrxone.com (**app.hrxone.com was never an
+  authorized Auth domain; staff invite links had been broken**).
+- **sendPasswordResetV2**: single server-side gate — reset requests
+  resolving to a worker account send a "sign in with your phone" SMS
+  instead of a reset email, same enumeration-safe success. Covers every
+  client reset surface at once.
+- Worker profile "reset password" section → "Sign-in & security" (no
+  button); AuthDialog's legacy email+password signup paths (Enter key +
+  form submit on the Create tab) dead-ended — PhoneSignupGate only.
+- `inviteUser` v1 DELETED from Cloud Run (zero routed callers) — slot freed.
+- ☠️ Open product call: `adminCreateWorker` (recruiter sets a password in
+  person, stated use case "workers without phones") kept as the documented
+  exception. Its phone-collision retry silently drops the phone — unfixed.
+- ☠️ AddWorkers CSV import sends securityLevel '5' for "workers" — those
+  classify as STAFF everywhere (isStaff ≥ 5, this slice's gate). Ask Greg
+  whether that page's tiering is right before touching it.
+
+## WebOTP + self-managed OTP (SHIPPED 2026-08-25)
+
+- sendOtp now mints its OWN 6-digit codes (SHA-256 at `phone_otp/{digits}`,
+  10-min TTL, 5 attempts, 30s resend / 5-per-hour rate limits) and sends
+  via the A2P messaging number with the WebOTP last line
+  `@hrxone.com #123456` → Android Chrome one-tap autofill
+  (useWebOtpAutofill hook auto-verifies in PhoneSignupGate +
+  PhoneLoginPage); iOS reads any code via autocomplete="one-time-code".
+  Also ~6x cheaper than Twilio Verify per verification.
+- checkOtp checks the self store FIRST (wrong self-code never falls
+  through to a second oracle); 'no_code' falls back to Twilio Verify —
+  covers in-flight codes and the rollback flag
+  `app_config/phone_auth.smsOtpProvider = 'verify'` (send side only).
+  Test phones bypass everything, unchanged. sendOtpHttp (profile phone
+  verification) still sends via Verify; the check-side fallback covers it.
+- Verified live: match/consume/replay/wrong-code/attempt-count against the
+  deployed checkOtp; real template SMS sent to Greg's phone.

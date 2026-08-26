@@ -30,6 +30,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { signInWithCustomToken } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { setLastLoginMethod } from '../../utils/lastLoginMethod';
+import { useWebOtpAutofill } from '../../hooks/useWebOtpAutofill';
 import { useT, getLanguage } from '../../i18n';
 
 interface PhoneSignupGateProps {
@@ -86,6 +87,12 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
   const [existingNotice, setExistingNotice] = useState(false);
 
   const phoneE164 = toE164(phone);
+
+  // Android one-tap code autofill; auto-verifies on receipt.
+  useWebOtpAutofill(step === 'code', (otp) => {
+    setCode(otp);
+    void verify(otp);
+  });
   // 18+ (W-2 staffing, Greg 2026-08-25). Server enforces the same rule.
   const dobIso = (() => {
     const t = dob.trim();
@@ -143,14 +150,15 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
     }
   };
 
-  const verify = async () => {
-    if (!phoneE164 || !/^\d{6}$/.test(code.trim())) return;
+  const verify = async (codeOverride?: string) => {
+    const codeToUse = (codeOverride ?? code).trim();
+    if (!phoneE164 || !/^\d{6}$/.test(codeToUse)) return;
     setBusy(true);
     setError(null);
     try {
       const res = await httpsCallable(getFunctions(), 'checkOtp')({
         phoneE164,
-        code: code.trim(),
+        code: codeToUse,
         signup: true,
         firstName: firstName.trim(),
         lastName: lastName.trim(),

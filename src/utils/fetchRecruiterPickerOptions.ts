@@ -1,4 +1,4 @@
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export type RecruiterPickerOption = { id: string; displayName: string; email?: string };
@@ -25,10 +25,23 @@ const RECRUITER_EMAIL_SUFFIX = '@c1staffing.com';
  * `tenantIds.{tenantId}.recruiter`, and a work email ending in `@c1staffing.com`.
  */
 export async function fetchRecruiterPickerOptions(tenantId: string): Promise<RecruiterPickerOption[]> {
-  const usersSnapshot = await getDocs(collection(db, 'users'));
+  // Perf (2026-08-25): was a FULL root-users-collection scan — the second of
+  // two concurrent full scans behind the Applications tab's 60s spinner.
+  // Recruiters are a tiny set: two targeted single-field queries (tenant map
+  // flag + legacy top-level flag), unioned; both auto-indexed.
+  const [tenantFlagSnap, legacyFlagSnap] = await Promise.all([
+    getDocs(query(collection(db, 'users'), where(`tenantIds.${tenantId}.recruiter`, '==', true))),
+    getDocs(query(collection(db, 'users'), where('recruiter', '==', true))),
+  ]);
+  const seen = new Set<string>();
+  const candidateDocs = [...tenantFlagSnap.docs, ...legacyFlagSnap.docs].filter((d) => {
+    if (seen.has(d.id)) return false;
+    seen.add(d.id);
+    return true;
+  });
   const recruiters: RecruiterPickerOption[] = [];
 
-  usersSnapshot.docs.forEach((docSnap) => {
+  candidateDocs.forEach((docSnap) => {
     const userData = docSnap.data() as Record<string, unknown>;
     if (!userData.tenantIds || !(userData.tenantIds as Record<string, unknown>)[tenantId]) return;
 

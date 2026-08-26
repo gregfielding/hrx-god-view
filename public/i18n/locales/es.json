@@ -739,8 +739,8 @@
     "sectionLanguagesDescription": "Agrega idiomas una sola vez y evita duplicados.",
     "sectionAppLanguageTitle": "Preferencias de comunicación",
     "sectionAppLanguageDescription": "Administra el idioma de la app, las alertas por SMS y la configuración de notificaciones.",
-    "sectionResetPasswordTitle": "Restablecer contraseña",
-    "sectionResetPasswordDescription": "Actualiza tu contraseña de inicio de sesión.",
+    "sectionResetPasswordTitle": "Acceso y seguridad",
+    "sectionResetPasswordDescription": "Cómo inicias sesión y cerrar sesión.",
     "hubProfileComplete": "Perfil completo",
     "hubSectionsProgress": "{complete} de {total} secciones completas",
     "hubEmploymentNeedTenant": "El empleo aparecerá aquí cuando estés vinculado a una entidad C1.",
@@ -875,7 +875,8 @@
     "aboutDeleteSecondary": "Solicita la eliminación permanente de tu cuenta.",
     "aboutDeleteRequested": "Eliminación solicitada — nuestro equipo te contactará.",
     "aboutDeleteExplainer": "Esto envía una solicitud de eliminación a nuestro equipo. Los registros que la ley nos obliga a conservar (como nómina e impuestos) se retienen por el período requerido; todo lo demás se elimina. Te confirmaremos por texto o correo.",
-    "aboutDeleteConfirm": "Solicitar eliminación"
+    "aboutDeleteConfirm": "Solicitar eliminación",
+    "phoneSignInHelp": "Inicias sesión con tu número de celular: te enviamos un código por mensaje de texto. No necesitas contraseña."
   },
   "apply": {
     "availableShifts": "Turnos disponibles",

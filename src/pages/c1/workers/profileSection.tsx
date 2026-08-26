@@ -16,7 +16,6 @@ import {
 } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { sendPasswordReset } from '../../../services/sendPasswordResetCallable';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { db } from '../../../firebase';
@@ -354,21 +353,6 @@ const WorkerProfileSection: React.FC = () => {
     await persistPreferences(industryPrefs, next);
   };
 
-  const handlePasswordReset = async () => {
-    const email = String(userDoc?.email || user?.email || '').trim();
-    if (!email) {
-      setSaveError(t('profile.noEmailFound'));
-      return;
-    }
-    setSaveError(null);
-    setSaveMessage(null);
-    try {
-      await sendPasswordReset(email);
-      setSaveMessage(t('profile.passwordResetEmailSent', { email }));
-    } catch {
-      setSaveError(t('profile.unableToSendPasswordReset'));
-    }
-  };
 
   const updateAccountSettings = async (next: {
     preferredLanguage?: 'en' | 'es';
@@ -696,12 +680,11 @@ const WorkerProfileSection: React.FC = () => {
           <Card variant="outlined" sx={{ borderColor: 'divider' }}>
             <CardContent>
               <Stack spacing={1.5}>
+                {/* Slice 4 (2026-08-25): workers have no passwords — the
+                    reset button is gone; sign-in is phone OTP at /login. */}
                 <Typography variant="body2" color="text.secondary">
-                  {t('profile.resetPasswordEmailHelp')}
+                  {t('profile.phoneSignInHelp')}
                 </Typography>
-                <Button variant="contained" onClick={handlePasswordReset} sx={{ alignSelf: 'flex-start' }}>
-                  {t('profile.sendPasswordResetEmailButton')}
-                </Button>
                 <Button color="error" variant="outlined" onClick={() => void logout()} sx={{ alignSelf: 'flex-start' }}>
                   {t('nav.logOut')}
                 </Button>

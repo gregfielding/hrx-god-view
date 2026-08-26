@@ -125,9 +125,105 @@ async function testPhoneFixedCode(phoneE164: string): Promise<string | null> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Self-managed SMS OTP (2026-08-25 — WebOTP autofill).
+//
+// Twilio Verify's managed template can't carry the WebOTP origin-binding
+// last line (`@hrxone.com #123456`) that Android Chrome needs for one-tap
+// code autofill, so we mint and check our own codes and send them over the
+// A2P messaging number (also ~6x cheaper than Verify per verification).
+// Verify remains the CHECK-side fallback for codes in flight at deploy
+// time, and the SEND side can be rolled back instantly with
+// `app_config/phone_auth.smsOtpProvider = 'verify'`.
+// iOS needs no template change (autocomplete="one-time-code" reads any
+// code); test phones still bypass everything via testPhoneFixedCode.
+// ─────────────────────────────────────────────────────────────────────
+
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_MIN_RESEND_MS = 30 * 1000;
+const OTP_MAX_SENDS_PER_HOUR = 5;
+
+function hashOtp(phoneE164: string, code: string): string {
+  return crypto.createHash('sha256').update(`${phoneE164}:${code}`).digest('hex');
+}
+
+function otpDocRef(phoneE164: string): FirebaseFirestore.DocumentReference {
+  return db.doc(`phone_otp/${phoneE164.replace(/\D/g, '')}`);
+}
+
+async function selfOtpEnabled(): Promise<boolean> {
+  try {
+    const cfg = await db.doc('app_config/phone_auth').get();
+    return String(cfg.get('smsOtpProvider') ?? 'self') !== 'verify';
+  } catch {
+    return true;
+  }
+}
+
+async function sendSelfOtp(phoneE164: string): Promise<void> {
+  const ref = otpDocRef(phoneE164);
+  const now = Date.now();
+  const prev = (await ref.get()).data() as Record<string, unknown> | undefined;
+  if (now - Number(prev?.lastSentAtMs ?? 0) < OTP_MIN_RESEND_MS) {
+    throw new HttpsError('resource-exhausted', 'Please wait a moment before requesting another code.');
+  }
+  const windowStart = Number(prev?.sendWindowStartMs ?? 0);
+  const inWindow = now - windowStart < 60 * 60 * 1000;
+  const sendCount = inWindow ? Number(prev?.sendCount ?? 0) : 0;
+  if (sendCount >= OTP_MAX_SENDS_PER_HOUR) {
+    throw new HttpsError('resource-exhausted', 'Too many codes requested for this number. Please try again later.');
+  }
+  const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+  await ref.set({
+    codeHash: hashOtp(phoneE164, code),
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    expiresAtMs: now + OTP_TTL_MS,
+    attempts: 0,
+    lastSentAtMs: now,
+    sendWindowStartMs: inWindow && windowStart ? windowStart : now,
+    sendCount: sendCount + 1,
+  });
+  const from = TWILIO_MESSAGING_PHONE_NUMBER.value() || process.env.TWILIO_MESSAGING_PHONE_NUMBER;
+  if (!from) throw new HttpsError('internal', 'Messaging number not configured.');
+  const client = getTwilioClient();
+  // Last line is the WebOTP origin binding — format is exact:
+  // "@" + top-level origin + " #" + code, on its own final line.
+  await client.messages.create({
+    to: phoneE164,
+    from,
+    body: `Your C1 Staffing verification code is ${code}. It expires in 10 minutes.\n\n@hrxone.com #${code}`,
+  });
+}
+
+/** 'match' consumes the code; 'no_code' → caller falls back to Twilio
+ *  Verify. Wrong code / too many attempts THROW (never fall through — a
+ *  wrong self-code must not get a second oracle). */
+async function checkSelfOtp(phoneE164: string, code: string): Promise<'match' | 'no_code'> {
+  const ref = otpDocRef(phoneE164);
+  const snap = await ref.get();
+  if (!snap.exists) return 'no_code';
+  const d = snap.data() as Record<string, unknown>;
+  if (Number(d.expiresAtMs ?? 0) < Date.now()) {
+    await ref.delete();
+    return 'no_code';
+  }
+  const attempts = Number(d.attempts ?? 0);
+  if (attempts >= OTP_MAX_ATTEMPTS) {
+    await ref.delete();
+    throw new HttpsError('resource-exhausted', 'Too many attempts. Please request a new code.');
+  }
+  if (String(d.codeHash ?? '') !== hashOtp(phoneE164, code)) {
+    await ref.update({ attempts: attempts + 1 });
+    throw new HttpsError('permission-denied', 'Invalid verification code. Please try again.');
+  }
+  await ref.delete(); // single-use
+  return 'match';
+}
+
 export const sendOtp = onCall(
   {
-    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, verifyServiceSid],
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, verifyServiceSid, TWILIO_MESSAGING_PHONE_NUMBER],
     cors: true,
     invoker: 'public', // Allow unauthenticated calls for now
   },
@@ -154,14 +250,19 @@ export const sendOtp = onCall(
   }
 
   try {
-    const client = getTwilioClient();
-    const verifyServiceSid = getVerifyServiceSid();
-    
-    // Send OTP via Twilio Verify
-    await client.verify.v2.services(verifyServiceSid).verifications.create({
-      to: phoneE164,
-      channel: 'sms',
-    });
+    if (await selfOtpEnabled()) {
+      // Self-managed code with the WebOTP template (see helpers above).
+      await sendSelfOtp(phoneE164);
+    } else {
+      const client = getTwilioClient();
+      const verifyServiceSid = getVerifyServiceSid();
+
+      // Send OTP via Twilio Verify
+      await client.verify.v2.services(verifyServiceSid).verifications.create({
+        to: phoneE164,
+        channel: 'sms',
+      });
+    }
 
     // Store phone number in user profile when sending OTP
     if (uid) {
@@ -176,7 +277,12 @@ export const sendOtp = onCall(
     return { success: true };
   } catch (error: any) {
     logger.error('Failed to send OTP:', error);
-    
+
+    // Self-OTP rate limits throw HttpsError with the right code/message —
+    // pass them through instead of flattening to 'internal' (2026-08-25).
+    if (error instanceof HttpsError) {
+      throw error;
+    }
     // Handle specific Twilio errors
     if (error.code === 60200) {
       throw new HttpsError('invalid-argument', 'Invalid phone number. Please check and try again.');
@@ -185,7 +291,7 @@ export const sendOtp = onCall(
     } else if (error.code === 60212) {
       throw new HttpsError('resource-exhausted', 'Too many verification attempts. Please try again later.');
     }
-    
+
     throw new HttpsError('internal', 'Failed to send verification code. Please try again.');
   }
 });
@@ -669,7 +775,7 @@ async function resolvePhoneChange(
  */
 export const checkOtp = onCall(
   {
-    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, verifyServiceSid],
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, verifyServiceSid, TWILIO_MESSAGING_PHONE_NUMBER],
     cors: true,
     invoker: 'public', // Allow unauthenticated calls for now
   },
@@ -738,18 +844,24 @@ export const checkOtp = onCall(
   }
 
   try {
-    const client = getTwilioClient();
-    const verifyServiceSid = getVerifyServiceSid();
-    
-    // Verify OTP via Twilio Verify
-    const verificationCheck = await client.verify.v2.services(verifyServiceSid)
-      .verificationChecks.create({
-        to: phoneE164,
-        code: code,
-      });
+    // Self-managed OTP first (WebOTP template): 'match' consumes the code;
+    // a WRONG self-code throws inside checkSelfOtp (never falls through to a
+    // second oracle); 'no_code' → Twilio Verify covers codes that were in
+    // flight when the send side swapped over, and the 'verify' rollback flag.
+    if ((await checkSelfOtp(phoneE164, code)) !== 'match') {
+      const client = getTwilioClient();
+      const verifyServiceSid = getVerifyServiceSid();
 
-    if (verificationCheck.status !== 'approved') {
-      throw new HttpsError('permission-denied', 'Invalid verification code. Please try again.');
+      // Verify OTP via Twilio Verify
+      const verificationCheck = await client.verify.v2.services(verifyServiceSid)
+        .verificationChecks.create({
+          to: phoneE164,
+          code: code,
+        });
+
+      if (verificationCheck.status !== 'approved') {
+        throw new HttpsError('permission-denied', 'Invalid verification code. Please try again.');
+      }
     }
 
     // Phone SIGN-IN mode: turn the approved code into a session for the existing account.

@@ -771,7 +771,9 @@ export { restartEvereeOnboarding } from './onboarding/restartEvereeOnboardingCal
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';
-export { inviteUser } from './auth/inviteUser';
+// inviteUser (v1) deleted 2026-08-25 — zero routed client callers (only the
+// unrouted examples/InviteFlowExample); inviteUserV2 is the live invite path.
+// Freed a Cloud Run service slot.
 export { adminCreateWorker } from './auth/adminCreateWorker';
 export { companyLocationMirrorStats };
 export { deleteDuplicateCompanies };
@@ -8244,7 +8246,35 @@ function removeUndefined(obj: Record<string, any>) {
 }
 
 // Invite User (HRX, Agency, Customer) - 2nd Gen
-export const inviteUserV2 = onCall(async (request) => {
+/**
+ * Slice 4 (Greg approved 2026-08-25): workers sign in with phone OTP — no
+ * passwords. securityLevel ≤ 4 is a worker; so is an unparsable label like
+ * 'Worker' (WorkforceTab sends that literal string). Staff (≥ 5) keep
+ * email+password.
+ */
+function isWorkerSecurityLevel(level: unknown): boolean {
+  const n = parseInt(String(level ?? ''), 10);
+  return !Number.isFinite(n) || n <= 4;
+}
+
+/** Same classification off a users doc: top-level level, else the highest
+ *  tenantIds entry; no numeric level anywhere → worker. */
+function isWorkerUserDoc(docData: Record<string, any> | undefined): boolean {
+  if (!docData) return true;
+  const top = parseInt(String(docData.securityLevel ?? ''), 10);
+  if (Number.isFinite(top)) return top <= 4;
+  const tenantIds = docData.tenantIds && typeof docData.tenantIds === 'object' ? docData.tenantIds : {};
+  let max = NaN;
+  for (const entry of Object.values(tenantIds) as Array<Record<string, unknown>>) {
+    const lvl = parseInt(String(entry?.securityLevel ?? ''), 10);
+    if (Number.isFinite(lvl) && (!Number.isFinite(max) || lvl > max)) max = lvl;
+  }
+  return !Number.isFinite(max) || max <= 4;
+}
+
+export const inviteUserV2 = onCall(
+  { secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN] },
+  async (request) => {
   const start = Date.now();
   console.log('inviteUserV2 payload:', request.data);
   if (!request.data || !request.data.email) {
@@ -8254,6 +8284,19 @@ export const inviteUserV2 = onCall(async (request) => {
     email, displayName, firstName, lastName, jobTitle, department, phone,
     locationIds, securityLevel, role, agencyId, customerId, tenantId
   } = request.data;
+
+  // Slice 4: workers are invited to sign in with their PHONE (OTP), so a
+  // valid mobile number is mandatory for worker invites — this also closes
+  // the CSV-import/WorkforceTab silent-empty-phone gap that used to mint
+  // OTP-unreachable accounts.
+  const workerInvite = isWorkerSecurityLevel(securityLevel);
+  const invitePhoneE164 = normalizePhoneE164(String(phone || ''));
+  if (workerInvite && !invitePhoneE164) {
+    throw new HttpsError(
+      'invalid-argument',
+      'A valid mobile number is required to invite a worker — workers sign in with a text-message code, not a password.',
+    );
+  }
 
   // 1. Create Auth user if not exists
   let userRecord;
@@ -8268,27 +8311,41 @@ export const inviteUserV2 = onCall(async (request) => {
     });
   }
 
-  // 2. Generate password reset link for new users to set their password
-  const actionCodeSettings = {
-    url: 'https://app.hrxone.com/setup-password', // <-- New password setup page
-    handleCodeInApp: true,
-  };
-  const link = await auth.generatePasswordResetLink(email, actionCodeSettings);
+  // 2. Workers get the phone-first sign-in page — no password link ever.
+  // Staff keep the password-setup link. (hrxone.com, not app.hrxone.com:
+  // the latter is not an authorized Firebase Auth domain and
+  // generatePasswordResetLink threw on it — staff invites were broken.)
+  let link = 'https://hrxone.com/login';
+  if (!workerInvite) {
+    const actionCodeSettings = {
+      url: 'https://hrxone.com/setup-password',
+      handleCodeInApp: true,
+    };
+    link = await auth.generatePasswordResetLink(email, actionCodeSettings);
+  }
 
   // 3. Store user metadata in Firestore (filter out undefined fields)
   const tenantIdToUse = tenantId || agencyId;
   
+  // Slice 4: non-numeric worker labels ('Worker', missing) normalize to '2'
+  // — AuthContext treats a doc with role but NO numeric securityLevel as
+  // staff '5' (the documented staff-default footgun), which would bounce an
+  // invited worker into the admin shell.
+  const normalizedLevel = workerInvite && !Number.isFinite(parseInt(String(securityLevel ?? ''), 10))
+    ? '2'
+    : securityLevel;
+
   // Create the proper tenantIds map structure
   const tenantIdsMap = tenantIdToUse ? {
     [tenantIdToUse]: {
       role: role || 'Tenant',
-      securityLevel: securityLevel || 'Worker',
+      securityLevel: normalizedLevel || '2',
       locationIds: locationIds || [],
       department: department || null,
       addedAt: admin.firestore.FieldValue.serverTimestamp()
     }
   } : {};
-  
+
   const userData = removeUndefined({
     email,
     displayName: displayName || `${firstName} ${lastName}`,
@@ -8297,8 +8354,11 @@ export const inviteUserV2 = onCall(async (request) => {
     jobTitle,
     department,
     phone,
+    // E.164 so phone OTP sign-in resolves this account regardless of how
+    // the recruiter formatted the number (Slice 4).
+    phoneE164: invitePhoneE164 || undefined,
     locationIds,
-    securityLevel,
+    securityLevel: normalizedLevel,
     role,
     agencyId: agencyId || null,
     customerId: customerId || null,
@@ -8381,11 +8441,35 @@ export const inviteUserV2 = onCall(async (request) => {
      * dashboard before (or alongside) the functions deploy so the live
      * template doesn't render an empty `{{expiration_date}}`.
      */
-    invitation_validity_note:
-      "This invitation link works for a limited time and only once. " +
-      "If it's expired by the time you click it, just enter your email on " +
-      "the setup page and we'll send you a fresh one.",
+    invitation_validity_note: workerInvite
+      ? 'No password needed — sign in anytime with your mobile number and ' +
+        "the code we text you. If anything doesn't work, reply to the text " +
+        'we sent you.'
+      : "This invitation link works for a limited time and only once. " +
+        "If it's expired by the time you click it, just enter your email on " +
+        "the setup page and we'll send you a fresh one.",
   };
+
+  // Slice 4: workers ALSO get the invite by SMS — the phone is their
+  // identity, and the link is just hrxone.com/login (no expiring token).
+  if (workerInvite && invitePhoneE164) {
+    try {
+      const smsBody =
+        `${templateData.tenant_name || 'C1 Staffing'}: you've been invited to join. ` +
+        `Sign in with this phone number at https://hrxone.com/login — ` +
+        `we'll text you a code, no password needed.`;
+      await sendWorkerMessageInternal(invitePhoneE164, smsBody, {
+        systemContext: true,
+        source: 'system',
+        sourceId: userRecord.uid,
+        messageTypeId: 'worker_invite',
+        userId: userRecord.uid,
+        tenantId: tenantIdToUse || undefined,
+      });
+    } catch (smsErr) {
+      console.warn('inviteUserV2: invite SMS failed', smsErr);
+    }
+  }
 
   // 6. Send invite email via SendGrid with dynamic template
   let msg: any = {
@@ -8515,14 +8599,25 @@ ${templateData.tenant_legal_footer || `This email was sent by ${templateData.ten
   return { success: true, link };
 });
 // Resend Invite - 2nd Gen
-export const resendInviteV2 = onCall(async (request) => {
+export const resendInviteV2 = onCall(
+  { secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN] },
+  async (request) => {
   const { email } = request.data;
   const userRecord = await auth.getUserByEmail(email);
-  const actionCodeSettings = {
-    url: 'https://app.hrxone.com/setup-password',
-    handleCodeInApp: true,
-  };
-  const link = await auth.generatePasswordResetLink(email, actionCodeSettings);
+  // Slice 4: classification + phone come from the users doc.
+  const inviteDocSnap = await db.collection('users').doc(userRecord.uid).get();
+  const inviteDoc = (inviteDocSnap.data() || {}) as Record<string, any>;
+  const workerInvite = isWorkerUserDoc(inviteDoc);
+  const invitePhoneE164 = normalizePhoneE164(String(inviteDoc.phoneE164 || inviteDoc.phone || ''));
+  let link = 'https://hrxone.com/login';
+  if (!workerInvite) {
+    const actionCodeSettings = {
+      // hrxone.com — app.hrxone.com is not an authorized Auth domain.
+      url: 'https://hrxone.com/setup-password',
+      handleCodeInApp: true,
+    };
+    link = await auth.generatePasswordResetLink(email, actionCodeSettings);
+  }
 
   // Filter out undefined fields for update
   const updateData = removeUndefined({
@@ -8587,11 +8682,32 @@ export const resendInviteV2 = onCall(async (request) => {
     invitation_link: link,
     // See `inviteUserV2.invitation_validity_note` above for the rationale —
     // same TTL-agnostic copy is rendered for re-sends.
-    invitation_validity_note:
-      "This invitation link works for a limited time and only once. " +
-      "If it's expired by the time you click it, just enter your email on " +
-      "the setup page and we'll send you a fresh one.",
+    invitation_validity_note: workerInvite
+      ? 'No password needed — sign in anytime with your mobile number and ' +
+        'the code we text you.'
+      : "This invitation link works for a limited time and only once. " +
+        "If it's expired by the time you click it, just enter your email on " +
+        "the setup page and we'll send you a fresh one.",
   };
+
+  // Slice 4: worker re-invites go out by SMS too.
+  if (workerInvite && invitePhoneE164) {
+    try {
+      await sendWorkerMessageInternal(
+        invitePhoneE164,
+        `${templateData.tenant_name || 'C1 Staffing'}: reminder — sign in with this phone number at https://hrxone.com/login. We'll text you a code, no password needed.`,
+        {
+          systemContext: true,
+          source: 'system',
+          sourceId: userRecord.uid,
+          messageTypeId: 'worker_invite_resend',
+          userId: userRecord.uid,
+        },
+      );
+    } catch (smsErr) {
+      console.warn('resendInviteV2: invite SMS failed', smsErr);
+    }
+  }
 
   // Send resend email via SendGrid with dynamic template
   let msg: any = {
@@ -8767,7 +8883,9 @@ export const revokeInviteV2 = onCall(async (request) => {
  * staff callers (the profile "Send Reset Email" buttons) additionally get
  * `userExists` so they can tell when a worker has no Auth account yet.
  */
-export const sendPasswordResetV2 = onCall(async (request) => {
+export const sendPasswordResetV2 = onCall(
+  { secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN] },
+  async (request) => {
   const start = Date.now();
   const rawEmail = (request.data?.email ?? '').toString().trim().toLowerCase();
   const continueUrl = (request.data?.continueUrl ?? '').toString().trim();
@@ -8778,6 +8896,44 @@ export const sendPasswordResetV2 = onCall(async (request) => {
   }
   if (!SENDGRID_API_KEY || !SENDGRID_API_KEY.startsWith('SG.')) {
     throw new HttpsError('failed-precondition', 'Email sender is not configured.');
+  }
+
+  // Slice 4 (Greg approved 2026-08-25): workers have no passwords. A reset
+  // request that resolves to a worker account (securityLevel ≤ 4) sends a
+  // "sign in with your phone" SMS instead of a reset link — same quiet
+  // success either way (enumeration-safe). This single gate covers every
+  // client surface that offers a reset (login page, worker profile, staff
+  // profile buttons, AuthDialog).
+  try {
+    const targetRecord = await auth.getUserByEmail(rawEmail);
+    const targetDoc = (await db.collection('users').doc(targetRecord.uid).get()).data() as
+      | Record<string, any>
+      | undefined;
+    if (targetDoc && isWorkerUserDoc(targetDoc)) {
+      const workerPhone = normalizePhoneE164(String(targetDoc.phoneE164 || targetDoc.phone || ''));
+      if (workerPhone) {
+        try {
+          await sendWorkerMessageInternal(
+            workerPhone,
+            "C1 Staffing: no password needed — sign in with this phone number at https://hrxone.com/login and we'll text you a code.",
+            {
+              systemContext: true,
+              source: 'system',
+              sourceId: targetRecord.uid,
+              messageTypeId: 'password_reset_redirect',
+              userId: targetRecord.uid,
+            },
+          );
+        } catch (smsErr) {
+          console.warn('sendPasswordResetV2: worker redirect SMS failed', smsErr);
+        }
+      }
+      return isStaffCaller
+        ? { success: true, userExists: true, workerPhoneSignIn: true }
+        : { success: true };
+    }
+  } catch {
+    // Unknown email → fall through to the existing enumeration-safe path.
   }
 
   const actionCodeSettings = {
