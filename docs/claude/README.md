@@ -54,6 +54,7 @@ Load the files relevant to the task at hand; don't read all of them.
 - [interview sms cadence](feature_interview_sms_cadence.md) — "Worker AI pre-screen interview-SMS outreach — the 7 trigger entry points, the 5-day cadence hard stop, and where it's enforced"
 - [separation termination](feature_separation_termination.md) — Worker termination/separation (item 2) — separateWorker callable, CA final-pay gate, auto-cancel, notices, rehire block; Everee side is manual (no termination API); I-9 mirror nuance discovered
 - [ts1 phase4 state](feature_ts1_phase4_state.md) — None
+- [users read rules](feature_users_read_rules.md) — users-collection PII lockdown 2026-08-25: owner/HRX/Admin/isPlatformStaff (caller-centric level>=5, list-provable); workers read ONLY their own doc — cross-user surfaces need denorm fields or callables; claims are NOT a workable gate (3/14 staff have them); remaining holes = owner-write escalation + hasCRMAccess()
 - [venuesmart travel crew](feature_venuesmart_travel_crew.md) — "VenueSmart C1 Select travel crew payroll pattern: Mon–Sun custom week, per-event work state (WC dialog picker), $50/day untaxed per-diem Reimbursement column, cross-entity pairing trap"
 
 ## Footguns & hard-won lessons

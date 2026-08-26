@@ -482,6 +482,10 @@ const AssignmentDetails: React.FC = () => {
         }
         const uniq = Array.from(new Set(ids));
         const list: Array<{ id: string; displayName: string; email?: string; phone?: string }> = [];
+        // Workers can no longer read staff users docs (users rules lockdown
+        // 2026-08-25), so a denied read must NOT occupy a slot in `list` —
+        // the denormalized assignment.recruiter* fallback below only fires
+        // when the list stays empty.
         for (const uid of uniq) {
           try {
             const userSnap = await getDoc(doc(db, 'users', uid));
@@ -498,11 +502,10 @@ const AssignmentDetails: React.FC = () => {
                 email: d.email as string | undefined,
                 phone: phone && String(phone).trim() ? String(phone).trim() : undefined,
               });
-            } else {
-              list.push({ id: uid, displayName: 'Recruiter' });
             }
           } catch (_) {
-            list.push({ id: uid, displayName: 'Your recruiter' });
+            // permission-denied or transient failure — fall through to the
+            // denormalized fields on the assignment doc
           }
         }
         if (list.length === 0) {

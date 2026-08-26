@@ -27,8 +27,12 @@ interface SalespeopleProviderProps {
 }
 
 export const SalespeopleProvider: React.FC<SalespeopleProviderProps> = ({ children }) => {
-  const { activeTenant } = useAuth();
+  const { activeTenant, securityLevel, currentClaimsSecurityLevel } = useAuth();
   const tenantId = activeTenant?.id;
+  // Firestore rules only let staff (securityLevel >= 5) list the users
+  // collection; don't even start the crm_sales listener for workers.
+  const effectiveLevel = currentClaimsSecurityLevel || securityLevel;
+  const isStaff = !!effectiveLevel && ['5', '6', '7'].includes(String(effectiveLevel));
   const [salespeople, setSalespeople] = useState<Salesperson[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,9 +96,10 @@ export const SalespeopleProvider: React.FC<SalespeopleProviderProps> = ({ childr
     }
   };
 
-  // Set up real-time listener for salespeople changes
+  // Set up real-time listener for salespeople changes (staff only — the
+  // users-collection list is rules-denied for workers)
   useEffect(() => {
-    if (!tenantId) return;
+    if (!tenantId || !isStaff) return;
     
     // Setting up real-time listener for salespeople
     
@@ -168,7 +173,7 @@ export const SalespeopleProvider: React.FC<SalespeopleProviderProps> = ({ childr
         unsubscribe();
       }
     };
-  }, [tenantId]);
+  }, [tenantId, isStaff]);
 
   const fetchSalespeople = async (targetTenantId: string): Promise<Salesperson[]> => {
     const now = Date.now();
