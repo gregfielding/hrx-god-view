@@ -71,6 +71,9 @@ interface GroupTotals {
   attributed?: boolean;
   jobOrderRefs?: string[];
   poNumbers?: string[];
+  /** byAccount only: parent (national) account for child-account nesting. */
+  parentAccountId?: string | null;
+  parentAccountName?: string | null;
 }
 
 interface ReportData {
@@ -818,14 +821,86 @@ const PayrollCostsPage: React.FC<PayrollCostsPageProps> = ({ report }) => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {data.byAccount.map((g) => (
-                      <TableRow key={g.key} hover>
-                        <TableCell>{g.label}</TableCell>
-                        <TableCell align="right">{g.workers}</TableCell>
-                        <TableCell align="right">{usd(g.total)}</TableCell>
-                        <TableCell align="right">{g.pct}%</TableCell>
-                      </TableRow>
-                    ))}
+                    {(() => {
+                      // Nest child accounts beneath their national/parent
+                      // account (Greg 2026-08-26): parent header row shows
+                      // the rollup, children indent beneath it.
+                      interface Node {
+                        key: string;
+                        label: string;
+                        workers: number;
+                        total: number;
+                        pct: number;
+                        children: GroupTotals[];
+                      }
+                      const parents = new Map<string, Node>();
+                      const singles: GroupTotals[] = [];
+                      for (const g of data.byAccount) {
+                        const pid = g.parentAccountId;
+                        if (!pid) continue;
+                        let n = parents.get(pid);
+                        if (!n) {
+                          n = { key: pid, label: g.parentAccountName ?? 'Parent account', workers: 0, total: 0, pct: 0, children: [] };
+                          parents.set(pid, n);
+                        }
+                        n.children.push(g);
+                        n.total = Math.round((n.total + g.total) * 100) / 100;
+                        n.workers += g.workers;
+                        n.pct = Math.round((n.pct + g.pct) * 100) / 100;
+                      }
+                      for (const g of data.byAccount) {
+                        if (g.parentAccountId) continue;
+                        const n = parents.get(g.key);
+                        if (n) {
+                          // The parent account itself has direct payroll.
+                          n.children.unshift({ ...g, label: `${g.label} (direct)` });
+                          n.total = Math.round((n.total + g.total) * 100) / 100;
+                          n.workers += g.workers;
+                          n.pct = Math.round((n.pct + g.pct) * 100) / 100;
+                        } else {
+                          singles.push(g);
+                        }
+                      }
+                      const items: Array<{ sort: number; el: React.ReactNode }> = [];
+                      for (const n of parents.values()) {
+                        n.children.sort((a, b) => b.total - a.total);
+                        items.push({
+                          sort: n.total,
+                          el: (
+                            <React.Fragment key={`p-${n.key}`}>
+                              <TableRow hover>
+                                <TableCell sx={{ fontWeight: 700 }}>{n.label}</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 700 }}>{n.workers}</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 700 }}>{usd(n.total)}</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 700 }}>{n.pct}%</TableCell>
+                              </TableRow>
+                              {n.children.map((g) => (
+                                <TableRow key={g.key} hover>
+                                  <TableCell sx={{ pl: 4, color: 'text.secondary' }}>{g.label}</TableCell>
+                                  <TableCell align="right">{g.workers}</TableCell>
+                                  <TableCell align="right">{usd(g.total)}</TableCell>
+                                  <TableCell align="right">{g.pct}%</TableCell>
+                                </TableRow>
+                              ))}
+                            </React.Fragment>
+                          ),
+                        });
+                      }
+                      for (const g of singles) {
+                        items.push({
+                          sort: g.total,
+                          el: (
+                            <TableRow key={g.key} hover>
+                              <TableCell>{g.label}</TableCell>
+                              <TableCell align="right">{g.workers}</TableCell>
+                              <TableCell align="right">{usd(g.total)}</TableCell>
+                              <TableCell align="right">{g.pct}%</TableCell>
+                            </TableRow>
+                          ),
+                        });
+                      }
+                      return items.sort((a, b) => b.sort - a.sort).map((i) => i.el);
+                    })()}
                   </TableBody>
                 </Table>
               </TableContainer>

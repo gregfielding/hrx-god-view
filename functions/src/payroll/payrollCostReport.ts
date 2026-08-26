@@ -1838,6 +1838,33 @@ export const getPayrollCostReport = onCall(
       (r) => r.accountId ?? 'unattributed',
       (r) => r.accountName ?? 'Unattributed',
     );
+    // Parent-account nesting (Greg 2026-08-26): each account row carries its
+    // parentAccountId/name so the client can roll children up under the
+    // national account (CORT → CORT Baltimore/Woodbridge/…). Parents with
+    // no payroll of their own aren't in accountDocs yet — fetch them.
+    const parentIds = new Set<string>();
+    for (const g of byAccount) {
+      const p = trim(accountDocs.get(g.key)?.parentAccountId);
+      if (p) parentIds.add(p);
+    }
+    const missingParents = Array.from(parentIds).filter((id) => !accountDocs.has(id));
+    for (let i = 0; i < missingParents.length; i += 100) {
+      // eslint-disable-next-line no-await-in-loop
+      const snaps = await db.getAll(
+        ...missingParents.slice(i, i + 100).map((id) => db.doc(`tenants/${tenantId}/accounts/${id}`)),
+      );
+      snaps.forEach((s) => {
+        if (s.exists) accountDocs.set(s.id, s.data() as Record<string, unknown>);
+      });
+    }
+    const byAccountOut = byAccount.map((g) => {
+      const pid = trim(accountDocs.get(g.key)?.parentAccountId) || null;
+      return {
+        ...g,
+        parentAccountId: pid,
+        parentAccountName: pid ? trim(accountDocs.get(pid)?.name) || null : null,
+      };
+    });
 
     // Per-batch split — the wire-parsing view for the bookkeeper.
     interface BatchSplit {
@@ -2592,7 +2619,7 @@ export const getPayrollCostReport = onCall(
       },
       truncated: picked.length > MAX_ROWS,
       byJobOrder,
-      byAccount,
+      byAccount: byAccountOut,
       byBatch,
       rows,
       venueMappings: Array.from(venueMappings.values()).map((m) => ({
