@@ -8285,11 +8285,16 @@ export const inviteUserV2 = onCall(
     locationIds, securityLevel, role, agencyId, customerId, tenantId
   } = request.data;
 
+  // Company staff policy (Greg 2026-08-25): every @c1staffing.com account
+  // is securityLevel '7' — an invite can never mint company staff at a
+  // lower tier, whatever the form sent.
+  const isCompanyStaffEmail = String(email).trim().toLowerCase().endsWith('@c1staffing.com');
+
   // Slice 4: workers are invited to sign in with their PHONE (OTP), so a
   // valid mobile number is mandatory for worker invites — this also closes
   // the CSV-import/WorkforceTab silent-empty-phone gap that used to mint
   // OTP-unreachable accounts.
-  const workerInvite = isWorkerSecurityLevel(securityLevel);
+  const workerInvite = !isCompanyStaffEmail && isWorkerSecurityLevel(securityLevel);
   const invitePhoneE164 = normalizePhoneE164(String(phone || ''));
   if (workerInvite && !invitePhoneE164) {
     throw new HttpsError(
@@ -8330,10 +8335,12 @@ export const inviteUserV2 = onCall(
   // Slice 4: non-numeric worker labels ('Worker', missing) normalize to '2'
   // — AuthContext treats a doc with role but NO numeric securityLevel as
   // staff '5' (the documented staff-default footgun), which would bounce an
-  // invited worker into the admin shell.
-  const normalizedLevel = workerInvite && !Number.isFinite(parseInt(String(securityLevel ?? ''), 10))
-    ? '2'
-    : securityLevel;
+  // invited worker into the admin shell. Company staff emails force '7'.
+  const normalizedLevel = isCompanyStaffEmail
+    ? '7'
+    : workerInvite && !Number.isFinite(parseInt(String(securityLevel ?? ''), 10))
+      ? '2'
+      : securityLevel;
 
   // Create the proper tenantIds map structure
   const tenantIdsMap = tenantIdToUse ? {

@@ -117,9 +117,11 @@ const AdminCreateWorkerInputSchema = z.object({
    */
   passwordMode: z.enum(['generate', 'recruiter']).default('generate'),
 
-  // Tenant role / security level for the new user
+  // Tenant role / security level for the new user. Default '2' = worker
+  // tier — '5' was STAFF (isStaff gates treat ≥5 as staff; Greg 2026-08-25).
+  // The wizard client always sends '2' explicitly; this default is the net.
   role: z.enum(['Tenant', 'HRX']).default('Tenant'),
-  securityLevel: z.enum(SECURITY_LEVELS).default('5'),
+  securityLevel: z.enum(SECURITY_LEVELS).default('2'),
 
   // Optional immediate hire to entity
   entityId: z.string().optional(),

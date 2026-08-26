@@ -184,12 +184,10 @@ const OnboardingProfileForm: React.FC = () => {
         lastName: formData.lastName,
         photoUrl: formData.photoUrl || null,
         role: onboardingData.role,
-        securityLevel:
-          onboardingData.role === 'Applicant'
-            ? 'Applicant_Worker'
-            : onboardingData.type === 'Customer'
-            ? 'Customer_Worker'
-            : 'Agency_Worker',
+        // Numeric worker tier (Greg 2026-08-25) — the old string labels
+        // ('Applicant_Worker' etc.) were unparsable by every securityLevel
+        // gate in the app (zero such docs exist in prod; this path is rare).
+        securityLevel: '2',
         onboarded: false,
         preferredLanguage: formData.preferredLanguage,
         createdAt: new Date(),

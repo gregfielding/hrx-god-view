@@ -14,3 +14,28 @@ Conventions called out explicitly by Greg as load-bearing — assume any PR I wr
 - **Service-account auth path**: `GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud-claude/service-account.json` is exported in Greg's shell. That SA does not have Secret Manager access; sensitive creds (Twilio, SendGrid) must be exported manually each session via `gcloud secrets versions access`.
 - **`jobOrderNumber` is a NUMBER on job_orders docs** (2026-07-08 migration: 88 string docs converted, all writers aligned — jobOrderService, gig auto-builder, FG orchestrator, deal-draft form). Firestore orders by type before value, so a string reintroduction breaks table sorting again. Display pads via formatJobOrderNumber-style helpers; equality queries must use numbers.
 - **Inviting internal users** (2026-08-19 Vicki/Tabitha precedent): the app flow is `functions/src/auth/inviteUser.ts` (auth user + claims `roles[tenantId]={role,securityLevel}` + pending_invites + reset link). From a laptop, admin-SDK auth ops hit the ADC quota-project 403 — use Identity Toolkit REST with `gcloud auth print-access-token` + `x-goog-user-project: hrx1-d3beb` (script: `functions/.scratch/invite-vicki-tabitha.ts`). ☠️ ALSO write the `users/{uid}` doc (`tenantIds[tid].securityLevel` as STRING '7') — server-side gates read the users doc, not the claims roles map. All-reports access requires level 7. Invited 2026-08-19: vicki@crowncfo.com (Crown CFO), tabitha@bandwidthbookkeeping.com (Bandwidth Bookkeeping) — both Admin/7.
+
+## securityLevel model (normalized 2026-08-25, Greg's policy)
+
+- **Tenant map is the authoritative home** (`tenantIds.{tid}.securityLevel`);
+  the top-level `securityLevel` is a REQUIRED mirror — half the gates read
+  `tenantIds[tid].securityLevel ?? securityLevel` (isStaff, ensureBooksAccess,
+  AuthContext). Both must exist and agree on every doc.
+- **Policy: every @c1staffing.com email is '7'.** Enforced at invite time
+  (inviteUserV2 forces '7' for the domain) and swept 2026-08-25 (5 staff
+  promoted, incl. two who sat at worker-tier '2').
+- **Workers are '2'.** All mint paths now stamp it: phone signup,
+  inviteUserV2 (non-numeric labels like 'Worker' normalize to '2'),
+  adminCreateWorker default, OnboardingProfileForm (was writing unparsable
+  strings like 'Agency_Worker'), AddWorkers form (hidden hardcoded '5'
+  fixed; CSV import disabled entirely).
+- **Backfill 2026-08-25**: 7,492 legacy docs had the level ONLY in the
+  tenant map (AuthContext staff-default footgun class) — top-level mirrored
+  from the map (7,491×'2', 1×'7' = Greg's own staff doc). 108 docs with no
+  level anywhere (worker-looking) stamped '2'. Every one of the 14,008 user
+  docs now carries a top-level level. Markers: `securityLevelBackfill` /
+  `securityLevelRetier` {from, at, reason} on every touched doc — query
+  those to audit or revert.
+- Census after: 13,965×'2', 15×'7' (all staff), 23×'4' (customer-side
+  contacts — NOT company staff, left as-is), 1×'3', 1×'0', 3× numeric-0
+  gregapp@gmail.com test artifacts.
