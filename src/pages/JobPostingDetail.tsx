@@ -2822,17 +2822,12 @@ const JobPostingDetail: React.FC = () => {
 
       {/* Top row: Back to Jobs Board + Language picker + Sign In or Create Account (when guest) */}
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 2 }}>
-        {/* Back stays far-left (universal placement); the C1 logo rides next
-            to it as persistent guest branding (Greg 2026-08-25) and is
-            itself a tap-target back to the board. */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <IconButton
-            onClick={() => navigate('/c1/jobs-board')}
-            aria-label={t('jobs.backToJobsBoard')}
-            sx={{ color: 'text.secondary', ml: -1 }}
-          >
-            <ArrowBackIcon />
-          </IconButton>
+        {/* C1 logo alone on the left as guest branding (Greg 2026-08-25);
+            it also taps back to the board. Guests only — signed-in workers
+            already get the logo from the C1WorkerLayout shell. The back
+            arrow lives on the right, between EN|ES and Sign In (Greg's
+            layout call). */}
+        {!user ? (
           <Box
             component="img"
             src="/C1.png"
@@ -2843,7 +2838,9 @@ const JobPostingDetail: React.FC = () => {
               e.currentTarget.style.display = 'none';
             }}
           />
-        </Box>
+        ) : (
+          <Box />
+        )}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           {/* Quiet EN | ES toggle — the standard guest language picker
               (same as /login/phone and /apply, Greg 2026-08-25). */}
@@ -2854,6 +2851,13 @@ const JobPostingDetail: React.FC = () => {
               <button type="button" style={langToggleStyle(guestLanguage === 'es')} onClick={() => setGuestLanguage('es')}>ES</button>
             </Box>
           )}
+          <IconButton
+            onClick={() => navigate('/c1/jobs-board')}
+            aria-label={t('jobs.backToJobsBoard')}
+            sx={{ color: 'text.secondary' }}
+          >
+            <ArrowBackIcon />
+          </IconButton>
           {!user && (
             <Button
               variant="contained"

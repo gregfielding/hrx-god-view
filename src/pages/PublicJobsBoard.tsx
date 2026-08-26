@@ -2575,7 +2575,9 @@ const PublicJobsBoard: React.FC = () => {
   // If user is logged in, return content without Container (Layout will handle it)
   // If user is not logged in, wrap in Container for proper spacing
   return user ? mainContent : (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
+    // pt: 1 matches the posting page's top spacing (Greg 2026-08-25 — the
+    // two guest headers must sit at the same height).
+    <Container maxWidth="lg" sx={{ pt: 1, pb: 4 }}>
       {mainContent}
     </Container>
   );
