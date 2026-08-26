@@ -521,9 +521,9 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         return false;
       };
 
-      // Skip waitlisted when this user has another application for the same job with status 'accepted' or 'confirmed'.
-      // Covers: (1) two application docs — one set accepted in placement flow, the other set waitlisted; (2) worker just
-      // confirmed in UI so their application is 'confirmed' (not 'accepted') — we must not send waitlist SMS.
+      // Skip waitlisted when this user has another application for the same job in good standing.
+      // 'confirmed' is legacy: placementsApi wrote it on confirm until 2026-08-25 (now 'accepted');
+      // keep it here so historical docs still suppress the waitlist SMS.
       const IN_GOOD_STANDING_STATUSES = ['accepted', 'confirmed'];
       const skipWaitlistedWhenOtherApplicationAcceptedForSameJob = async () => {
         const userId = after.userId || after.candidateId;

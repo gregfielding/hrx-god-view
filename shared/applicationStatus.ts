@@ -54,6 +54,11 @@ const LEGACY_TO_CANONICAL: Record<string, ApplicationStatus> = {
   released_overlap: 'withdrawn',
   // NewDataModel-style
   pending: 'submitted',
+  // placementsApi wrote 'confirmed' on hire-confirmed applications until
+  // 2026-08-25 — an unrecognized value that made every hired worker count
+  // as an un-advanced applicant in funnel stats and the auto-hire capacity
+  // gates. Writers now stamp 'accepted'; this alias heals historical docs.
+  confirmed: 'accepted',
 };
 
 /**
