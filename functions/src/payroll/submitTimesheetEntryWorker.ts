@@ -121,6 +121,38 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
       }
       const entry = entrySnap.data() as Record<string, unknown>;
       const evereeState = (entry.everee as Record<string, unknown>) ?? {};
+
+      // Daily-reimbursement rule (Greg 2026-08-27, Prairie View A&M $5/day
+      // parking): strictly automatic — when the ASSIGNMENT carries
+      // `dailyReimbursement` and the entry has worked hours, the day gets
+      // the reimbursement; a day with no hours gets nothing. An amount
+      // already on the entry (import lane, manual correction) wins.
+      let reimbursementAmount = Number(entry.reimbursementAmount ?? 0) || 0;
+      let reimbursementLabel = String(entry.reimbursementLabel ?? '').trim();
+      if (reimbursementAmount <= 0) {
+        const assignmentId = String(entry.assignmentId ?? '');
+        const workedHours =
+          Number(entry.actualHoursOverride ?? 0) > 0
+            ? Number(entry.actualHoursOverride ?? 0)
+            : Number(entry.totalRegularHours ?? 0) +
+              Number(entry.totalFlsaOTHours ?? 0) +
+              Number(entry.totalNonFlsaOTHours ?? 0) +
+              Number(entry.totalDoubleTimeHours ?? 0);
+        if (assignmentId && workedHours > 0) {
+          try {
+            const aSnap = await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).get();
+            const a = (aSnap.data() ?? {}) as Record<string, unknown>;
+            const daily = Number(a.dailyReimbursement ?? 0);
+            if (Number.isFinite(daily) && daily > 0) {
+              reimbursementAmount = daily;
+              reimbursementLabel = String(a.reimbursementLabel ?? '').trim() || 'Reimbursement';
+            }
+          } catch {
+            // Fail-soft: a missed reimbursement is correctable; never
+            // block the pay submission on this lookup.
+          }
+        }
+      }
       // Stored as a STRING (String(workedShiftId) at write time) — a
       // number-only read here made every retry POST a brand-new shift
       // instead of PUTting the existing one (2026-08-13).
@@ -142,6 +174,9 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
           restBreakPenaltyHours: Number(entry.restBreakPenaltyHours ?? 0),
           tips: Number(entry.tips ?? 0),
           bonusAmount: Number(entry.bonusAmount ?? 0),
+          ...(reimbursementAmount > 0
+            ? { reimbursementAmount, reimbursementLabel }
+            : {}),
         },
         workerKind: payload.workerKind,
         externalWorkerId: payload.externalWorkerId,
@@ -236,6 +271,12 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
       };
       if (workedShiftId !== undefined) {
         updates['everee.workedShiftId'] = String(workedShiftId);
+      }
+      // Persist the auto-applied reimbursement so the entry (and the WC
+      // audit's reimbursements breakout) reflects what was actually paid.
+      if (reimbursementAmount > 0 && !(Number(entry.reimbursementAmount ?? 0) > 0)) {
+        updates.reimbursementAmount = reimbursementAmount;
+        updates.reimbursementLabel = reimbursementLabel;
       }
       await entryRef.update(updates);
 

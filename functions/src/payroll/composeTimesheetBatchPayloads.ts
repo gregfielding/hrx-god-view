@@ -78,6 +78,14 @@ export interface ComposeEntry {
   restBreakPenaltyHours: number;
   tips: number;
   bonusAmount: number;
+  /** Untaxed expense reimbursement for the day (e.g. Prairie View A&M
+   *  $5/day parking — Greg 2026-08-27). Resolved by the orchestrator
+   *  from the assignment's `dailyReimbursement` rule when the entry has
+   *  worked hours; excluded from OT and WC premium wages by nature of
+   *  the REIMBURSEMENT earning type. */
+  reimbursementAmount?: number;
+  /** Label for the reimbursement payable ("Parking"). */
+  reimbursementLabel?: string;
 }
 
 /**
@@ -291,6 +299,16 @@ export function composeW2AdditionalPayables(input: ComposeBatchInput): CreatePay
       }),
     );
   }
+  if ((input.entry.reimbursementAmount ?? 0) > 0) {
+    payables.push(
+      makePayableForEntry(input, {
+        kind: 'REIMBURSEMENT',
+        earningType: 'REIMBURSEMENT',
+        amount: input.entry.reimbursementAmount as number,
+        label: (input.entry.reimbursementLabel ?? '').trim() || 'Reimbursement',
+      }),
+    );
+  }
   if (input.entry.mealBreakPenaltyHours > 0) {
     payables.push(
       makePayableForEntry(input, {
@@ -416,7 +434,7 @@ export function withLabelPrefix(prefix: string | undefined, label: string): stri
 }
 
 interface MakePayableArgs {
-  kind: 'TIPS' | 'BONUS' | 'MEAL_PREMIUM' | 'REST_PREMIUM';
+  kind: 'TIPS' | 'BONUS' | 'MEAL_PREMIUM' | 'REST_PREMIUM' | 'REIMBURSEMENT';
   earningType: EvereeStandardEarningType;
   amount: number;
   label: string;

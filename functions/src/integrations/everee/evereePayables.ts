@@ -370,6 +370,7 @@ export type EvereePayableExternalIdKind =
   | 'BONUS'
   | 'MEAL_PREMIUM'
   | 'REST_PREMIUM'
+  | 'REIMBURSEMENT'
   | 'CONTRACTOR';
 
 export function buildPayableExternalId(args: {
