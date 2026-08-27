@@ -135,6 +135,46 @@ async function getTenantProfileId(tenantId: string): Promise<ShiftReminderProfil
 }
 
 /**
+ * Phase 2 (2026-08-27): the Settings → Messaging Sequences targeting doc
+ * (`tenants/{t}/messagingSequences/cort_gig`) now GOVERNS which
+ * assignments get the CORT cadence. When the doc has saved targeting it
+ * wins over the legacy `messagingConfig/shiftReminderProfile` tenant
+ * switch; when it has never been saved, the legacy switch still applies.
+ */
+interface SequenceTargeting {
+  active: boolean;
+  accountIds: string[];
+  workerTypes: string[];
+  occurrence: 'first_shift' | 'every_shift';
+}
+
+async function getSequenceTargeting(tenantId: string): Promise<SequenceTargeting | null> {
+  if (!tenantId) return null;
+  try {
+    const snap = await db.doc(`tenants/${tenantId}/messagingSequences/cort_gig`).get();
+    if (!snap.exists) return null;
+    const t = (snap.data() as Record<string, unknown> | undefined)?.targeting as
+      | Record<string, unknown>
+      | undefined;
+    if (!t) return null;
+    return {
+      active: t.active === true,
+      accountIds: Array.isArray(t.accountIds) ? t.accountIds.map((x) => String(x)) : [],
+      workerTypes: Array.isArray(t.workerTypes)
+        ? t.workerTypes.map((x) => String(x).toLowerCase())
+        : ['gig'],
+      occurrence: t.occurrence === 'every_shift' ? 'every_shift' : 'first_shift',
+    };
+  } catch (err) {
+    logger.warn('shiftReminderProfile.getSequenceTargeting_failed', {
+      tenantId,
+      error: (err as Error)?.message || String(err),
+    });
+    return null;
+  }
+}
+
+/**
  * Resolve the profile for this (tenant, assignment). Never throws — falls back
  * to the default profile on any lookup error. Upstream callers should treat the
  * returned list as the canonical set of reminders to materialize.
@@ -148,6 +188,43 @@ export async function resolveShiftReminderProfile(args: {
   if (perAssignmentId) {
     return PROFILES_BY_ID[perAssignmentId];
   }
+
+  const targeting = await getSequenceTargeting(tenantId);
+  if (targeting) {
+    if (!targeting.active || targeting.accountIds.length === 0) return DEFAULT_PROFILE;
+    const acctId = String(assignment?.accountId ?? '').trim();
+    if (!acctId || !targeting.accountIds.includes(acctId)) return DEFAULT_PROFILE;
+    const workerType =
+      String(assignment?.jobOrderType ?? 'gig').toLowerCase() === 'career' ? 'career' : 'gig';
+    if (!targeting.workerTypes.includes(workerType)) return DEFAULT_PROFILE;
+    if (targeting.occurrence === 'first_shift') {
+      // "First shift at account (until completion)": once the worker has a
+      // COMPLETED/ended assignment at this account, later shifts drop to
+      // the default two-step cadence. Fail-open to the CORT profile.
+      const userId = String(assignment?.userId ?? assignment?.candidateId ?? '').trim();
+      if (userId) {
+        try {
+          const priorSnap = await db
+            .collection(`tenants/${tenantId}/assignments`)
+            .where('userId', '==', userId)
+            .where('accountId', '==', acctId)
+            .limit(10)
+            .get();
+          const hasCompletedPrior = priorSnap.docs.some((d) =>
+            ['completed', 'ended'].includes(String(d.data()?.status ?? '').trim().toLowerCase()),
+          );
+          if (hasCompletedPrior) return DEFAULT_PROFILE;
+        } catch (err) {
+          logger.warn('shiftReminderProfile.first_shift_lookup_failed', {
+            tenantId,
+            error: (err as Error)?.message || String(err),
+          });
+        }
+      }
+    }
+    return PROFILES_BY_ID.cort_gig;
+  }
+
   const tenantId_ = await getTenantProfileId(tenantId);
   if (tenantId_) {
     return PROFILES_BY_ID[tenantId_];

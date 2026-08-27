@@ -102,6 +102,69 @@ const RATE_LIMIT_EXEMPT_MESSAGE_TYPES = new Set([
 ]);
 
 /**
+ * Hard per-user daily SMS ceilings for exemption-branch types (2026-08
+ * audit). Default applies to every type in RATE_LIMIT_EXEMPT_MESSAGE_TYPES;
+ * overrides tighten specific offenders. bulk_direct_sms is capped here so
+ * recruiter re-blasts can't stack unlimited same-day texts on one worker
+ * (1:1 direct_message replies are deliberately NOT capped).
+ */
+const EXEMPT_TYPE_DAILY_CAP_DEFAULT = 3;
+const TYPE_DAILY_CAP_OVERRIDES: Record<string, number> = {
+  onboarding_reminder: 1,
+  bulk_direct_sms: 3,
+};
+
+/**
+ * Claim one of the per-user-per-type daily SMS slots. Counter docs (not
+ * messageLogs queries) so no composite index is needed; the claim is a
+ * reservation made at check time — a later send failure slightly
+ * undercounts capacity, which errs on the quiet side. Fail-open on
+ * transaction errors: rate limiting must never block a send outright.
+ */
+export async function claimTypeDailySlot(
+  tenantId: string,
+  userId: string,
+  messageTypeId: string,
+  cap: number
+): Promise<boolean> {
+  const day = new Date().toISOString().slice(0, 10);
+  const ref = db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('messagingConfig')
+    .doc('typeDailyCaps')
+    .collection('counters')
+    .doc(`${userId}__${messageTypeId}__${day}`);
+  try {
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const n = Number(snap.data()?.count ?? 0);
+      if (n >= cap) return false;
+      tx.set(
+        ref,
+        {
+          count: n + 1,
+          userId,
+          messageTypeId,
+          day,
+          updatedAt: admin.firestore.Timestamp.now(),
+        },
+        { merge: true }
+      );
+      return true;
+    });
+  } catch (err) {
+    logger.warn('claimTypeDailySlot failed open', {
+      tenantId,
+      userId,
+      messageTypeId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return true;
+  }
+}
+
+/**
  * Default rate limit configuration
  */
 const DEFAULT_RATE_LIMITS: RateLimitConfig = {
@@ -223,6 +286,30 @@ export async function checkRateLimits(
     // Same fall-through structure as RATE_LIMIT_EXEMPT_MESSAGE_TYPES so the
     // tenant cap stays consistent across exempt branches.
     if (RATE_LIMIT_EXEMPT_MESSAGE_TYPES.has(messageTypeId) || source === 'recruiter') {
+      // 2026-08 audit: "exempt" must mean a HIGHER bound, never NO bound —
+      // a status flip-flop once sent ~180 confirmations to one worker in a
+      // day, and bulk re-blasts stacked +894 same-day repeats, all through
+      // this branch. Hard per-user-per-type daily ceiling for SMS.
+      if (channel === 'sms') {
+        const typeCap =
+          TYPE_DAILY_CAP_OVERRIDES[messageTypeId] ??
+          (RATE_LIMIT_EXEMPT_MESSAGE_TYPES.has(messageTypeId) ? EXEMPT_TYPE_DAILY_CAP_DEFAULT : null);
+        if (typeCap != null) {
+          const slotOk = await claimTypeDailySlot(tenantId, userId, messageTypeId, typeCap);
+          if (!slotOk) {
+            return {
+              allowed: false,
+              reason: 'USER_LIMIT',
+              details: {
+                limitType: `smsDailyPerType:${messageTypeId}`,
+                limitValue: typeCap,
+                currentCount: typeCap,
+                window: '1 day',
+              },
+            };
+          }
+        }
+      }
       // Still enforce tenant-level limits to prevent abuse
       const config = await getRateLimitConfig(tenantId);
       const now = admin.firestore.Timestamp.now();

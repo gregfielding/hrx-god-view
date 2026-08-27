@@ -6,6 +6,24 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from '../twilio';
 import { markLifecycleEventIfFirst } from '../messaging/lifecycleDedupe';
+
+/**
+ * One prescreen/interview SMS per worker per day, across ALL application
+ * docs and prescreen kinds (2026-08 SMS audit: a worker with many
+ * application docs got 335 chase texts in 5 days — the 5-day hard stop
+ * bounds days, not sends per day, and these sends bypass the router's
+ * rate limiter entirely). Uses the lifecycle dedupe store keyed by UTC
+ * day; first claim wins, everything else that day is skipped/deferred.
+ */
+async function claimDailyPrescreenSmsSlot(tenantId: string, userId: string): Promise<boolean> {
+  const day = new Date().toISOString().slice(0, 10);
+  return markLifecycleEventIfFirst({
+    tenantId,
+    dedupeKey: `worker_ai_prescreen_daily_sms__${tenantId}__${userId}__${day}`,
+    eventType: 'worker_ai_prescreen_daily_sms_slot',
+    context: { userId, day },
+  });
+}
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -278,6 +296,16 @@ async function processPrescreenChaseSms(args: {
   const messageTypeId =
     chase === 1 ? 'worker_ai_prescreen_chase_1' : 'worker_ai_prescreen_chase_2';
 
+  if (!(await claimDailyPrescreenSmsSlot(tenantId, userId))) {
+    await docSnap.ref.update({
+      [pendingKey]: true,
+      [outcomeKey]: 'daily_sms_cap',
+      [dueKey]: admin.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return 'skipped';
+  }
+
   const smsResult = await sendWorkerMessageInternal(phone, body, {
     tenantId,
     userId,
@@ -478,6 +506,16 @@ async function processProfileFirstPrescreenChaseUserSms(args: {
 
   const messageTypeId =
     chase === 1 ? 'worker_ai_prescreen_profile_first_chase_1' : 'worker_ai_prescreen_profile_first_chase_2';
+
+  if (!(await claimDailyPrescreenSmsSlot(tenantId, userId))) {
+    await docSnap.ref.update({
+      [pendingKey]: true,
+      [outcomeKey]: 'daily_sms_cap',
+      [dueKey]: admin.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return 'skipped';
+  }
 
   const smsResult = await sendWorkerMessageInternal(phone, body, {
     tenantId,
@@ -763,6 +801,9 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         }
       }
 
+      if (!(await claimDailyPrescreenSmsSlot(tenantId, userId))) {
+        continue;
+      }
       const smsResult = await sendWorkerMessageInternal(phone, body, {
         tenantId,
         userId,
@@ -988,6 +1029,9 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         body = `Hi ${firstName}, quick next step: answer a few questions so we can consider you for ${jobTitle} and match you with the right opportunities. Start here:\n${prescreenUrl}`;
       }
 
+      if (!(await claimDailyPrescreenSmsSlot(tenantId, userId))) {
+        continue;
+      }
       const smsResult = await sendWorkerMessageInternal(phone, body, {
         tenantId,
         userId,

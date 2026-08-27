@@ -9732,24 +9732,26 @@ export const logAssignmentUpdated = onDocumentUpdated(
     if (after.retroactive === true || after.notificationsSuppressed === true) {
       return { success: true, skipped: 'retroactive' };
     }
-    // Check for status changes
-    const statusChanged = before.status !== after.status;
+    // Check for status changes — NORMALIZED, not raw. Raw compare turned
+    // status flip-flops/re-casing into a message per write, and the old
+    // dedupe key carried updatedAt so every write minted a fresh key
+    // (2026-08-18: ~180 "assignment confirmed" sends EACH to two workers
+    // in one day — see docs/claude/project_sms_audit_2026_08.md).
+    const { normalizeAssignmentStatus } = await import('./utils/assignmentStatusNormalize');
+    const beforeN0 = normalizeAssignmentStatus(before.status as string);
+    const afterN0 = normalizeAssignmentStatus(after.status as string);
+    const statusChanged = beforeN0 !== afterN0;
 
     if (statusChanged && after.userId) {
       try {
-        const { normalizeAssignmentStatus } = await import('./utils/assignmentStatusNormalize');
-        const beforeN = normalizeAssignmentStatus(before.status as string);
-        const afterN = normalizeAssignmentStatus(after.status as string);
+        const beforeN = beforeN0;
+        const afterN = afterN0;
         const { markLifecycleEventIfFirst } = await import('./messaging/lifecycleDedupe');
-        const statusChangedAtToken =
-          typeof (after.updatedAt as any)?.toMillis === 'function'
-            ? String((after.updatedAt as any).toMillis())
-            : typeof (after.updatedAt as any)?._seconds === 'number'
-              ? String((after.updatedAt as any)._seconds)
-              : 'na';
+        // Key is (assignment, normalized transition) — once ever. No
+        // timestamp token: a flip-flopping writer must never re-mint keys.
         const canProcessStatusEvent = await markLifecycleEventIfFirst({
           tenantId,
-          dedupeKey: `assignment_status__${assignmentId}__${String(before.status || '').toLowerCase()}__${String(after.status || '').toLowerCase()}__${statusChangedAtToken}`,
+          dedupeKey: `assignment_status__${assignmentId}__${beforeN || 'none'}__${afterN || 'none'}`,
           eventType: 'assignment_status_changed',
           context: { assignmentId, userId: after.userId, beforeStatus: before.status, afterStatus: after.status },
         });

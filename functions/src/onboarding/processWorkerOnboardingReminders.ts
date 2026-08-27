@@ -6,6 +6,7 @@ import * as admin from 'firebase-admin';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from '../twilio';
+import { claimTypeDailySlot } from '../messaging/rateLimiter';
 import { userDocHasUsablePhone } from '../workerAiPrescreen/evaluateAiPrescreenEligibility';
 import { resolveWorkerOnboardingLink } from '../integrations/everee/resolveWorkerOnboardingLink';
 import { evereePaths } from '../integrations/everee/evereeConfig';
@@ -355,6 +356,12 @@ async function sendOnboardingReminderSms(args: {
   const lang = workerLang(userData);
   const fn = firstNameFromUser(userData);
   const body = buildOnboardingReminderSmsBody(fn, link, lang, variant);
+  // 2026-08 SMS audit: this sender bypasses the router's rate limiter —
+  // enforce the onboarding_reminder 1/day-per-worker ceiling directly.
+  const dailySlotOk = await claimTypeDailySlot(tenantId, userId, 'onboarding_reminder', 1);
+  if (!dailySlotOk) {
+    return { success: false, error: 'daily_cap' };
+  }
   const result = await sendWorkerMessageInternal(phone, body, {
     systemContext: true,
     tenantId,

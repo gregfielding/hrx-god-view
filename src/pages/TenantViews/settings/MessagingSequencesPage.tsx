@@ -516,12 +516,14 @@ const MessagingSequencesPage: React.FC = () => {
                 ) : null}
               </Stack>
 
-              <Alert severity="warning" variant="outlined" sx={{ mt: 1 }}>
+              <Alert severity="success" variant="outlined" sx={{ mt: 1 }}>
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.5 }}>
-                  <strong>Phase 1 note:</strong> saving writes the targeting to Firestore, but the
-                  cloud-function dispatcher doesn't read it yet — today the cadence still fires based on
-                  the older <code>shiftReminderProfile</code> tenant switch. Wire-up to read this targeting
-                  is the next backend task.
+                  <strong>Targeting is live (2026-08-27):</strong> the dispatcher reads this card once
+                  saved — Active off, an empty account list, or a non-matching account/worker type all
+                  drop assignments to the default two-step cadence. &ldquo;First shift at account&rdquo;
+                  stops the extended cadence once the worker has a completed assignment at the account.
+                  If this card has never been saved, the legacy <code>shiftReminderProfile</code> tenant
+                  switch still governs.
                 </Typography>
               </Alert>
             </Stack>

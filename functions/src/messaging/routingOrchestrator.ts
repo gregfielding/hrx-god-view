@@ -430,12 +430,14 @@ async function shouldUseChannel(
       return { allowed: true };
     }
 
-    if (context.messageTypeId === 'worker_hired') {
-      const phone = userData.phoneE164 || userData.phone;
-      if (!phone) {
-        return { allowed: false, reason: 'Recipient has no phone number' };
-      }
-      return { allowed: true };
+    // Hire-moment consolidation (2026-08 SMS audit): hiring used to fire
+    // THREE texts within minutes — worker_hired (congrats) +
+    // on_call_employment_started (bilingual blurb) +
+    // payroll_onboarding_invite_needed (the actionable link). 239 workers
+    // got all three in 14 days. Only the payroll invite keeps SMS; the
+    // other two deliver via push/in-app.
+    if (context.messageTypeId === 'worker_hired' || context.messageTypeId === 'on_call_employment_started') {
+      return { allowed: false, reason: 'SMS consolidated into payroll onboarding invite (hire-moment barrage fix)' };
     }
 
     if (context.messageTypeId === 'on_call_employment_started') {
@@ -1980,8 +1982,14 @@ async function logMessageAttempt(
   try {
     // Log each channel separately for better tracking
     const logIds: string[] = [];
-    
+
     for (const result of deliveryResults) {
+      // SMS and email delivery paths write their own messageLogs row at
+      // send time (queued → sent, with the REAL body). Logging them again
+      // here double-counted every send and stamped the duplicate with the
+      // `Message: <type>` placeholder — 2,965 phantom "duplicate" rows in
+      // 14 days (2026-08 SMS audit). Skip the self-logging channels.
+      if (result.channel === 'sms' || result.channel === 'email') continue;
       // Get actual message content - prefer _message (unified message) or message from context
       let actualContent = context.variables?._message || context.variables?.message;
       
