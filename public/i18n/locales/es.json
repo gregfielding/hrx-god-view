@@ -1981,6 +1981,10 @@
   "payrollHelp": {
     "title": "Ayuda con la nómina",
     "subtitle": "¿Problema con tu pago, depósito directo o configuración de nómina? Cuéntanos qué pasó y nuestro equipo lo atenderá.",
+    "scheduleTitle": "¿Cuándo me pagan?",
+    "scheduleSelect": "C1 Select: la semana de pago va de domingo a sábado y el día de pago es el viernes siguiente.",
+    "scheduleEvents": "C1 Events: la semana de pago va de lunes a domingo y el día de pago es el viernes.",
+    "scheduleDirectDeposit": "Todos los pagos se hacen por depósito directo.",
     "newTicketHeading": "¿Qué está pasando?",
     "newTicketPlaceholder": "Ejemplo: Trabajé el sábado pero mi pago se ve incompleto…",
     "myRequests": "Mis solicitudes",
