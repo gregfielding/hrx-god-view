@@ -81,7 +81,10 @@ premium wages), and stamps `reimbursementAmount`/`reimbursementLabel` on
 the entry (the WC audit's reimbursements breakout reads
 `entry.reimbursementAmount`). Hours-gated: a day with no hours gets
 nothing. An amount already on the entry (import lane) wins over the rule.
-To add the rule for another location: stamp its JOs + live assignments
-(script pattern: 2026-08-27 session) — no code change needed.
+To add the rule for another location: set `dailyReimbursement` +
+`reimbursementLabel` on the ACCOUNT doc — the resolution chain is
+assignment → job order → account (more-specific wins, so one JO can
+override its account's rule), meaning new JOs and new assignments under
+that account inherit with zero stamping.
 Live: Sodexo PVAMU account autoLoc_8ea92d49ea1833ab292a7a091626ec77 —
 5 JOs (#219/220/221/222/404) + 12 assignments at \$5 "Parking".

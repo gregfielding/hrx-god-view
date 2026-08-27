@@ -144,9 +144,12 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
             const a = (aSnap.data() ?? {}) as Record<string, unknown>;
             let daily = Number(a.dailyReimbursement ?? 0);
             let label = String(a.reimbursementLabel ?? '').trim();
-            // JO fallback: the rule is a LOCATION policy — a freshly
-            // created assignment that predates its stamp still inherits
-            // from the job order.
+            // Fallback chain: assignment → job order → ACCOUNT. The rule
+            // is a location policy governed by the (child) account (Greg
+            // 2026-08-27) — a new JO or fresh assignment under that
+            // account inherits with no stamping. More-specific levels
+            // win, so a single JO could later override the account rule.
+            let acctId = String(entry.accountId ?? a.accountId ?? '');
             if (!(daily > 0)) {
               const joId = String(entry.jobOrderId ?? a.jobOrderId ?? '');
               if (joId) {
@@ -154,7 +157,14 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
                 const j = (jSnap.data() ?? {}) as Record<string, unknown>;
                 daily = Number(j.dailyReimbursement ?? 0);
                 label = String(j.reimbursementLabel ?? '').trim();
+                if (!acctId) acctId = String(j.recruiterAccountId ?? '');
               }
+            }
+            if (!(daily > 0) && acctId) {
+              const acctSnap = await db.doc(`tenants/${tenantId}/accounts/${acctId}`).get();
+              const acct = (acctSnap.data() ?? {}) as Record<string, unknown>;
+              daily = Number(acct.dailyReimbursement ?? 0);
+              label = String(acct.reimbursementLabel ?? '').trim();
             }
             if (Number.isFinite(daily) && daily > 0) {
               reimbursementAmount = daily;
