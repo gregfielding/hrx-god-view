@@ -1476,35 +1476,38 @@ async function buildClassCatalog(
  * ------------------------------------------------------------------------- */
 export async function buildJobOrderCosting(
   tenantId: string,
-  jobOrderId: string,
+  jobOrderIds: string[],
 ): Promise<Record<string, unknown>> {
-  // JO + account + entity context.
-  let jo: Record<string, unknown> | null = null;
-  for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
-    const s = await db.doc(`tenants/${tenantId}/${coll}/${jobOrderId}`).get();
-    if (s.exists) {
-      jo = s.data() as Record<string, unknown>;
-      break;
+  // JO + account + entity context — MULTIPLE JOs aggregate into one P&L
+  // (Greg 2026-08-27: MN Yacht Club #315 + MN Country Club #209 share one
+  // QBO class and are really one engagement; same shape as the Maryland
+  // Loader/Crew → Warehouse Associate successor pairs).
+  const jos: Array<{ id: string; jo: Record<string, unknown> }> = [];
+  for (const joId of jobOrderIds.slice(0, 10)) {
+    for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+      // eslint-disable-next-line no-await-in-loop
+      const s = await db.doc(`tenants/${tenantId}/${coll}/${joId}`).get();
+      if (s.exists) {
+        jos.push({ id: joId, jo: s.data() as Record<string, unknown> });
+        break;
+      }
     }
   }
-  if (!jo) throw new HttpsError('not-found', 'Job order not found.');
-  const joName = trim(jo.jobOrderName) || trim(jo.jobTitle) || jobOrderId;
-  const accountId = trim(jo.recruiterAccountId) || trim(jo.accountId) || null;
-  let accountName: string | null = trim(jo.accountName) || null;
+  if (jos.length === 0) throw new HttpsError('not-found', 'Job order not found.');
+  const joNames = jos.map(({ id, jo }) => trim(jo.jobOrderName) || trim(jo.jobTitle) || id);
+  const first = jos[0].jo;
+  const accountId = trim(first.recruiterAccountId) || trim(first.accountId) || null;
+  let accountName: string | null = trim(first.accountName) || null;
   if (accountId) {
     const acct = await db.doc(`tenants/${tenantId}/accounts/${accountId}`).get();
     if (acct.exists) accountName = trim(acct.data()?.name) || accountName;
   }
-  const entityId = trim(jo.hiringEntityId);
+  const entityId = trim(first.hiringEntityId);
   const entSnap = entityId ? await db.doc(`tenants/${tenantId}/entities/${entityId}`).get() : null;
   const isContractor =
     trim(entSnap?.data()?.workerType).toLowerCase() === 'contractor' || /events|workforce/i.test(entityId);
 
-  // Every entry the JO has ever had (single-field query, auto-indexed).
-  const entriesSnap = await db
-    .collection(`tenants/${tenantId}/timesheet_entries`)
-    .where('jobOrderId', '==', jobOrderId)
-    .get();
+  // Every entry the JOs have ever had (single-field queries, auto-indexed).
   const PAID = new Set(['sent_to_everee', 'submitted', 'paid']);
   const PENDING = new Set(['draft', 'pending', 'approved']);
   let pay = 0;
@@ -1519,45 +1522,52 @@ export async function buildJobOrderCosting(
   const workers = new Set<string>();
   const payByEntity: Record<string, number> = {};
   let entryCount = 0;
-  entriesSnap.forEach((d) => {
-    const e = d.data() as Record<string, unknown>;
-    const status = trim(e.status);
-    const isImport = trim(e.source) === 'csv_import';
-    const rate = num(e.payRate);
-    const reg = num(e.totalRegularHours);
-    const ot = num(e.totalOTHours);
-    const dt = num(e.totalDoubleTimeHours);
-    const premiums = isImport ? 0 : round2((num(e.mealBreakPenaltyHours) + num(e.restBreakPenaltyHours)) * rate);
-    const hourly = isContractor
-      ? round2((reg + ot + dt) * rate)
-      : isImport
-        ? round2(reg * rate + ot * rate * 1.5)
-        : round2(reg * rate + ot * rate * 1.5 + dt * rate * 2);
-    const total = round2(hourly + premiums + num(e.tips) + num(e.bonusAmount));
-    if (!(total > 0)) return;
-    const wd = trim(e.workDate);
-    if (PAID.has(status)) {
-      pay = round2(pay + total);
-      hours = round2(hours + reg + ot + dt);
-      tips = round2(tips + num(e.tips));
-      bonus = round2(bonus + num(e.bonusAmount));
-      reimbursements = round2(reimbursements + num(e.reimbursementAmount));
-      wcPremium = round2(wcPremium + (total * (num(e.workersCompRate) || 0)) / 100);
-      if (trim(e.workerId)) workers.add(trim(e.workerId));
-      const ent = trim(e.hiringEntityId) || 'unknown';
-      payByEntity[ent] = round2((payByEntity[ent] ?? 0) + total);
-      if (wd && (!minDate || wd < minDate)) minDate = wd;
-      if (wd && (!maxDate || wd > maxDate)) maxDate = wd;
-      entryCount += 1;
-    } else if (PENDING.has(status)) {
-      pendingPay = round2(pendingPay + total);
-    }
-  });
+  for (const { id: joId } of jos) {
+    // eslint-disable-next-line no-await-in-loop
+    const entriesSnap = await db
+      .collection(`tenants/${tenantId}/timesheet_entries`)
+      .where('jobOrderId', '==', joId)
+      .get();
+    entriesSnap.forEach((d) => {
+      const e = d.data() as Record<string, unknown>;
+      const status = trim(e.status);
+      const isImport = trim(e.source) === 'csv_import';
+      const rate = num(e.payRate);
+      const reg = num(e.totalRegularHours);
+      const ot = num(e.totalOTHours);
+      const dt = num(e.totalDoubleTimeHours);
+      const premiums = isImport ? 0 : round2((num(e.mealBreakPenaltyHours) + num(e.restBreakPenaltyHours)) * rate);
+      const hourly = isContractor
+        ? round2((reg + ot + dt) * rate)
+        : isImport
+          ? round2(reg * rate + ot * rate * 1.5)
+          : round2(reg * rate + ot * rate * 1.5 + dt * rate * 2);
+      const total = round2(hourly + premiums + num(e.tips) + num(e.bonusAmount));
+      if (!(total > 0)) return;
+      const wd = trim(e.workDate);
+      if (PAID.has(status)) {
+        pay = round2(pay + total);
+        hours = round2(hours + reg + ot + dt);
+        tips = round2(tips + num(e.tips));
+        bonus = round2(bonus + num(e.bonusAmount));
+        reimbursements = round2(reimbursements + num(e.reimbursementAmount));
+        wcPremium = round2(wcPremium + (total * (num(e.workersCompRate) || 0)) / 100);
+        if (trim(e.workerId)) workers.add(trim(e.workerId));
+        const ent = trim(e.hiringEntityId) || 'unknown';
+        payByEntity[ent] = round2((payByEntity[ent] ?? 0) + total);
+        if (wd && (!minDate || wd < minDate)) minDate = wd;
+        if (wd && (!maxDate || wd > maxDate)) maxDate = wd;
+        entryCount += 1;
+      } else if (PENDING.has(status)) {
+        pendingPay = round2(pendingPay + total);
+      }
+    });
+  }
 
   // Horizon: earliest work (or JO start) minus 45d → today. Invoices and
   // card spend land late; the pad catches deposits billed before work.
   const todayIso = new Date().toISOString().slice(0, 10);
-  const anchor = minDate || trim(jo.startDate) || todayIso;
+  const anchor = minDate || trim(first.startDate) || todayIso;
   const start = new Date(`${anchor}T00:00:00Z`);
   start.setUTCDate(start.getUTCDate() - 45);
   const windowStart = start.toISOString().slice(0, 10);
@@ -1572,8 +1582,9 @@ export async function buildJobOrderCosting(
       : Promise.resolve({} as Record<string, EntityBurden>),
   ]);
 
-  // Class → this-JO matching (mapped > exact > fuzzy; account-prefix
-  // compatible, space-insensitive — mirrors the Gross Margin matcher).
+  // Class → this-engagement matching (mapped > exact > fuzzy;
+  // account-prefix compatible, space-insensitive — mirrors the Gross
+  // Margin matcher). A class matches when it matches ANY of the JOs.
   const normName = (s: string): string =>
     s
       .toLowerCase()
@@ -1598,36 +1609,66 @@ export async function buildJobOrderCosting(
     return acctSquash.includes(prefix) || prefix.includes(acctSquash);
   };
   const classMapSnap = await db.collection(`tenants/${tenantId}/qbo_class_mappings`).get().catch(() => null);
+  const namesSet = new Set(joNames);
   const mappedToThisJo = new Set<string>();
   if (classMapSnap) {
     classMapSnap.forEach((d) => {
       const m = d.data();
-      if (trim(m.jobOrderName) !== joName) return;
+      if (!namesSet.has(trim(m.jobOrderName))) return;
       for (const n of [trim(m.className), trim(m.fqn)].filter(Boolean)) mappedToThisJo.add(n.toLowerCase());
     });
   }
-  const nameKey = joName.toLowerCase();
-  const fullKey = accountName ? `${accountName}:${joName}`.toLowerCase() : null;
-  const joNorm = normName(joName);
+  const nameKeys = joNames.map((n) => n.toLowerCase());
+  const fullKeys = accountName ? joNames.map((n) => `${accountName}:${n}`.toLowerCase()) : [];
+  const joNorms = joNames.map((n) => normName(n)).filter(Boolean);
+  // Bare account-named classes ("Black Caviar" under the Black Caviar
+  // account) describe the ACCOUNT, not an event — every token of the
+  // class lives inside the account's own name. Fuzzy-matching those
+  // glommed EVERY account invoice onto whichever JO contained the account
+  // words (Greg 2026-08-27, Outside Lands showing all 19 Black Caviar
+  // invoices). Such classes attribute only via explicit qbo_class_mappings
+  // or an exact "Account:JO" key — otherwise they're reported separately
+  // as account-level billing the JO cannot claim.
+  const accountTokens = new Set(normName(accountName ?? '').split(' ').filter(Boolean));
+  const isAccountLevelClass = (segNorm: string): boolean => {
+    const toks = segNorm.split(' ').filter(Boolean);
+    return toks.length > 0 && accountTokens.size > 0 && toks.every((t) => accountTokens.has(t));
+  };
   const matchesJo = (key: string): boolean => {
     if (mappedToThisJo.has(key)) return true;
     const lastSegment = key.split(':').pop()?.trim() ?? key;
-    if (key === fullKey) return true;
-    if ((key === nameKey || lastSegment === nameKey) && acctCompatible(key)) return true;
+    if (fullKeys.includes(key)) return true;
     const seg = normName(lastSegment);
-    if (!seg || !joNorm || !acctCompatible(key)) return false;
-    const substringHit = seg.length >= 5 && joNorm.length >= 5 && (joNorm.includes(seg) || seg.includes(joNorm));
-    return substringHit || tokenSubset(seg, joNorm) || tokenSubset(joNorm, seg);
+    if (isAccountLevelClass(seg)) return false;
+    if ((nameKeys.includes(key) || nameKeys.includes(lastSegment)) && acctCompatible(key)) return true;
+    if (!seg || !acctCompatible(key)) return false;
+    return joNorms.some(
+      (joNorm) =>
+        (seg.length >= 5 && joNorm.length >= 5 && (joNorm.includes(seg) || seg.includes(joNorm))) ||
+        tokenSubset(seg, joNorm) ||
+        tokenSubset(joNorm, seg),
+    );
+  };
+  const isAccountLevelKey = (key: string): boolean => {
+    if (mappedToThisJo.has(key)) return false;
+    const lastSegment = key.split(':').pop()?.trim() ?? key;
+    return isAccountLevelClass(normName(lastSegment)) && acctCompatible(key);
   };
 
   let billed = 0;
   const billedClasses: string[] = [];
   const invoiceRefs: Array<Record<string, unknown>> = [];
+  let accountLevelBilled = 0;
+  const accountLevelClasses: string[] = [];
   for (const [key, a] of agg.classAggs) {
-    if (!matchesJo(key)) continue;
-    billed = round2(billed + a.billed);
-    billedClasses.push(a.className);
-    invoiceRefs.push(...a.invoiceRefs);
+    if (matchesJo(key)) {
+      billed = round2(billed + a.billed);
+      billedClasses.push(a.className);
+      invoiceRefs.push(...a.invoiceRefs);
+    } else if (isAccountLevelKey(key)) {
+      accountLevelBilled = round2(accountLevelBilled + a.billed);
+      if (!accountLevelClasses.includes(a.className)) accountLevelClasses.push(a.className);
+    }
   }
   let expenses = 0;
   const expenseClasses: string[] = [];
@@ -1654,10 +1695,11 @@ export async function buildJobOrderCosting(
   const gp = round2(billed - pay - wcPremium - effTax - expenses - reimbursements);
 
   return {
-    jobOrderId,
-    jobOrderName: joName,
-    jobOrderNumber: jo.jobOrderNumber ?? null,
-    status: trim(jo.status) || null,
+    jobOrderId: jos[0].id,
+    jobOrderIds: jos.map((j) => j.id),
+    jobOrderName: joNames.join(' + '),
+    jobOrderNumber: jos.map(({ jo }) => jo.jobOrderNumber).filter((n) => n != null).join(', ') || null,
+    status: jos.map(({ jo }) => trim(jo.status)).filter(Boolean).join(', ') || null,
     accountId,
     accountName,
     hiringEntityId: entityId || null,
@@ -1678,6 +1720,8 @@ export async function buildJobOrderCosting(
     burdenByEntity,
     billed,
     billedClasses,
+    accountLevelBilled,
+    accountLevelClasses,
     invoiceRefs: invoiceRefs.slice(0, 300),
     expenses,
     expenseClasses,
@@ -1694,12 +1738,14 @@ export const getPayrollCostReport = onCall(
     // Job-order costing mode (Greg 2026-08-27): keyed by JO, not dates —
     // branch before date validation.
     if (request.data?.jobCosting === true) {
-      const jobOrderId = trim(request.data?.jobOrderId);
-      if (!tenantId || !jobOrderId) {
-        throw new HttpsError('invalid-argument', 'tenantId and jobOrderId are required.');
+      const jobOrderIds = Array.isArray(request.data?.jobOrderIds)
+        ? (request.data.jobOrderIds as unknown[]).map((x) => trim(x)).filter(Boolean)
+        : [trim(request.data?.jobOrderId)].filter(Boolean);
+      if (!tenantId || jobOrderIds.length === 0) {
+        throw new HttpsError('invalid-argument', 'tenantId and jobOrderId(s) are required.');
       }
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
-      return buildJobOrderCosting(tenantId, jobOrderId);
+      return buildJobOrderCosting(tenantId, jobOrderIds);
     }
     const startDate = trim(request.data?.startDate);
     const endDate = trim(request.data?.endDate);

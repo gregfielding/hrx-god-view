@@ -75,6 +75,10 @@ interface JoCosting {
   burdenByEntity: Record<string, { ratePct: number }>;
   billed: number;
   billedClasses: string[];
+  /** Billing under a bare account-named class (e.g. "Black Caviar") that
+   *  cannot be attributed to a specific job order. */
+  accountLevelBilled?: number;
+  accountLevelClasses?: string[];
   invoiceRefs: Array<{ docNumber: string | null; txnDate: string | null; amount: number; customerName: string | null }>;
   expenses: number;
   expenseClasses: string[];
@@ -105,7 +109,7 @@ const JobCostingReportPage: React.FC = () => {
   const [accounts, setAccounts] = useState<AcctOpt[]>([]);
   const [accountId, setAccountId] = useState('');
   const [jobOrders, setJobOrders] = useState<Opt[]>([]);
-  const [jobOrderId, setJobOrderId] = useState('');
+  const [selectedJos, setSelectedJos] = useState<Opt[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<JoCosting | null>(null);
@@ -131,7 +135,7 @@ const JobCostingReportPage: React.FC = () => {
     setAccounts([]);
     setAccountId('');
     setJobOrders([]);
-    setJobOrderId('');
+    setSelectedJos([]);
     setData(null);
     if (!tenantId || !entityId) return;
     (async () => {
@@ -188,7 +192,7 @@ const JobCostingReportPage: React.FC = () => {
   // Account → job orders (a parent account includes its children's JOs).
   useEffect(() => {
     setJobOrders([]);
-    setJobOrderId('');
+    setSelectedJos([]);
     setData(null);
     if (!tenantId || !accountId) return;
     const acct = accounts.find((a) => a.id === accountId);
@@ -225,18 +229,22 @@ const JobCostingReportPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, accountId]);
 
-  // Job order → costing.
+  // Job order(s) → costing. Multi-select combines successor/companion JOs
+  // that share billing classes (MN Yacht Club #315 + Country Club #209)
+  // into one whole-engagement P&L.
+  const selectedIds = selectedJos.map((j) => j.id).join(',');
   useEffect(() => {
     setData(null);
     setError(null);
-    if (!tenantId || !jobOrderId) return;
+    if (!tenantId || selectedJos.length === 0) return;
     setLoading(true);
     const fn = httpsCallable(functions, 'getPayrollCostReport', { timeout: 300000 });
-    fn({ tenantId, jobCosting: true, jobOrderId })
+    fn({ tenantId, jobCosting: true, jobOrderIds: selectedJos.map((j) => j.id) })
       .then((res) => setData(res.data as JoCosting))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
-  }, [tenantId, jobOrderId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, selectedIds]);
 
   const gpColor = (gp: number): string => (gp < 0 ? 'error.main' : 'success.main');
 
@@ -283,15 +291,18 @@ const JobCostingReportPage: React.FC = () => {
               </Select>
             </FormControl>
             <Autocomplete
+              multiple
               size="small"
-              sx={{ minWidth: 320 }}
+              sx={{ minWidth: 360, maxWidth: 640 }}
               disabled={!accountId}
               options={jobOrders}
               getOptionLabel={(o) => o.label}
               isOptionEqualToValue={(o, v) => o.id === v.id}
-              value={jobOrders.find((j) => j.id === jobOrderId) ?? null}
-              onChange={(_, v) => setJobOrderId(v?.id ?? '')}
-              renderInput={(params) => <TextField {...params} label="Job order" placeholder="Type to search…" />}
+              value={selectedJos}
+              onChange={(_, v) => setSelectedJos(v)}
+              renderInput={(params) => (
+                <TextField {...params} label="Job order(s)" placeholder={selectedJos.length === 0 ? 'Type to search — pick one or combine several' : ''} />
+              )}
             />
             {loading && <CircularProgress size={22} />}
           </Stack>
@@ -352,6 +363,16 @@ const JobCostingReportPage: React.FC = () => {
             )}
             {data.billedClasses.length > 0 && (
               <Chip size="small" variant="outlined" label={`billing classes: ${data.billedClasses.join(', ')}`} />
+            )}
+            {(data.accountLevelBilled ?? 0) > 0 && (
+              <Tooltip title={`Invoices under ${data.accountLevelClasses?.join(', ')} describe the whole account, not one event — HRX cannot tell which job order they belong to. To attribute: bill per-event classes in QBO (like Venue Smart does), or map the class to a job order on the QBO Classes report.`}>
+                <Chip
+                  size="small"
+                  color="warning"
+                  variant="outlined"
+                  label={`${usd(data.accountLevelBilled)} account-level billing not attributed`}
+                />
+              </Tooltip>
             )}
             <Tooltip title="QBO billing/expenses scanned from 45 days before the first worked day through today.">
               <Chip size="small" variant="outlined" label={`QBO window ${data.windowStart} → ${data.windowEnd}`} />
