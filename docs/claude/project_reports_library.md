@@ -296,3 +296,21 @@ waiting (createQboClass/mapQboClass branches on savePayrollVenueMapping).
   timesheet_site_mapping. Rule: when cloning a JO's shape, take the
   account from jo.recruiterAccountId AND VERIFY the accounts doc exists —
   never trust jo.accountId/companyId/accountName.
+- **2026-08-27 Job Costing v2 (JO-based):** `buildJobOrderCosting`
+  (getPayrollCostReport {jobCosting:true, jobOrderIds[]}) — whole-life
+  P&L per engagement, no date window (horizon = first worked day −45d →
+  today); entity→account→JO cascading pickers (accounts nested under
+  parents; parent selection pulls children's JOs; JO field = multi-select
+  autocomplete). MULTI-JO combine: successor/companion JOs sharing a
+  class aggregate (MN Yacht #315 + Country Club #209 = +$11.5k GP where
+  the split showed −$5.5k). ☠️ BARE ACCOUNT-CLASS GUARD: a QBO class
+  whose every token lives inside the account name ("Black Caviar") is
+  ACCOUNT-level — never fuzzy-matched to a JO (Outside Lands was
+  claiming all 19 Black Caviar invoices); reported as
+  accountLevelBilled/-Classes + warning chip. Attribution for such
+  accounts requires per-event QBO classes (Venue Smart pattern) or
+  qbo_class_mappings. Expensify note: JEs classed to venues are the
+  bookkeeper's "EV Pay Alloc" payroll reallocations — correctly EXCLUDED
+  (payroll already counted from entries); Expensify exporter sees only
+  ON-REPORT expenses, so unreported card spend is invisible until moved
+  to a report + tagged (write-back verified current: 0 unmatched/unknown).
