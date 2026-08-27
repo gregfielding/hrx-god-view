@@ -1452,10 +1452,243 @@ async function buildClassCatalog(
   };
 }
 
+/* -------------------------------------------------------------------------
+ * Job-order costing (Greg 2026-08-27): one JO's complete P&L over its
+ * WHOLE LIFE — no date window. Pick entity → account → job order; the
+ * report derives its own horizon from the JO's entries (invoices often
+ * land months after the work, which is exactly what date-windowed views
+ * distort). Pay/hours/WC from ALL of the JO's paid entries; billing +
+ * expenses from QBO classes matched to the JO (explicit qbo_class_mappings
+ * first, then exact, then fuzzy — same philosophy as Gross Margin);
+ * employer taxes at the entity's real Everee rate for the work span.
+ * ------------------------------------------------------------------------- */
+async function buildJobOrderCosting(
+  tenantId: string,
+  jobOrderId: string,
+): Promise<Record<string, unknown>> {
+  // JO + account + entity context.
+  let jo: Record<string, unknown> | null = null;
+  for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+    const s = await db.doc(`tenants/${tenantId}/${coll}/${jobOrderId}`).get();
+    if (s.exists) {
+      jo = s.data() as Record<string, unknown>;
+      break;
+    }
+  }
+  if (!jo) throw new HttpsError('not-found', 'Job order not found.');
+  const joName = trim(jo.jobOrderName) || trim(jo.jobTitle) || jobOrderId;
+  const accountId = trim(jo.recruiterAccountId) || trim(jo.accountId) || null;
+  let accountName: string | null = trim(jo.accountName) || null;
+  if (accountId) {
+    const acct = await db.doc(`tenants/${tenantId}/accounts/${accountId}`).get();
+    if (acct.exists) accountName = trim(acct.data()?.name) || accountName;
+  }
+  const entityId = trim(jo.hiringEntityId);
+  const entSnap = entityId ? await db.doc(`tenants/${tenantId}/entities/${entityId}`).get() : null;
+  const isContractor =
+    trim(entSnap?.data()?.workerType).toLowerCase() === 'contractor' || /events|workforce/i.test(entityId);
+
+  // Every entry the JO has ever had (single-field query, auto-indexed).
+  const entriesSnap = await db
+    .collection(`tenants/${tenantId}/timesheet_entries`)
+    .where('jobOrderId', '==', jobOrderId)
+    .get();
+  const PAID = new Set(['sent_to_everee', 'submitted', 'paid']);
+  const PENDING = new Set(['draft', 'pending', 'approved']);
+  let pay = 0;
+  let pendingPay = 0;
+  let hours = 0;
+  let tips = 0;
+  let bonus = 0;
+  let reimbursements = 0;
+  let wcPremium = 0;
+  let minDate = '';
+  let maxDate = '';
+  const workers = new Set<string>();
+  const payByEntity: Record<string, number> = {};
+  let entryCount = 0;
+  entriesSnap.forEach((d) => {
+    const e = d.data() as Record<string, unknown>;
+    const status = trim(e.status);
+    const isImport = trim(e.source) === 'csv_import';
+    const rate = num(e.payRate);
+    const reg = num(e.totalRegularHours);
+    const ot = num(e.totalOTHours);
+    const dt = num(e.totalDoubleTimeHours);
+    const premiums = isImport ? 0 : round2((num(e.mealBreakPenaltyHours) + num(e.restBreakPenaltyHours)) * rate);
+    const hourly = isContractor
+      ? round2((reg + ot + dt) * rate)
+      : isImport
+        ? round2(reg * rate + ot * rate * 1.5)
+        : round2(reg * rate + ot * rate * 1.5 + dt * rate * 2);
+    const total = round2(hourly + premiums + num(e.tips) + num(e.bonusAmount));
+    if (!(total > 0)) return;
+    const wd = trim(e.workDate);
+    if (PAID.has(status)) {
+      pay = round2(pay + total);
+      hours = round2(hours + reg + ot + dt);
+      tips = round2(tips + num(e.tips));
+      bonus = round2(bonus + num(e.bonusAmount));
+      reimbursements = round2(reimbursements + num(e.reimbursementAmount));
+      wcPremium = round2(wcPremium + (total * (num(e.workersCompRate) || 0)) / 100);
+      if (trim(e.workerId)) workers.add(trim(e.workerId));
+      const ent = trim(e.hiringEntityId) || 'unknown';
+      payByEntity[ent] = round2((payByEntity[ent] ?? 0) + total);
+      if (wd && (!minDate || wd < minDate)) minDate = wd;
+      if (wd && (!maxDate || wd > maxDate)) maxDate = wd;
+      entryCount += 1;
+    } else if (PENDING.has(status)) {
+      pendingPay = round2(pendingPay + total);
+    }
+  });
+
+  // Horizon: earliest work (or JO start) minus 45d → today. Invoices and
+  // card spend land late; the pad catches deposits billed before work.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const anchor = minDate || trim(jo.startDate) || todayIso;
+  const start = new Date(`${anchor}T00:00:00Z`);
+  start.setUTCDate(start.getUTCDate() - 45);
+  const windowStart = start.toISOString().slice(0, 10);
+
+  const [agg, expAgg, burdenByEntity] = await Promise.all([
+    buildBillingAggregates(tenantId, windowStart, todayIso),
+    buildExpenseAggregates(tenantId, windowStart, todayIso),
+    minDate
+      ? buildEvereeBurdenRates(tenantId, minDate, maxDate || todayIso).catch(
+          () => ({}) as Record<string, EntityBurden>,
+        )
+      : Promise.resolve({} as Record<string, EntityBurden>),
+  ]);
+
+  // Class → this-JO matching (mapped > exact > fuzzy; account-prefix
+  // compatible, space-insensitive — mirrors the Gross Margin matcher).
+  const normName = (s: string): string =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\b(20\d\d|llc|inc|national|account)\b/g, '')
+      .replace(/\bmn\b/g, 'minnesota')
+      .replace(/\bkc\b/g, 'kansas city')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const squash = (s: string): string => normName(s).replace(/ /g, '');
+  const tokenSubset = (a: string, b: string): boolean => {
+    const ta = a.split(' ').filter(Boolean);
+    const tb = new Set(b.split(' ').filter(Boolean));
+    return ta.length > 0 && ta.every((t) => tb.has(t));
+  };
+  const acctSquash = squash(accountName ?? '');
+  const acctCompatible = (classKey: string): boolean => {
+    const i = classKey.lastIndexOf(':');
+    if (i <= 0) return true;
+    const prefix = squash(classKey.slice(0, i));
+    if (!prefix || !acctSquash) return true;
+    return acctSquash.includes(prefix) || prefix.includes(acctSquash);
+  };
+  const classMapSnap = await db.collection(`tenants/${tenantId}/qbo_class_mappings`).get().catch(() => null);
+  const mappedToThisJo = new Set<string>();
+  if (classMapSnap) {
+    classMapSnap.forEach((d) => {
+      const m = d.data();
+      if (trim(m.jobOrderName) !== joName) return;
+      for (const n of [trim(m.className), trim(m.fqn)].filter(Boolean)) mappedToThisJo.add(n.toLowerCase());
+    });
+  }
+  const nameKey = joName.toLowerCase();
+  const fullKey = accountName ? `${accountName}:${joName}`.toLowerCase() : null;
+  const joNorm = normName(joName);
+  const matchesJo = (key: string): boolean => {
+    if (mappedToThisJo.has(key)) return true;
+    const lastSegment = key.split(':').pop()?.trim() ?? key;
+    if (key === fullKey) return true;
+    if ((key === nameKey || lastSegment === nameKey) && acctCompatible(key)) return true;
+    const seg = normName(lastSegment);
+    if (!seg || !joNorm || !acctCompatible(key)) return false;
+    const substringHit = seg.length >= 5 && joNorm.length >= 5 && (joNorm.includes(seg) || seg.includes(joNorm));
+    return substringHit || tokenSubset(seg, joNorm) || tokenSubset(joNorm, seg);
+  };
+
+  let billed = 0;
+  const billedClasses: string[] = [];
+  const invoiceRefs: Array<Record<string, unknown>> = [];
+  for (const [key, a] of agg.classAggs) {
+    if (!matchesJo(key)) continue;
+    billed = round2(billed + a.billed);
+    billedClasses.push(a.className);
+    invoiceRefs.push(...a.invoiceRefs);
+  }
+  let expenses = 0;
+  const expenseClasses: string[] = [];
+  const expenseLines: Array<Record<string, unknown>> = [];
+  for (const [key, a] of expAgg.classAggs) {
+    if (!matchesJo(key)) continue;
+    expenses = round2(expenses + a.total);
+    expenseClasses.push(a.className);
+    expenseLines.push(...a.lines);
+  }
+
+  // Real employer taxes at each entity's Everee rate for the work span.
+  let taxBurden: number | null = 0;
+  for (const [ent, p] of Object.entries(payByEntity)) {
+    const b = burdenByEntity[ent];
+    if (!b) {
+      taxBurden = null;
+      break;
+    }
+    taxBurden = round2((taxBurden ?? 0) + (p * b.ratePct) / 100);
+  }
+  const burdenAvailable = taxBurden !== null;
+  const effTax = taxBurden ?? round2(pay * 0.12);
+  const gp = round2(billed - pay - wcPremium - effTax - expenses - reimbursements);
+
+  return {
+    jobOrderId,
+    jobOrderName: joName,
+    jobOrderNumber: jo.jobOrderNumber ?? null,
+    status: trim(jo.status) || null,
+    accountId,
+    accountName,
+    hiringEntityId: entityId || null,
+    workSpan: minDate ? { start: minDate, end: maxDate } : null,
+    windowStart,
+    windowEnd: todayIso,
+    entryCount,
+    workers: workers.size,
+    hours,
+    pay,
+    pendingPay,
+    tips,
+    bonus,
+    reimbursements,
+    wcPremium,
+    taxBurden,
+    burdenAvailable,
+    burdenByEntity,
+    billed,
+    billedClasses,
+    invoiceRefs: invoiceRefs.slice(0, 300),
+    expenses,
+    expenseClasses,
+    expenseLines: expenseLines.slice(0, 300),
+    grossProfit: gp,
+    grossProfitPct: billed > 0 ? round2((gp / billed) * 100) : null,
+  };
+}
+
 export const getPayrollCostReport = onCall(
   { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
   async (request) => {
     const tenantId = trim(request.data?.tenantId);
+    // Job-order costing mode (Greg 2026-08-27): keyed by JO, not dates —
+    // branch before date validation.
+    if (request.data?.jobCosting === true) {
+      const jobOrderId = trim(request.data?.jobOrderId);
+      if (!tenantId || !jobOrderId) {
+        throw new HttpsError('invalid-argument', 'tenantId and jobOrderId are required.');
+      }
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      return buildJobOrderCosting(tenantId, jobOrderId);
+    }
     const startDate = trim(request.data?.startDate);
     const endDate = trim(request.data?.endDate);
     const hiringEntityId = trim(request.data?.hiringEntityId);

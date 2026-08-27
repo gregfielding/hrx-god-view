@@ -110,7 +110,7 @@ export const REPORTS: ReportDef[] = [
     slug: 'job-costing',
     title: 'Job Costing',
     description:
-      'One job order’s complete P&L — billing, payroll, burden estimate, and Expensify/QBO expenses classed to the order. Entity → client → job order drill-down.',
+      'One job order’s complete P&L over its whole life — pick entity → account → job order; no date window. Billing and Expensify/QBO expenses classed to the order, payroll, real WC premium and Everee employer taxes.',
     category: 'Finance & receivables',
     minLevel: 7,
     icon: <CalculateOutlinedIcon />,
