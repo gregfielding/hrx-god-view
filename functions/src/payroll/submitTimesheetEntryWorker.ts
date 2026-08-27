@@ -142,10 +142,23 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
           try {
             const aSnap = await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).get();
             const a = (aSnap.data() ?? {}) as Record<string, unknown>;
-            const daily = Number(a.dailyReimbursement ?? 0);
+            let daily = Number(a.dailyReimbursement ?? 0);
+            let label = String(a.reimbursementLabel ?? '').trim();
+            // JO fallback: the rule is a LOCATION policy — a freshly
+            // created assignment that predates its stamp still inherits
+            // from the job order.
+            if (!(daily > 0)) {
+              const joId = String(entry.jobOrderId ?? a.jobOrderId ?? '');
+              if (joId) {
+                const jSnap = await db.doc(`tenants/${tenantId}/job_orders/${joId}`).get();
+                const j = (jSnap.data() ?? {}) as Record<string, unknown>;
+                daily = Number(j.dailyReimbursement ?? 0);
+                label = String(j.reimbursementLabel ?? '').trim();
+              }
+            }
             if (Number.isFinite(daily) && daily > 0) {
               reimbursementAmount = daily;
-              reimbursementLabel = String(a.reimbursementLabel ?? '').trim() || 'Reimbursement';
+              reimbursementLabel = label || 'Reimbursement';
             }
           } catch {
             // Fail-soft: a missed reimbursement is correctable; never
