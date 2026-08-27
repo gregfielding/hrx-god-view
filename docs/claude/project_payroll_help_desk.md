@@ -204,3 +204,18 @@ through the authorize button (first real money-lane ticket will be).
 
 Skipped by decision: Slack channel; third-party ticket systems (context must
 live next to Everee/timesheets for the AI).
+
+## Pay-schedule policy — the 4 places it lives (2026-08-26)
+
+Greg's stated policy: **C1 Select** pay week Sun–Sat, payday the FOLLOWING
+Friday; **C1 Events** pay week Mon–Sun, payday Friday; all payments by
+direct deposit. When this ever changes, update ALL FOUR:
+1. `functions/src/workerSupportAssistant.ts` → `SUPPORT_KNOWLEDGE_V1.pay_schedule_basics`
+2. `functions/src/payroll/payrollTicketsCore.ts` → BOTH system prompts
+   (triage ~260 + investigator ~1142; the investigator line also teaches
+   "payday not arrived ≠ missing payment")
+3. `src/pages/c1/workers/payrollHelp.tsx` → "When do I get paid?" card
+4. `i18n/locales/en.json` + `es.json` → `payrollHelp.schedule*` keys
+   (public copies regenerate on build — commit them too)
+The ticket AI context is entity-tagged (linkage lines + `[entityId]`
+payments), so it answers with the worker's specific entity's schedule.
