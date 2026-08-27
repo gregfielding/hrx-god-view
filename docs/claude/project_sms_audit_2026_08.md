@@ -56,3 +56,35 @@ router-SMS suppression for invites → normalized transition gate → hard
 per-type daily caps → onboarding ladder stop → one-message hire moment
 (single language) → chase cap → wire sequences targeting (Phase 2).
 P0+P1 ≈ −40% volume and kills every complaint pattern.
+
+## ALL FIXES SHIPPED 2026-08-27 (commit 6edbeb11; 18 functions + hosting)
+
+1. logAssignmentUpdated: NORMALIZED transition gate; dedupe key =
+   (assignment, beforeN, afterN) — no updatedAt token.
+2. rateLimiter: `claimTypeDailySlot` counter docs
+   (messagingConfig/typeDailyCaps/counters/{uid}__{type}__{day}) — exempt
+   types capped 3/day (onboarding_reminder 1/day, bulk_direct_sms 3/day);
+   1:1 direct_message uncapped. Exported for direct-Twilio senders.
+3. routingOrchestrator.logMessageAttempt skips sms/email rows (delivery
+   paths self-log with the real body) — the placeholder double-rows are
+   gone. CORRECTION from deeper analysis: the shift_invite "double send"
+   was double-LOGGING (same Twilio provider id in every pair) — workers
+   received ONE text; true 14d volume ≈ 7,962; biggest real dupe source
+   was recruiter bulk re-blasts (+894/14d), now capped.
+4. Hire moment: worker_hired + on_call_employment_started are DENIED the
+   SMS channel in the router policy (push/in-app only);
+   payroll_onboarding_invite_needed keeps SMS (the actionable link).
+5. processWorkerOnboardingReminders claims the 1/day slot directly (it
+   bypasses the router via sendWorkerMessageInternal).
+6. Prescreen/interview: `claimDailyPrescreenSmsSlot` — ONE prescreen SMS
+   per worker per day across all application docs and kinds (all 4
+   direct-Twilio sites in processWorkerAiPrescreenReminders).
+7. shiftReminderProfile Phase 2: `messagingSequences/cort_gig.targeting`
+   GOVERNS (active/accountIds/workerTypes/occurrence; first_shift = CORT
+   until a completed assignment exists at the account); legacy
+   messagingConfig/shiftReminderProfile switch applies only when the card
+   was never saved. Settings page note updated to "targeting is live".
+
+Watch after ship: typeDailyCaps counters growing (each doc is tiny;
+consider a TTL cleanup later); recruiters may notice bulk re-blasts
+capped at 3/day per worker — that is intended.
