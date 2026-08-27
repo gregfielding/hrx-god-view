@@ -814,22 +814,34 @@ export async function buildEvereeBurdenRates(
       let wages = 0;
       let tax = 0;
       let contrib = 0;
-      for (let page = 0; page < 10; page++) {
-        // eslint-disable-next-line no-await-in-loop
-        const res = (await evereeRequest(
-          config,
-          'GET',
-          // ☠️ size caps at 100 — size=200 is a hard 400 from Everee.
-          `/integration/v1/expenses/by-date-range?min-earning-date=${startDate}&max-earning-date=${endDate}&page=${page}&size=100`,
-        )) as Record<string, any>;
-        const items = (res.items ?? []) as Array<Record<string, any>>;
-        for (const it of items) {
-          wages += money(it.totalWageAmount);
-          tax += money(it.totalEmployerTaxAmount);
-          contrib += money(it.totalEmployerContributionAmount);
+      // ☠️ The endpoint rejects ranges longer than ~31 days — chunk into
+      // 30-day windows and sum (totals are additive across disjoint
+      // ranges, so chunking is exact). size also caps at 100.
+      let winStart = startDate;
+      for (let guard = 0; guard < 40 && winStart <= endDate; guard++) {
+        const ws = new Date(`${winStart}T00:00:00Z`);
+        ws.setUTCDate(ws.getUTCDate() + 29);
+        const winEndIso = ws.toISOString().slice(0, 10);
+        const winEnd = winEndIso < endDate ? winEndIso : endDate;
+        for (let page = 0; page < 10; page++) {
+          // eslint-disable-next-line no-await-in-loop
+          const res = (await evereeRequest(
+            config,
+            'GET',
+            `/integration/v1/expenses/by-date-range?min-earning-date=${winStart}&max-earning-date=${winEnd}&page=${page}&size=100`,
+          )) as Record<string, any>;
+          const items = (res.items ?? []) as Array<Record<string, any>>;
+          for (const it of items) {
+            wages += money(it.totalWageAmount);
+            tax += money(it.totalEmployerTaxAmount);
+            contrib += money(it.totalEmployerContributionAmount);
+          }
+          const totalPages = Number(res.totalPages ?? 1) || 1;
+          if (items.length === 0 || page + 1 >= totalPages) break;
         }
-        const totalPages = Number(res.totalPages ?? 1) || 1;
-        if (items.length === 0 || page + 1 >= totalPages) break;
+        const next = new Date(`${winEnd}T00:00:00Z`);
+        next.setUTCDate(next.getUTCDate() + 1);
+        winStart = next.toISOString().slice(0, 10);
       }
       out[entityId] = {
         wages: round2(wages),
@@ -1462,7 +1474,7 @@ async function buildClassCatalog(
  * first, then exact, then fuzzy — same philosophy as Gross Margin);
  * employer taxes at the entity's real Everee rate for the work span.
  * ------------------------------------------------------------------------- */
-async function buildJobOrderCosting(
+export async function buildJobOrderCosting(
   tenantId: string,
   jobOrderId: string,
 ): Promise<Record<string, unknown>> {
