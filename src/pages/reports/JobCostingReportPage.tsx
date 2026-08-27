@@ -17,6 +17,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
+  Autocomplete,
   Box,
   Card,
   CardContent,
@@ -35,13 +36,14 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CalculateOutlinedIcon from '@mui/icons-material/CalculateOutlined';
 import { httpsCallable } from 'firebase/functions';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 
 import { db, functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -86,12 +88,21 @@ interface Opt {
   label: string;
 }
 
+interface AcctOpt {
+  id: string;
+  label: string;
+  /** 0 = parent/standalone, 1 = child location (indented). */
+  depth: number;
+  /** Child account ids — picking a parent pulls JOs across all of them. */
+  childIds: string[];
+}
+
 const JobCostingReportPage: React.FC = () => {
   const { tenantId } = useAuth();
   const navigate = useNavigate();
   const [entities, setEntities] = useState<Opt[]>([]);
   const [entityId, setEntityId] = useState('');
-  const [accounts, setAccounts] = useState<Opt[]>([]);
+  const [accounts, setAccounts] = useState<AcctOpt[]>([]);
   const [accountId, setAccountId] = useState('');
   const [jobOrders, setJobOrders] = useState<Opt[]>([]);
   const [jobOrderId, setJobOrderId] = useState('');
@@ -112,7 +123,10 @@ const JobCostingReportPage: React.FC = () => {
       .catch(() => setEntities([]));
   }, [tenantId]);
 
-  // Entity → accounts.
+  // Entity → accounts, nested: national/parent accounts first, their
+  // child locations indented beneath (Greg 2026-08-27: "Oakland is a
+  // location within Legends"). Picking a parent pulls JOs across all of
+  // its children; picking a child narrows to that location.
   useEffect(() => {
     setAccounts([]);
     setAccountId('');
@@ -120,38 +134,95 @@ const JobCostingReportPage: React.FC = () => {
     setJobOrderId('');
     setData(null);
     if (!tenantId || !entityId) return;
-    getDocs(query(collection(db, 'tenants', tenantId, 'accounts'), where('hiringEntityId', '==', entityId)))
-      .then((snap) =>
-        setAccounts(
-          snap.docs
-            .map((d) => ({ id: d.id, label: String(d.data().name ?? d.id) }))
-            .sort((a, b) => a.label.localeCompare(b.label)),
-        ),
-      )
-      .catch(() => setAccounts([]));
+    (async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, 'tenants', tenantId, 'accounts'), where('hiringEntityId', '==', entityId)),
+        );
+        const rows = snap.docs.map((d) => ({
+          id: d.id,
+          name: String(d.data().name ?? d.id),
+          parentId: String(d.data().parentAccountId ?? '').trim(),
+        }));
+        const byId = new Map(rows.map((r) => [r.id, r]));
+        // A child may point at a parent outside this entity's list —
+        // fetch those so the group header still renders.
+        const missing = Array.from(
+          new Set(rows.map((r) => r.parentId).filter((p) => p && !byId.has(p))),
+        );
+        const fetched = await Promise.all(
+          missing.map(async (id) => {
+            try {
+              const s = await getDoc(doc(db, 'tenants', tenantId, 'accounts', id));
+              return s.exists() ? { id, name: String(s.data().name ?? id), parentId: '' } : null;
+            } catch {
+              return null;
+            }
+          }),
+        );
+        for (const f of fetched) if (f) byId.set(f.id, f);
+        const children = new Map<string, typeof rows>();
+        const tops: typeof rows = [];
+        for (const r of byId.values()) {
+          if (r.parentId && byId.has(r.parentId)) {
+            if (!children.has(r.parentId)) children.set(r.parentId, []);
+            children.get(r.parentId)!.push(r);
+          } else {
+            tops.push(r);
+          }
+        }
+        tops.sort((a, b) => a.name.localeCompare(b.name));
+        const opts: AcctOpt[] = [];
+        for (const t of tops) {
+          const kids = (children.get(t.id) ?? []).sort((a, b) => a.name.localeCompare(b.name));
+          opts.push({ id: t.id, label: t.name, depth: 0, childIds: kids.map((k) => k.id) });
+          for (const k of kids) opts.push({ id: k.id, label: k.name, depth: 1, childIds: [] });
+        }
+        setAccounts(opts);
+      } catch {
+        setAccounts([]);
+      }
+    })();
   }, [tenantId, entityId]);
 
-  // Account → job orders.
+  // Account → job orders (a parent account includes its children's JOs).
   useEffect(() => {
     setJobOrders([]);
     setJobOrderId('');
     setData(null);
     if (!tenantId || !accountId) return;
-    getDocs(query(collection(db, 'tenants', tenantId, 'job_orders'), where('recruiterAccountId', '==', accountId)))
-      .then((snap) =>
-        setJobOrders(
-          snap.docs
-            .map((d) => {
-              const j = d.data();
-              const num = j.jobOrderNumber != null ? `#${j.jobOrderNumber} ` : '';
-              const status = j.status ? ` (${String(j.status)})` : '';
-              return { id: d.id, label: `${num}${String(j.jobOrderName ?? d.id)}${status}`, sort: Number(j.jobOrderNumber ?? 0) };
-            })
-            .sort((a, b) => (b as { sort: number }).sort - (a as { sort: number }).sort)
-            .map(({ id, label }) => ({ id, label })),
+    const acct = accounts.find((a) => a.id === accountId);
+    const ids = [accountId, ...(acct?.childIds ?? [])];
+    Promise.all(
+      ids.map((id) =>
+        getDocs(query(collection(db, 'tenants', tenantId, 'job_orders'), where('recruiterAccountId', '==', id))).catch(
+          () => null,
         ),
-      )
+      ),
+    )
+      .then((snaps) => {
+        const seen = new Set<string>();
+        const rows: Array<{ id: string; label: string; sort: number }> = [];
+        for (const snap of snaps) {
+          if (!snap) continue;
+          for (const d of snap.docs) {
+            if (seen.has(d.id)) continue;
+            seen.add(d.id);
+            const j = d.data();
+            const num = j.jobOrderNumber != null ? `#${j.jobOrderNumber} ` : '';
+            const status = j.status ? ` (${String(j.status)})` : '';
+            rows.push({
+              id: d.id,
+              label: `${num}${String(j.jobOrderName ?? d.id)}${status}`,
+              sort: Number(j.jobOrderNumber ?? 0),
+            });
+          }
+        }
+        rows.sort((a, b) => b.sort - a.sort);
+        setJobOrders(rows.map(({ id, label }) => ({ id, label })));
+      })
       .catch(() => setJobOrders([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, accountId]);
 
   // Job order → costing.
@@ -200,22 +271,28 @@ const JobCostingReportPage: React.FC = () => {
               <InputLabel>Account</InputLabel>
               <Select value={accountId} label="Account" onChange={(e) => setAccountId(e.target.value)}>
                 {accounts.map((a) => (
-                  <MenuItem key={a.id} value={a.id}>
+                  <MenuItem key={a.id} value={a.id} sx={a.depth > 0 ? { pl: 4 } : { fontWeight: a.childIds.length > 0 ? 600 : 400 }}>
                     {a.label}
+                    {a.childIds.length > 0 && (
+                      <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                        all {a.childIds.length + 1} locations
+                      </Typography>
+                    )}
                   </MenuItem>
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: 300 }} disabled={!accountId}>
-              <InputLabel>Job order</InputLabel>
-              <Select value={jobOrderId} label="Job order" onChange={(e) => setJobOrderId(e.target.value)}>
-                {jobOrders.map((j) => (
-                  <MenuItem key={j.id} value={j.id}>
-                    {j.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            <Autocomplete
+              size="small"
+              sx={{ minWidth: 320 }}
+              disabled={!accountId}
+              options={jobOrders}
+              getOptionLabel={(o) => o.label}
+              isOptionEqualToValue={(o, v) => o.id === v.id}
+              value={jobOrders.find((j) => j.id === jobOrderId) ?? null}
+              onChange={(_, v) => setJobOrderId(v?.id ?? '')}
+              renderInput={(params) => <TextField {...params} label="Job order" placeholder="Type to search…" />}
+            />
             {loading && <CircularProgress size={22} />}
           </Stack>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
