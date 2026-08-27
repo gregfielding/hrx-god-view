@@ -68,3 +68,20 @@ FICA-TAXED ($50→$46.17); FIXED 2026-08-20 — import extras + off-cycle
 per-diems now ship payCode REIMBURSEMENT (non-taxable). Historical
 PER_DIEM-coded earnings were shorted 7.65% (workers) + employer FICA
 match overpaid; remediation via Everee support or top-up payables.
+
+## Daily-reimbursement rule (2026-08-27, Prairie View A&M \$5/day parking)
+
+Assignment-level automatic per-day reimbursement: set `dailyReimbursement`
+(number) + `reimbursementLabel` on an ASSIGNMENT (and its JO so future
+assignments at that location inherit — inherit is manual today: stamp new
+assignments when created from those JOs, or re-run the stamp). At submit,
+`submitTimesheetEntryWorker` gives every entry with worked hours a
+REIMBURSEMENT payable at that amount (untaxed, excluded from OT + WC
+premium wages), and stamps `reimbursementAmount`/`reimbursementLabel` on
+the entry (the WC audit's reimbursements breakout reads
+`entry.reimbursementAmount`). Hours-gated: a day with no hours gets
+nothing. An amount already on the entry (import lane) wins over the rule.
+To add the rule for another location: stamp its JOs + live assignments
+(script pattern: 2026-08-27 session) — no code change needed.
+Live: Sodexo PVAMU account autoLoc_8ea92d49ea1833ab292a7a091626ec77 —
+5 JOs (#219/220/221/222/404) + 12 assignments at \$5 "Parking".
