@@ -314,3 +314,18 @@ waiting (createQboClass/mapQboClass branches on savePayrollVenueMapping).
   (payroll already counted from entries); Expensify exporter sees only
   ON-REPORT expenses, so unreported card spend is invisible until moved
   to a report + tagged (write-back verified current: 0 unmatched/unknown).
+- **2026-08-27 level-aware class mapping (the classes doctrine):** a QBO
+  class maps to ONE node in the HRX hierarchy via
+  `qbo_class_mappings/{classId}.targetKind`: 'overhead' (non-client —
+  excluded from client margins; GM payload carries
+  overheadBilled/overheadClasses), 'account' (parent/child/standalone —
+  dollars attach at the account; Job Costing shows them as
+  account-level, NEVER guessed down to JOs), 'job_order' (jobOrderIds[]/
+  jobOrderNames[] — may target SEVERAL JOs). Legacy docs infer kind
+  (jobOrderName ⇒ job_order else account). Resolution order everywhere:
+  explicit mapping > exact Account:JO name > guarded fuzzy (bare
+  account-named classes never fuzzy) > account-level inference >
+  unattributed; classes mapped ELSEWHERE are excluded from name/fuzzy.
+  Console (/reports/qbo-classes): level badges + breadcrumbs, kind-aware
+  Map dialog (multi-JO), 'By account' tree lens, create-and-map one step
+  (per-event-class convention, e.g. "Black Caviar:Outside Lands").
