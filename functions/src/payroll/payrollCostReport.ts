@@ -156,43 +156,67 @@ export const savePayrollVenueMapping = onCall(
         await ref.delete();
         return { ok: true, removed: true, classId };
       }
-      const jobOrderId = trim(request.data?.jobOrderId);
+      // Level-aware mapping (Greg 2026-08-27): a class points to ONE node
+      // in the HRX hierarchy — 'overhead' (non-client, excluded from
+      // client margins), 'account' (parent/child/standalone — dollars
+      // attach at the account, never guessed down to JOs), or
+      // 'job_order' (one or MORE JOs — the MN Yacht + Country Club
+      // shape). Legacy docs without targetKind keep working: jobOrderName
+      // ⇒ job_order, else accountId ⇒ account.
+      const targetKind = trim(request.data?.targetKind); // '', 'overhead', 'account', 'job_order'
+      const jobOrderIds = Array.isArray(request.data?.jobOrderIds)
+        ? (request.data.jobOrderIds as unknown[]).map((x) => trim(x)).filter(Boolean)
+        : [trim(request.data?.jobOrderId)].filter(Boolean);
       const accountId = trim(request.data?.accountId);
-      if (!jobOrderId && !accountId) {
-        throw new HttpsError('invalid-argument', 'jobOrderId or accountId is required to map.');
+      if (targetKind !== 'overhead' && jobOrderIds.length === 0 && !accountId) {
+        throw new HttpsError('invalid-argument', 'jobOrderId(s), accountId, or targetKind=overhead is required to map.');
       }
-      let jobOrderName: string | null = null;
+      const jobOrderNames: string[] = [];
       let mappedAccountId: string | null = accountId || null;
       let accountName: string | null = null;
-      if (jobOrderId) {
-        for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
-          // eslint-disable-next-line no-await-in-loop
-          const s = await db.doc(`tenants/${tenantId}/${coll}/${jobOrderId}`).get();
-          if (s.exists) {
-            jobOrderName = trim(s.data()?.jobOrderName) || trim(s.data()?.title) || null;
-            if (!mappedAccountId) mappedAccountId = trim(s.data()?.recruiterAccountId) || null;
-            break;
+      if (targetKind !== 'overhead' && targetKind !== 'account') {
+        for (const joId of jobOrderIds.slice(0, 10)) {
+          for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+            // eslint-disable-next-line no-await-in-loop
+            const s = await db.doc(`tenants/${tenantId}/${coll}/${joId}`).get();
+            if (s.exists) {
+              const n = trim(s.data()?.jobOrderName) || trim(s.data()?.title);
+              if (n) jobOrderNames.push(n);
+              if (!mappedAccountId) mappedAccountId = trim(s.data()?.recruiterAccountId) || null;
+              break;
+            }
           }
         }
-        if (!jobOrderName) throw new HttpsError('not-found', `Job order ${jobOrderId} not found.`);
+        if (jobOrderIds.length > 0 && jobOrderNames.length === 0) {
+          throw new HttpsError('not-found', 'Job order(s) not found.');
+        }
       }
       if (mappedAccountId) {
         const acct = await db.doc(`tenants/${tenantId}/accounts/${mappedAccountId}`).get();
         accountName = acct.exists ? trim(acct.data()?.name) || null : null;
       }
+      const resolvedKind =
+        targetKind === 'overhead'
+          ? 'overhead'
+          : targetKind === 'account' || jobOrderNames.length === 0
+            ? 'account'
+            : 'job_order';
       await ref.set({
         classId,
         className,
         fqn: trim(request.data?.fqn) || className,
-        jobOrderId: jobOrderId || null,
-        jobOrderName,
-        accountId: mappedAccountId,
-        accountName,
+        targetKind: resolvedKind,
+        jobOrderId: resolvedKind === 'job_order' ? jobOrderIds[0] : null,
+        jobOrderName: resolvedKind === 'job_order' ? jobOrderNames[0] : null,
+        jobOrderIds: resolvedKind === 'job_order' ? jobOrderIds : [],
+        jobOrderNames: resolvedKind === 'job_order' ? jobOrderNames : [],
+        accountId: resolvedKind === 'overhead' ? null : mappedAccountId,
+        accountName: resolvedKind === 'overhead' ? null : accountName,
         source: trim(request.data?.source) || 'manual',
         mappedBy: request.auth?.uid ?? null,
         mappedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
-      return { ok: true, classId, jobOrderName, accountId: mappedAccountId, accountName };
+      return { ok: true, classId, targetKind: resolvedKind, jobOrderNames, accountId: mappedAccountId, accountName };
     }
 
     const venueLabel = trim(request.data?.venueLabel);
@@ -1394,8 +1418,13 @@ async function buildClassCatalog(
   // Suggestion candidates: JO names (scoped by account) + account names.
   const joList: Array<{ id: string; name: string; accountId: string | null; accountName: string | null }> = [];
   const acctNameById = new Map<string, string>();
+  const acctParentById = new Map<string, string>();
   const acctSnap = await db.collection(`tenants/${tenantId}/accounts`).get();
-  acctSnap.forEach((d) => acctNameById.set(d.id, trim(d.data().name)));
+  acctSnap.forEach((d) => {
+    acctNameById.set(d.id, trim(d.data().name));
+    const p = trim(d.data().parentAccountId);
+    if (p) acctParentById.set(d.id, p);
+  });
   for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
     // eslint-disable-next-line no-await-in-loop
     const snap = await db.collection(`tenants/${tenantId}/${coll}`).get().catch(() => null);
@@ -1439,13 +1468,25 @@ async function buildClassCatalog(
       billedInRange: billedAgg?.billed ?? 0,
       expensesInRange: expAgg?.total ?? 0,
       mapping: mapping
-        ? {
-            jobOrderId: trim(mapping.jobOrderId) || null,
-            jobOrderName: trim(mapping.jobOrderName) || null,
-            accountId: trim(mapping.accountId) || null,
-            accountName: trim(mapping.accountName) || null,
-            source: trim(mapping.source) || 'manual',
-          }
+        ? (() => {
+            const kind = trim(mapping.targetKind) || (trim(mapping.jobOrderName) ? 'job_order' : 'account');
+            const acctId = trim(mapping.accountId) || null;
+            const parentId = acctId ? acctParentById.get(acctId) ?? null : null;
+            const joNames: string[] = Array.isArray(mapping.jobOrderNames)
+              ? (mapping.jobOrderNames as unknown[]).map((x) => trim(x)).filter(Boolean)
+              : [trim(mapping.jobOrderName)].filter(Boolean);
+            return {
+              targetKind: kind,
+              jobOrderId: trim(mapping.jobOrderId) || null,
+              jobOrderName: trim(mapping.jobOrderName) || null,
+              jobOrderNames: joNames,
+              accountId: acctId,
+              accountName: trim(mapping.accountName) || null,
+              parentAccountId: parentId,
+              parentAccountName: parentId ? acctNameById.get(parentId) ?? null : null,
+              source: trim(mapping.source) || 'manual',
+            };
+          })()
         : null,
       suggestion: mapping ? null : suggest(fqn),
     };
@@ -1610,12 +1651,33 @@ export async function buildJobOrderCosting(
   };
   const classMapSnap = await db.collection(`tenants/${tenantId}/qbo_class_mappings`).get().catch(() => null);
   const namesSet = new Set(joNames);
+  const joIdSet = new Set(jos.map((j) => j.id));
   const mappedToThisJo = new Set<string>();
+  // Level-aware mappings (2026-08-27): 'overhead' classes never touch a
+  // JO or its account chip; 'account' classes mapped to this account are
+  // account-level by declaration; classes mapped ELSEWHERE (other JO or
+  // other account) are excluded from name/fuzzy matching entirely.
+  const mappedOverhead = new Set<string>();
+  const mappedToThisAccount = new Set<string>();
+  const mappedElsewhere = new Set<string>();
   if (classMapSnap) {
     classMapSnap.forEach((d) => {
       const m = d.data();
-      if (!namesSet.has(trim(m.jobOrderName))) return;
-      for (const n of [trim(m.className), trim(m.fqn)].filter(Boolean)) mappedToThisJo.add(n.toLowerCase());
+      const keys = [trim(m.className), trim(m.fqn)].filter(Boolean).map((n) => n.toLowerCase());
+      const kind = trim(m.targetKind) || (trim(m.jobOrderName) ? 'job_order' : 'account');
+      const mNames: string[] = Array.isArray(m.jobOrderNames)
+        ? (m.jobOrderNames as unknown[]).map((x) => trim(x)).filter(Boolean)
+        : [trim(m.jobOrderName)].filter(Boolean);
+      const mIds: string[] = Array.isArray(m.jobOrderIds)
+        ? (m.jobOrderIds as unknown[]).map((x) => trim(x)).filter(Boolean)
+        : [trim(m.jobOrderId)].filter(Boolean);
+      let bucket: Set<string>;
+      if (kind === 'overhead') bucket = mappedOverhead;
+      else if (kind === 'job_order' && (mNames.some((n) => namesSet.has(n)) || mIds.some((i) => joIdSet.has(i))))
+        bucket = mappedToThisJo;
+      else if (kind === 'account' && accountId && trim(m.accountId) === accountId) bucket = mappedToThisAccount;
+      else bucket = mappedElsewhere;
+      for (const k of keys) bucket.add(k);
     });
   }
   const nameKeys = joNames.map((n) => n.toLowerCase());
@@ -1636,6 +1698,7 @@ export async function buildJobOrderCosting(
   };
   const matchesJo = (key: string): boolean => {
     if (mappedToThisJo.has(key)) return true;
+    if (mappedOverhead.has(key) || mappedToThisAccount.has(key) || mappedElsewhere.has(key)) return false;
     const lastSegment = key.split(':').pop()?.trim() ?? key;
     if (fullKeys.includes(key)) return true;
     const seg = normName(lastSegment);
@@ -1651,6 +1714,8 @@ export async function buildJobOrderCosting(
   };
   const isAccountLevelKey = (key: string): boolean => {
     if (mappedToThisJo.has(key)) return false;
+    if (mappedToThisAccount.has(key)) return true;
+    if (mappedOverhead.has(key) || mappedElsewhere.has(key)) return false;
     const lastSegment = key.split(':').pop()?.trim() ?? key;
     return isAccountLevelClass(normName(lastSegment)) && acctCompatible(key);
   };
@@ -2287,18 +2352,39 @@ export const getPayrollCostReport = onCall(
         // heuristic — a mapped class's amounts land on its mapped job
         // order/account row, period. Keyed by class DISPLAY name (lower).
         const classMapSnap = await db.collection(`tenants/${tenantId}/qbo_class_mappings`).get().catch(() => null);
-        const mappedClassByName = new Map<string, { jobOrderName: string | null; accountId: string | null }>();
+        // Level-aware (2026-08-27): overhead-mapped classes are non-client
+        // dollars — excluded from every row and summed separately;
+        // job_order mappings may target MULTIPLE JOs (jobOrderNames[]).
+        const mappedClassByName = new Map<
+          string,
+          { kind: string; jobOrderNames: string[]; accountId: string | null }
+        >();
         if (classMapSnap) {
           classMapSnap.forEach((d) => {
             const m = d.data();
             const names = [trim(m.className), trim(m.fqn)].filter(Boolean);
+            const kind = trim(m.targetKind) || (trim(m.jobOrderName) ? 'job_order' : 'account');
+            const joNames: string[] = Array.isArray(m.jobOrderNames)
+              ? (m.jobOrderNames as unknown[]).map((x) => trim(x)).filter(Boolean)
+              : [trim(m.jobOrderName)].filter(Boolean);
             for (const n of names) {
               mappedClassByName.set(n.toLowerCase(), {
-                jobOrderName: trim(m.jobOrderName) || null,
+                kind,
+                jobOrderNames: joNames,
                 accountId: trim(m.accountId) || null,
               });
             }
           });
+        }
+        // Overhead classes: pull them out of the pool before any matching.
+        let overheadBilled = 0;
+        const overheadClasses: string[] = [];
+        for (const [key, a] of agg.classAggs) {
+          if (mappedClassByName.get(key)?.kind === 'overhead') {
+            usedClassKeys.add(key);
+            overheadBilled = round2(overheadBilled + a.billed);
+            if (!overheadClasses.includes(a.className)) overheadClasses.push(a.className);
+          }
         }
         const gmByJobOrder = byJobOrder.map((g) => {
           // ClassGroup key format: `${accountId}|jo-or-venue|name`.
@@ -2313,8 +2399,9 @@ export const getPayrollCostReport = onCall(
             const mapped = mappedClassByName.get(key);
             const mappedHere =
               mapped != null &&
-              ((mapped.jobOrderName != null && mapped.jobOrderName === g.label) ||
-                (mapped.jobOrderName == null && mapped.accountId != null && mapped.accountId === payAccountId));
+              mapped.kind !== 'overhead' &&
+              ((mapped.jobOrderNames.length > 0 && mapped.jobOrderNames.includes(g.label)) ||
+                (mapped.jobOrderNames.length === 0 && mapped.accountId != null && mapped.accountId === payAccountId));
             const exact =
               mappedHere ||
               (mapped == null &&
@@ -2654,6 +2741,8 @@ export const getPayrollCostReport = onCall(
           // falls back to its estimate slider when not.
           burdenAvailable,
           burdenByEntity,
+          overheadBilled: round2(overheadBilled),
+          overheadClasses,
           totalWcPremium: round2(gmByJobOrder.reduce((s, r) => s + (r.wcPremium || 0), 0)),
           totalTaxBurden: burdenAvailable
             ? round2(gmByJobOrder.reduce((s, r) => s + (r.taxBurden ?? 0), 0))
