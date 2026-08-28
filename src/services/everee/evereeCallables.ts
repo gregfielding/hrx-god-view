@@ -73,9 +73,24 @@ export interface EvereeCreateOnboardingSessionRequest {
    * on the linkage doc's embedSessionCache.
    */
   context?: string;
+  /**
+   * Shrunken-widget bank pre-push (2026-08-28): when present, the server
+   * PUTs this to Everee's bank-accounts/default endpoint BEFORE minting the
+   * session, so the ONBOARDING widget skips its "Add payment method" step.
+   * In transit only — never persisted or logged on either side.
+   */
+  bankAccount?: {
+    bankName: string;
+    accountName: string;
+    accountType: 'CHECKING' | 'SAVINGS';
+    routingNumber: string;
+    accountNumber: string;
+  };
 }
 
 export interface EvereeCreateOnboardingSessionResult {
+  /** Outcome of the optional bank pre-push; absent when none was sent. */
+  bankPush?: { ok: boolean; error?: string; last4?: string };
   /** Firestore `everee_embed_sessions` doc id — useful for client-side logging / correlation. */
   sessionId: string;
   /** Iframe / WebView src. One-time use; create fresh on each open. */

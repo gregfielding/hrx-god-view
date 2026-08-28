@@ -2016,5 +2016,27 @@
     "genericError": "Algo salió mal — inténtalo de nuevo.",
     "emailOptional": "Opcional — te lo pediremos después si la nómina lo necesita.",
     "mustBe18": "Debes tener al menos 18 años para trabajar con C1 Staffing."
+  },
+  "workerPayroll": {
+    "bankFirst": {
+      "title": "Configura tu depósito directo",
+      "intro": "Agrega tu cuenta bancaria ahora y la configuración de nómina será un paso más corta: solo te quedarán tu SSN y los formularios de impuestos.",
+      "bankName": "Nombre del banco",
+      "accountName": "Nombre en la cuenta",
+      "accountType": "Tipo de cuenta",
+      "checking": "Corriente (checking)",
+      "savings": "Ahorros (savings)",
+      "routingNumber": "Número de ruta (9 dígitos)",
+      "accountNumber": "Número de cuenta",
+      "confirmAccountNumber": "Confirma el número de cuenta",
+      "routingInvalid": "Ese número de ruta no parece correcto; verifícalo con un cheque o tu aplicación bancaria.",
+      "accountInvalid": "El número de cuenta debe tener de 4 a 17 dígitos.",
+      "accountMismatch": "Los números de cuenta no coinciden.",
+      "requiredFields": "Por favor completa todos los campos.",
+      "submit": "Guardar y continuar",
+      "skip": "Omitir por ahora — lo agregaré durante la configuración",
+      "pushFailedContinue": "No pudimos guardar tu cuenta bancaria, así que la configuración de nómina te la pedirá.",
+      "privacy": "Los datos de tu cuenta van directamente a nuestro socio de nómina Everee por una conexión cifrada. HRX ONE nunca los guarda."
+    }
   }
 }

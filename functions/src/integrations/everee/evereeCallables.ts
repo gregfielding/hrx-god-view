@@ -16,7 +16,9 @@ import {
   ping,
   normalizeDobToISO,
   updateEvereeWorkerPersonalInfo,
+  updateWorkerDefaultBankAccount,
   type EvereeEmbedExperienceType,
+  type WorkerBankAccountInput,
 } from './evereeService';
 import { mirrorWorkEligibilityFromAuthoritativeSource } from '../../utils/workEligibilityMirror';
 import { extractEvereeHomeAddressFromUserDoc } from './evereeUserAddress';
@@ -593,6 +595,44 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
       : '';
   const experienceType = coerceEmbedExperienceType(d?.experienceType);
   const experienceVersion = coerceEmbedExperienceVersion(d?.experienceVersion);
+
+  // Shrunken-widget bank pre-push (2026-08-28, verified in sandbox 2320):
+  // an optional `bankAccount` rides this request, is PUT to Everee BEFORE
+  // the session is minted, and never touches Firestore or logs — with a
+  // bank account on file the ONBOARDING widget skips its "Add payment
+  // method" step. A failed push degrades gracefully: we mint the session
+  // anyway and the widget's own bank step remains as the fallback.
+  let bankPush: { ok: boolean; error?: string; last4?: string } | null = null;
+  const rawBank = d?.bankAccount as Record<string, unknown> | undefined;
+  if (rawBank && typeof rawBank === 'object') {
+    const bankAccount: WorkerBankAccountInput = {
+      bankName: typeof rawBank.bankName === 'string' ? rawBank.bankName : '',
+      accountName: typeof rawBank.accountName === 'string' ? rawBank.accountName : '',
+      accountType: rawBank.accountType === 'SAVINGS' ? 'SAVINGS' : 'CHECKING',
+      routingNumber:
+        typeof rawBank.routingNumber === 'string' ? rawBank.routingNumber.replace(/\D/g, '') : '',
+      accountNumber:
+        typeof rawBank.accountNumber === 'string' ? rawBank.accountNumber.replace(/\D/g, '') : '',
+    };
+    const result = await updateWorkerDefaultBankAccount({
+      tenantId,
+      entityId,
+      evereeWorkerId,
+      bankAccount,
+    });
+    bankPush = result.ok
+      ? { ok: true, last4: bankAccount.accountNumber.slice(-4) }
+      : { ok: false, error: result.error };
+    logger.info('[evereeCreateOnboardingSession] bank pre-push', {
+      tenantId,
+      entityId,
+      userId,
+      ok: result.ok,
+      // Sanitized failure reason only — never bank fields.
+      ...(result.ok ? {} : { reason: bankPush.error }),
+    });
+  }
+
   const requestedKey = buildExperienceCacheKey(
     experienceType ?? null,
     experienceVersion ?? null,
@@ -610,6 +650,9 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
   const nowMs = Date.now();
   if (
     cached &&
+    // A session minted before a just-pushed bank account may still render
+    // the payment step — always mint fresh after a bank pre-push.
+    !bankPush &&
     cached.experienceCacheKey === requestedKey &&
     nowMs - cached.createdAtMs <= EMBED_SESSION_REUSE_WINDOW_MS &&
     cached.expiresAtMs - nowMs >= EMBED_SESSION_MIN_REMAINING_MS
@@ -700,6 +743,7 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
       embedUrl: session.url,
       expiresAt: new Date(expiresAtMs).toISOString(),
       reusedFromCache: false,
+      ...(bankPush ? { bankPush } : {}),
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

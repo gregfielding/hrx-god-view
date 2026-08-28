@@ -2016,5 +2016,27 @@
     "genericError": "Something went wrong — please try again.",
     "emailOptional": "Optional — we'll ask again later if payroll needs it.",
     "mustBe18": "You must be at least 18 years old to work with C1 Staffing."
+  },
+  "workerPayroll": {
+    "bankFirst": {
+      "title": "Set up direct deposit",
+      "intro": "Add your bank account now and payroll setup gets one step shorter — you'll only have your SSN and tax forms left.",
+      "bankName": "Bank name",
+      "accountName": "Name on the account",
+      "accountType": "Account type",
+      "checking": "Checking",
+      "savings": "Savings",
+      "routingNumber": "Routing number (9 digits)",
+      "accountNumber": "Account number",
+      "confirmAccountNumber": "Confirm account number",
+      "routingInvalid": "That routing number doesn't look right — please check it against a check or your banking app.",
+      "accountInvalid": "Account number should be 4–17 digits.",
+      "accountMismatch": "Account numbers don't match.",
+      "requiredFields": "Please fill in every field.",
+      "submit": "Save & continue",
+      "skip": "Skip for now — I'll add it during setup",
+      "pushFailedContinue": "We couldn't save your bank account, so payroll setup will ask for it instead.",
+      "privacy": "Your account details go directly to our payroll partner Everee over an encrypted connection. HRX ONE never stores them."
+    }
   }
 }

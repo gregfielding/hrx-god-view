@@ -70,7 +70,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { deleteField, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material';
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CircularProgress,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { db } from '../../../firebase';
 import { t } from '../../../i18n';
 import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
@@ -108,9 +119,157 @@ type Phase =
       /** Bridge name Everee will look up on `window`; default `hrx_default`. */
       eventHandlerName: string;
     }
+  /** Shrunken-widget bank-first step (2026-08-28): offered once before the
+   *  ONBOARDING embed mounts. Bank details are pushed to Everee through the
+   *  session callable (in transit only — never stored client- or
+   *  server-side), which makes the widget skip its payment-method step. */
+  | { state: 'bank_offer' }
   | { state: 'expired' }
   | { state: 'error'; message: string }
   | { state: 'forbidden' };
+
+interface BankFirstDetails {
+  bankName: string;
+  accountName: string;
+  accountType: 'CHECKING' | 'SAVINGS';
+  routingNumber: string;
+  accountNumber: string;
+}
+
+/** ABA 3-7-1 checksum — mirrors the server-side validation. */
+const isValidAbaRoutingNumber = (routingNumber: string): boolean => {
+  if (!/^\d{9}$/.test(routingNumber)) return false;
+  const d = routingNumber.split('').map(Number);
+  const sum = 3 * (d[0] + d[3] + d[6]) + 7 * (d[1] + d[4] + d[7]) + (d[2] + d[5] + d[8]);
+  return sum % 10 === 0 && sum > 0;
+};
+
+/**
+ * Bank-first card shown before the ONBOARDING embed mounts. Values live in
+ * local state only for the lifetime of the form; on submit they're handed to
+ * the caller, sent once to the session callable, and dropped.
+ */
+const BankFirstCard: React.FC<{
+  onSubmit: (details: BankFirstDetails) => void;
+  onSkip: () => void;
+}> = ({ onSubmit, onSkip }) => {
+  const [bankName, setBankName] = useState('');
+  const [accountName, setAccountName] = useState('');
+  const [accountType, setAccountType] = useState<'CHECKING' | 'SAVINGS'>('CHECKING');
+  const [routingNumber, setRoutingNumber] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [confirmAccountNumber, setConfirmAccountNumber] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = () => {
+    const routing = routingNumber.replace(/\D/g, '');
+    const account = accountNumber.replace(/\D/g, '');
+    if (!bankName.trim() || !accountName.trim() || !routing || !account || !confirmAccountNumber) {
+      setError(t('workerPayroll.bankFirst.requiredFields'));
+      return;
+    }
+    if (!isValidAbaRoutingNumber(routing)) {
+      setError(t('workerPayroll.bankFirst.routingInvalid'));
+      return;
+    }
+    if (!/^\d{4,17}$/.test(account)) {
+      setError(t('workerPayroll.bankFirst.accountInvalid'));
+      return;
+    }
+    if (account !== confirmAccountNumber.replace(/\D/g, '')) {
+      setError(t('workerPayroll.bankFirst.accountMismatch'));
+      return;
+    }
+    setError('');
+    onSubmit({
+      bankName: bankName.trim(),
+      accountName: accountName.trim(),
+      accountType,
+      routingNumber: routing,
+      accountNumber: account,
+    });
+  };
+
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+      <Card sx={{ maxWidth: 520, width: '100%' }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>
+            {t('workerPayroll.bankFirst.title')}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {t('workerPayroll.bankFirst.intro')}
+          </Typography>
+          <Stack spacing={2}>
+            <TextField
+              label={t('workerPayroll.bankFirst.bankName')}
+              value={bankName}
+              onChange={(e) => setBankName(e.target.value)}
+              fullWidth
+              size="small"
+            />
+            <TextField
+              label={t('workerPayroll.bankFirst.accountName')}
+              value={accountName}
+              onChange={(e) => setAccountName(e.target.value)}
+              fullWidth
+              size="small"
+            />
+            <TextField
+              select
+              label={t('workerPayroll.bankFirst.accountType')}
+              value={accountType}
+              onChange={(e) => setAccountType(e.target.value === 'SAVINGS' ? 'SAVINGS' : 'CHECKING')}
+              fullWidth
+              size="small"
+            >
+              <MenuItem value="CHECKING">{t('workerPayroll.bankFirst.checking')}</MenuItem>
+              <MenuItem value="SAVINGS">{t('workerPayroll.bankFirst.savings')}</MenuItem>
+            </TextField>
+            <TextField
+              label={t('workerPayroll.bankFirst.routingNumber')}
+              value={routingNumber}
+              onChange={(e) => setRoutingNumber(e.target.value.replace(/[^\d]/g, '').slice(0, 9))}
+              fullWidth
+              size="small"
+              inputProps={{ inputMode: 'numeric', autoComplete: 'off' }}
+            />
+            <TextField
+              label={t('workerPayroll.bankFirst.accountNumber')}
+              value={accountNumber}
+              onChange={(e) => setAccountNumber(e.target.value.replace(/[^\d]/g, '').slice(0, 17))}
+              fullWidth
+              size="small"
+              inputProps={{ inputMode: 'numeric', autoComplete: 'off' }}
+            />
+            <TextField
+              label={t('workerPayroll.bankFirst.confirmAccountNumber')}
+              value={confirmAccountNumber}
+              onChange={(e) =>
+                setConfirmAccountNumber(e.target.value.replace(/[^\d]/g, '').slice(0, 17))
+              }
+              fullWidth
+              size="small"
+              inputProps={{ inputMode: 'numeric', autoComplete: 'off' }}
+            />
+            {error ? <Alert severity="warning">{error}</Alert> : null}
+            <Typography variant="caption" color="text.secondary">
+              {t('workerPayroll.bankFirst.privacy')}
+            </Typography>
+            <Stack direction="row" spacing={1} justifyContent="flex-end">
+              <Button variant="text" onClick={onSkip}>
+                {t('workerPayroll.bankFirst.skip')}
+              </Button>
+              <Button variant="contained" onClick={handleSubmit}>
+                {t('workerPayroll.bankFirst.submit')}
+              </Button>
+            </Stack>
+          </Stack>
+        </CardContent>
+      </Card>
+    </Box>
+  );
+};
 
 const ONBOARDING_COMPLETE_STATUSES = new Set(['onboarding_complete', 'complete', 'completed']);
 const COMPLETE_PAYROLL_STATUSES = new Set(['complete', 'completed', 'done']);
@@ -460,6 +619,17 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
   const currentRequestRef = useRef(0);
   /** Counter for the EE.3 debug log so re-fires are visible in the console. */
   const startSessionInvocationsRef = useRef(0);
+  /**
+   * Bank-first step state. 'pending' → the next ONBOARDING decision shows
+   * the bank card instead of minting; 'submitted' / 'skipped' → mint
+   * normally. Refs (not state) so `startSession`'s dep list stays stable —
+   * the card's buttons call `startSession()` explicitly after setting them.
+   */
+  const bankStepRef = useRef<'pending' | 'submitted' | 'skipped'>('pending');
+  /** Held only between card submit and the callable that pushes it. */
+  const bankDetailsRef = useRef<BankFirstDetails | null>(null);
+  /** Set when a bank push failed so the widget view can explain the fallback. */
+  const [bankPushNotice, setBankPushNotice] = useState<string>('');
 
   const clearExpireTimer = useCallback(() => {
     if (expireTimerRef.current) {
@@ -615,19 +785,33 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
         ...preflightDiagnostic,
       });
       lastSwapRef.current = experienceType;
+      // Bank-first gate: before the very first ONBOARDING mint, offer the
+      // native direct-deposit card. Submitting (or skipping) it re-enters
+      // startSession with bankStepRef advanced past 'pending'.
+      if (experienceType === 'ONBOARDING' && bankStepRef.current === 'pending') {
+        setPhase({ state: 'bank_offer' });
+        return;
+      }
+      const bankAccount = bankDetailsRef.current;
+      bankDetailsRef.current = null; // one push only — retries must not resubmit
       const sessionRes = await evereeCreateOnboardingSession({
         tenantId: scopeTenantId,
         entityId: resolved.entityId,
         userId: uid,
         evereeWorkerId,
         experienceType,
-        context: 'worker_page',
+        context: bankAccount ? 'worker_page_bank_first' : 'worker_page',
+        ...(bankAccount ? { bankAccount } : {}),
         returnUrl:
           typeof window !== 'undefined'
             ? `${window.location.origin}/c1/workers/payroll/${encodeURIComponent(evereeTenantId)}`
             : undefined,
       });
       if (isStale()) return;
+      const bankPush = (sessionRes.data as { bankPush?: { ok?: boolean } } | undefined)?.bankPush;
+      if (bankAccount && bankPush && bankPush.ok === false) {
+        setBankPushNotice(t('workerPayroll.bankFirst.pushFailedContinue'));
+      }
       const raw = sessionRes.data as EvereeCreateOnboardingSessionResult | undefined;
       const embedUrl = String(raw?.embedUrl ?? raw?.url ?? '').trim();
       const expiresInMs =
@@ -912,6 +1096,25 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
     );
   }
 
+  if (phase.state === 'bank_offer') {
+    return (
+      <Box>
+        <WorkerPageHeader title={t('nav.payroll')} backTo="/c1/workers/earnings" />
+        <BankFirstCard
+          onSubmit={(details) => {
+            bankDetailsRef.current = details;
+            bankStepRef.current = 'submitted';
+            void startSession();
+          }}
+          onSkip={() => {
+            bankStepRef.current = 'skipped';
+            void startSession();
+          }}
+        />
+      </Box>
+    );
+  }
+
   if (phase.state === 'loading') {
     return (
       <Box sx={{ p: 4, display: 'flex', justifyContent: 'center' }}>
@@ -930,6 +1133,11 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
       }}
     >
       <WorkerPageHeader title={t('nav.payroll')} backTo="/c1/workers/earnings" />
+      {bankPushNotice ? (
+        <Alert severity="info" sx={{ mb: 1 }} onClose={() => setBankPushNotice('')}>
+          {bankPushNotice}
+        </Alert>
+      ) : null}
       <Box
         component="iframe"
         ref={iframeRef}

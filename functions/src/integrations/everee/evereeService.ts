@@ -881,6 +881,94 @@ export async function updateEvereeWorkerPersonalInfo(input: {
   return evereeRequest<unknown>(config, 'PUT', path, { dateOfBirth: input.dateOfBirth });
 }
 
+export interface WorkerBankAccountInput {
+  bankName: string;
+  accountName: string;
+  accountType: 'CHECKING' | 'SAVINGS';
+  /** Exactly 9 digits; caller must have already passed ABA checksum validation. */
+  routingNumber: string;
+  /** Digits only. */
+  accountNumber: string;
+}
+
+/**
+ * ABA routing-number checksum (3-7-1 weighting). Catches typos before the
+ * digits ever leave our process — a bad routing number that reaches Everee
+ * becomes a failed payment weeks later.
+ */
+export function isValidAbaRoutingNumber(routingNumber: string): boolean {
+  if (!/^\d{9}$/.test(routingNumber)) return false;
+  const d = routingNumber.split('').map(Number);
+  const sum = 3 * (d[0] + d[3] + d[6]) + 7 * (d[1] + d[4] + d[7]) + (d[2] + d[5] + d[8]);
+  return sum % 10 === 0 && sum > 0;
+}
+
+/**
+ * PUT a worker's default direct-deposit bank account
+ * (`/integration/v1/workers/{id}/bank-accounts/default`).
+ *
+ * **Shrunken-widget keystone (verified in sandbox 2320, 2026-08-28):** this
+ * endpoint works while the worker is still in onboarding, and a bank account
+ * on file makes the embedded ONBOARDING widget SKIP its "Add payment method"
+ * step entirely (contractor walk reached "Success!" without ever seeing a
+ * payment screen). HRX collects bank details natively, pushes them here
+ * before minting the session, and the widget shrinks to SSN + tax forms.
+ *
+ * ☠️ PII: the account/routing numbers transit this process in memory only.
+ * NEVER log the body, and never persist it — callers store at most the
+ * last-4 that Everee's own worker record echoes back. Errors from
+ * `evereeRequest` may quote submitted values in the response text, so catch
+ * and sanitize before logging/rethrowing.
+ */
+export async function updateWorkerDefaultBankAccount(input: {
+  tenantId: string;
+  entityId: string;
+  /** Everee canonical worker UUID (NOT the HRX uid). */
+  evereeWorkerId: string;
+  bankAccount: WorkerBankAccountInput;
+}): Promise<{ ok: boolean; error?: string }> {
+  const config = await getEvereeConfigForEntity(input.tenantId, input.entityId);
+  if (!config) {
+    return { ok: false, error: `No Everee config for entity ${input.entityId}` };
+  }
+  const b = input.bankAccount;
+  if (!b.bankName.trim() || !b.accountName.trim()) {
+    return { ok: false, error: 'Bank name and account holder name are required' };
+  }
+  if (b.accountType !== 'CHECKING' && b.accountType !== 'SAVINGS') {
+    return { ok: false, error: 'Account type must be checking or savings' };
+  }
+  if (!isValidAbaRoutingNumber(b.routingNumber)) {
+    return { ok: false, error: 'Routing number failed validation (9 digits, ABA checksum)' };
+  }
+  if (!/^\d{4,17}$/.test(b.accountNumber)) {
+    return { ok: false, error: 'Account number must be 4-17 digits' };
+  }
+  const path = `/integration/v1/workers/${encodeURIComponent(input.evereeWorkerId)}/bank-accounts/default`;
+  try {
+    await evereeRequest<unknown>(config, 'PUT', path, {
+      bankName: b.bankName.trim(),
+      accountName: b.accountName.trim(),
+      accountType: b.accountType,
+      routingNumber: b.routingNumber,
+      accountNumber: b.accountNumber,
+    });
+    return { ok: true };
+  } catch (e: unknown) {
+    // Sanitize: keep only the HTTP status; the response text may echo the
+    // submitted digits.
+    const msg = e instanceof Error ? e.message : String(e);
+    const status = /:\s*(\d{3})\b/.exec(msg)?.[1] ?? 'unknown';
+    logger.warn('[everee.bankAccount] PUT failed', {
+      tenantId: input.tenantId,
+      entityId: input.entityId,
+      evereeWorkerId: input.evereeWorkerId,
+      httpStatus: status,
+    });
+    return { ok: false, error: `Everee rejected the bank account (HTTP ${status})` };
+  }
+}
+
 /** Create an Everee Embed Component session (short-lived URL for iframe / WebView). */
 export async function createOnboardingSession(input: CreateOnboardingSessionInput): Promise<{
   url: string;
