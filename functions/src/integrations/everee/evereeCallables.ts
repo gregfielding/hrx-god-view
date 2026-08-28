@@ -1371,6 +1371,28 @@ export const evereeAdminClearStaleStamps = onCall(async (request) => {
   }
 });
 
+/**
+ * ☠️ Recursively strip full-TIN fields from an Everee payload before it
+ * leaves the server (found 2026-08-28: `GET /api/v2/workers/{id}` returns
+ * the worker's FULL 9-digit `taxpayerIdentifier`, and this callable used to
+ * forward the record verbatim — full SSNs were reaching admin browsers in
+ * the network payload). `taxpayerIdentifierLast4` survives; every key named
+ * like a full TIN is dropped wherever it nests (w9-info gets the same
+ * treatment defensively). The UI only ever renders last-4.
+ */
+function scrubFullTinDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(scrubFullTinDeep);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (/^(taxpayerIdentifier|ssn|tin|socialSecurityNumber)$/i.test(k)) continue;
+      out[k] = scrubFullTinDeep(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 export const evereeAdminGetWorker = onCall(async (request) => {
   requireAuth(request);
   const d = request.data as Record<string, unknown> | null;
@@ -1414,7 +1436,12 @@ export const evereeAdminGetWorker = onCall(async (request) => {
         });
       }
     }
-    return { ok: true as const, evereeWorkerId, evereeTenantId: config.evereeTenantId, response };
+    return {
+      ok: true as const,
+      evereeWorkerId,
+      evereeTenantId: config.evereeTenantId,
+      response: scrubFullTinDeep(response),
+    };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     logger.error('[evereeAdminGetWorker] failed', {
@@ -1522,7 +1549,7 @@ export const evereeAdminGetWorkerW9 = onCall(async (request) => {
       'GET',
       `/api/v2/workers/${encodeURIComponent(evereeWorkerId)}/w9-info`,
     );
-    return { ok: true as const, applicable: true as const, response };
+    return { ok: true as const, applicable: true as const, response: scrubFullTinDeep(response) };
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     const status = parseEvereeErrorStatus(message);
