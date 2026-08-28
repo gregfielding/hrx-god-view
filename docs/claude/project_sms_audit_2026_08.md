@@ -88,3 +88,26 @@ P0+P1 ≈ −40% volume and kills every complaint pattern.
 Watch after ship: typeDailyCaps counters growing (each doc is tiny;
 consider a TTL cleanup later); recruiters may notice bulk re-blasts
 capped at 3/day per worker — that is intended.
+
+## Payroll "action needed" category (2026-08-28, shipped)
+
+Two new message types, registered EXEMPT with 1/day caps in
+`messaging/rateLimiter.ts`: `payroll_payment_returned` (deposit bounced /
+bank info invalid → deep link to /c1/workers/payroll-settings) and
+`payroll_setup_blocking_pay` (payment ERRORED for missing SSN → deep link
+to the worker's Earnings step). Sent by `runPayrollPaymentIssueSweep`
+(functions/src/payroll/payrollPaymentIssueSweep.ts), an hourly
+`scheduledOrchestrator` subtask self-gated to every 6h — Twilio secrets
+are now bound on scheduledOrchestrator for this. Doctrine: **Everee owns
+good-news payment notifications (never duplicate); HRX owns action-needed**
+(observed: workers sat on returned deposits for a month under Everee's
+email-only notice). Guardrails: per-payment max 3 reminders 5 days apart,
+one-worker-one-cadence across multiple stuck payments, auto-resolve when
+the payment clears (Everee retries deposits itself once the account is
+fixed). State/ops queue: `tenants/{t}/payroll_payment_issues` (status
+open/resolved, notifySkipReason for no_phone / no_user_doc — e.g. legacy
+imports whose Everee externalWorkerId is a NAME, not a uid: Aitiana Garza).
+Detection signals live in `payHistory/mapPayments.ts#derivePaymentIssue`
+(same source as the worker-facing fix-your-deposit banner on Earnings/Pay
+history — also shipped 2026-08-28, along with the rollup fix where bounced
+deposits previously showed workers a green "Paid" chip).
