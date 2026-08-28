@@ -193,6 +193,7 @@ function coerceEmbedExperienceVersion(value: unknown): string | undefined {
 import { getEvereeConfigForEntity, requireEvereeEnabledEntity } from './evereeConfig';
 import { evereeRequest } from './evereeHttp';
 import { updateEvereeWorkerAddress } from './evereeService';
+import { reconcileWorkerInternal } from './evereeReconcileWorker';
 import { getFirestore } from 'firebase-admin/firestore';
 
 function requireAuth(request: { auth?: { uid: string; token?: Record<string, unknown> } | null }) {
@@ -623,6 +624,18 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
     bankPush = result.ok
       ? { ok: true, last4: bankAccount.accountNumber.slice(-4) }
       : { ok: false, error: result.error };
+    if (result.ok) {
+      // Fire-and-forget mirror refresh so the Payroll hub's setup checklist
+      // shows the direct-deposit checkmark immediately instead of waiting
+      // for the 2h reconcile cron (2026-08-28 checklist build).
+      void reconcileWorkerInternal({
+        tenantId,
+        entityId,
+        userId,
+        evereeWorkerId,
+        syncSource: 'embed',
+      }).catch(() => undefined);
+    }
     logger.info('[evereeCreateOnboardingSession] bank pre-push', {
       tenantId,
       entityId,
@@ -1438,6 +1451,15 @@ export const evereeAdminGetWorker = onCall(async (request) => {
       },
     });
     bankUpdate = result.ok ? { ok: true } : { ok: false, error: result.error };
+    if (result.ok) {
+      void reconcileWorkerInternal({
+        tenantId,
+        entityId,
+        userId: targetUserId,
+        evereeWorkerId,
+        syncSource: 'manual',
+      }).catch(() => undefined);
+    }
     logger.info('[evereeAdminGetWorker] bank write-through', {
       tenantId,
       entityId,

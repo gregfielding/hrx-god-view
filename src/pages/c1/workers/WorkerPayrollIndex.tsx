@@ -253,7 +253,9 @@ const WorkerPayrollIndex: React.FC = () => {
    *  linkage docs — drives the tax-forms-vs-finish-setup card labels
    *  (2026-08-28 Payroll-hub IA). Absent/unknown status → treated as NOT
    *  complete, which shows the safer "Finish payroll setup" label. */
-  const [onboardingDoneByTid, setOnboardingDoneByTid] = useState<Record<string, boolean>>({});
+  const [setupByTid, setSetupByTid] = useState<
+    Record<string, { done: boolean; ssnOk: boolean; bankOk: boolean }>
+  >({});
   useEffect(() => {
     if (!uid || !scopeTenantId) return;
     let cancelled = false;
@@ -265,18 +267,35 @@ const WorkerPayrollIndex: React.FC = () => {
             where('firebaseUid', '==', uid),
           ),
         );
-        const next: Record<string, boolean> = {};
+        const next: Record<string, { done: boolean; ssnOk: boolean; bankOk: boolean }> = {};
         snap.docs.forEach((d) => {
-          const data = d.data() as { evereeTenantId?: string | number; status?: string };
+          const data = d.data() as {
+            evereeTenantId?: string | number;
+            status?: string;
+            readinessMirror?: {
+              taxpayerIdentifierLast4?: string | null;
+              bankAccountCount?: number;
+              directDepositReady?: boolean;
+            };
+          };
           const tid =
             typeof data.evereeTenantId === 'number'
               ? String(data.evereeTenantId)
               : String(data.evereeTenantId ?? '').trim();
           if (!tid) return;
           const st = String(data.status ?? '').toLowerCase();
-          next[tid] = st === 'onboarding_complete' || st === 'complete' || st === 'completed';
+          const m = data.readinessMirror ?? {};
+          next[tid] = {
+            done: st === 'onboarding_complete' || st === 'complete' || st === 'completed',
+            // Checklist signals from the readiness mirror (refreshed by the 2h
+            // reconcile cron, webhooks, and immediately after our own bank
+            // pushes). w4/w9 stamps are unreliable in prod, so the tax-forms
+            // step derives from overall completion instead.
+            ssnOk: Boolean(String(m.taxpayerIdentifierLast4 ?? '').trim()),
+            bankOk: (m.bankAccountCount ?? 0) > 0 || m.directDepositReady === true,
+          };
         });
-        if (!cancelled) setOnboardingDoneByTid(next);
+        if (!cancelled) setSetupByTid(next);
       } catch {
         /* labels fall back to "Finish payroll setup" */
       }
@@ -457,13 +476,25 @@ const WorkerPayrollIndex: React.FC = () => {
               // mid-onboarding the embedded step is the blocking setup (SSN +
               // tax forms); once complete it's the tax-forms surface (W-4
               // changes, year-end docs). Entity name stays as the caption.
-              const done = onboardingDoneByTid[tid] === true;
+              const setup = setupByTid[tid];
+              const done = setup?.done === true;
               const title = !done
                 ? t('earnings.finishSetupCard')
                 : info
                   ? t(info.kind === 'contractor' ? 'earnings.contractorTaxForms' : 'earnings.w2TaxForms')
                   : `Payroll · ${tid}`;
               const caption = info?.label ?? null;
+              // Setup checklist (2026-08-28): SSN + bank are observable live
+              // from the readiness mirror; the final in-widget pass (tax
+              // forms + signatures) reads pending until overall completion.
+              const steps = !done
+                ? [
+                    { label: t('earnings.stepSsn'), ok: setup?.ssnOk === true },
+                    { label: t('earnings.stepBank'), ok: setup?.bankOk === true },
+                    { label: t('earnings.stepTaxForms'), ok: false },
+                  ]
+                : [];
+              const stepsLeft = steps.filter((st) => !st.ok).length;
               return (
                 <Card key={tid} variant="outlined">
                   <CardActionArea
@@ -477,6 +508,24 @@ const WorkerPayrollIndex: React.FC = () => {
                       <Typography variant="caption" color="text.secondary" display="block">
                         {caption}
                       </Typography>
+                    ) : null}
+                    {!done ? (
+                      <Box sx={{ mt: 1 }}>
+                        {steps.map((step) => (
+                          <Typography
+                            key={step.label}
+                            variant="body2"
+                            sx={{ color: step.ok ? 'success.main' : 'text.secondary', lineHeight: 1.8 }}
+                          >
+                            {step.ok ? '✓' : '○'} {step.label}
+                          </Typography>
+                        ))}
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                          {`${steps.length - stepsLeft}/${steps.length} · ${
+                            stepsLeft >= 3 ? t('earnings.setupTimeLong') : t('earnings.setupTimeShort')
+                          }`}
+                        </Typography>
+                      </Box>
                     ) : null}
                   </CardActionArea>
                 </Card>
