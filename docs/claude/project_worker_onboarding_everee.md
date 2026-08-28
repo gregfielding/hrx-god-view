@@ -43,6 +43,18 @@
 >   `shrinktest_1099_20260828` (1099, completed). Scratch: `.scratch/shrink-*.ts` + scratchpad
 >   `harness.html`.
 >
+> **Last-4 SSN: already Everee-sourced (2026-08-21) + full-TIN leak fixed (2026-08-28).** The
+> wizard stopped asking last-4 on 2026-08-21; `evereeReconcileWorker` stamps
+> `users/{uid}.last4SSN` from the worker record's `taxpayerIdentifierLast4` once payroll
+> onboarding completes (`taxIdentity.source: 'everee'`), and the recruiter payroll panel reads
+> the live value. ☠️ While verifying that path: `GET /api/v2/workers/{id}` returns the FULL
+> 9-digit `taxpayerIdentifier` (and `/integration/v1/workers/{id}` does too) — and
+> `evereeAdminGetWorker` was forwarding the record verbatim, so full SSNs were reaching admin
+> browsers in the network payload. Fixed 2026-08-28 (commit 7bc205ad): `scrubFullTinDeep`
+> strips every full-TIN key server-side on evereeAdminGetWorker + evereeAdminGetWorkerW9;
+> last-4 survives. Any future code touching those Everee worker endpoints MUST scrub before
+> returning to a client.
+>
 > **Architecture direction (Greg, 2026-08-28): SHRUNKEN WIDGET, not full native.** Push everything
 > we can by API so the ONBOARDING widget collapses to one short step (SSN + W-4/W-9) and Everee
 > keeps the compliance surface. Deciding facts: SSN is settable ONLY at complete-record create —
