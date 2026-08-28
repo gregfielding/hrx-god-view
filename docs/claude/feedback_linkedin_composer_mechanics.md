@@ -59,6 +59,13 @@ coordinates keep alternating. The upside: the right-hand pane shows the
 previous contact's message with its delivery timestamp, so **each batch
 confirms the previous send for free** — no separate verification pass needed.
 
+**Closing it is not optional (2026-08-28).** Skipping the close sent contact
+N's message into contact N−1's still-open composer — Katelin Markham received a
+note addressed "Hi Keith". The text goes to the wrong person and *sends*; there
+is no undo. Close the previous composer before every new Message click, and if
+it does happen, send a one-line correction in that thread immediately rather
+than leaving it.
+
 ## The urn shortcut is dead
 
 Navigating straight to `/messaging/thread/new/?recipient=<urn>` would give one
