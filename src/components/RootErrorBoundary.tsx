@@ -19,6 +19,27 @@ const isChunkLoadError = (error: Error): boolean =>
 
 const CHUNK_RELOAD_KEY = 'hrx_chunk_reload_at';
 
+/**
+ * ☠️ Cache-poisoning repair (2026-08-28): Firebase matches header rules on
+ * the REQUEST path, so a missing /static/js chunk gets served index.html
+ * by the SPA rewrite WITH the /static/** `max-age=31536000, immutable`
+ * header — the browser then caches HTML as that chunk for a year and a
+ * plain reload can never fix it. Before reloading, force-revalidate the
+ * failing chunk URL (`cache: 'reload'` replaces the poisoned HTTP-cache
+ * entry), then reload the shell.
+ */
+async function repairPoisonedChunkAndReload(error: Error): Promise<void> {
+  try {
+    const urls = error.message.match(/https?:\/\/[^\s()]+\.js/g) ?? [];
+    await Promise.all(
+      urls.slice(0, 3).map((u) => fetch(u, { cache: 'reload', credentials: 'omit' }).catch(() => undefined)),
+    );
+  } catch {
+    // best effort — the reload below still helps for plain stale shells
+  }
+  window.location.reload();
+}
+
 const shouldAutoReload = (): boolean => {
   try {
     const last = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) || 0);
@@ -45,7 +66,7 @@ export class RootErrorBoundary extends Component<Props, State> {
     console.error('[RootErrorBoundary]', error, info.componentStack);
     if (isChunkLoadError(error) && shouldAutoReload()) {
       this.setState({ autoReloading: true });
-      window.location.reload();
+      void repairPoisonedChunkAndReload(error);
     }
   }
 
@@ -93,7 +114,14 @@ export class RootErrorBoundary extends Component<Props, State> {
               If this appeared right after a release, try a hard refresh (Shift+Reload) or clear site data for
               this domain, then reload. Stale cached HTML can point at old JavaScript files.
             </Typography>
-            <Button variant="contained" onClick={() => window.location.reload()}>
+            <Button
+              variant="contained"
+              onClick={() => {
+                const err = this.state.error;
+                if (err && isChunkLoadError(err)) void repairPoisonedChunkAndReload(err);
+                else window.location.reload();
+              }}
+            >
               Reload page
             </Button>
           </Paper>
