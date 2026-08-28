@@ -31,6 +31,9 @@ export interface RawPayment {
   /** Lifecycle / approval / deposit status fields — Everee surfaces all
    *  three and the recruiter needs a single rollup. */
   status?: string;
+  /** Structured failure on ERRORED payments (e.g. INVALID_BANK_ACCOUNT,
+   *  MISSING_TAX_PAYER_IDENTIFIER). */
+  error?: { type?: string } | null;
   queryStatus?: string;
   depositStatus?: string;
   /** Nested employee object — carries the HRX uid in
@@ -123,7 +126,32 @@ function mapOne(p: RawPayment): EvereePayHistoryItem {
     net: round2(net || gross),
     currency,
     status: rollupPaymentStatus(p),
+    issue: derivePaymentIssue(p),
   };
+}
+
+/**
+ * Worker-fixable payment problems (2026-08-28, from the Returned Payments
+ * audit — real values observed in prod):
+ *  - `status=ERRORED` + `error.type=INVALID_BANK_ACCOUNT` → payment never
+ *    processed; direct-deposit info invalid.
+ *  - `status=ERRORED` + `error.type=MISSING_TAX_PAYER_IDENTIFIER` → payroll
+ *    setup (SSN) never finished.
+ *  - `depositStatus=FAILED/RETURNED/ERROR` → the deposit was attempted and
+ *    bounced ("No Account" / "Credit Refused by Receiver" in Everee's UI —
+ *    usually a wrong account or routing number).
+ */
+export function derivePaymentIssue(
+  p: RawPayment,
+): 'bank_invalid' | 'missing_tin' | 'deposit_returned' | null {
+  const errType = String(p.error?.type ?? '').toUpperCase();
+  if (errType === 'INVALID_BANK_ACCOUNT') return 'bank_invalid';
+  if (errType === 'MISSING_TAX_PAYER_IDENTIFIER') return 'missing_tin';
+  const deposit = (p.depositStatus ?? '').toUpperCase();
+  if (deposit === 'FAILED' || deposit === 'RETURNED' || deposit === 'ERROR') {
+    return 'deposit_returned';
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -152,9 +180,12 @@ export function rollupPaymentStatus(p: RawPayment): string {
   const query = (p.queryStatus ?? '').toUpperCase();
   const status = (p.status ?? '').toUpperCase();
 
-  if (deposit === 'PAID') return 'PAID';
+  if (deposit === 'PAID' || deposit === 'DEPOSITED') return 'PAID';
   if (deposit === 'ERROR') return 'ERROR';
-  if (deposit === 'RETURNED') return 'RETURNED';
+  // FAILED is what prod actually returns for a bounced deposit (observed
+  // 2026-08-28); pre-fix these rolled all the way through to status=PAID
+  // and the worker saw a green "Paid" chip on money they never received.
+  if (deposit === 'RETURNED' || deposit === 'FAILED') return 'RETURNED';
 
   // Worker-level error from approval pipeline — surfaces UNPAYABLE
   // chip even when depositStatus is still NONE.

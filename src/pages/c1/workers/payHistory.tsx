@@ -26,6 +26,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
 import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
+import PaymentIssueBanner from '../../../components/worker/PaymentIssueBanner';
 import {
   USD,
   useWorkerEmployerLinkages,
@@ -222,6 +223,7 @@ const WorkerPayHistoryPage: React.FC = () => {
   return (
     <Box>
       <WorkerPageHeader title={t('earnings.payHistoryTitle')} backTo="/c1/workers/earnings" />
+      <PaymentIssueBanner rows={rows} />
 
       {linkages.length > 1 && (
         <Stack direction="row" spacing={1} sx={{ mb: 2 }} useFlexGap flexWrap="wrap">

@@ -40,6 +40,7 @@ import {
   resolvePayrollWorkerKind,
   type PayrollWorkerKind,
 } from '../../../utils/payrollEntityDisplay';
+import PaymentIssueBanner from '../../../components/worker/PaymentIssueBanner';
 
 interface EvereeEntityInfo {
   label: string;
@@ -296,6 +297,7 @@ const WorkerPayrollIndex: React.FC = () => {
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>
         {t('earnings.chooseEmployer')}
       </Typography>
+      <PaymentIssueBanner rows={payRows} />
       {labelsLoading ? (
         <CircularProgress size={28} />
       ) : (

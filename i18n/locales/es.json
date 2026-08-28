@@ -1983,7 +1983,13 @@
     "noPayments": "Aún no hay pagos.",
     "statementError": "No se pudo cargar este comprobante — inténtalo de nuevo.",
     "w2Title": "Empleado W-2",
-    "contractorTitle": "Contratista independiente"
+    "contractorTitle": "Contratista independiente",
+    "issueDepositTitle": "No se pudo depositar un pago",
+    "issueDepositBody": "Tu banco devolvió un pago reciente. Verifica tu número de ruta y de cuenta; una vez corregidos, el depósito se reintenta automáticamente.",
+    "issueFixDepositCta": "Corregir depósito directo",
+    "issueSetupTitle": "Termina la configuración de nómina para recibir tu pago",
+    "issueSetupBody": "Un pago reciente no se pudo procesar porque tu configuración de nómina no está terminada.",
+    "issueFinishSetupCta": "Terminar configuración"
   },
   "payrollHelp": {
     "title": "Ayuda con la nómina",

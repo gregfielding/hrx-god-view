@@ -1983,7 +1983,13 @@
     "noPayments": "No payments yet.",
     "statementError": "Couldn't load this statement — please try again.",
     "w2Title": "W-2 Employee",
-    "contractorTitle": "Independent Contractor"
+    "contractorTitle": "Independent Contractor",
+    "issueDepositTitle": "A payment couldn't be deposited",
+    "issueDepositBody": "Your bank returned a recent payment. Double-check your routing and account number — once they're fixed, the deposit is retried automatically.",
+    "issueFixDepositCta": "Fix direct deposit",
+    "issueSetupTitle": "Finish payroll setup to get paid",
+    "issueSetupBody": "A recent payment couldn't be processed because your payroll setup isn't finished.",
+    "issueFinishSetupCta": "Finish setup"
   },
   "payrollHelp": {
     "title": "Payroll help",

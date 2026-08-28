@@ -28,6 +28,9 @@ export interface PayHistoryRow {
   gross: number | null;
   net: number | null;
   status: string | null;
+  /** Worker-fixable payment problem from the server mapper (2026-08-28):
+   *  'bank_invalid' | 'missing_tin' | 'deposit_returned' | null. */
+  issue: string | null;
   employerLabel: string;
   entityId: string;
   evereeTenantId: string;
@@ -137,6 +140,7 @@ export function useWorkerPayHistory(
                 gross: typeof it.gross === 'number' ? it.gross : null,
                 net: typeof it.net === 'number' ? it.net : null,
                 status: (it.status as string) ?? null,
+                issue: (it.issue as string) ?? null,
                 employerLabel: l.label,
                 entityId: l.entityId,
                 evereeTenantId: l.evereeTenantId,
