@@ -73,6 +73,12 @@ export interface EvereeReadinessMirrorLike {
   // ── I-9 (W-2 only) ──
   i9SignedAt: unknown | null;
   i9Applicable: boolean;
+  /** WorkBright I-9 pipeline docs present (mirrored from Everee's
+   *  `/onboarding-status`). Since 2026-08-28 the Everee widget no longer
+   *  collects I-9 for C1 Select (WorkBright owns it), so this is the
+   *  primary I-9 signal for new W-2 workers; `i9SignedAt` covers the
+   *  pre-toggle cohort. Optional: older mirror snapshots lack it. */
+  hasWorkbrightDocs?: boolean;
 
   // ── W-4 (W-2 only) ──
   w4SignedAt: unknown | null;
@@ -114,7 +120,12 @@ export function mapI9WorkerStatus(
   mirror: EvereeReadinessMirrorLike,
 ): EmployeeReadinessItemStatus {
   if (!mirror.i9Applicable) return 'not_applicable';
-  return mirror.i9SignedAt != null ? 'complete_pass' : 'incomplete';
+  // Either source satisfies Section 1: Everee's in-widget I-9 (pre-2026-08-28
+  // cohort, before the C1 Select toggle was turned off) or the WorkBright
+  // pipeline (the system of record going forward).
+  return mirror.i9SignedAt != null || mirror.hasWorkbrightDocs === true
+    ? 'complete_pass'
+    : 'incomplete';
 }
 
 /**
