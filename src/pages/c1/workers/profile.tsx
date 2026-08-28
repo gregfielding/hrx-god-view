@@ -424,6 +424,39 @@ const WorkerProfile: React.FC = () => {
         ) : null}
         */}
 
+        {/* Payroll (2026-08-28) — the fields we pulled out of the Everee
+            widget live natively (direct deposit), the rest (SSN, tax forms)
+            link into the secure Everee step via Earnings. */}
+        <Card variant="outlined" sx={{ borderColor: 'divider' }}>
+          <CardContent sx={{ p: 0 }}>
+            <Typography variant="subtitle1" sx={{ px: 2, py: 1.5 }}>{t('workerAccount.sectionPayroll')}</Typography>
+            <Divider />
+            <List disablePadding>
+              <ListItemButton onClick={() => navigate('/c1/workers/payroll-settings')}>
+                <ListItemText
+                  primary={t('profile.sectionDirectDepositTitle')}
+                  secondary={t('profile.sectionDirectDepositDescription')}
+                />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/earnings')}>
+                <ListItemText
+                  primary={t('profile.sectionSsnTaxTitle')}
+                  secondary={t('profile.sectionSsnTaxDescription')}
+                />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/pay-history')}>
+                <ListItemText
+                  primary={t('profile.sectionPayDocsTitle')}
+                  secondary={t('profile.sectionPayDocsDescription')}
+                />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+            </List>
+          </CardContent>
+        </Card>
+
         <Card variant="outlined" sx={{ borderColor: 'divider' }}>
           <CardContent sx={{ p: 0 }}>
             <Typography variant="subtitle1" sx={{ px: 2, py: 1.5 }}>{t('workerAccount.sectionDocuments')}</Typography>
@@ -433,13 +466,6 @@ const WorkerProfile: React.FC = () => {
                 <ListItemText
                   primary={t('profile.sectionMyDocumentsTitle')}
                   secondary={t('profile.sectionMyDocumentsDescription')}
-                />
-                <ChevronRightIcon color="action" />
-              </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/earnings')}>
-                <ListItemText
-                  primary={t('profile.sectionPayDocsTitle')}
-                  secondary={t('profile.sectionPayDocsDescription')}
                 />
                 <ChevronRightIcon color="action" />
               </ListItemButton>

@@ -27,13 +27,8 @@ import {
   CardHeader,
   Chip,
   CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
   Divider,
   Link as MuiLink,
-  MenuItem,
   Skeleton,
   Snackbar,
   Stack,
@@ -42,7 +37,6 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  TextField,
   Typography,
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -65,7 +59,7 @@ import {
 } from '../../../../services/everee/evereeCallables';
 import { assertEvereeWorkerIdMatch } from '../../../../utils/everee/assertEvereeWorkerIdMatch';
 import { formatFirebaseHttpsError } from '../../../../utils/firebaseHttpsErrors';
-import { isValidAbaRoutingNumber } from '../../../../utils/abaRouting';
+import ReplaceBankAccountDialog from '../../../../components/everee/ReplaceBankAccountDialog';
 import {
   formatBankAllocation,
   formatDocumentTypeColor,
@@ -444,88 +438,10 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
   const [w4Result, setW4Result] = useState<EvereeAdminGetWorkerTaxFormResult | null>(null);
   const [w4Loading, setW4Loading] = useState<boolean>(true);
 
-  // Replace-bank-account dialog (2026-08-28). Values live only in this form
-  // state for the dialog's lifetime; on submit they ride the
-  // `evereeAdminGetWorker` write-through once and are cleared — never
-  // persisted anywhere in HRX.
+  // Replace-bank-account dialog (2026-08-28) — shared component; see
+  // src/components/everee/ReplaceBankAccountDialog.tsx for the PII handling.
   const [bankDialogOpen, setBankDialogOpen] = useState<boolean>(false);
-  const [bankForm, setBankForm] = useState({
-    bankName: '',
-    accountName: '',
-    accountType: 'CHECKING' as 'CHECKING' | 'SAVINGS',
-    routingNumber: '',
-    accountNumber: '',
-    confirmAccountNumber: '',
-  });
-  const [bankSaving, setBankSaving] = useState<boolean>(false);
-  const [bankDialogError, setBankDialogError] = useState<string>('');
   const [bankSavedSnackOpen, setBankSavedSnackOpen] = useState<boolean>(false);
-
-  const closeBankDialog = () => {
-    setBankDialogOpen(false);
-    setBankDialogError('');
-    setBankForm({
-      bankName: '',
-      accountName: '',
-      accountType: 'CHECKING',
-      routingNumber: '',
-      accountNumber: '',
-      confirmAccountNumber: '',
-    });
-  };
-
-  const submitBankDialog = async () => {
-    const routing = bankForm.routingNumber.replace(/\D/g, '');
-    const account = bankForm.accountNumber.replace(/\D/g, '');
-    if (!bankForm.bankName.trim() || !bankForm.accountName.trim() || !routing || !account) {
-      setBankDialogError('Please fill in every field.');
-      return;
-    }
-    if (!isValidAbaRoutingNumber(routing)) {
-      setBankDialogError('That routing number fails the ABA checksum — double-check it.');
-      return;
-    }
-    if (!/^\d{4,17}$/.test(account)) {
-      setBankDialogError('Account number should be 4–17 digits.');
-      return;
-    }
-    if (account !== bankForm.confirmAccountNumber.replace(/\D/g, '')) {
-      setBankDialogError('Account numbers do not match.');
-      return;
-    }
-    setBankDialogError('');
-    setBankSaving(true);
-    try {
-      const res = await evereeAdminGetWorker({
-        tenantId,
-        entityId,
-        evereeWorkerId,
-        userId,
-        setDefaultBankAccount: {
-          bankName: bankForm.bankName.trim(),
-          accountName: bankForm.accountName.trim(),
-          accountType: bankForm.accountType,
-          routingNumber: routing,
-          accountNumber: account,
-        },
-      });
-      const data = res.data as EvereeAdminGetWorkerResult;
-      if (data?.bankUpdate?.ok === false) {
-        setBankDialogError(data.bankUpdate.error || 'Everee rejected the bank account.');
-        return;
-      }
-      setWorker(pickWorker(data?.response));
-      setBankSavedSnackOpen(true);
-      closeBankDialog();
-    } catch (err: unknown) {
-      setBankDialogError(
-        formatFirebaseHttpsError(err) ||
-          (err instanceof Error ? err.message : 'Could not update the bank account.'),
-      );
-    } finally {
-      setBankSaving(false);
-    }
-  };
 
   useEffect(() => {
     let cancelled = false;
@@ -939,98 +855,19 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
             Bank account updated in Everee.
           </Alert>
         </Snackbar>
-        <Dialog open={bankDialogOpen} onClose={bankSaving ? undefined : closeBankDialog} fullWidth maxWidth="xs">
-          <DialogTitle>
-            {bankAccounts.length === 0 ? 'Add bank account' : 'Replace bank account'}
-          </DialogTitle>
-          <DialogContent>
-            <Stack spacing={2} sx={{ mt: 0.5 }}>
-              <TextField
-                label="Bank name"
-                value={bankForm.bankName}
-                onChange={(e) => setBankForm((f) => ({ ...f, bankName: e.target.value }))}
-                fullWidth
-                size="small"
-              />
-              <TextField
-                label="Name on the account"
-                value={bankForm.accountName}
-                onChange={(e) => setBankForm((f) => ({ ...f, accountName: e.target.value }))}
-                fullWidth
-                size="small"
-              />
-              <TextField
-                select
-                label="Account type"
-                value={bankForm.accountType}
-                onChange={(e) =>
-                  setBankForm((f) => ({
-                    ...f,
-                    accountType: e.target.value === 'SAVINGS' ? 'SAVINGS' : 'CHECKING',
-                  }))
-                }
-                fullWidth
-                size="small"
-              >
-                <MenuItem value="CHECKING">Checking</MenuItem>
-                <MenuItem value="SAVINGS">Savings</MenuItem>
-              </TextField>
-              <TextField
-                label="Routing number (9 digits)"
-                value={bankForm.routingNumber}
-                onChange={(e) =>
-                  setBankForm((f) => ({
-                    ...f,
-                    routingNumber: e.target.value.replace(/[^\d]/g, '').slice(0, 9),
-                  }))
-                }
-                fullWidth
-                size="small"
-                inputProps={{ inputMode: 'numeric', autoComplete: 'off' }}
-              />
-              <TextField
-                label="Account number"
-                value={bankForm.accountNumber}
-                onChange={(e) =>
-                  setBankForm((f) => ({
-                    ...f,
-                    accountNumber: e.target.value.replace(/[^\d]/g, '').slice(0, 17),
-                  }))
-                }
-                fullWidth
-                size="small"
-                inputProps={{ inputMode: 'numeric', autoComplete: 'off' }}
-              />
-              <TextField
-                label="Confirm account number"
-                value={bankForm.confirmAccountNumber}
-                onChange={(e) =>
-                  setBankForm((f) => ({
-                    ...f,
-                    confirmAccountNumber: e.target.value.replace(/[^\d]/g, '').slice(0, 17),
-                  }))
-                }
-                fullWidth
-                size="small"
-                inputProps={{ inputMode: 'numeric', autoComplete: 'off' }}
-              />
-              {bankDialogError ? <Alert severity="warning">{bankDialogError}</Alert> : null}
-              <Typography variant="caption" color="text.secondary">
-                Sent directly to Everee over an encrypted connection — HRX never stores these
-                numbers. This becomes the worker&apos;s default direct-deposit account, and any
-                not-yet-approved payments reroute to it.
-              </Typography>
-            </Stack>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={closeBankDialog} disabled={bankSaving}>
-              Cancel
-            </Button>
-            <Button variant="contained" onClick={() => void submitBankDialog()} disabled={bankSaving}>
-              {bankSaving ? 'Saving…' : 'Save to Everee'}
-            </Button>
-          </DialogActions>
-        </Dialog>
+        <ReplaceBankAccountDialog
+          open={bankDialogOpen}
+          onClose={() => setBankDialogOpen(false)}
+          tenantId={tenantId}
+          entityId={entityId}
+          evereeWorkerId={evereeWorkerId}
+          userId={userId}
+          hasExistingAccount={bankAccounts.length > 0}
+          onSaved={(resp) => {
+            setWorker(pickWorker(resp));
+            setBankSavedSnackOpen(true);
+          }}
+        />
         {workerLoading ? (
           <Stack spacing={1}>
             <Skeleton variant="text" width="40%" />

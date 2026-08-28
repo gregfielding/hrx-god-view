@@ -63,7 +63,8 @@
     "screeningPageSubtitle": "Background checks, employment verification, and related checks for your assignments. This page is read-only; your hiring team may contact you with next steps.",
     "screeningSignInPrompt": "Sign in to view your hiring progress.",
     "screeningSelectWorkspace": "Select a workspace to view pre-employment checks.",
-    "sectionDocuments": "Documents"
+    "sectionDocuments": "Documents",
+    "sectionPayroll": "Payroll"
   },
   "workerEmploymentHub": {
     "statusNotStarted": "Not started",
@@ -876,7 +877,11 @@
     "aboutDeleteRequested": "Deletion requested — our team will contact you.",
     "aboutDeleteExplainer": "This sends a deletion request to our team. Records we are legally required to keep (like payroll and tax records) are retained for the required period; everything else is removed. We will confirm by text or email.",
     "aboutDeleteConfirm": "Request deletion",
-    "phoneSignInHelp": "You sign in with your mobile number — we text you a code. No password needed."
+    "phoneSignInHelp": "You sign in with your mobile number — we text you a code. No password needed.",
+    "sectionDirectDepositTitle": "Direct deposit",
+    "sectionDirectDepositDescription": "The bank account where your pay is deposited.",
+    "sectionSsnTaxTitle": "SSN & tax forms",
+    "sectionSsnTaxDescription": "Finish payroll setup or update tax info in the secure payroll portal."
   },
   "apply": {
     "availableShifts": "Available Shifts",
@@ -2040,5 +2045,36 @@
       "pushFailedContinue": "We couldn't save your bank account, so payroll setup will ask for it instead.",
       "privacy": "Your account details go directly to our payroll partner Everee over an encrypted connection. HRX ONE never stores them."
     }
+  },
+  "bankDialog": {
+    "addTitle": "Add bank account",
+    "replaceTitle": "Replace bank account",
+    "bankName": "Bank name",
+    "accountName": "Name on the account",
+    "accountType": "Account type",
+    "checking": "Checking",
+    "savings": "Savings",
+    "routingNumber": "Routing number (9 digits)",
+    "accountNumber": "Account number",
+    "confirmAccountNumber": "Confirm account number",
+    "requiredFields": "Please fill in every field.",
+    "routingInvalid": "That routing number doesn't look right — check it against a check or your banking app.",
+    "accountInvalid": "Account number should be 4–17 digits.",
+    "accountMismatch": "Account numbers don't match.",
+    "rejected": "The bank account couldn't be saved. Please check the numbers and try again.",
+    "privacy": "Your account details go directly to our payroll partner Everee over an encrypted connection. HRX ONE never stores them. Pending payments will go to the new account.",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving…"
+  },
+  "payrollSettings": {
+    "title": "Direct deposit",
+    "intro": "The bank account where your pay is deposited, for each employer.",
+    "noAccount": "No bank account on file yet.",
+    "bankFallback": "Bank account",
+    "blocked": "Deposits blocked",
+    "loadError": "Couldn't load your account details right now. Pull to refresh or try again later.",
+    "empty": "Payroll setup hasn't started yet — once you're hired, direct deposit appears here.",
+    "saved": "Bank account updated."
   }
 }

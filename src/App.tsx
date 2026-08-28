@@ -129,6 +129,7 @@ const WorkerPayrollEvereeTenant = lazy(() => import('./pages/c1/workers/WorkerPa
 const WorkerAiPrescreenPage = lazy(() => import('./pages/c1/workers/WorkerAiPrescreenPage'));
 const C1WorkerPayrollHelp = lazy(() => import('./pages/c1/workers/payrollHelp'));
 const C1WorkerPayHistory = lazy(() => import('./pages/c1/workers/payHistory'));
+const C1WorkerPayrollSettings = lazy(() => import('./pages/c1/workers/payrollSettings'));
 const PayrollTicketsPage = lazy(() => import('./pages/PayrollTicketsPage'));
 import OnboardingProfileForm from './components/OnboardingProfileForm';
 import OnboardingCompleteScreen from './components/OnboardingCompleteScreen';
@@ -631,6 +632,7 @@ function App() {
             <Route path="documents" element={<C1WorkerDocuments />} />
             <Route path="support" element={<WorkerSupport />} />
             <Route path="payroll-help" element={<C1WorkerPayrollHelp />} />
+            <Route path="payroll-settings" element={<WorkerRoute><C1WorkerPayrollSettings /></WorkerRoute>} />
             <Route path="pay-history" element={<WorkerRoute><C1WorkerPayHistory /></WorkerRoute>} />
             <Route path="pay-history/:evereeTenantId/:statementId" element={<WorkerRoute><C1WorkerPayHistory /></WorkerRoute>} />
             <Route path="payroll-help/:ticketId" element={<C1WorkerPayrollHelp />} />
