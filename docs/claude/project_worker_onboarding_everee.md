@@ -21,6 +21,28 @@
 >   in HRX; the rest reachable via the hub. `update-payment-preferences` documented but NOT
 >   integrated (bank changes post-switch need it or a kept embed).
 >
+> **SANDBOX TEST PASSED + v1 SHIPPED (2026-08-28, sandbox tenant 2320, walked live via a local
+> harness — MessageChannel port-transfer per hostMessageBridge is REQUIRED or the embed ignores
+> input/events):**
+> - **Step-skipping CONFIRMED**: 1099 contractor with bank PUT'd by API before first widget open
+>   walked payee-type → SSN+consent → personal info → W-9 → "Success!" — NO payment-method step;
+>   ended `onboardingComplete: true` with our pushed account as direct deposit.
+> - **Bank PUT works mid-onboarding** (both W-2 + 1099 test workers). **Pre-fill CONFIRMED**
+>   (name/DOB/address; contact-info step skipped entirely — DOB re-ask reports = legacy cohort).
+> - **ESIGN consent lives on the widget's SSN screen** (Everee ToS/privacy/e-records agreement).
+> - **☠️ "Tax forms" step = per-tenant DOCUMENTS ENGINE**: sandbox served full CA DE-4 (typed
+>   e-signature) AND a complete I-9 (Section 1 + Section 2 List A/B/C uploads). Document set is
+>   Everee tenant config → CHECK PROD Select 3133 / Events 3138 onboarding document sets in Everee
+>   admin; Select must not double-collect I-9 (WorkBright owns it).
+> - **Shipped v1 (commit 6356df0d)**: native bank-first card on WorkerPayrollEvereeTenant before
+>   the ONBOARDING embed mounts; details ride `evereeCreateOnboardingSession` (`bankAccount` input,
+>   `bankPush` result) in transit only — `updateWorkerDefaultBankAccount` in evereeService sanitizes
+>   errors (Everee 4xx text can echo submitted digits), ABA checksum both sides, cache-reuse is
+>   bypassed when a bank rides along. Push failure falls back to the widget's own bank step.
+> - Test workers left in sandbox: `shrinktest_20260828` (W-2, stopped at I-9),
+>   `shrinktest_1099_20260828` (1099, completed). Scratch: `.scratch/shrink-*.ts` + scratchpad
+>   `harness.html`.
+>
 > **Architecture direction (Greg, 2026-08-28): SHRUNKEN WIDGET, not full native.** Push everything
 > we can by API so the ONBOARDING widget collapses to one short step (SSN + W-4/W-9) and Everee
 > keeps the compliance surface. Deciding facts: SSN is settable ONLY at complete-record create —
