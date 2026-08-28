@@ -1439,17 +1439,45 @@ async function buildClassCatalog(
   }
   const norm = (s: string): string =>
     s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(20\d\d|llc|inc|national|account)\b/g, '').replace(/\s+/g, ' ').trim();
-  const suggest = (className: string): { jobOrderId: string; jobOrderName: string; accountId: string | null; accountName: string | null } | null => {
+  // Level-aware suggestions (2026-08-27): JO first, then account (the
+  // right home for bare account-named classes like "Black Caviar"), then
+  // an overhead hint for expense-only classes matching nothing.
+  const acctList = Array.from(acctNameById.entries()).map(([id, name]) => ({ id, name, n: norm(name) }));
+  const suggest = (
+    className: string,
+    billed: number,
+    expenses: number,
+  ): {
+    kind: 'job_order' | 'account' | 'overhead';
+    jobOrderId?: string;
+    jobOrderName?: string;
+    accountId: string | null;
+    accountName: string | null;
+  } | null => {
     const seg = norm(className.split(':').pop() ?? className);
-    if (seg.length < 4) return null;
-    let best: (typeof joList)[number] | null = null;
-    for (const jo of joList) {
-      const n = norm(jo.name);
-      if (!n) continue;
-      if (n === seg) return { jobOrderId: jo.id, jobOrderName: jo.name, accountId: jo.accountId, accountName: jo.accountName };
-      if (!best && seg.length >= 5 && n.length >= 5 && (n.includes(seg) || seg.includes(n))) best = jo;
+    if (!seg) return expenses > 0 && billed === 0 ? { kind: 'overhead', accountId: null, accountName: null } : null;
+    if (seg.length >= 4) {
+      let best: (typeof joList)[number] | null = null;
+      for (const jo of joList) {
+        const n = norm(jo.name);
+        if (!n) continue;
+        if (n === seg)
+          return { kind: 'job_order', jobOrderId: jo.id, jobOrderName: jo.name, accountId: jo.accountId, accountName: jo.accountName };
+        if (!best && seg.length >= 5 && n.length >= 5 && (n.includes(seg) || seg.includes(n))) best = jo;
+      }
+      // Account match beats a fuzzy JO hit when the class IS an account name
+      // (the Black Caviar trap): exact first, then unique containment.
+      const acctExact = acctList.filter((a) => a.n === seg);
+      if (acctExact.length === 1)
+        return { kind: 'account', accountId: acctExact[0].id, accountName: acctExact[0].name };
+      const acctContains = acctList.filter((a) => a.n.length >= 4 && a.n.includes(seg));
+      if (acctContains.length === 1 && !best)
+        return { kind: 'account', accountId: acctContains[0].id, accountName: acctContains[0].name };
+      if (best)
+        return { kind: 'job_order', jobOrderId: best.id, jobOrderName: best.name, accountId: best.accountId, accountName: best.accountName };
     }
-    return best ? { jobOrderId: best.id, jobOrderName: best.name, accountId: best.accountId, accountName: best.accountName } : null;
+    if (expenses > 0 && billed === 0) return { kind: 'overhead', accountId: null, accountName: null };
+    return null;
   };
 
   const classes = ((classRes.Class ?? []) as Array<Record<string, any>>).map((c) => {
@@ -1488,7 +1516,7 @@ async function buildClassCatalog(
             };
           })()
         : null,
-      suggestion: mapping ? null : suggest(fqn),
+      suggestion: mapping ? null : suggest(fqn, billedAgg?.billed ?? 0, expAgg?.total ?? 0),
     };
   });
   classes.sort((a, b) => (b.billedInRange + b.expensesInRange) - (a.billedInRange + a.expensesInRange) || a.fqn.localeCompare(b.fqn));

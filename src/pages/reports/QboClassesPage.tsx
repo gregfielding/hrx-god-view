@@ -56,7 +56,7 @@ interface ClassRow {
   billedInRange: number;
   expensesInRange: number;
   mapping: ClassMapping | null;
-  suggestion: { jobOrderId: string; jobOrderName: string; accountId: string | null; accountName: string | null } | null;
+  suggestion: { kind: 'job_order' | 'account' | 'overhead'; jobOrderId?: string; jobOrderName?: string; accountId: string | null; accountName: string | null } | null;
 }
 
 interface CatalogData {
@@ -310,12 +310,27 @@ const QboClassesPage: React.FC = () => {
         ) : c.suggestion ? (
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography variant="caption" color="text.secondary">
-              suggest: {c.suggestion.jobOrderName}
+              suggest {KIND_LABEL[c.suggestion.kind].toLowerCase()}:{' '}
+              {c.suggestion.kind === 'overhead'
+                ? 'non-client'
+                : c.suggestion.kind === 'account'
+                  ? c.suggestion.accountName
+                  : c.suggestion.jobOrderName}
             </Typography>
             <Button
               size="small"
               disabled={busy === c.classId}
-              onClick={() => void saveMapping(c, { targetKind: 'job_order', jobOrderIds: [c.suggestion!.jobOrderId] })}
+              onClick={() =>
+                void saveMapping(c, {
+                  targetKind: c.suggestion!.kind,
+                  ...(c.suggestion!.kind === 'job_order' && c.suggestion!.jobOrderId
+                    ? { jobOrderIds: [c.suggestion!.jobOrderId] }
+                    : {}),
+                  ...(c.suggestion!.kind === 'account' && c.suggestion!.accountId
+                    ? { accountId: c.suggestion!.accountId }
+                    : {}),
+                })
+              }
             >
               Apply
             </Button>

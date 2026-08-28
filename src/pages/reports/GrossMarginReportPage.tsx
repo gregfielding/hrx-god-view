@@ -103,6 +103,9 @@ interface BillingData {
   burdenByEntity?: Record<string, EntityBurden>;
   totalWcPremium?: number;
   totalTaxBurden?: number | null;
+  /** Overhead-mapped classes: non-client dollars, excluded from all rows. */
+  overheadBilled?: number;
+  overheadClasses?: string[];
 }
 
 function csvCell(v: unknown): string {
@@ -360,6 +363,9 @@ const GrossMarginReportPage: React.FC = () => {
                 : [{ label: `Burden est. (${burdenPct}%)`, value: usd(margins.totalBurden) }]),
               { label: 'Gross margin', value: usd(margins.totalGm) },
               { label: 'Margin %', value: pctFmt(margins.totalGmPct) },
+              ...((billing.overheadBilled ?? 0) > 0
+                ? [{ label: 'Overhead (non-client)', value: usd(billing.overheadBilled) }]
+                : []),
             ].map((t) => (
               <Paper key={t.label} variant="outlined" sx={{ px: 2, py: 1.25, minWidth: 130 }}>
                 <Typography variant="caption" color="text.secondary">
@@ -377,6 +383,8 @@ const GrossMarginReportPage: React.FC = () => {
               ' · entity view: only invoices tied to this entity’s payroll (invoices carry no entity of their own)'}
             {billing.unclassifiedBilled > 0 &&
               ` · ${usd(billing.unclassifiedBilled)} billed without a class (counted in client totals, missing from job-order rows)`}
+            {(billing.overheadBilled ?? 0) > 0 &&
+              ` · ${usd(billing.overheadBilled)} overhead-mapped (${(billing.overheadClasses ?? []).join(', ')}) — excluded from client rows`}
           </Typography>
 
           <Card sx={{ mb: 2 }}>
