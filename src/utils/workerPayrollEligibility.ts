@@ -80,9 +80,15 @@ export async function buildPayrollEligibleEvereeTenantIdSet(
     if (!w) return;
     const entityId =
       (typeof data.entityId === 'string' && data.entityId.trim()) || d.id.split('__')[0] || '';
-    if (entityId && terminalEntityIds.has(entityId)) return;
+    // Never show sandbox linkages on the worker picker (Greg 2026-08-28 —
+    // legacy smoke-test linkage docs exist for real uids). Workers can't
+    // read entities/* to check evereeEnvironment, so match the known
+    // sandbox shape: entity id contains "sandbox" / Everee tenant 2320.
+    if (/sandbox/i.test(entityId)) return;
     const tid = normalizeEvereeTenantIdForSet(data.evereeTenantId);
-    if (tid) allowed.add(tid);
+    if (!tid || tid === '2320') return;
+    if (entityId && terminalEntityIds.has(entityId)) return;
+    allowed.add(tid);
   });
 
   return allowed;
