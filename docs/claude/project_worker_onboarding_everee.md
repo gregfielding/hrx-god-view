@@ -55,6 +55,17 @@
 > last-4 survives. Any future code touching those Everee worker endpoints MUST scrub before
 > returning to a client.
 >
+> **Admin/worker bank editing SHIPPED (2026-08-28, commit 93ac58d5).** User > Payroll panel (both
+> admin and worker-facing mounts of EmployeePayrollSection) has an Add/Replace bank account dialog:
+> optional `setDefaultBankAccount` on `evereeAdminGetWorker` PUTs the account and returns the fresh
+> scrubbed record in one round trip (`bankUpdate` result field; ABA checksum via shared
+> `src/utils/abaRouting.ts`). This retires the PAYMENT_DEPOSIT embed for bank changes. Earnings
+> picker also reworked same day (commit daafc3ea): cards titled "W-2 Employee" / "Independent
+> Contractor" (entity name in caption, EN+ES) and shown from onboarding START (everee_workers
+> linkage w/ worker id) unless employment ended — no longer requires an active employment row.
+> Limit: Everee's update APIs accept NO phone/email post-create — those edits stay HRX-side (ask
+> Piers).
+>
 > **Architecture direction (Greg, 2026-08-28): SHRUNKEN WIDGET, not full native.** Push everything
 > we can by API so the ONBOARDING widget collapses to one short step (SSN + W-4/W-9) and Everee
 > keeps the compliance surface. Deciding facts: SSN is settable ONLY at complete-record create —
