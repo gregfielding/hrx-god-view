@@ -20,6 +20,19 @@
 >   PAYMENT_DEPOSIT/HOME_ADDRESS/PAY_CARD_SIGNUP V1_0. Only ONBOARDING + WORKER_HOME are mounted
 >   in HRX; the rest reachable via the hub. `update-payment-preferences` documented but NOT
 >   integrated (bank changes post-switch need it or a kept embed).
+>
+> **Architecture direction (Greg, 2026-08-28): SHRUNKEN WIDGET, not full native.** Push everything
+> we can by API so the ONBOARDING widget collapses to one short step (SSN + W-4/W-9) and Everee
+> keeps the compliance surface. Deciding facts: SSN is settable ONLY at complete-record create —
+> `update-personal-information` (PUT /integration/v1/workers/{id}/personal-info) explicitly
+> excludes it, so on the widget path SSN never touches our systems at all; bank HAS a real update
+> API (`PUT /integration/v1/workers/{id}/bank-accounts/default`, full fields — note it reroutes all
+> not-yet-approved payments); complete-record has ZERO state-withholding fields, and OnTrac W-2
+> spans many state-certificate states (NJ/OH/IL/NC…) — full-native would mean hand-building state
+> tax forms. Verify-live for the design: (1) widget step-skipping when bank pre-pushed by API,
+> (2) bank PUT during onboarding-in-progress status, (3) ask Everee (Piers) about a scoped
+> tax-forms-only session/experienceOptions. Full-native shelved unless the one embedded step
+> measurably loses workers.
 
 > Greg: workers "sign up with us and then have to sign up again with Everee — both need emails and
 > passwords; we ask last-4 SSN, Everee asks the whole thing." Compared unfavorably to Instawork /
