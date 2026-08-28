@@ -88,3 +88,33 @@ override its account's rule), meaning new JOs and new assignments under
 that account inherit with zero stamping.
 Live: Sodexo PVAMU account autoLoc_8ea92d49ea1833ab292a7a091626ec77 —
 5 JOs (#219/220/221/222/404) + 12 assignments at \$5 "Parking".
+
+## ☠️ Everee pay-run calc can RACE a batch submit (2026-08-28, Leonard Frett)
+
+Everee auto-calculates a worker's open scheduled payment when worked
+shifts arrive — and the calc reads a SNAPSHOT. Leonard's 5 Indeed Flex
+shifts (Aug 17–21) were POSTed in one batch at 15:19:03Z; his payment's
+`calculationRequestedAt` was 15:19:01Z and `calculatedAt` 15:19:03.56Z,
+so the snapshot caught only the first 3 shifts. The last 2 landed
+seconds later and did NOT re-trigger calculation; Greg approved the
+$432.30 payment at 16:13 and Leonard was paid 24.02 of 40.05 hours.
+Nobody else in the 39-entry / 9-worker batch was affected (their calcs
+ran after their shifts landed).
+
+Diagnosis path (all read-only, from `functions/`):
+- `/api/v2/payments?page=N&size=500&include-workers-on-regular-pay-cycle=true`
+  — worker fields live in `employee`/`payeeDisplayFullName`; hours in
+  `regularHours`/`totalHours`; shift linkage in `earningList[].note`
+  ("Shift ending YYYY-MM-DD").
+- `listWorkedShifts` (`external-worker-id` filter works) —
+  `payableDetails.paid` / `.paymentId` / `.editable` tell you exactly
+  which shifts a payment consumed. There is NO GET-by-id route for
+  worked shifts (`/integration/v1/worked-shifts/{id}` 404s).
+
+Unpaid-but-submitted shifts stay `paid:false, editable:true` and should
+ride the worker's NEXT scheduled payment; make-whole-today = revert the
+entries in the grid (deletes the shifts) + off-cycle payment via UI
+(same path as the Zirick 2026-08-28 case). Watch item: after any batch
+submit, verify every shift in the batch reaches `paid:true` once the
+period's payment finalizes — a post-approval sweep would have caught
+this same-day.
