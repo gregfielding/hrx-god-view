@@ -1,5 +1,26 @@
 # Worker onboarding + Everee without the embedded widget — investigation (2026-08-21)
 
+> **2026-08-28 — widget punch-list audit DONE** (Greg's pre-removal ask, OnTrac-driven; artifact
+> https://claude.ai/code/artifact/7d3e1400-e182-4180-a137-128722d43c87). Key findings on top of the
+> 2026-08-21 investigation below:
+> - **Only widget-exclusive captures**: full SSN, bank account, W-4 (8 fields, exact
+>   `withholdingSettings` enum parity in complete-record), W-9 certification + e-sign (NO API
+>   fields — biggest build item), ESIGN/disclosure consents. Everything identity/comp we already
+>   pass at create.
+> - **Show-now natively (API integrated, worker self-access already allowed)**: pay history/stubs
+>   LIVE (Earnings v2 2026-08-24); tax documents page (`/api/v2/workers/files` type TAXES via
+>   `evereeAdminGetWorkerDocuments`); W-4/W-9 read-only cards (`evereeAdminGetWorkerW4/W9`);
+>   deposit-account last-4 card; native checklist from `evereeGetMyOnboardingStatus`; address
+>   already syncs via `evereeUpdateWorkerAddress`.
+> - **Verify-live before switch**: widget pre-fill, state withholding handling (not in
+>   complete-record schema), post-onboarding W-4 changes (no update API found), pay-card decision
+>   (`PAY_CARD_SIGNUP` embed never mounted). Cheapest: walk ONE test worker through the widget and
+>   screenshot every step.
+> - Embed catalogue (docs 2026-08-28): ONBOARDING V2_0, WORKER_HOME/PAYMENT_HISTORY/TAX_DOCUMENTS/
+>   PAYMENT_DEPOSIT/HOME_ADDRESS/PAY_CARD_SIGNUP V1_0. Only ONBOARDING + WORKER_HOME are mounted
+>   in HRX; the rest reachable via the hub. `update-payment-preferences` documented but NOT
+>   integrated (bank changes post-switch need it or a kept embed).
+
 > Greg: workers "sign up with us and then have to sign up again with Everee — both need emails and
 > passwords; we ask last-4 SSN, Everee asks the whole thing." Compared unfavorably to Instawork /
 > Qwick. Greg + Mark independently concluded: **phone-number auth instead of email/password.**
