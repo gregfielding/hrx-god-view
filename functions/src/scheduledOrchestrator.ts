@@ -2,6 +2,13 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { CONFIG, isFeatureEnabled } from './utils/configReader';
+import { runPayrollPaymentIssueSweep } from './payroll/payrollPaymentIssueSweep';
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+  TWILIO_A2P_CAMPAIGN,
+} from './messaging/twilioSecrets';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -433,6 +440,16 @@ async function runAutoCloseCompletedAssignments(): Promise<SubtaskResult> {
 // Subtask registry
 const SUBTASKS: SubtaskConfig[] = [
   {
+    name: 'payroll_payment_issue_sweep',
+    // Always on — money-stuck detection; the sweep self-gates to every 6h
+    // and the ENABLE flag can force it off in an emergency.
+    enabled: isFeatureEnabled('payroll_payment_issue_sweep', true),
+    envFlag: 'ENABLE_PAYROLL_PAYMENT_ISSUE_SWEEP',
+    handler: runPayrollPaymentIssueSweep,
+    maxDurationMs: 120000,
+    runParallel: false
+  },
+  {
     name: 'gmail_monitoring',
     enabled: isFeatureEnabled('gmail_monitoring', CONFIG.ENABLE_GMAIL_MONITORING),
     envFlag: 'ENABLE_GMAIL_MONITORING',
@@ -507,7 +524,9 @@ export const scheduledOrchestrator = onSchedule({
   maxInstances: 1,
   retryCount: 0,
   timeoutSeconds: 300,
-  memory: '512MiB'
+  memory: '512MiB',
+  // Twilio secrets for the payroll payment-issue sweep's worker SMS.
+  secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN]
 }, async (event) => {
   // Idempotency: process this run only once per hour
   const runId = `orchestrator_${new Date().toISOString().slice(0, 13)}`; // YYYY-MM-DDTHH

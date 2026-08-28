@@ -99,6 +99,10 @@ const RATE_LIMIT_EXEMPT_MESSAGE_TYPES = new Set([
   'on_call_employment_started',
   'payroll_onboarding_invite_needed',
   'onboarding_reminder',
+  // Payroll "action needed" category (2026-08-28): money is stuck and only
+  // the worker can fix it — must not be starved by general caps.
+  'payroll_payment_returned',
+  'payroll_setup_blocking_pay',
 ]);
 
 /**
@@ -112,6 +116,8 @@ const EXEMPT_TYPE_DAILY_CAP_DEFAULT = 3;
 const TYPE_DAILY_CAP_OVERRIDES: Record<string, number> = {
   onboarding_reminder: 1,
   bulk_direct_sms: 3,
+  payroll_payment_returned: 1,
+  payroll_setup_blocking_pay: 1,
 };
 
 /**
