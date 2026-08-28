@@ -1993,7 +1993,11 @@
     "settingsHeading": "Payroll settings",
     "finishSetupCard": "Finish payroll setup",
     "w2TaxForms": "W-2 tax forms",
-    "contractorTaxForms": "Contractor tax forms"
+    "contractorTaxForms": "Contractor tax forms",
+    "nextPaydayLabel": "Next payday",
+    "paydayTodayLabel": "Payday is today — deposits usually arrive by end of day.",
+    "firstPaydayNote": "You're paid by direct deposit on the Friday after your first work week.",
+    "grossShort": "Gross"
   },
   "payrollHelp": {
     "title": "Payroll help",

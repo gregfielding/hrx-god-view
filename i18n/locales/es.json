@@ -1993,7 +1993,11 @@
     "settingsHeading": "Configuración de nómina",
     "finishSetupCard": "Terminar configuración de nómina",
     "w2TaxForms": "Formularios de impuestos W-2",
-    "contractorTaxForms": "Formularios de impuestos de contratista"
+    "contractorTaxForms": "Formularios de impuestos de contratista",
+    "nextPaydayLabel": "Próximo día de pago",
+    "paydayTodayLabel": "Hoy es día de pago; los depósitos suelen llegar antes del final del día.",
+    "firstPaydayNote": "Te pagamos por depósito directo el viernes después de tu primera semana de trabajo.",
+    "grossShort": "Bruto"
   },
   "payrollHelp": {
     "title": "Ayuda con la nómina",

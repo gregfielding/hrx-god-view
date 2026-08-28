@@ -272,10 +272,20 @@ const WorkerPayHistoryPage: React.FC = () => {
               >
                 <Box sx={{ minWidth: 0 }}>
                   <Typography variant="body1" sx={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-                    {r.gross != null ? USD.format(r.gross) : '—'}
+                    {r.net != null ? USD.format(r.net) : r.gross != null ? USD.format(r.gross) : '—'}
                   </Typography>
                   <Typography variant="caption" color="text.secondary" noWrap display="block">
-                    {[r.payDate, r.employerLabel].filter(Boolean).join(' · ')}
+                    {[
+                      r.payDate,
+                      r.employerLabel,
+                      // Workers reconcile against their bank, so net leads; show
+                      // gross only when it actually differs (2026-08-28).
+                      r.net != null && r.gross != null && r.net !== r.gross
+                        ? `${t('earnings.grossShort')} ${USD.format(r.gross)}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </Typography>
                 </Box>
                 {statusChip(t, r.status)}

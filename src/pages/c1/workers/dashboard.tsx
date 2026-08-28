@@ -23,6 +23,7 @@ import { useNavigate } from 'react-router-dom';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import WorkerDashboardActionItems from '../../../components/worker/home/WorkerDashboardActionItems';
+import PaymentIssueHomeBanner from '../../../components/worker/PaymentIssueHomeBanner';
 import type { UpcomingShift } from '../../../components/worker/dashboard/WorkerDashboardHero';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
@@ -210,6 +211,7 @@ const WorkerDashboard: React.FC = () => {
   return (
     <Box sx={{ maxWidth: 720, mx: 'auto', pb: 4 }}>
       <Stack spacing={{ xs: 3, sm: 3.5 }} sx={{ pt: { xs: 2, sm: 2.5 } }}>
+        <PaymentIssueHomeBanner tenantId={tenantId} uid={user?.uid} />
         {user?.uid ? (
           <WorkerDashboardActionItems
             uid={user.uid}

@@ -10,7 +10,7 @@
  * `everee_workers/{entityId}__{uid}` (worker-readable). Stale `evereeWorkerIds` entries with no such hire are hidden.
  */
 
-import { t } from '../../../i18n';
+import { getLanguage, t } from '../../../i18n';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   collection,
@@ -102,6 +102,17 @@ function useEvereeEntityInfos(
   }, [tenantId, evereeTenantIds.join('|')]);
 
   return { infos, loading };
+}
+
+/** Next Friday (inclusive of today) — both entities pay on Fridays:
+ *  Select for the prior Sun-Sat week, Events for the prior Mon-Sun week.
+ *  See docs/claude/project_payroll_help_desk.md. */
+function nextPayday(now: Date = new Date()): { date: Date; isToday: boolean } {
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const day = d.getDay(); // 5 = Friday
+  const delta = (5 - day + 7) % 7;
+  d.setDate(d.getDate() + delta);
+  return { date: d, isToday: delta === 0 };
 }
 
 const WorkerPayrollIndex: React.FC = () => {
@@ -320,6 +331,31 @@ const WorkerPayrollIndex: React.FC = () => {
         {t('earnings.chooseEmployer')}
       </Typography>
       <PaymentIssueBanner rows={payRows} />
+      {/* Payday strip (2026-08-28): the #1 payroll question, answered before
+          it's asked. With no pay history yet, set the expectation instead. */}
+      {!payLoading && (
+        <Card variant="outlined" sx={{ mb: 2, px: 2, py: 1.5, bgcolor: 'action.hover' }}>
+          {payRows.length > 0 ? (
+            <Typography variant="body2">
+              {(() => {
+                const { date, isToday } = nextPayday();
+                if (isToday) return t('earnings.paydayTodayLabel');
+                const lang = getLanguage() === 'es' ? 'es-US' : 'en-US';
+                const formatted = new Intl.DateTimeFormat(lang, {
+                  weekday: 'long',
+                  month: 'long',
+                  day: 'numeric',
+                }).format(date);
+                return `${t('earnings.nextPaydayLabel')}: ${formatted}`;
+              })()}
+            </Typography>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              {t('earnings.firstPaydayNote')}
+            </Typography>
+          )}
+        </Card>
+      )}
       {/* Native pay history (Earnings v1, 2026-08-24; leads the hub since the 2026-08-28 IA). */}
       {(payLoading || payRows.length > 0) && (
         <Box>
@@ -349,10 +385,18 @@ const WorkerPayrollIndex: React.FC = () => {
                   >
                     <Box sx={{ minWidth: 0 }}>
                       <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                        {r.gross != null ? USD.format(r.gross) : '—'}
+                        {r.net != null ? USD.format(r.net) : r.gross != null ? USD.format(r.gross) : '—'}
                       </Typography>
                       <Typography variant="caption" color="text.secondary" noWrap display="block">
-                        {[r.payDate, r.employerLabel].filter(Boolean).join(' · ')}
+                        {[
+                          r.payDate,
+                          r.employerLabel,
+                          r.net != null && r.gross != null && r.net !== r.gross
+                            ? `${t('earnings.grossShort')} ${USD.format(r.gross)}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
                       </Typography>
                     </Box>
                     <Chip
