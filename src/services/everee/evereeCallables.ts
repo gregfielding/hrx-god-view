@@ -319,14 +319,31 @@ export interface EvereeAdminGetWorkerRequest {
    * Recruiters/admins may pass another worker's uid.
    */
   userId?: string;
+  /**
+   * Optional write-through (2026-08-28): replace the worker's default
+   * direct-deposit account before the fetch, so one round trip both
+   * updates and returns the fresh record. In transit only — never stored
+   * or logged on either side. Everee reroutes all not-yet-approved
+   * payments to the new account.
+   */
+  setDefaultBankAccount?: {
+    bankName: string;
+    accountName: string;
+    accountType: 'CHECKING' | 'SAVINGS';
+    routingNumber: string;
+    accountNumber: string;
+  };
 }
 
 export interface EvereeAdminGetWorkerResult {
   ok: true;
   evereeWorkerId: string;
   evereeTenantId: string;
-  /** Raw `GET /api/v2/workers/{id}` response — PII-bearing. Display, don't store. */
+  /** Raw `GET /api/v2/workers/{id}` response — PII-bearing (full TIN is
+   *  scrubbed server-side; last-4 survives). Display, don't store. */
   response: unknown;
+  /** Outcome of the optional bank write-through; absent when none was sent. */
+  bankUpdate?: { ok: boolean; error?: string };
 }
 
 /**

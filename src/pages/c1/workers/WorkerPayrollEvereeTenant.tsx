@@ -94,6 +94,7 @@ import {
   type EvereeGetMyOnboardingStatusResult,
 } from '../../../services/everee/evereeCallables';
 import { formatFirebaseHttpsError } from '../../../utils/firebaseHttpsErrors';
+import { isValidAbaRoutingNumber } from '../../../utils/abaRouting';
 import { collection, getDocs, limit, query, where } from 'firebase/firestore';
 import {
   attachEvereePortChannel,
@@ -135,14 +136,6 @@ interface BankFirstDetails {
   routingNumber: string;
   accountNumber: string;
 }
-
-/** ABA 3-7-1 checksum — mirrors the server-side validation. */
-const isValidAbaRoutingNumber = (routingNumber: string): boolean => {
-  if (!/^\d{9}$/.test(routingNumber)) return false;
-  const d = routingNumber.split('').map(Number);
-  const sum = 3 * (d[0] + d[3] + d[6]) + 7 * (d[1] + d[4] + d[7]) + (d[2] + d[5] + d[8]);
-  return sum % 10 === 0 && sum > 0;
-};
 
 /**
  * Bank-first card shown before the ONBOARDING embed mounts. Values live in

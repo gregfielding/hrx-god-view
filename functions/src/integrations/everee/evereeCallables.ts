@@ -1412,6 +1412,42 @@ export const evereeAdminGetWorker = onCall(async (request) => {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   const config = await requireEvereeEnabledEntity(tenantId, entityId);
+
+  // Optional write-through (2026-08-28, admin bank visibility ask): replace
+  // the worker's default direct-deposit account BEFORE the fetch, so one
+  // round trip both updates and returns the fresh record. Details are in
+  // transit only — same handling as the bank-first onboarding push (never
+  // stored, never logged; `updateWorkerDefaultBankAccount` sanitizes Everee
+  // errors that could echo digits). Everee reroutes all not-yet-approved
+  // payments to the new account.
+  let bankUpdate: { ok: boolean; error?: string } | null = null;
+  const rawBank = d?.setDefaultBankAccount as Record<string, unknown> | undefined;
+  if (rawBank && typeof rawBank === 'object') {
+    const result = await updateWorkerDefaultBankAccount({
+      tenantId,
+      entityId,
+      evereeWorkerId,
+      bankAccount: {
+        bankName: typeof rawBank.bankName === 'string' ? rawBank.bankName : '',
+        accountName: typeof rawBank.accountName === 'string' ? rawBank.accountName : '',
+        accountType: rawBank.accountType === 'SAVINGS' ? 'SAVINGS' : 'CHECKING',
+        routingNumber:
+          typeof rawBank.routingNumber === 'string' ? rawBank.routingNumber.replace(/\D/g, '') : '',
+        accountNumber:
+          typeof rawBank.accountNumber === 'string' ? rawBank.accountNumber.replace(/\D/g, '') : '',
+      },
+    });
+    bankUpdate = result.ok ? { ok: true } : { ok: false, error: result.error };
+    logger.info('[evereeAdminGetWorker] bank write-through', {
+      tenantId,
+      entityId,
+      evereeWorkerId,
+      byUid: request.auth?.uid ?? '',
+      ok: result.ok,
+      ...(result.ok ? {} : { reason: result.error }),
+    });
+  }
+
   try {
     const response = await evereeRequest<unknown>(
       config,
@@ -1441,6 +1477,7 @@ export const evereeAdminGetWorker = onCall(async (request) => {
       evereeWorkerId,
       evereeTenantId: config.evereeTenantId,
       response: scrubFullTinDeep(response),
+      ...(bankUpdate ? { bankUpdate } : {}),
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
