@@ -49,7 +49,7 @@
     "findWork": "Buscar turnos",
     "viewApplications": "Ver solicitudes",
     "prescreen": "Preselección",
-    "payroll": "Pagos"
+    "payroll": "Nómina"
   },
   "workerAccount": {
     "sectionProfile": "Perfil",
@@ -1965,7 +1965,7 @@
     }
   },
   "earnings": {
-    "chooseEmployer": "Elige tu empleador para abrir tu registro de nómina o tu portal de pagos.",
+    "chooseEmployer": "Historial de pagos, depósito directo y formularios de impuestos: todo sobre tu pago.",
     "recentPay": "Pagos recientes",
     "statusPaid": "Pagado",
     "statusPending": "En proceso",
@@ -1989,7 +1989,11 @@
     "issueFixDepositCta": "Corregir depósito directo",
     "issueSetupTitle": "Termina la configuración de nómina para recibir tu pago",
     "issueSetupBody": "Un pago reciente no se pudo procesar porque tu configuración de nómina no está terminada.",
-    "issueFinishSetupCta": "Terminar configuración"
+    "issueFinishSetupCta": "Terminar configuración",
+    "settingsHeading": "Configuración de nómina",
+    "finishSetupCard": "Terminar configuración de nómina",
+    "w2TaxForms": "Formularios de impuestos W-2",
+    "contractorTaxForms": "Formularios de impuestos de contratista"
   },
   "payrollHelp": {
     "title": "Ayuda con la nómina",

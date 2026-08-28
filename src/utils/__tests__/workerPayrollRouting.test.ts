@@ -7,10 +7,10 @@ describe('workerPayrollRouting', () => {
     expect(getWorkerPayrollLanding({}).kind).toBe('empty');
   });
 
-  it('redirects when exactly one Everee tenant', () => {
+  it('shows the hub (picker) even with exactly one Everee tenant (2026-08-28 IA)', () => {
     const r = getWorkerPayrollLanding({ '3138': 'wid-1' });
-    expect(r.kind).toBe('redirect');
-    if (r.kind === 'redirect') expect(r.evereeTenantId).toBe('3138');
+    expect(r.kind).toBe('picker');
+    if (r.kind === 'picker') expect(r.evereeTenantIds).toEqual(['3138']);
   });
 
   it('shows picker when multiple tenants', () => {

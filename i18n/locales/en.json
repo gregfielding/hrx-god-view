@@ -49,7 +49,7 @@
     "findWork": "Find Shifts",
     "viewApplications": "View Applications",
     "prescreen": "Pre-screen",
-    "payroll": "Earnings"
+    "payroll": "Payroll"
   },
   "workerAccount": {
     "sectionProfile": "Profile",
@@ -1965,7 +1965,7 @@
     }
   },
   "earnings": {
-    "chooseEmployer": "Choose your employer to open payroll onboarding or your pay portal.",
+    "chooseEmployer": "Pay history, direct deposit, and tax forms — everything about getting paid.",
     "recentPay": "Recent pay",
     "statusPaid": "Paid",
     "statusPending": "Processing",
@@ -1989,7 +1989,11 @@
     "issueFixDepositCta": "Fix direct deposit",
     "issueSetupTitle": "Finish payroll setup to get paid",
     "issueSetupBody": "A recent payment couldn't be processed because your payroll setup isn't finished.",
-    "issueFinishSetupCta": "Finish setup"
+    "issueFinishSetupCta": "Finish setup",
+    "settingsHeading": "Payroll settings",
+    "finishSetupCard": "Finish payroll setup",
+    "w2TaxForms": "W-2 tax forms",
+    "contractorTaxForms": "Contractor tax forms"
   },
   "payrollHelp": {
     "title": "Payroll help",

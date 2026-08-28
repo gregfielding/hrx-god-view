@@ -233,17 +233,47 @@ const WorkerPayrollIndex: React.FC = () => {
     Object.keys(map).every((k) => !String(map[k] ?? '').trim()) &&
     linkageLoading;
 
-  const idsForLabels =
-    landing.kind === 'picker' ? landing.evereeTenantIds : landing.kind === 'redirect' ? [landing.evereeTenantId] : [];
+  const idsForLabels = landing.kind === 'picker' ? landing.evereeTenantIds : [];
   const { infos, loading: labelsLoading } = useEvereeEntityInfos(scopeTenantId, idsForLabels);
   const { linkages: payLinkages } = useWorkerEmployerLinkages(scopeTenantId, uid);
   const { rows: payRows, loading: payLoading } = useWorkerPayHistory(scopeTenantId, payLinkages, 10);
 
+  /** Per-Everee-tenant onboarding completeness from the worker-readable
+   *  linkage docs — drives the tax-forms-vs-finish-setup card labels
+   *  (2026-08-28 Payroll-hub IA). Absent/unknown status → treated as NOT
+   *  complete, which shows the safer "Finish payroll setup" label. */
+  const [onboardingDoneByTid, setOnboardingDoneByTid] = useState<Record<string, boolean>>({});
   useEffect(() => {
-    if (landing.kind === 'redirect') {
-      navigate(`/c1/workers/earnings/${encodeURIComponent(landing.evereeTenantId)}`, { replace: true });
-    }
-  }, [landing, navigate]);
+    if (!uid || !scopeTenantId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await getDocs(
+          query(
+            collection(db, 'tenants', scopeTenantId, 'everee_workers'),
+            where('firebaseUid', '==', uid),
+          ),
+        );
+        const next: Record<string, boolean> = {};
+        snap.docs.forEach((d) => {
+          const data = d.data() as { evereeTenantId?: string | number; status?: string };
+          const tid =
+            typeof data.evereeTenantId === 'number'
+              ? String(data.evereeTenantId)
+              : String(data.evereeTenantId ?? '').trim();
+          if (!tid) return;
+          const st = String(data.status ?? '').toLowerCase();
+          next[tid] = st === 'onboarding_complete' || st === 'complete' || st === 'completed';
+        });
+        if (!cancelled) setOnboardingDoneByTid(next);
+      } catch {
+        /* labels fall back to "Finish payroll setup" */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, scopeTenantId]);
 
   if (!uid) {
     return (
@@ -261,14 +291,6 @@ const WorkerPayrollIndex: React.FC = () => {
         ) : (
           <CircularProgress />
         )}
-      </Box>
-    );
-  }
-
-  if (landing.kind === 'redirect') {
-    return (
-      <Box sx={{ p: 4, display: 'flex', justifyContent: 'center' }}>
-        <CircularProgress />
       </Box>
     );
   }
@@ -298,42 +320,9 @@ const WorkerPayrollIndex: React.FC = () => {
         {t('earnings.chooseEmployer')}
       </Typography>
       <PaymentIssueBanner rows={payRows} />
-      {labelsLoading ? (
-        <CircularProgress size={28} />
-      ) : (
-        <Stack spacing={1.5}>
-          {landing.evereeTenantIds.map((tid) => {
-            const info = infos[tid];
-            // Worker-kind first (Greg 2026-08-28): workers think "am I W-2 or a
-            // contractor here", not in legal entity names — those drop to the
-            // caption so support can still disambiguate.
-            const title = info
-              ? t(info.kind === 'contractor' ? 'earnings.contractorTitle' : 'earnings.w2Title')
-              : `Payroll · ${tid}`;
-            const caption = info?.label ?? null;
-            return (
-              <Card key={tid} variant="outlined">
-                <CardActionArea
-                  onClick={() => navigate(`/c1/workers/earnings/${encodeURIComponent(tid)}`)}
-                  sx={{ p: 2, alignItems: 'flex-start' }}
-                >
-                  <Typography variant="subtitle1">
-                    {title}
-                  </Typography>
-                  {caption ? (
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      {caption}
-                    </Typography>
-                  ) : null}
-                </CardActionArea>
-              </Card>
-            );
-          })}
-        </Stack>
-      )}
-      {/* Native pay history (Earnings v1, 2026-08-24). */}
+      {/* Native pay history (Earnings v1, 2026-08-24; leads the hub since the 2026-08-28 IA). */}
       {(payLoading || payRows.length > 0) && (
-        <Box sx={{ mt: 3 }}>
+        <Box>
           <Typography variant="subtitle1" sx={{ mb: 1 }}>
             {t('earnings.recentPay')}
           </Typography>
@@ -397,6 +386,61 @@ const WorkerPayrollIndex: React.FC = () => {
         </Box>
       )}
 
+      <Box sx={{ mt: 3 }}>
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>
+          {t('earnings.settingsHeading')}
+        </Typography>
+        <Stack spacing={1.5}>
+          <Card variant="outlined">
+            <CardActionArea
+              onClick={() => navigate('/c1/workers/payroll-settings')}
+              sx={{ p: 2, alignItems: 'flex-start' }}
+            >
+              <Typography variant="subtitle1">{t('profile.sectionDirectDepositTitle')}</Typography>
+              <Typography variant="caption" color="text.secondary" display="block">
+                {t('profile.sectionDirectDepositDescription')}
+              </Typography>
+            </CardActionArea>
+          </Card>
+          {labelsLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+              <CircularProgress size={24} />
+            </Box>
+          ) : (
+            landing.evereeTenantIds.map((tid) => {
+              const info = infos[tid];
+              // Label follows the worker's state (2026-08-28 Payroll-hub IA):
+              // mid-onboarding the embedded step is the blocking setup (SSN +
+              // tax forms); once complete it's the tax-forms surface (W-4
+              // changes, year-end docs). Entity name stays as the caption.
+              const done = onboardingDoneByTid[tid] === true;
+              const title = !done
+                ? t('earnings.finishSetupCard')
+                : info
+                  ? t(info.kind === 'contractor' ? 'earnings.contractorTaxForms' : 'earnings.w2TaxForms')
+                  : `Payroll · ${tid}`;
+              const caption = info?.label ?? null;
+              return (
+                <Card key={tid} variant="outlined">
+                  <CardActionArea
+                    onClick={() => navigate(`/c1/workers/earnings/${encodeURIComponent(tid)}`)}
+                    sx={{ p: 2, alignItems: 'flex-start' }}
+                  >
+                    <Typography variant="subtitle1">
+                      {title}
+                    </Typography>
+                    {caption ? (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {caption}
+                      </Typography>
+                    ) : null}
+                  </CardActionArea>
+                </Card>
+              );
+            })
+          )}
+        </Stack>
+      </Box>
       {/* Payroll help desk entry (Slice 1, 2026-08-24). */}
       <Button
         variant="text"
