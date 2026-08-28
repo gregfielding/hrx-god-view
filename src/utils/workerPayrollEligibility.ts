@@ -1,12 +1,17 @@
 /**
- * Which Everee tenant IDs may appear on `/c1/workers/payroll` — only employers where
- * the worker has a **current** `entity_employments` row and a matching
- * `tenants/{tid}/everee_workers/{entityId}__{userId}` doc (Everee actually linked for that hire).
+ * Which Everee tenant IDs may appear on `/c1/workers/payroll` — employers where
+ * payroll onboarding has STARTED (an `everee_workers` linkage doc with a worker
+ * id — provisioning is the start of onboarding), unless the worker's employment
+ * for that entity has ENDED (terminal status / terminatedAt). A missing
+ * `entity_employments` row is fine: workers are provisioned into Everee before
+ * their employment row goes active, and they need the card to finish setup
+ * (Greg 2026-08-28; previously required an ACTIVE employment row AND linkage,
+ * which hid the card exactly when mid-onboarding workers needed it).
  *
  * Does not read `entities/*` (workers often lack Firestore read on entities).
  */
 
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import type { Firestore } from 'firebase/firestore';
 
 /** Loose match for Firestore string vs numeric everee tenant ids. */
@@ -31,8 +36,9 @@ function normalizeEvereeTenantIdForSet(raw: string | number | undefined | null):
 const TERMINAL_EMPLOYMENT_STATUS = new Set(['terminated', 'separated', 'inactive']);
 
 /**
- * Everee tenant ids (normalized strings) for which the worker may use payroll: active employment
- * for `entityId` **and** an `everee_workers` linkage doc for `entityId__uid`.
+ * Everee tenant ids (normalized strings) the payroll picker may show — see
+ * module doc: onboarding started (linkage doc with a worker id), minus
+ * entities whose employment has ended.
  */
 export async function buildPayrollEligibleEvereeTenantIdSet(
   db: Firestore,
@@ -40,46 +46,44 @@ export async function buildPayrollEligibleEvereeTenantIdSet(
   uid: string,
 ): Promise<Set<string>> {
   const allowed = new Set<string>();
-  const eeSnap = await getDocs(
-    query(collection(db, 'tenants', tenantId, 'entity_employments'), where('userId', '==', uid)),
-  );
 
-  const activeEntityIds = new Set<string>();
+  const [eeSnap, linkSnap] = await Promise.all([
+    getDocs(
+      query(collection(db, 'tenants', tenantId, 'entity_employments'), where('userId', '==', uid)),
+    ),
+    getDocs(
+      query(collection(db, 'tenants', tenantId, 'everee_workers'), where('firebaseUid', '==', uid)),
+    ),
+  ]);
+
+  const terminalEntityIds = new Set<string>();
   eeSnap.docs.forEach((d) => {
     const data = d.data() as {
       entityId?: string;
       terminatedAt?: unknown;
       status?: string;
     };
-    if (data.terminatedAt) return;
-    const st = String(data.status || '').toLowerCase();
-    if (TERMINAL_EMPLOYMENT_STATUS.has(st)) return;
     const eid = typeof data.entityId === 'string' ? data.entityId.trim() : '';
-    if (eid) activeEntityIds.add(eid);
+    if (!eid) return;
+    const st = String(data.status || '').toLowerCase();
+    if (data.terminatedAt || TERMINAL_EMPLOYMENT_STATUS.has(st)) terminalEntityIds.add(eid);
   });
 
-  if (activeEntityIds.size === 0) return allowed;
-
-  await Promise.all(
-    [...activeEntityIds].map(async (entityId) => {
-      try {
-        const linkId = `${entityId}__${uid}`;
-        const linkSnap = await getDoc(doc(db, 'tenants', tenantId, 'everee_workers', linkId));
-        if (!linkSnap.exists()) return;
-        const data = linkSnap.data() as {
-          evereeTenantId?: string | number;
-          evereeWorkerId?: string;
-          externalWorkerId?: string;
-        };
-        const w = String(data.evereeWorkerId || data.externalWorkerId || '').trim();
-        if (!w) return;
-        const tid = normalizeEvereeTenantIdForSet(data.evereeTenantId);
-        if (tid) allowed.add(tid);
-      } catch {
-        /* ignore */
-      }
-    }),
-  );
+  linkSnap.docs.forEach((d) => {
+    const data = d.data() as {
+      entityId?: string;
+      evereeTenantId?: string | number;
+      evereeWorkerId?: string;
+      externalWorkerId?: string;
+    };
+    const w = String(data.evereeWorkerId || data.externalWorkerId || '').trim();
+    if (!w) return;
+    const entityId =
+      (typeof data.entityId === 'string' && data.entityId.trim()) || d.id.split('__')[0] || '';
+    if (entityId && terminalEntityIds.has(entityId)) return;
+    const tid = normalizeEvereeTenantIdForSet(data.evereeTenantId);
+    if (tid) allowed.add(tid);
+  });
 
   return allowed;
 }

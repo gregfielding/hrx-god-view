@@ -1976,7 +1976,9 @@
     "viewPdf": "Ver comprobante en PDF",
     "noPdf": "El comprobante en PDF aún no está disponible.",
     "noPayments": "Aún no hay pagos.",
-    "statementError": "No se pudo cargar este comprobante — inténtalo de nuevo."
+    "statementError": "No se pudo cargar este comprobante — inténtalo de nuevo.",
+    "w2Title": "Empleado W-2",
+    "contractorTitle": "Contratista independiente"
   },
   "payrollHelp": {
     "title": "Ayuda con la nómina",

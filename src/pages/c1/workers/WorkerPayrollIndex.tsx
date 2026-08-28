@@ -37,7 +37,6 @@ import {
   filterEvereeWorkerMapByEligibleTenants,
 } from '../../../utils/workerPayrollEligibility';
 import {
-  payrollEntityDescription,
   resolvePayrollWorkerKind,
   type PayrollWorkerKind,
 } from '../../../utils/payrollEntityDisplay';
@@ -303,8 +302,13 @@ const WorkerPayrollIndex: React.FC = () => {
         <Stack spacing={1.5}>
           {landing.evereeTenantIds.map((tid) => {
             const info = infos[tid];
-            const label = info?.label ?? `Payroll · ${tid}`;
-            const description = info ? payrollEntityDescription(info.kind) : null;
+            // Worker-kind first (Greg 2026-08-28): workers think "am I W-2 or a
+            // contractor here", not in legal entity names — those drop to the
+            // caption so support can still disambiguate.
+            const title = info
+              ? t(info.kind === 'contractor' ? 'earnings.contractorTitle' : 'earnings.w2Title')
+              : `Payroll · ${tid}`;
+            const caption = info?.label ?? null;
             return (
               <Card key={tid} variant="outlined">
                 <CardActionArea
@@ -312,11 +316,11 @@ const WorkerPayrollIndex: React.FC = () => {
                   sx={{ p: 2, alignItems: 'flex-start' }}
                 >
                   <Typography variant="subtitle1">
-                    {label}
+                    {title}
                   </Typography>
-                  {description ? (
+                  {caption ? (
                     <Typography variant="caption" color="text.secondary" display="block">
-                      {description}
+                      {caption}
                     </Typography>
                   ) : null}
                 </CardActionArea>

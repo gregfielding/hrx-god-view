@@ -1976,7 +1976,9 @@
     "viewPdf": "View PDF statement",
     "noPdf": "PDF statement not available yet.",
     "noPayments": "No payments yet.",
-    "statementError": "Couldn't load this statement — please try again."
+    "statementError": "Couldn't load this statement — please try again.",
+    "w2Title": "W-2 Employee",
+    "contractorTitle": "Independent Contractor"
   },
   "payrollHelp": {
     "title": "Payroll help",
