@@ -138,7 +138,23 @@ export function buildPrescreenNavEntries(params: {
     out.push({ kind: 'dynamic', step, phase: 'late' });
   }
 
-  const tailOrder: WorkerAiPrescreenStepId[] = ['drug_screen', 'background_check', 'supervisor_feedback', 'additional_notes'];
+  // ☠️ F1 fix (2026-08-29 interview review): the compliance FOLLOW-UP steps
+  // were computed into visibleCoreSteps but never rendered — a worker who
+  // honestly answered "yes" to drug/background hit the server's
+  // explanation-required validation at submit with NO screen to answer it
+  // on, an unrecoverable dead end that pressured answer-flipping. They ride
+  // right behind their parent question; byId membership (from
+  // visibleCoreSteps) keeps them conditional on the worker's answers.
+  const tailOrder: WorkerAiPrescreenStepId[] = [
+    'drug_screen',
+    'drug_screen_detail',
+    'background_check',
+    'background_check_detail',
+    'background_offense_class',
+    'background_offense_when',
+    'supervisor_feedback',
+    'additional_notes',
+  ];
   for (const id of tailOrder) {
     const s = byId[id];
     if (!s) continue;
@@ -218,30 +234,12 @@ export function mergeClientFollowUpsIntoAnswers(
 }
 
 /**
- * When expanded narrative steps were skipped (strong experience), pad motivation + pressure so scoring/text pipelines receive substantive strings.
+ * ensureFastPathNarrativePadding was DELETED 2026-08-29 (interview review
+ * F2): it fabricated motivation/pressure sentences, stored them in the
+ * transcript as the worker's own words, and the synthetic text gamed the
+ * concrete-detail scorer ("…with the team."). Unanswered narratives now
+ * submit empty and score as what they are.
  */
-export function ensureFastPathNarrativePadding(
-  answers: WorkerAiPrescreenAnswers,
-  expandedNarrativeShown: boolean,
-): WorkerAiPrescreenAnswers {
-  if (expandedNarrativeShown) return answers;
-  const exp = String(answers.experience_details ?? '').trim();
-  const snippet = exp.length > 40 ? `${exp.slice(0, 200)}…` : exp || 'my recent work history and availability.';
-
-  const pad = (existing: string, lead: string): string => {
-    if (wordCountAnswer(existing) >= PRESCREEN_MIN_SUBSTANTIVE_WORDS) return existing;
-    return `${lead} ${snippet} I can share more in a follow-up conversation with the team.`.trim();
-  };
-
-  return {
-    ...answers,
-    motivation: pad(String(answers.motivation ?? ''), 'My goals align with roles that fit'),
-    pressure_situation: pad(
-      String(answers.pressure_situation ?? ''),
-      'I stay calm under pressure. Context from my background:',
-    ),
-  };
-}
 
 const SUBSTANTIVE_TEXT_IDS = new Set<WorkerAiPrescreenStepId>([
   'motivation',

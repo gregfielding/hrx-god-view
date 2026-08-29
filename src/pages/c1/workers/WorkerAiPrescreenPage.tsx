@@ -55,7 +55,6 @@ import PrescreenAddressGate from '../../../components/apply/PrescreenAddressGate
 import type { WorkerAiPrescreenUiSection } from '../../../utils/workerAiPrescreenUiFlow';
 import {
   buildPrescreenNavEntries,
-  ensureFastPathNarrativePadding,
   mergeClientFollowUpsIntoAnswers,
   navEntryStepId,
   PRESCREEN_FAST_PATH_V2,
@@ -1072,13 +1071,11 @@ const WorkerAiPrescreenPage: React.FC = () => {
         pressureFollowupOptional,
         supervisorFollowupOptional,
       );
-      const expandedNarrativeShown = navEntries.some(
-        (e) => e.kind === 'core' && (e.step.id === 'motivation' || e.step.id === 'pressure_situation'),
-      );
-      const padded = ensureFastPathNarrativePadding(merged, expandedNarrativeShown);
-      const mergedDynamic = applyPrescreenDynamicDedupe(dynamicSteps, padded, dynamicAnswers).mergedDynamicAnswers;
+      // Fabricated-narrative padding removed 2026-08-29 (interview review
+      // F2) — the transcript carries only what the worker actually wrote.
+      const mergedDynamic = applyPrescreenDynamicDedupe(dynamicSteps, merged, dynamicAnswers).mergedDynamicAnswers;
       const result = await submitWorkerAiPrescreenInterview({
-        answers: buildAnswersForSubmit(padded, dynamicSteps, mergedDynamic),
+        answers: buildAnswersForSubmit(merged, dynamicSteps, mergedDynamic),
         applicationId: applicationId || null,
         tenantId,
         entry: entryQuery?.trim() || null,
