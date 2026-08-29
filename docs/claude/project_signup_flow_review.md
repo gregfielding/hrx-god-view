@@ -81,3 +81,27 @@ Build plan: quick wins (~half day: hired→Payroll-hub landing, /earnings
 SMS links, dedupe auto-add, AuthDialog reroute) → convergence (~2-3 days)
 → dead-code cleanup (~half day). Related: [[project_worker_onboarding_everee]],
 [[project_recruiter_roster_adoption]], feedback_apply_* docs.
+
+## 2026-08-29 evening — two-step signup + vocabulary doctrine (56804fd3, deployed)
+
+Greg's calls after the platform comparison (Instawork/Qwick/Traba/Bluecrew):
+
+- **"Hired" is banned for mere enrollment.** Three states, three words:
+  ENROLLED (employment row + Everee = payable) → "approved to work with
+  C1"; crew/group membership → no promise of work; BOOKED (assignment) →
+  the ONLY "you're working" message. Auto-hire landings now say approved +
+  explicit "you don't have any shifts yet" (prevents show-up-unbooked).
+- **Two-step signup**: brand-new jobs-board visitors get an account-only
+  wizard (steps 0-1, "Continue to the job"), return to the posting, and
+  apply there via the authed flow (requirement acks) — quick-apply success
+  now lands straight in the interview. Wizard `accountOnly` mode frozen at
+  mount (authed cert-jumps/error fallbacks keep the full wizard).
+- **Interview = "make your application stand out"** (unlock-not-judge
+  framing) on all in-session entries.
+- **Roadmap parked with Greg's blessing**: tiered-claim marketplace model —
+  regulars/crews get early claim windows, new signups earn access via
+  reliability + interview scores (compliance-safe use of scores = access
+  ordering, not hiring decisions); converges with roster board + the
+  parked "always hire" Tier-2 designations. Threshold auto-DECISIONS
+  flagged as AEDT/EEOC exposure (NYC LL144 etc.) — recommendation on file:
+  demote to recruiter-priority queue once Greg signs off.
