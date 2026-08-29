@@ -648,8 +648,16 @@ export async function handleCadenceReply(
   if (classification.intent === 'confirmation') {
     active = pickPendingCadence(allCadences);
     if (!active) {
+      // Re-confirm: the T-4h second opt-in goes to already-confirmed
+      // workers, so their YES must land here (idempotent) instead of
+      // falling through to the compliance START handler.
+      active = pickCancellableCadence(allCadences);
+    }
+    if (!active) {
       const nearShift = pickActiveOrRecentCadence(allCadences);
-      if (nearShift && nearShift.state === 'pending') active = nearShift;
+      if (nearShift && (nearShift.state === 'pending' || nearShift.state === 'confirmed')) {
+        active = nearShift;
+      }
     }
   } else if (classification.intent === 'cancellation') {
     active = pickCancellableCadence(allCadences);

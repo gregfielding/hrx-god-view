@@ -1,39 +1,31 @@
 /**
- * Messaging Sequences — read-only viewer.
+ * Messaging Sequences — one editable targeting card per sequence doc.
  *
- * Today this renders the canonical CORT gig-shift cadence from
- * `src/config/messagingSequences/cortCadence.ts`. That module is the single UI-facing
- * source of truth; the runtime cloud-function code (cadenceMessages, shiftReminderProfile,
- * workerShiftRemindersV2, replyClassifier) must stay in sync with it.
- *
- * Phase 2 will replace the hardcoded import with a Firestore-backed loader that falls
- * back to this config when no tenant override exists.
+ * 2026-08-29: the backend scans EVERY doc in
+ * `tenants/{t}/messagingSequences` (each with its own track, accounts,
+ * locations, occurrence), so this page loads the whole collection and
+ * renders a SequenceTargetingCard per doc — an invisible sequence would be
+ * live SMS config nobody can see. The step table below documents the CORT
+ * track; step timing/copy still live in code (cadenceMessages,
+ * shiftReminderProfile, workerShiftRemindersV2, replyClassifier).
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
   Chip,
   CircularProgress,
   Divider,
-  FormControl,
-  FormControlLabel,
-  InputLabel,
-  MenuItem,
   Paper,
-  Select,
   Snackbar,
   Stack,
-  Switch,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -42,8 +34,7 @@ import ScheduleIcon from '@mui/icons-material/Schedule';
 import ReplyIcon from '@mui/icons-material/Reply';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import TargetOutlinedIcon from '@mui/icons-material/CenterFocusStrong';
-import { collection, doc, getDoc, getDocs, orderBy, query, setDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, orderBy, query, setDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import {
@@ -51,14 +42,13 @@ import {
   CORT_SEQUENCE_STEPS,
   CORT_SEQUENCE_SUMMARY,
   DEFAULT_CORT_TARGETING,
-  OCCURRENCE_LABELS,
-  WORKER_TYPE_LABELS,
   sequenceTargetingDocPath,
   type MessagingSequenceStep,
-  type SequenceOccurrence,
   type SequenceTargeting,
+  type SequenceTrack,
   type SequenceWorkerType,
 } from '../../../config/messagingSequences/cortCadence';
+import SequenceTargetingCard from './SequenceTargetingCard';
 
 interface AccountOption {
   id: string;
@@ -163,23 +153,37 @@ function StepRow({ step }: { step: MessagingSequenceStep }) {
 }
 
 const CORT_SEQUENCE_ID = CORT_SEQUENCE_SUMMARY.id; // 'cort_gig'
-const WORKER_TYPE_OPTIONS: SequenceWorkerType[] = ['gig', 'career'];
-const OCCURRENCE_OPTIONS: SequenceOccurrence[] = ['first_shift', 'every_shift'];
+
+interface SequenceDocRow {
+  id: string;
+  track: SequenceTrack;
+  targeting: SequenceTargeting;
+}
+
+function coerceTargeting(raw: Partial<SequenceTargeting> | undefined, fallbackLabel: string): SequenceTargeting {
+  return {
+    label:
+      typeof raw?.label === 'string' && raw.label.trim() !== '' ? raw.label.trim() : fallbackLabel,
+    active: raw?.active === true,
+    accountIds: Array.isArray(raw?.accountIds) ? raw.accountIds.map(String) : [],
+    workerTypes:
+      Array.isArray(raw?.workerTypes) && raw.workerTypes.length > 0
+        ? (raw.workerTypes as SequenceWorkerType[])
+        : ['gig'],
+    occurrence: raw?.occurrence === 'every_shift' ? 'every_shift' : 'first_shift',
+    locationIds: Array.isArray(raw?.locationIds) ? raw.locationIds.map(String) : [],
+  };
+}
 
 const MessagingSequencesPage: React.FC = () => {
   const { tenantId, activeTenant } = useAuth();
   const effectiveTenantId = activeTenant?.id || tenantId || '';
 
-  // ============================================================================
-  // Targeting state. `saved` is the last persisted value (used to detect dirty).
-  // `targeting` is the current edit state. Save button disables when they match.
-  // ============================================================================
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [accountsLoading, setAccountsLoading] = useState<boolean>(false);
-  const [targeting, setTargeting] = useState<SequenceTargeting>(DEFAULT_CORT_TARGETING);
-  const [saved, setSaved] = useState<SequenceTargeting>(DEFAULT_CORT_TARGETING);
-  const [targetingLoading, setTargetingLoading] = useState<boolean>(false);
-  const [saving, setSaving] = useState<boolean>(false);
+  const [sequences, setSequences] = useState<SequenceDocRow[]>([]);
+  const [sequencesLoading, setSequencesLoading] = useState<boolean>(false);
+  const [addingSequence, setAddingSequence] = useState<boolean>(false);
   const [snack, setSnack] = useState<{ open: boolean; msg: string; ok: boolean }>({
     open: false,
     msg: '',
@@ -228,47 +232,38 @@ const MessagingSequencesPage: React.FC = () => {
     };
   }, [effectiveTenantId]);
 
-  // Load existing targeting config for this sequence.
+  // Load EVERY sequence doc — each one governs live dispatch, so each must be
+  // visible here. The CORT card renders even before its doc exists.
   useEffect(() => {
     if (!effectiveTenantId) return;
     let cancelled = false;
-    setTargetingLoading(true);
+    setSequencesLoading(true);
     (async () => {
       try {
-        const ref = doc(db, sequenceTargetingDocPath(effectiveTenantId, CORT_SEQUENCE_ID));
-        const snap = await getDoc(ref);
+        const snap = await getDocs(
+          collection(db, 'tenants', effectiveTenantId, 'messagingSequences'),
+        );
         if (cancelled) return;
-        if (snap.exists()) {
-          const data = snap.data() as { targeting?: Partial<SequenceTargeting> };
-          const loaded: SequenceTargeting = {
-            label:
-              typeof data?.targeting?.label === 'string' && data.targeting.label.trim() !== ''
-                ? data.targeting.label.trim()
-                : DEFAULT_CORT_TARGETING.label,
-            active: data?.targeting?.active === true,
-            accountIds: Array.isArray(data?.targeting?.accountIds) ? data.targeting.accountIds : [],
-            workerTypes:
-              Array.isArray(data?.targeting?.workerTypes) && data.targeting.workerTypes.length > 0
-                ? (data.targeting.workerTypes as SequenceWorkerType[])
-                : DEFAULT_CORT_TARGETING.workerTypes,
-            occurrence:
-              data?.targeting?.occurrence === 'every_shift' ? 'every_shift' : 'first_shift',
-          };
-          setTargeting(loaded);
-          setSaved(loaded);
-        } else {
-          setTargeting(DEFAULT_CORT_TARGETING);
-          setSaved(DEFAULT_CORT_TARGETING);
+        const rows: SequenceDocRow[] = snap.docs.map((d) => {
+          const data = d.data() as { track?: string; targeting?: Partial<SequenceTargeting> };
+          const track: SequenceTrack = data.track === 'gig_standard' ? 'gig_standard' : 'cort_gig';
+          return { id: d.id, track, targeting: coerceTargeting(data.targeting, d.id) };
+        });
+        if (!rows.some((r) => r.id === CORT_SEQUENCE_ID)) {
+          rows.unshift({
+            id: CORT_SEQUENCE_ID,
+            track: 'cort_gig',
+            targeting: { ...DEFAULT_CORT_TARGETING, locationIds: [] },
+          });
         }
+        rows.sort((a, b) => a.id.localeCompare(b.id));
+        setSequences(rows);
       } catch (err) {
-        if (!cancelled) {
-          setTargeting(DEFAULT_CORT_TARGETING);
-          setSaved(DEFAULT_CORT_TARGETING);
-        }
+        if (!cancelled) setSequences([]);
         // eslint-disable-next-line no-console
-        console.warn('MessagingSequencesPage: failed to load targeting', err);
+        console.warn('MessagingSequencesPage: failed to load sequences', err);
       } finally {
-        if (!cancelled) setTargetingLoading(false);
+        if (!cancelled) setSequencesLoading(false);
       }
     })();
     return () => {
@@ -276,43 +271,37 @@ const MessagingSequencesPage: React.FC = () => {
     };
   }, [effectiveTenantId]);
 
-  const accountsById = useMemo(() => {
-    const map = new Map<string, AccountOption>();
-    for (const a of accounts) map.set(a.id, a);
-    return map;
-  }, [accounts]);
-
-  const selectedAccountOptions: AccountOption[] = useMemo(
-    () =>
-      targeting.accountIds.map((id) => accountsById.get(id) ?? { id, name: `(unknown account: ${id})` }),
-    [targeting.accountIds, accountsById],
-  );
-
-  const isDirty =
-    JSON.stringify(targeting) !== JSON.stringify(saved) ||
-    targeting.accountIds.length !== saved.accountIds.length;
-
-  async function handleSave() {
-    if (!effectiveTenantId || saving) return;
-    setSaving(true);
+  async function handleAddSequence() {
+    if (!effectiveTenantId || addingSequence) return;
+    setAddingSequence(true);
     try {
-      const ref = doc(db, sequenceTargetingDocPath(effectiveTenantId, CORT_SEQUENCE_ID));
-      await setDoc(
-        ref,
-        {
-          sequenceId: CORT_SEQUENCE_ID,
-          targeting,
-          updatedAt: new Date(),
-        },
-        { merge: true },
+      const id = `seq_${Date.now().toString(36)}`;
+      const targeting: SequenceTargeting = {
+        label: 'New sequence',
+        active: false,
+        accountIds: [],
+        workerTypes: ['gig'],
+        occurrence: 'every_shift',
+        locationIds: [],
+      };
+      await setDoc(doc(db, sequenceTargetingDocPath(effectiveTenantId, id)), {
+        sequenceId: id,
+        track: 'gig_standard',
+        targeting,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      setSequences((prev) =>
+        [...prev, { id, track: 'gig_standard' as SequenceTrack, targeting }].sort((a, b) =>
+          a.id.localeCompare(b.id),
+        ),
       );
-      setSaved(targeting);
-      setSnack({ open: true, msg: 'Targeting saved.', ok: true });
+      setSnack({ open: true, msg: 'Sequence created — set its accounts and turn it on.', ok: true });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Save failed.';
-      setSnack({ open: true, msg: `Save failed: ${msg}`, ok: false });
+      const msg = err instanceof Error ? err.message : 'Create failed.';
+      setSnack({ open: true, msg: `Create failed: ${msg}`, ok: false });
     } finally {
-      setSaving(false);
+      setAddingSequence(false);
     }
   }
 
@@ -326,9 +315,10 @@ const MessagingSequencesPage: React.FC = () => {
         </Typography>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 720 }}>
-        Multi-step SMS flows with a defined start, end, and purpose. Each sequence fires against a
-        specific trigger (e.g. shift confirmed) and can branch on worker replies. Only the CORT
-        cadence ships today; more sequences will appear here as we model them.
+        Multi-step SMS flows with a defined start, end, and purpose. Each sequence below targets
+        its own accounts (and optionally specific venues) with a reminder track — the standard gig
+        confirm cadence, or the CORT variant with the QR clock-in link. Careers automatically get
+        a quiet placement track and are never targeted here.
       </Typography>
 
       <Alert severity="info" icon={<InfoOutlinedIcon />} sx={{ mb: 3 }}>
@@ -342,194 +332,38 @@ const MessagingSequencesPage: React.FC = () => {
         </Typography>
       </Alert>
 
-      {/* Targeting card (editable) */}
-      <Paper variant="outlined" sx={{ mb: 3 }}>
-        <Box sx={{ p: 2.5, borderBottom: 1, borderColor: 'divider' }}>
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
-            <TargetOutlinedIcon sx={{ fontSize: 20, color: 'primary.main' }} />
-            <Typography variant="subtitle1" fontWeight={600}>
-              Targeting
-            </Typography>
-          </Stack>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2, lineHeight: 1.5 }}>
-            Controls which assignments receive this sequence. Saved to{' '}
-            <code>tenants/{'{tenantId}'}/messagingSequences/{CORT_SEQUENCE_ID}</code>.
+      {/* One editable card per sequence doc — every doc governs live dispatch. */}
+      {sequencesLoading ? (
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 2 }}>
+          <CircularProgress size={18} />
+          <Typography variant="caption" color="text.secondary">
+            Loading sequences…
           </Typography>
+        </Stack>
+      ) : (
+        sequences.map((row) => (
+          <SequenceTargetingCard
+            key={`${row.id}`}
+            tenantId={effectiveTenantId}
+            sequenceId={row.id}
+            initialTrack={row.track}
+            initialTargeting={row.targeting}
+            accounts={accounts}
+            accountsLoading={accountsLoading}
+            onSaved={(msg, ok) => setSnack({ open: true, msg, ok })}
+          />
+        ))
+      )}
 
-          {targetingLoading ? (
-            <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 1 }}>
-              <CircularProgress size={18} />
-              <Typography variant="caption" color="text.secondary">
-                Loading current targeting…
-              </Typography>
-            </Stack>
-          ) : (
-            <Stack spacing={2}>
-              {/* Label + Active toggle — row at top. Label helps distinguish multiple rules
-                  that share the same underlying sequence template; Active is the master
-                  on/off switch. */}
-              <Stack
-                direction={{ xs: 'column', sm: 'row' }}
-                spacing={2}
-                alignItems={{ xs: 'stretch', sm: 'center' }}
-              >
-                <TextField
-                  label="Label"
-                  size="small"
-                  value={targeting.label}
-                  onChange={(e) =>
-                    setTargeting((prev) => ({ ...prev, label: e.target.value }))
-                  }
-                  helperText="Recruiter-facing name for this rule (e.g. CORT CSR Waitlist)."
-                  sx={{ flex: 1, maxWidth: 480 }}
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={targeting.active}
-                      onChange={(_, checked) =>
-                        setTargeting((prev) => ({ ...prev, active: checked }))
-                      }
-                    />
-                  }
-                  label={
-                    <Stack>
-                      <Typography variant="body2" fontWeight={500}>
-                        {targeting.active ? 'Active' : 'Inactive'}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Master on/off. Skips this sequence when off, even if other fields match.
-                      </Typography>
-                    </Stack>
-                  }
-                  sx={{ ml: 0, alignItems: 'flex-start' }}
-                />
-              </Stack>
-
-              {/* Accounts */}
-              <Autocomplete
-                multiple
-                options={accounts}
-                loading={accountsLoading}
-                value={selectedAccountOptions}
-                onChange={(_, newValue) => {
-                  setTargeting((prev) => ({
-                    ...prev,
-                    accountIds: newValue.map((v) => v.id),
-                  }));
-                }}
-                getOptionLabel={(o) => o.name}
-                isOptionEqualToValue={(a, b) => a.id === b.id}
-                filterSelectedOptions
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Accounts"
-                    placeholder={accounts.length > 0 ? 'Select one or more accounts…' : 'No active accounts found'}
-                    helperText="Assignments at these accounts will use this sequence. Leave empty to disable the sequence tenant-wide."
-                    size="small"
-                    InputProps={{
-                      ...params.InputProps,
-                      endAdornment: (
-                        <>
-                          {accountsLoading ? <CircularProgress size={16} /> : null}
-                          {params.InputProps.endAdornment}
-                        </>
-                      ),
-                    }}
-                  />
-                )}
-              />
-
-              {/* Worker type */}
-              <FormControl size="small" sx={{ maxWidth: 360 }}>
-                <InputLabel id="worker-type-label">Worker type</InputLabel>
-                <Select
-                  labelId="worker-type-label"
-                  multiple
-                  value={targeting.workerTypes}
-                  label="Worker type"
-                  onChange={(e) => {
-                    const value = typeof e.target.value === 'string' ? [e.target.value] : e.target.value;
-                    const clean = (value as string[]).filter((v): v is SequenceWorkerType =>
-                      WORKER_TYPE_OPTIONS.includes(v as SequenceWorkerType),
-                    );
-                    setTargeting((prev) => ({
-                      ...prev,
-                      workerTypes: clean.length > 0 ? clean : DEFAULT_CORT_TARGETING.workerTypes,
-                    }));
-                  }}
-                  renderValue={(selected) =>
-                    (selected as SequenceWorkerType[]).map((s) => WORKER_TYPE_LABELS[s]).join(', ')
-                  }
-                >
-                  {WORKER_TYPE_OPTIONS.map((wt) => (
-                    <MenuItem key={wt} value={wt}>
-                      {WORKER_TYPE_LABELS[wt]}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              {/* Occurrence */}
-              <FormControl size="small" sx={{ maxWidth: 420 }}>
-                <InputLabel id="occurrence-label">Occurrence</InputLabel>
-                <Select
-                  labelId="occurrence-label"
-                  value={targeting.occurrence}
-                  label="Occurrence"
-                  onChange={(e) => {
-                    const v = e.target.value as SequenceOccurrence;
-                    if (OCCURRENCE_OPTIONS.includes(v)) {
-                      setTargeting((prev) => ({ ...prev, occurrence: v }));
-                    }
-                  }}
-                >
-                  {OCCURRENCE_OPTIONS.map((o) => (
-                    <MenuItem key={o} value={o}>
-                      {OCCURRENCE_LABELS[o]}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              {/* Save / Reset */}
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Button
-                  variant="contained"
-                  disabled={!isDirty || saving || !effectiveTenantId}
-                  onClick={handleSave}
-                >
-                  {saving ? 'Saving…' : 'Save targeting'}
-                </Button>
-                <Button
-                  variant="text"
-                  disabled={!isDirty || saving}
-                  onClick={() => setTargeting(saved)}
-                >
-                  Discard changes
-                </Button>
-                {!effectiveTenantId ? (
-                  <Typography variant="caption" color="error">
-                    No active tenant — cannot save.
-                  </Typography>
-                ) : null}
-              </Stack>
-
-              <Alert severity="success" variant="outlined" sx={{ mt: 1 }}>
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.5 }}>
-                  <strong>Targeting is live (2026-08-27):</strong> the dispatcher reads this card once
-                  saved — Active off, an empty account list, or a non-matching account/worker type all
-                  drop assignments to the default two-step cadence. &ldquo;First shift at account&rdquo;
-                  stops the extended cadence once the worker has a completed assignment at the account.
-                  If this card has never been saved, the legacy <code>shiftReminderProfile</code> tenant
-                  switch still governs.
-                </Typography>
-              </Alert>
-            </Stack>
-          )}
-        </Box>
-      </Paper>
+      <Stack direction="row" spacing={1} sx={{ mb: 3 }}>
+        <Button
+          variant="outlined"
+          disabled={addingSequence || !effectiveTenantId}
+          onClick={handleAddSequence}
+        >
+          {addingSequence ? 'Creating…' : 'Add sequence'}
+        </Button>
+      </Stack>
 
       {/* Sequence card */}
       <Paper variant="outlined" sx={{ mb: 3 }}>

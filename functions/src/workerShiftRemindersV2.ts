@@ -150,6 +150,8 @@ const HOURS_BY_TYPE: Record<ReminderType, number> = {
   assignment_reminder_24h: 24,
   assignment_reminder_23h_escalate: 23,
   assignment_reminder_22h_final: 22,
+  assignment_reconfirm_4h: 4,
+  career_first_day: 15,
   assignment_reminder_2h: 2,
   assignment_reminder_2h_instructions: 2,
   assignment_reminder_15m_clockin: 0.25,
@@ -164,6 +166,8 @@ const DOC_ID_BY_TYPE: Record<ReminderType, string> = {
   assignment_reminder_24h: 'assignment_reminder_24h',
   assignment_reminder_23h_escalate: 'assignment_reminder_23h_escalate',
   assignment_reminder_22h_final: 'assignment_reminder_22h_final',
+  assignment_reconfirm_4h: 'assignment_reconfirm_4h',
+  career_first_day: 'career_first_day',
   assignment_reminder_2h: 'assignment_reminder_2h',
   assignment_reminder_2h_instructions: 'assignment_reminder_2h_instructions',
   assignment_reminder_15m_clockin: 'assignment_reminder_15m_clockin',
@@ -785,12 +789,12 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
     ),
   );
 
-  // Seed confirmation state for cort_gig profile. We only seed when absent or
-  // still pending — never stomp on a prior `confirmed` / `cancelled` from the
-  // worker's own reply. This lets the inbound reply handler (see
-  // cadence/cadenceReplyHandler.ts) flip state and the dispatcher suppress
-  // escalations accordingly.
-  if (profile.id === 'cort_gig') {
+  // Seed confirmation state for the gig confirm tracks. We only seed when
+  // absent or still pending — never stomp on a prior `confirmed` /
+  // `cancelled` from the worker's own reply. This lets the inbound reply
+  // handler (see cadence/cadenceReplyHandler.ts) flip state and the
+  // dispatcher suppress escalations accordingly.
+  if (profile.id === 'cort_gig' || profile.id === 'gig_standard') {
     const cort = (assignment.cortConfirmation as Record<string, unknown> | undefined) || {};
     const currentState = normalizeStatus(cort.state);
     // checked_in / no_show added 2026-08-29: a resync (material edit) was
@@ -803,7 +807,7 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
           {
             cortConfirmation: {
               state: 'pending',
-              profileId: 'cort_gig',
+              profileId: profile.id,
               updatedAt: now,
             },
           },
@@ -840,7 +844,9 @@ function buildReminderMessage(
 ) {
   const startLabel = formatStartInTimezone(payload.startTime, payload.timezone);
   const assignmentUrl = buildWorkerAssignmentUrl(assignmentId);
-  const isCortProfile = reminderProfile === 'cort_gig';
+  // Both gig confirm tracks use the YES/CANCEL ask bodies; the variable name
+  // predates gig_standard.
+  const isCortProfile = reminderProfile === 'cort_gig' || reminderProfile === 'gig_standard';
   const es = lang === 'es';
 
   // Cadence-specific types (T-2h_instructions, T-15m_clockin, T+0_checkin) get
@@ -865,8 +871,41 @@ function buildReminderMessage(
     return buildCadenceMessage(reminderType, cadencePayload, lang);
   }
 
-  // Escalation reminders — only scheduled under cort_gig profile. Progressive
-  // tone: 23h is a friendly nudge, 22h is "last call" before we reassign.
+  // T-4h re-confirm (gig tracks): the Qwick-style second opt-in. Goes to
+  // confirmed AND still-pending workers — plans change overnight.
+  if (reminderType === 'assignment_reconfirm_4h') {
+    return es
+      ? {
+          title: '¿Sigues disponible para hoy?',
+          body: `${payload.jobTitle} hoy el ${startLabel}. Responde SI para confirmar.`,
+          sms: `C1 Staffing: ¿Sigues disponible para hoy? ${payload.jobTitle} el ${startLabel} en ${payload.locationName}. Responde SI — o CANCELAR ahora para que podamos cubrir tu lugar.`,
+        }
+      : {
+          title: 'Still good for today?',
+          body: `${payload.jobTitle} today at ${startLabel}. Reply YES to confirm.`,
+          sms: `C1 Staffing: Still good for today? ${payload.jobTitle} at ${startLabel} at ${payload.locationName}. Reply YES — or CANCEL now so we can cover your spot.`,
+        };
+  }
+
+  // Career track: first-day welcome the evening before. Warm, informative,
+  // no reply demanded.
+  if (reminderType === 'career_first_day') {
+    const addr = payload.locationAddress ? (es ? ` Dirección: ${payload.locationAddress}.` : ` Address: ${payload.locationAddress}.`) : '';
+    return es
+      ? {
+          title: `¡Bienvenido a ${payload.companyName}!`,
+          body: `Tu primer día es el ${startLabel} en ${payload.locationName}.`,
+          sms: `C1 Staffing: ¡Bienvenido! Tu primer día con ${payload.companyName} es el ${startLabel} en ${payload.locationName}.${addr} Detalles: ${assignmentUrl}`,
+        }
+      : {
+          title: `Welcome to ${payload.companyName}!`,
+          body: `Your first day is ${startLabel} at ${payload.locationName}.`,
+          sms: `C1 Staffing: Welcome! Your first day with ${payload.companyName} is ${startLabel} at ${payload.locationName}.${addr} Details: ${assignmentUrl}`,
+        };
+  }
+
+  // Escalation reminders — only scheduled under gig confirm profiles.
+  // Progressive tone: 23h is a friendly nudge, 22h is "last call".
   if (reminderType === 'assignment_reminder_23h_escalate') {
     return es
       ? {
@@ -920,6 +959,21 @@ function buildReminderMessage(
           sms: `C1 Staffing reminder: You’re confirmed for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. View details: ${assignmentUrl}`,
         };
   }
+  // Career morning-of: same 2h slot, placement voice — it's day one of a
+  // job, not a shift.
+  if (reminderProfile === 'career_placement') {
+    return es
+      ? {
+          title: 'Hoy es tu primer día',
+          body: `${payload.companyName} — ${startLabel} en ${payload.locationName}. ¡Éxito!`,
+          sms: `C1 Staffing: ¡Hoy es el día! ${payload.companyName} a las ${startLabel}, ${payload.locationName}. ¡Que te vaya muy bien!`,
+        }
+      : {
+          title: 'Today’s the day',
+          body: `${payload.companyName} — ${startLabel} at ${payload.locationName}. Good luck!`,
+          sms: `C1 Staffing: Today's the day! ${payload.companyName} at ${startLabel}, ${payload.locationName}. Have a great first day!`,
+        };
+  }
   return es
     ? {
         title: 'Tu turno empieza pronto',
@@ -949,7 +1003,9 @@ function toCanonicalReminderType(
   | 'assignment_checkin_0h'
   | 'assignment_noshow_check'
   | 'assignment_reminder_23h_escalate'
-  | 'assignment_reminder_22h_final' {
+  | 'assignment_reminder_22h_final'
+  | 'assignment_reconfirm_4h'
+  | 'career_first_day' {
   if (reminderType === 'assignment_reminder_24h' || reminderType === 'shift_reminder_24h') {
     return 'assignment_reminder_24h';
   }
@@ -959,6 +1015,8 @@ function toCanonicalReminderType(
   if (reminderType === 'assignment_noshow_check') return 'assignment_noshow_check';
   if (reminderType === 'assignment_reminder_23h_escalate') return 'assignment_reminder_23h_escalate';
   if (reminderType === 'assignment_reminder_22h_final') return 'assignment_reminder_22h_final';
+  if (reminderType === 'assignment_reconfirm_4h') return 'assignment_reconfirm_4h';
+  if (reminderType === 'career_first_day') return 'career_first_day';
   return 'assignment_reminder_2h';
 }
 
@@ -1112,12 +1170,18 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     reminder.reminderType === 'assignment_reminder_2h_instructions' ||
     reminder.reminderType === 'assignment_reminder_15m_clockin' ||
     reminder.reminderType === 'assignment_checkin_0h';
+  // The T-4h re-confirm deliberately GOES to already-confirmed workers —
+  // that second opt-in is its whole point. Suppressed only when the worker
+  // cancelled or is somehow already on site.
+  const isReconfirm = reminder.reminderType === 'assignment_reconfirm_4h';
 
   let cadenceSuppressReason = '';
   if (isEscalation && (cortState === 'confirmed' || cortState === 'cancelled')) {
     cadenceSuppressReason = `cadence_state_${cortState}_escalation_not_needed`;
   } else if (isPostConfirmOperational && cortState === 'cancelled') {
     cadenceSuppressReason = 'cadence_cancelled_by_worker';
+  } else if (isReconfirm && (cortState === 'cancelled' || cortState === 'checked_in')) {
+    cadenceSuppressReason = `cadence_state_${cortState}_reconfirm_not_needed`;
   }
   if (cadenceSuppressReason) {
     logger.info('[worker_shift_reminders] reminder suppressed', {

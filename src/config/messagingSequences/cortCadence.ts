@@ -184,7 +184,22 @@ export interface SequenceTargeting {
    * `every_shift` = run on every assignment at these accounts.
    */
   occurrence: SequenceOccurrence;
+  /**
+   * Optional venue filter INSIDE the targeted accounts: assignment.locationId must be in this
+   * list when non-empty (e.g. Oakland Arena within Legends National Account). Empty/absent =
+   * whole account.
+   */
+  locationIds?: string[];
 }
+
+/** Which reminder track a sequence applies. Careers never come from targeting —
+ *  the backend fences jobOrderType 'career' into its own quiet track. */
+export type SequenceTrack = 'gig_standard' | 'cort_gig';
+
+export const SEQUENCE_TRACK_LABELS: Record<SequenceTrack, string> = {
+  gig_standard: 'Gig standard (confirm → re-confirm → check-in)',
+  cort_gig: 'Gig standard + QR clock-in link (CORT)',
+};
 
 export const DEFAULT_CORT_TARGETING: SequenceTargeting = {
   label: 'CORT CSR Waitlist',
