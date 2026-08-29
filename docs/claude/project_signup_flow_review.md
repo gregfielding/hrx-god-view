@@ -3,7 +3,15 @@
 > Greg: "The flow should be intuitive. Currently, it's a mess." Full review
 > artifact (flow maps, ranked findings, build plan):
 > https://claude.ai/code/artifact/098affb9-98b4-4063-b811-27462760254a
-> Status: REVIEW DELIVERED, build not started.
+> Status 2026-08-29: QUICK WINS + most of convergence + cleanup SHIPPED
+> (commits 8e9da766, 53d39d71): hired→Payroll-hub landing, DOB in dialog
+> signup (18+ closed), /earnings SMS links, auto-add dedupe, resume+headshot
+> out of the funnel, job applies land IN the AI interview post-submit,
+> ~645 dead lines deleted (both email/password branches, orphaned steps,
+> hidden nav bar). REMAINING: gated-group pending state + application doc
+> on group path (finding 3), write groupId on applications to revive the
+> signals door (finding 5) + kill the wrong-app fallback (finding 6),
+> consolidate the two group-resolution utils + two wizard shells (finding 7).
 
 ## The two paths (live code, 2026-08-28)
 
