@@ -491,6 +491,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     }
     return {};
   });
+  /** Group ids the early (step-0) auto-add already sent — submit skips them. */
+  const autoAddedGroupIdsRef = useRef<Set<string>>(new Set());
   const formDataRef = useRef(formData);
   useEffect(() => {
     formDataRef.current = formData;
@@ -2103,12 +2105,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           // Auto-add to user groups as soon as account exists + tenant is linked (do not wait for full wizard).
           if (tenantId && effectiveUid) {
             try {
-              await autoAddUserToApplyConfiguredGroups({
+              const added = await autoAddUserToApplyConfiguredGroups({
                 userId: effectiveUid,
                 tenantId,
                 posting,
                 signupGroupId,
+                alreadyAddedGroupIds: autoAddedGroupIdsRef.current,
               });
+              added.forEach((id) => autoAddedGroupIdsRef.current.add(id));
             } catch (groupEarlyErr) {
               console.warn('Apply wizard: early auto-add to user groups failed', groupEarlyErr);
             }
@@ -3418,12 +3422,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
         if (tenantId && effectiveUid) {
           try {
-            await autoAddUserToApplyConfiguredGroups({
+            const added = await autoAddUserToApplyConfiguredGroups({
               userId: effectiveUid,
               tenantId,
               posting,
               signupGroupId,
+              alreadyAddedGroupIds: autoAddedGroupIdsRef.current,
             });
+            added.forEach((id) => autoAddedGroupIdsRef.current.add(id));
           } catch (groupSubmitErr) {
             console.error('Apply wizard: submit auto-add to user groups failed', groupSubmitErr);
           }
@@ -3839,18 +3845,22 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       );
     }
 
-    // Group / auto-hire apply (no returnTo): the worker is signed in now, so
-    // land them in the real app chrome (bottom nav, dashboard action items —
-    // payroll setup, headshot, etc.) instead of a dead-end card under the
-    // signup header (Greg 2026-08-25).
+    // Group / auto-hire apply (no returnTo): land the just-hired worker on
+    // the PAYROLL HUB, where the setup checklist ("✓ SSN · ✓ direct deposit ·
+    // ○ tax forms") is waiting — this is their peak-motivation moment and the
+    // whole point of the signup (signup-flow review 2026-08-28; supersedes
+    // the 2026-08-25 dashboard landing). Auto-hire fires at step-0 exit, so
+    // by submit the Everee linkage exists and the hub renders their card.
+    // General signups (no group, no job) still go to the dashboard — they
+    // have no payroll to set up yet.
     return (
       <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
         <PostSubmitRedirect
-          to="/c1/workers/dashboard"
+          to={signupGroupId ? '/c1/workers/earnings' : '/c1/workers/dashboard'}
           delayMs={1500}
           headlineKey="apply.hiredTitle"
-          subheadKey="apply.takingYouHome"
-          helperKey="apply.payrollLaterHint"
+          subheadKey={signupGroupId ? 'apply.takingYouToPayroll' : 'apply.takingYouHome'}
+          helperKey={signupGroupId ? 'apply.payrollNowHint' : 'apply.payrollLaterHint'}
           applicationsPath={applicationsPath}
           jobsBoardPath={jobsBoardPath}
           t={t}

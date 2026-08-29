@@ -1086,7 +1086,9 @@
     "positionInterest_hospitality": "Hospitalidad y hoteles",
     "positionInterest_general_labor": "Trabajo general",
     "positionInterest_customer_service": "Atención al cliente",
-    "positionInterest_skilled_trades": "Oficios especializados"
+    "positionInterest_skilled_trades": "Oficios especializados",
+    "takingYouToPayroll": "Te llevamos a la configuración de nómina: 3 pasos rápidos para recibir tu pago…",
+    "payrollNowHint": "Toma unos 5 minutos. También puedes terminarla después desde la pestaña Nómina."
   },
   "jobs": {
     "title": "Trabajos",

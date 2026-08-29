@@ -72,14 +72,23 @@ export async function autoAddUserToApplyConfiguredGroups(params: {
   tenantId: string;
   posting: ApplyPostingGroupSource;
   signupGroupId?: string | null;
-}): Promise<void> {
-  const { userId, tenantId, posting, signupGroupId } = params;
-  if (!userId || !tenantId) return;
+  /**
+   * Group ids a previous call this session already added — skipped here so
+   * the wizard's two call sites (step-0 exit + submit) don't double-write
+   * membership and double-fire the auto-hire trigger (signup-flow review
+   * 2026-08-28). Returns the ids actually sent so the caller can extend it.
+   */
+  alreadyAddedGroupIds?: ReadonlySet<string>;
+}): Promise<string[]> {
+  const { userId, tenantId, posting, signupGroupId, alreadyAddedGroupIds } = params;
+  if (!userId || !tenantId) return [];
 
-  const groupIds = await resolveApplyWizardAutoGroupIds({ tenantId, posting, signupGroupId });
-  if (groupIds.length === 0) return;
+  const resolved = await resolveApplyWizardAutoGroupIds({ tenantId, posting, signupGroupId });
+  const groupIds = resolved.filter((id) => !alreadyAddedGroupIds?.has(id));
+  if (groupIds.length === 0) return [];
 
   const functions = getFunctions();
   const addUsersToGroups = httpsCallable(functions as any, 'addUsersToGroups');
   await addUsersToGroups({ userId, groupIds, tenantId });
+  return groupIds;
 }

@@ -101,7 +101,10 @@ export function buildWorkerAssignmentsUrl(): string {
 export function buildWorkerPayrollEvereeTenantUrl(evereeTenantId: string): string {
   const id = String(evereeTenantId || '').trim();
   if (!id) return '';
-  return `${getWorkerWebBaseUrl()}/c1/workers/payroll/${encodeURIComponent(id)}`;
+  // /earnings is the canonical route since the 2026-08-23 rename; the old
+  // /payroll link still redirects but costs mobile users an extra hop
+  // (signup-flow review 2026-08-28).
+  return `${getWorkerWebBaseUrl()}/c1/workers/earnings/${encodeURIComponent(id)}`;
 }
 
 export function buildWorkerAssignmentUrl(assignmentId?: string): string {

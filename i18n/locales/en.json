@@ -1086,7 +1086,9 @@
     "positionInterest_hospitality": "Hospitality & Hotels",
     "positionInterest_general_labor": "General Labor",
     "positionInterest_customer_service": "Customer Service",
-    "positionInterest_skilled_trades": "Skilled Trades"
+    "positionInterest_skilled_trades": "Skilled Trades",
+    "takingYouToPayroll": "Taking you to payroll setup — 3 quick steps to get paid…",
+    "payrollNowHint": "It takes about 5 minutes. You can also finish later from the Payroll tab."
   },
   "jobs": {
     "title": "Jobs",

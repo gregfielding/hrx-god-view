@@ -74,6 +74,8 @@ const AUTH_COPY: Record<'en' | 'es', Record<string, string>> = {
     phone: 'Phone Number',
     phonePlaceholder: '(555) 123-4567',
     phoneHelp: "We'll use this to send you job updates and verification codes.",
+    dob: 'Date of birth',
+    dobHelp: 'MM/DD/YYYY — you must be 18 or older to work with us.',
     smsConsent: 'By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One, including application updates, interview scheduling, onboarding reminders, shift notifications, payroll alerts, and account security messages. Message & data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment. See our Privacy Policy, Terms of Use, and SMS Consent.',
     termsAgree: 'I agree to the Terms of Use.',
     termsAgreePrefix: 'I agree to the ',
@@ -131,6 +133,8 @@ const AUTH_COPY: Record<'en' | 'es', Record<string, string>> = {
     phone: 'Número de teléfono',
     phonePlaceholder: '(555) 123-4567',
     phoneHelp: 'Lo usaremos para enviarte actualizaciones de trabajos y códigos de verificación.',
+    dob: 'Fecha de nacimiento',
+    dobHelp: 'MM/DD/AAAA — debes tener 18 años o más para trabajar con nosotros.',
     smsConsent: 'Al marcar esta casilla, acepto recibir mensajes de texto relacionados con el empleo de C1 Staffing / HRX One, incluyendo actualizaciones de solicitudes, citas para entrevistas, recordatorios de incorporación, avisos de turnos, alertas de nómina y mensajes de seguridad de la cuenta. Pueden aplicar tarifas de mensajes y datos. La frecuencia varía. Responde STOP para cancelar o HELP para ayuda. El consentimiento no es condición de empleo. Consulta nuestra Política de privacidad, Términos de uso y Consentimiento SMS.',
     termsAgree: 'Acepto los Términos de uso.',
     termsAgreePrefix: 'Acepto los ',
@@ -192,6 +196,10 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [acknowledgedPrivacy, setAcknowledgedPrivacy] = useState(false);
   const [phone, setPhone] = useState('');
+  // DOB closes the 18+ gap: this dialog previously created accounts with no
+  // date of birth, silently skipping the server-side age check that the apply
+  // wizard enforces (signup-flow review 2026-08-28).
+  const [dob, setDob] = useState('');
   const [smsConsent, setSmsConsent] = useState(false);
   const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>(detectDefaultLanguage());
 
@@ -902,6 +910,21 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
               />
             )}
 
+            {activeTab === 0 && (
+              <TextField
+                fullWidth
+                label={t.dob}
+                value={dob}
+                onChange={(e) => setDob(e.target.value)}
+                disabled={loading}
+                required
+                size={isMobile ? 'medium' : 'medium'}
+                placeholder="MM/DD/YYYY"
+                helperText={t.dobHelp}
+                inputProps={{ inputMode: 'numeric', autoComplete: 'bday' }}
+              />
+            )}
+
             {/* Phone-first account creation (Slice 2, 2026-08-25): OTP gate
                 replaces email+password signup — see PhoneSignupGate. */}
             {activeTab === 0 && agreedToTerms && smsConsent && (
@@ -909,6 +932,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
                 firstName={firstName}
                 lastName={lastName}
                 phone={phone}
+                dob={dob}
+                dobRequired
                 signupSource="jobs_board_dialog"
                 onAuthed={() => {
                   try {
