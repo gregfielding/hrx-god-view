@@ -115,8 +115,11 @@ const Apply: React.FC = () => {
       <Box sx={{ bgcolor: 'background.default', minHeight: '100vh', pb: 4 }}>
         <Box
           sx={{
-            px: { xs: 2, sm: 3 },
-            pt: { xs: 2, sm: 3 },
+            // Signed-in renders inside C1WorkerLayout (routes joined the
+            // shared shell 2026-08-29) which brings its own gutters — avoid
+            // double padding, mirroring ApplyWizardPage.
+            px: user ? 0 : { xs: 2, sm: 3 },
+            pt: user ? 0 : { xs: 2, sm: 3 },
             pb: 1.5,
             maxWidth: { sm: 720 },
             mx: 'auto',

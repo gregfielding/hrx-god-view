@@ -594,8 +594,10 @@ function App() {
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
-      <Route path="/c1/apply" element={<Apply />} />
-      <Route path="/c1/apply/group/:groupId" element={<Apply />} />
+      {/* /c1/apply moved under ConditionalWorkerLayout 2026-08-29 (signup-flow
+          review finding 7) — same shell behavior as /apply/:slug/:jobId: no
+          chrome while signed out, real worker chrome once the OTP gate signs
+          them in. See the layout group below. */}
       {/* `/signup` alias → the generic apply/signup page at /c1/apply. */}
       <Route path="/signup" element={<SignupRedirect />} />
       <Route path="/signup/group/:groupId" element={<SignupRedirect />} />
@@ -609,6 +611,8 @@ function App() {
 
       {/* Single layout for /c1 and /apply so nav + top bar stay mounted on back/forward */}
       <Route element={<ConditionalWorkerLayout />}>
+        <Route path="/c1/apply" element={<Apply />} />
+        <Route path="/c1/apply/group/:groupId" element={<Apply />} />
         <Route path="/c1" element={<Outlet />}>
           <Route index element={<Navigate to="/c1/workers/dashboard" replace />} />
           <Route path="workers" element={<Outlet />}>

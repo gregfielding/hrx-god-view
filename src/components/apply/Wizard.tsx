@@ -82,7 +82,7 @@ import { useT } from '../../i18n';
 import { buildCanonicalWorkerProfileWritePatch, expandDottedKeys } from '../../utils/workerReadinessWriteModel';
 import { buildCanonicalHomeAddressFromWizardPersonal } from '../../utils/buildCanonicalHomeAddress';
 import { isApplyHomeAddressValid } from '../../utils/applyHomeAddressValid';
-import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroupAutoAdd';
+import { autoAddUserToApplyConfiguredGroups, resolveApplyWizardAutoGroupIds } from '../../utils/applyWizardGroupAutoAdd';
 import { isValidUsPhone10, normalizeUsPhoneDigits } from '../../utils/usPhoneValidation';
 import { normalizeLast4SsnDigits } from '../../utils/last4Ssn';
 import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
@@ -3087,6 +3087,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           // address — `addressValid` should make this unreachable.
           const applicationHomeAddress = buildCanonicalHomeAddressFromWizardPersonal(personal);
 
+          // Second auto-hire door, revived 2026-08-29 (signup-flow review
+          // finding 5): `onApplicationHiringSignalsChangedAutoOnboard` hard-
+          // requires `groupId` on the application, and nothing ever wrote it —
+          // prescreen-completion auto-hire could never fire for wizard
+          // applications. Stamp the primary configured hiring group (plus the
+          // full list for future multi-group logic). Best-effort: a resolution
+          // failure must never block the submit.
+          const applicationGroupIds = await resolveApplyWizardAutoGroupIds({
+            tenantId,
+            posting,
+            signupGroupId,
+          }).catch(() => [] as string[]);
+
           await setDoc(
             tRef,
             {
@@ -3094,6 +3107,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               tenantId,
               jobId,
               jobOrderId: posting?.jobOrderId || jobOrderIdOverride || null, // CRITICAL: Link to job order if posting is connected
+              groupId: applicationGroupIds[0] ?? null,
+              ...(applicationGroupIds.length ? { groupIds: applicationGroupIds } : {}),
               status: 'submitted',
               appliedAt: serverTimestamp(),
               submittedAt: serverTimestamp(),
