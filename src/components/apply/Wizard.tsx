@@ -3770,8 +3770,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       // away via the secondary links; workers who already interviewed hit
       // the cumulative-prescreen zero-delta auto-complete and sail through.
       const submittedUid = auth.currentUser?.uid;
+      // Repeat interviewees skip the interview page — their application
+      // auto-completes server-side from the answer bank (2026-08-29).
+      const interviewedBefore =
+        (userProfile as any)?.hasWorkerAiPrescreenInterview === true ||
+        (userProfile as any)?.interviewStatus === 'completed';
       const prescreenTo =
-        jobId && submittedUid
+        jobId && submittedUid && !interviewedBefore
           ? `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${submittedUid}_${jobId}`)}&entry=apply_wizard_inline`
           : returnTo;
       return (
@@ -3802,10 +3807,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     // interview, so land them straight in it (same in-session pattern as
     // job applies); auto-hire groups land on the Payroll hub as before.
     const gatedGroupUid = auth.currentUser?.uid;
+    const gatedGroupInterviewedBefore =
+      (userProfile as any)?.hasWorkerAiPrescreenInterview === true ||
+      (userProfile as any)?.interviewStatus === 'completed';
     const isGatedGroup = Boolean(signupGroupId && signupGroupAutoHires === false && gatedGroupUid);
-    const gatedGroupTo = isGatedGroup
-      ? `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${gatedGroupUid}_group_${signupGroupId}`)}&entry=apply_group_inline`
-      : null;
+    // Repeat interviewees on a score-gated group go to the dashboard — the
+    // answer-bank auto-complete + signals reactor resolve their outcome in
+    // the background within moments.
+    const gatedGroupTo =
+      isGatedGroup && !gatedGroupInterviewedBefore
+        ? `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${gatedGroupUid}_group_${signupGroupId}`)}&entry=apply_group_inline`
+        : isGatedGroup
+          ? '/c1/workers/dashboard'
+          : null;
     return (
       <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
         <PostSubmitRedirect

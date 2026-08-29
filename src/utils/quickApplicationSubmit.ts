@@ -117,6 +117,26 @@ export async function getMissingRequiredCertifications(
  * not re-asked, matching the wizard's own skip logic. Returns item labels;
  * non-empty → route the worker into the wizard's requirements step.
  */
+/**
+ * Has this worker EVER completed an AI prescreen interview? (Denormalized
+ * users-doc flag + legacy fallback — same signal the server suppression
+ * uses.) Governs whether we route them into the interview after applying:
+ * repeat workers' applications auto-complete server-side from the answer
+ * bank (per-category freshness windows: 90/180/365d, job-specific never
+ * carried), so sending them to the interview page is noise. Deltas are
+ * chased by the existing SMS cadence instead (2026-08-29, Greg).
+ */
+export async function hasCompletedPrescreen(userId: string): Promise<boolean> {
+  try {
+    const snap = await getDoc(doc(db, 'users', userId));
+    if (!snap.exists()) return false;
+    const d = snap.data() as Record<string, unknown>;
+    return d.hasWorkerAiPrescreenInterview === true || d.interviewStatus === 'completed';
+  } catch {
+    return false;
+  }
+}
+
 export async function getUnansweredRequirementAcks(
   userId: string,
   jobPosting: any

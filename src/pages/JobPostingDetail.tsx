@@ -1815,13 +1815,16 @@ const JobPostingDetail: React.FC = () => {
             const { emitWorkerCardSignal } = await import('../utils/workerCardSignals');
             emitWorkerCardSignal({ type: 'job_applied', entityId: postId! });
             setApplicationStatusReloadKey((k) => k + 1);
-            // Straight into the stand-out interview (2026-08-29 two-step
-            // signup): the application exists as {uid}_{postId}; the
-            // cumulative prescreen zero-delta auto-completes for workers
-            // who already interviewed, so repeat applicants sail through.
-            navigate(
-              `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${user.uid}_${postId}`)}&entry=post_apply_inline`,
-            );
+            // First-time interviewees go straight into the stand-out
+            // interview; repeat workers stay on the posting — their fresh
+            // application auto-completes server-side from the answer bank,
+            // so the interview page would be noise (2026-08-29, Greg).
+            const { hasCompletedPrescreen } = await import('../utils/quickApplicationSubmit');
+            if (!(await hasCompletedPrescreen(user.uid))) {
+              navigate(
+                `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${user.uid}_${postId}`)}&entry=post_apply_inline`,
+              );
+            }
             return;
           } else {
             // Error - show alert and navigate to wizard

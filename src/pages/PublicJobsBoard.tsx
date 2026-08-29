@@ -1294,12 +1294,17 @@ const PublicJobsBoard: React.FC = () => {
           
           if (result.success) {
             handleCloseDialog();
-            // Straight into the stand-out interview, same as the posting
-            // page (2026-08-29) — the submitted state greets them when they
-            // come back to the posting.
-            navigate(
-              `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${user.uid}_${job.id}`)}&entry=post_apply_inline`,
-            );
+            // First-time interviewees go into the stand-out interview;
+            // repeat workers see the posting's submitted state — their
+            // application auto-completes from the answer bank server-side.
+            const { hasCompletedPrescreen } = await import('../utils/quickApplicationSubmit');
+            if (await hasCompletedPrescreen(user.uid)) {
+              navigate(`/c1/jobs-board/${job.id}`, { replace: true });
+            } else {
+              navigate(
+                `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${user.uid}_${job.id}`)}&entry=post_apply_inline`,
+              );
+            }
             return;
           } else {
             // Error - show alert and navigate to wizard
