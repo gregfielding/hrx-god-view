@@ -225,20 +225,9 @@ const C1WorkerSupport: React.FC = () => {
             </Box>
           )}
           {reply?.escalate && (
-            <Alert
-              severity="warning"
-              sx={{ mt: 1.5 }}
-              action={
-                <Button
-                  color="inherit"
-                  size="small"
-                  onClick={goToNotifications}
-                  startIcon={<SupportAgentIcon />}
-                >
-                  {t('support.contactRecruiter')}
-                </Button>
-              }
-            >
+            // Contact-recruiter button hidden 2026-08-28 (same dead wiring as
+            // the escalation card below) — the advisory text stands alone.
+            <Alert severity="warning" sx={{ mt: 1.5 }}>
               {t('support.mayNeedRecruiterSupport')}
             </Alert>
           )}
@@ -288,24 +277,29 @@ const C1WorkerSupport: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* 3. Escalation — Contact recruiter */}
-      <Card variant="outlined">
-        <CardContent sx={{ pt: 2, pb: 2 }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
-            <Typography variant="body2" color="text.secondary">
-              {t('support.cantResolveRecruiterCanHelp')}
-            </Typography>
-            <Button
-              variant="contained"
-              startIcon={<SupportAgentIcon />}
-              onClick={goToNotifications}
-              sx={{ textTransform: 'none', fontWeight: 600 }}
-            >
-              {t('support.contactRecruiter')}
-            </Button>
-          </Stack>
-        </CardContent>
-      </Card>
+      {/* 3. Escalation — Contact recruiter. Hidden 2026-08-28 (Greg): the
+          button only opened the notifications pane — there is no actual
+          recruiter-contact flow behind it yet. Restore once a real
+          escalation path (recruiter inbox thread / SMS bridge) exists. */}
+      {false && (
+        <Card variant="outlined">
+          <CardContent sx={{ pt: 2, pb: 2 }}>
+            <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
+              <Typography variant="body2" color="text.secondary">
+                {t('support.cantResolveRecruiterCanHelp')}
+              </Typography>
+              <Button
+                variant="contained"
+                startIcon={<SupportAgentIcon />}
+                onClick={goToNotifications}
+                sx={{ textTransform: 'none', fontWeight: 600 }}
+              >
+                {t('support.contactRecruiter')}
+              </Button>
+            </Stack>
+          </CardContent>
+        </Card>
+      )}
     </Box>
   );
 };
