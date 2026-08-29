@@ -41,6 +41,7 @@ import { sendWorkerMessageInternal } from '../twilio';
 import { notifyRecruitersOnWorkerEvent } from '../messaging/notifyRecruitersOnWorkerEvent';
 import { classifyCadenceReply, type CadenceReplyIntent } from './replyClassifier';
 import { ALL_SHIFT_REMINDER_TYPES, type ShiftReminderType } from './shiftReminderProfile';
+import { getTenantSmsBrand } from './sequenceCopyOverrides';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -554,6 +555,7 @@ async function sendReceipt(args: {
 }): Promise<void> {
   const { tenantId, userId, phoneE164, assignmentId, intent, assignment } = args;
   const es = args.lang === 'es';
+  const brand = await getTenantSmsBrand(tenantId);
 
   const job = normalize(assignment.jobTitle || assignment.jobOrderName || assignment.title) ||
     (es ? 'tu turno' : 'your shift');
@@ -563,18 +565,18 @@ async function sendReceipt(args: {
 
   if (intent === 'confirmation') {
     body = es
-      ? `C1 Staffing: Gracias — estás confirmado para ${job}. Te enviaremos los detalles del lugar antes de empezar.`
-      : `C1 Staffing: Thanks — you're confirmed for ${job}. We'll send worksite details closer to start time.`;
+      ? `${brand}: Gracias — estás confirmado para ${job}. Te enviaremos los detalles del lugar antes de empezar.`
+      : `${brand}: Thanks — you're confirmed for ${job}. We'll send worksite details closer to start time.`;
     messageTypeId = 'assignment_confirmation_receipt';
   } else if (intent === 'cancellation') {
     body = es
-      ? `C1 Staffing: Entendido — cancelamos ${job} y avisamos a tu reclutador.`
-      : `C1 Staffing: Got it — we've cancelled ${job} and alerted your recruiter.`;
+      ? `${brand}: Entendido — cancelamos ${job} y avisamos a tu reclutador.`
+      : `${brand}: Got it — we've cancelled ${job} and alerted your recruiter.`;
     messageTypeId = 'assignment_cancellation_receipt';
   } else if (intent === 'check_in') {
     body = es
-      ? `C1 Staffing: Listo — registramos tu llegada a ${job}. ¡Buen turno! Responde HELP si algo sale mal.`
-      : `C1 Staffing: Got it — you're checked in for ${job}. Have a great shift. Reply HELP if anything goes wrong.`;
+      ? `${brand}: Listo — registramos tu llegada a ${job}. ¡Buen turno! Responde HELP si algo sale mal.`
+      : `${brand}: Got it — you're checked in for ${job}. Have a great shift. Reply HELP if anything goes wrong.`;
     messageTypeId = 'assignment_checked_in_receipt';
   } else {
     // walk_off_warning — this is the "don't walk off, you're being paid" copy.
@@ -582,11 +584,11 @@ async function sendReceipt(args: {
     // variant this is where we'd branch on assignment / jobOrder metadata;
     // for now the default covers the CORT use case.
     body = es
-      ? `C1 Staffing: Gracias por avisar. Tu pago cuenta desde tu hora de inicio programada — ` +
+      ? `${brand}: Gracias por avisar. Tu pago cuenta desde tu hora de inicio programada — ` +
         `por favor quédate en el lugar y espera al menos 30 minutos a tu supervisor. ` +
         `Ya avisamos a tu reclutador y te contactará pronto. Responde AQUÍ cuando lo veas, ` +
         `o HELP si necesitas ayuda.`
-      : `C1 Staffing: Thanks for reaching out. You're paid from your scheduled start time — ` +
+      : `${brand}: Thanks for reaching out. You're paid from your scheduled start time — ` +
         `please stay on site and wait at least 30 minutes for your supervisor or driver lead. ` +
         `We've alerted your recruiter, who will reach out shortly. Reply HERE when you see them, ` +
         `or reply HELP if you need support.`;

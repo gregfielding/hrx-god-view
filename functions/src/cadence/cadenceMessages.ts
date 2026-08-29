@@ -107,6 +107,7 @@ export function buildCadenceMessage(
   reminderType: CadenceReminderType,
   payload: CadenceMessagePayload,
   lang: 'en' | 'es' = 'en',
+  brand: string = 'C1 Staffing',
 ): BuiltMessage {
   const es = lang === 'es';
   const startLabel = formatStartInTimezone(payload.startTime, payload.timezone);
@@ -120,8 +121,8 @@ export function buildCadenceMessage(
     case 'assignment_reminder_2h_instructions': {
       const parts = [
         es
-          ? `C1 Staffing: Tu turno de ${job} en ${location} empieza el ${startLabel}.`
-          : `C1 Staffing: Your ${job} shift at ${location} starts at ${startLabel}.`,
+          ? `${brand}: Tu turno de ${job} en ${location} empieza el ${startLabel}.`
+          : `${brand}: Your ${job} shift at ${location} starts at ${startLabel}.`,
       ];
       if (address) parts.push(es ? `Dirección: ${address}.` : `Address: ${address}.`);
       if (detail) parts.push(detail);
@@ -137,7 +138,7 @@ export function buildCadenceMessage(
 
     case 'assignment_reminder_15m_clockin': {
       const parts = [
-        es ? `C1 Staffing: ${job} empieza el ${startLabel}.` : `C1 Staffing: ${job} starts at ${startLabel}.`,
+        es ? `${brand}: ${job} empieza el ${startLabel}.` : `${brand}: ${job} starts at ${startLabel}.`,
       ];
       if (clockInUrl) {
         parts.push(es ? `Marca tu entrada aquí: ${clockInUrl}` : `Clock in here: ${clockInUrl}`);
@@ -165,11 +166,11 @@ export function buildCadenceMessage(
     case 'assignment_checkin_0h': {
       const parts = es
         ? [
-            `C1 Staffing: Tu turno de ${job} ya empezó.`,
+            `${brand}: Tu turno de ${job} ya empezó.`,
             '¿Ya estás en el lugar? Responde AQUÍ cuando llegues, o HELP si necesitas ayuda.',
           ]
         : [
-            `C1 Staffing: Your ${job} shift has started.`,
+            `${brand}: Your ${job} shift has started.`,
             'Are you on site? Reply HERE once you arrive, or reply HELP if you need assistance.',
           ];
       if (location && location.toLowerCase() !== 'your worksite' && location !== 'tu lugar de trabajo') {
@@ -192,7 +193,7 @@ export function buildCadenceMessage(
       return {
         title: 'Shift reminder',
         body: `${job} starts at ${startLabel}.`,
-        sms: `C1 Staffing: ${job} starts at ${startLabel}.`,
+        sms: `${brand}: ${job} starts at ${startLabel}.`,
       };
     }
   }

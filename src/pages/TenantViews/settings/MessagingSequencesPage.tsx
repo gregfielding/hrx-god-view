@@ -158,6 +158,7 @@ interface SequenceDocRow {
   id: string;
   track: SequenceTrack;
   targeting: SequenceTargeting;
+  copyOverrides: Record<string, { en?: string; es?: string }>;
 }
 
 function coerceTargeting(raw: Partial<SequenceTargeting> | undefined, fallbackLabel: string): SequenceTargeting {
@@ -245,15 +246,22 @@ const MessagingSequencesPage: React.FC = () => {
         );
         if (cancelled) return;
         const rows: SequenceDocRow[] = snap.docs.map((d) => {
-          const data = d.data() as { track?: string; targeting?: Partial<SequenceTargeting> };
+          const data = d.data() as {
+            track?: string;
+            targeting?: Partial<SequenceTargeting>;
+            copyOverrides?: Record<string, { en?: string; es?: string }>;
+          };
           const track: SequenceTrack = data.track === 'gig_standard' ? 'gig_standard' : 'cort_gig';
-          return { id: d.id, track, targeting: coerceTargeting(data.targeting, d.id) };
+          const copyOverrides =
+            data.copyOverrides && typeof data.copyOverrides === 'object' ? data.copyOverrides : {};
+          return { id: d.id, track, targeting: coerceTargeting(data.targeting, d.id), copyOverrides };
         });
         if (!rows.some((r) => r.id === CORT_SEQUENCE_ID)) {
           rows.unshift({
             id: CORT_SEQUENCE_ID,
             track: 'cort_gig',
             targeting: { ...DEFAULT_CORT_TARGETING, locationIds: [] },
+            copyOverrides: {},
           });
         }
         rows.sort((a, b) => a.id.localeCompare(b.id));
@@ -292,7 +300,7 @@ const MessagingSequencesPage: React.FC = () => {
         updatedAt: new Date(),
       });
       setSequences((prev) =>
-        [...prev, { id, track: 'gig_standard' as SequenceTrack, targeting }].sort((a, b) =>
+        [...prev, { id, track: 'gig_standard' as SequenceTrack, targeting, copyOverrides: {} }].sort((a, b) =>
           a.id.localeCompare(b.id),
         ),
       );
@@ -323,12 +331,13 @@ const MessagingSequencesPage: React.FC = () => {
 
       <Alert severity="info" icon={<InfoOutlinedIcon />} sx={{ mb: 3 }}>
         <Typography variant="body2" sx={{ fontWeight: 500, mb: 0.25 }}>
-          Targeting is editable — steps below are read-only (Phase 2)
+          Targeting and message wording are editable — step timing is fixed per track
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          Use the targeting card below to choose which accounts, worker types, and occurrences this
-          cadence applies to. The step timing and message copy are still defined in code (see the
-          "Built in" paths per step) and will become editable in a follow-up.
+          Each card controls which accounts, venues, and occurrences its sequence applies to, and
+          &ldquo;Edit message wording&rdquo; rewords any step&apos;s SMS (English and Spanish, with
+          tokens) without a deploy. Step timing and the reply keywords are defined per track in
+          code — the table below documents them.
         </Typography>
       </Alert>
 
@@ -348,6 +357,7 @@ const MessagingSequencesPage: React.FC = () => {
             sequenceId={row.id}
             initialTrack={row.track}
             initialTargeting={row.targeting}
+            initialCopyOverrides={row.copyOverrides}
             accounts={accounts}
             accountsLoading={accountsLoading}
             onSaved={(msg, ok) => setSnack({ open: true, msg, ok })}

@@ -55,10 +55,10 @@ export const CORT_SEQUENCE_STEPS: MessagingSequenceStep[] = [
     purpose:
       'First touch. Asks the worker to confirm tomorrow\'s shift. This is the message whose reply drives the entire escalation path — if YES or CANCEL arrives, the 23h / 22h reminders are skipped.',
     smsTemplate:
-      "C1 Staffing: You're scheduled for {jobTitle} tomorrow at {startTime} at {locationName}. Reply YES to confirm or CANCEL to decline.",
+      "{brand}: You're scheduled for {jobTitle} tomorrow at {startTime} at {locationName}. Reply YES to confirm or CANCEL to decline.",
     expectedReplies: ['YES', 'CANCEL'],
     branching:
-      'YES → mark confirmed, skip 23h + 22h escalations. CANCEL → mark declined, release shift, skip rest of cadence. No reply → 23h escalation fires.',
+      'YES → mark confirmed, skip 23h + 22h escalations. CANCEL → mark declined, alert recruiter feed + Scheduling Health, skip rest of cadence (seat re-open/backfill is a planned follow-up). No reply → 23h escalation fires.',
     sourceFile: 'functions/src/workerShiftRemindersV2.ts (buildReminderMessage)',
   },
   {
@@ -70,10 +70,10 @@ export const CORT_SEQUENCE_STEPS: MessagingSequenceStep[] = [
     purpose:
       'Fires only if the worker hasn\'t replied YES or CANCEL to the 24h message. Friendly nudge — "we still need a response".',
     smsTemplate:
-      'C1 Staffing: We still need a response for your {jobTitle} shift at {startTime}. Reply YES to confirm or CANCEL to decline.',
+      '{brand}: We still need a response for your {jobTitle} shift at {startTime}. Reply YES to confirm or CANCEL to decline.',
     expectedReplies: ['YES', 'CANCEL'],
     branching:
-      'YES → mark confirmed, skip 22h. CANCEL → release shift, skip rest. No reply → 22h final reminder fires.',
+      'YES → mark confirmed, skip 22h. CANCEL → mark declined, alert recruiter feed, skip rest. No reply → 22h final reminder fires.',
     sourceFile: 'functions/src/workerShiftRemindersV2.ts (buildReminderMessage)',
   },
   {
@@ -85,50 +85,65 @@ export const CORT_SEQUENCE_STEPS: MessagingSequenceStep[] = [
     purpose:
       'Last chance before the recruiter may need to reassign. Tone shifts from friendly nudge to "last call".',
     smsTemplate:
-      'C1 Staffing: Last reminder for {jobTitle} at {startTime}. Reply YES to keep the shift or CANCEL — otherwise we may need to reassign it.',
+      '{brand}: Last reminder for {jobTitle} at {startTime}. Reply YES to keep the shift or CANCEL — otherwise we may need to reassign it.',
     expectedReplies: ['YES', 'CANCEL'],
     branching:
-      'YES → mark confirmed, continue to T-2h instructions. CANCEL → release shift, skip rest. No reply → recruiter alerted, shift flagged for reassignment (cadence still proceeds to T-2h in case worker replies late).',
+      'YES → mark confirmed, continue to T-2h instructions. CANCEL → mark declined, alert recruiter feed, skip rest. No reply → nothing else fires at 22h; the unconfirmed shift shows on Scheduling Health, and the T+30m no-show probe alerts recruiters if they never check in (cadence still proceeds to T-2h in case the worker replies late).',
+    sourceFile: 'functions/src/workerShiftRemindersV2.ts (buildReminderMessage)',
+  },
+  {
+    id: 'assignment_reconfirm_4h',
+    order: 3,
+    offsetHours: 4,
+    offsetLabel: '4 hours before shift (evening before, for 5-9 AM starts)',
+    title: 'Re-confirm',
+    purpose:
+      'Second opt-in a few hours before start — plans change overnight. Deliberately ALSO sent to already-confirmed workers; skipped only when the worker cancelled or already checked in. Dropped automatically if it would land on top of the worksite-details step.',
+    smsTemplate:
+      '{brand}: Still good for your shift? {jobTitle} at {startTime} at {locationName}. Reply YES — or CANCEL now so we can cover your spot.',
+    expectedReplies: ['YES', 'CANCEL'],
+    branching:
+      'YES → (re)confirmed. CANCEL → mark declined, alert recruiter feed, skip rest. No reply → cadence proceeds.',
     sourceFile: 'functions/src/workerShiftRemindersV2.ts (buildReminderMessage)',
   },
   {
     id: 'assignment_reminder_2h_instructions',
-    order: 3,
+    order: 4,
     offsetHours: 2,
     offsetLabel: '2 hours before shift',
     title: 'Worksite details',
     purpose:
       'Ships address, parking/entry instructions, and shift description. The "Replaces the generic 2h reminder" step for CORT.',
     smsTemplate:
-      'C1 Staffing: Your {jobTitle} shift at {locationName} starts at {startTime}. Address: {locationAddress}. {shiftDescription} Reply HELP if you need anything.',
+      '{brand}: Your {jobTitle} shift at {locationName} starts at {startTime}. Address: {locationAddress}. {shiftDescription} Reply HELP if you need anything.',
     expectedReplies: ['HELP'],
     branching: 'HELP → triggers the help response path. Otherwise this is informational — cadence proceeds to T-15m clock-in.',
     sourceFile: 'functions/src/cadence/cadenceMessages.ts (buildCadenceMessage)',
   },
   {
     id: 'assignment_reminder_15m_clockin',
-    order: 4,
+    order: 5,
     offsetHours: 0.25,
     offsetLabel: '15 minutes before shift',
     title: 'Clock-in link',
     purpose:
       'Delivers the clock-in URL. If no clockInUrl is configured, falls back to "open the app to clock in".',
     smsTemplate:
-      'C1 Staffing: {jobTitle} starts at {startTime}. Clock in here: {clockInUrl}. Keep this thread open — we may send you instructions when you arrive.',
+      '{brand}: {jobTitle} starts at {startTime}. Clock in here: {clockInUrl}. Keep this thread open — we may send you instructions when you arrive.',
     expectedReplies: ['HELP'],
     branching: 'Informational. The next step (T+0 check-in) determines whether the worker showed up.',
     sourceFile: 'functions/src/cadence/cadenceMessages.ts (buildCadenceMessage)',
   },
   {
     id: 'assignment_checkin_0h',
-    order: 5,
+    order: 6,
     offsetHours: 0,
     offsetLabel: 'At shift start',
     title: 'On-site check-in',
     purpose:
       "Asks worker to confirm arrival. The reply (HERE / walk-off phrases / HELP) determines the no-show path.",
     smsTemplate:
-      'C1 Staffing: Your {jobTitle} shift has started. Location: {locationName}. Are you on site? Reply HERE once you arrive, or reply HELP if you need assistance.',
+      '{brand}: Your {jobTitle} shift has started. Location: {locationName}. Are you on site? Reply HERE once you arrive, or reply HELP if you need assistance.',
     expectedReplies: ['HERE', 'HELP', 'walk-off phrases'],
     branching:
       'HERE (or "I\'m here", "made it", etc.) → mark arrived, cadence complete. Walk-off phrases ("no one is here", "locked out") → escalate to recruiter. HELP → help path. No reply → T+30m silent no-show check determines status.',
@@ -136,7 +151,7 @@ export const CORT_SEQUENCE_STEPS: MessagingSequenceStep[] = [
   },
   {
     id: 'assignment_noshow_check',
-    order: 6,
+    order: 7,
     offsetHours: -0.5,
     offsetLabel: '30 minutes after shift start',
     title: 'No-show check (silent)',
@@ -148,6 +163,21 @@ export const CORT_SEQUENCE_STEPS: MessagingSequenceStep[] = [
       'No-show detected → recruiter alerted, shift marked for reassignment, worker prior-shift record updated. Worker arrived → no action, silent.',
     silent: true,
     sourceFile: 'functions/src/cadence/shiftReminderProfile.ts + dispatcher',
+  },
+  {
+    id: 'assignment_confirm_now',
+    order: 8,
+    offsetHours: 0,
+    offsetLabel: 'Immediately on late assignment (inside the 24h window)',
+    title: 'Late-fill ask (situational)',
+    purpose:
+      'Synthesized when a worker is assigned after the 24h ask would have fired and the shift is still ≥45 minutes away. First cadence message for that worker — asks for the commitment AND carries the address. Escalations are rebuilt at +2h/+4h after it when there is room.',
+    smsTemplate:
+      "{brand}: You're on the crew — {jobTitle} at {startTime} at {locationName}. Address: {locationAddress}. Reply YES to confirm or CANCEL if you can't make it.",
+    expectedReplies: ['YES', 'CANCEL'],
+    branching:
+      'Same as the 24h confirmation request. Suppressed if the worker already confirmed or cancelled by dispatch time.',
+    sourceFile: 'functions/src/workerShiftRemindersV2.ts (buildReminderMessage)',
   },
 ];
 
@@ -265,7 +295,7 @@ export const CORT_REPLY_TOKENS: Array<{
   {
     token: 'CANCEL / CANCELED / CANCELLED',
     kind: 'decline',
-    effect: 'Marks assignment declined, releases shift for reassignment, stops the cadence. Also functions as a carrier-compliance STOP synonym.',
+    effect: 'Marks the worker declined (cortConfirmation.state=cancelled), alerts the recruiter feed, stops the cadence. Seat re-open/backfill is a planned follow-up. Claimed by the cadence before the carrier-compliance STOP handler; with no active cadence it still acts as a STOP synonym.',
   },
   {
     token: 'HERE / I\'M HERE / MADE IT / ARRIVED',

@@ -9,6 +9,9 @@ module.exports = {
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.test.ts'],
+  // Initialize a dummy firebase-admin app so modules that call
+  // `admin.firestore()` at import time can be loaded without the emulator.
+  setupFiles: ['<rootDir>/src/__tests__/setup.ts'],
   moduleFileExtensions: ['ts', 'js', 'json'],
   // Keep unit tests hermetic — no emulator, no network.
   transform: { '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.json', diagnostics: false }] },

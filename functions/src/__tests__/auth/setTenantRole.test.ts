@@ -20,6 +20,13 @@ describe('setTenantRole', () => {
     }
   };
 
+  // `setTenantRole` is a firebase-functions v2 onCall. The exported value is an
+  // HTTP handler `(req, res)` — invoking it with `(data, context)` v1-style
+  // explodes with "res.on is not a function". The v2 test surface is `.run()`,
+  // which takes a CallableRequest and skips token verification.
+  const callSetTenantRole = (data: unknown, context: { auth: unknown } = mockContext) =>
+    (setTenantRole as any).run({ data, auth: context.auth, rawRequest: {} });
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetUser.mockClear();
@@ -43,13 +50,15 @@ describe('setTenantRole', () => {
       // Mock successful claims update
       mockSetCustomUserClaims.mockResolvedValueOnce(undefined);
 
-      const result = await setTenantRole({
+      const result = await callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-123',
         role: 'Recruiter',
         securityLevel: '4'
-      }, mockContext as any);
+      }, mockContext);
 
+      // ver is `(currentClaims.ver || 1) + 1` — a user with no prior claims
+      // starts at 2, not 1 (ver only exists to change and force token refresh).
       expect(result).toEqual({
         hrx: undefined,
         roles: {
@@ -58,7 +67,7 @@ describe('setTenantRole', () => {
             securityLevel: '4'
           }
         },
-        ver: 1
+        ver: 2
       });
 
       expect(mockSetCustomUserClaims).toHaveBeenCalledWith('target-uid', {
@@ -69,7 +78,7 @@ describe('setTenantRole', () => {
             securityLevel: '4'
           }
         },
-        ver: 1
+        ver: 2
       });
     });
 
@@ -88,13 +97,13 @@ describe('setTenantRole', () => {
 
       mockSetCustomUserClaims.mockResolvedValueOnce(undefined);
 
-      const result = await setTenantRole({
+      const result = await callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-123',
         role: 'Admin',
         securityLevel: '5',
         hrx: true
-      }, mockContext as any);
+      }, mockContext);
 
       expect(result.hrx).toBe(true);
     });
@@ -120,12 +129,12 @@ describe('setTenantRole', () => {
 
       mockSetCustomUserClaims.mockResolvedValueOnce(undefined);
 
-      const result = await setTenantRole({
+      const result = await callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-123',
         role: 'Worker',
         securityLevel: '2'
-      }, mockContext as any);
+      }, mockContext);
 
       expect(result.roles?.['tenant-123']).toEqual({
         role: 'Worker',
@@ -144,12 +153,12 @@ describe('setTenantRole', () => {
         }
       } as any);
 
-      await expect(setTenantRole({
+      await expect(callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-456', // Different tenant
         role: 'Worker',
         securityLevel: '2'
-      }, mockContext as any)).rejects.toThrow('Only HRX users or tenant Admins can set tenant roles');
+      }, mockContext)).rejects.toThrow('Only HRX users or tenant Admins can set tenant roles');
     });
   });
 
@@ -165,12 +174,12 @@ describe('setTenantRole', () => {
         }
       } as any);
 
-      await expect(setTenantRole({
+      await expect(callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-123',
         role: 'Recruiter',
         securityLevel: '4'
-      }, mockContext as any)).rejects.toThrow('Only HRX users or tenant Admins can set tenant roles');
+      }, mockContext)).rejects.toThrow('Only HRX users or tenant Admins can set tenant roles');
     });
 
     it('should reject users without any roles', async () => {
@@ -180,41 +189,48 @@ describe('setTenantRole', () => {
         customClaims: {}
       } as any);
 
-      await expect(setTenantRole({
+      await expect(callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-123',
         role: 'Recruiter',
         securityLevel: '4'
-      }, mockContext as any)).rejects.toThrow('Only HRX users or tenant Admins can set tenant roles');
+      }, mockContext)).rejects.toThrow('Only HRX users or tenant Admins can set tenant roles');
     });
   });
 
   describe('Input validation', () => {
+    // The schema widened since these were written (roles now include Tenant and
+    // HRX; securityLevel runs '1'–'7') and enum errors surface zod's default
+    // message wrapped as `Validation error: ...`.
     it('should reject invalid role values', async () => {
-      await expect(setTenantRole({
+      await expect(callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-123',
         role: 'InvalidRole' as any,
         securityLevel: '4'
-      }, mockContext as any)).rejects.toThrow('role must be one of: Admin, Recruiter, Manager, Worker, Customer');
+      }, mockContext)).rejects.toThrow(
+        "Validation error: Invalid enum value. Expected 'Admin' | 'Recruiter' | 'Manager' | 'Worker' | 'Customer' | 'Tenant' | 'HRX', received 'InvalidRole'"
+      );
     });
 
     it('should reject invalid security level values', async () => {
-      await expect(setTenantRole({
+      await expect(callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-123',
         role: 'Recruiter',
-        securityLevel: '6' as any
-      }, mockContext as any)).rejects.toThrow('securityLevel must be one of: 1, 2, 3, 4, 5');
+        securityLevel: '9' as any // '6' and '7' became valid when the enum widened
+      }, mockContext)).rejects.toThrow(
+        "Validation error: Invalid enum value. Expected '1' | '2' | '3' | '4' | '5' | '6' | '7', received '9'"
+      );
     });
 
     it('should reject missing required fields', async () => {
-      await expect(setTenantRole({
+      await expect(callSetTenantRole({
         targetUid: '',
         tenantId: 'tenant-123',
         role: 'Recruiter',
         securityLevel: '4'
-      }, mockContext as any)).rejects.toThrow('targetUid is required');
+      }, mockContext)).rejects.toThrow('targetUid is required');
     });
   });
 
@@ -240,12 +256,12 @@ describe('setTenantRole', () => {
 
       mockSetCustomUserClaims.mockResolvedValueOnce(undefined);
 
-      const result = await setTenantRole({
+      const result = await callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-123',
         role: 'Recruiter',
         securityLevel: '4'
-      }, mockContext as any);
+      }, mockContext);
 
       expect(result.roles).toEqual({
         'tenant-456': { role: 'Manager', securityLevel: '3' },
@@ -277,12 +293,12 @@ describe('setTenantRole', () => {
       mockSetCustomUserClaims.mockResolvedValueOnce(undefined);
 
       // Call with same data
-      const result = await setTenantRole({
+      const result = await callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-123',
         role: 'Recruiter',
         securityLevel: '4'
-      }, mockContext as any);
+      }, mockContext);
 
       expect(result.roles?.['tenant-123']).toEqual({
         role: 'Recruiter',
@@ -297,12 +313,12 @@ describe('setTenantRole', () => {
     it('should reject unauthenticated requests', async () => {
       const unauthenticatedContext = { auth: null };
 
-      await expect(setTenantRole({
+      await expect(callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-123',
         role: 'Recruiter',
         securityLevel: '4'
-      }, unauthenticatedContext as any)).rejects.toThrow('Authentication required');
+      }, unauthenticatedContext)).rejects.toThrow('Authentication required');
     });
   });
 
@@ -318,13 +334,13 @@ describe('setTenantRole', () => {
         }
       } as any);
 
-      await expect(setTenantRole({
+      await expect(callSetTenantRole({
         targetUid: 'target-uid',
         tenantId: 'tenant-123',
         role: 'Admin',
         securityLevel: '5',
         hrx: true
-      }, mockContext as any)).rejects.toThrow('Only HRX users can set the hrx flag');
+      }, mockContext)).rejects.toThrow('Only HRX users can set the hrx flag');
     });
   });
 });

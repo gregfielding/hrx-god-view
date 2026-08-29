@@ -248,6 +248,14 @@ async function getSequenceTargetings(tenantId: string): Promise<SequenceTargetin
   }
 }
 
+export interface ResolvedShiftReminderProfile {
+  profile: ShiftReminderProfile;
+  /** The messagingSequences doc that matched, when the profile came from
+   *  targeting — lets dispatch load that sequence's copy overrides. Null
+   *  for fences, per-assignment overrides, and the legacy tenant switch. */
+  sequenceId: string | null;
+}
+
 /**
  * Resolve the profile for this (tenant, assignment). Never throws — falls back
  * to the default profile on any lookup error. Upstream callers should treat the
@@ -256,7 +264,7 @@ async function getSequenceTargetings(tenantId: string): Promise<SequenceTargetin
 export async function resolveShiftReminderProfile(args: {
   tenantId: string;
   assignment: Record<string, unknown>;
-}): Promise<ShiftReminderProfile> {
+}): Promise<ResolvedShiftReminderProfile> {
   const { tenantId, assignment } = args;
 
   // Hard product fences (Greg, 2026-08-29): the confirm/check-in cadence is
@@ -265,9 +273,9 @@ export async function resolveShiftReminderProfile(args: {
   // probes); Open Shift (standing-crew, date-range) assignments get the
   // plain two-step reminders. No targeting doc, tenant switch, or
   // per-assignment override can pull either into the confirm cadence.
-  if (assignment?.isOpenShift === true) return DEFAULT_PROFILE;
+  if (assignment?.isOpenShift === true) return { profile: DEFAULT_PROFILE, sequenceId: null };
   if (String(assignment?.jobOrderType ?? '').trim().toLowerCase() === 'career') {
-    return CAREER_PLACEMENT_PROFILE;
+    return { profile: CAREER_PLACEMENT_PROFILE, sequenceId: null };
   }
 
   // Honor the override ONLY when the field is actually set: normalizeProfileId
@@ -278,7 +286,7 @@ export async function resolveShiftReminderProfile(args: {
   const rawOverride = String(assignment?.shiftReminderProfile ?? '').trim();
   const perAssignmentId = rawOverride ? normalizeProfileId(rawOverride) : null;
   if (perAssignmentId) {
-    return PROFILES_BY_ID[perAssignmentId];
+    return { profile: PROFILES_BY_ID[perAssignmentId], sequenceId: null };
   }
 
   const targetings = await getSequenceTargetings(tenantId);
@@ -317,17 +325,17 @@ export async function resolveShiftReminderProfile(args: {
           }
         }
       }
-      return PROFILES_BY_ID[targeting.profileId];
+      return { profile: PROFILES_BY_ID[targeting.profileId], sequenceId: targeting.sequenceId };
     }
     // Targeting docs exist → they govern; no fallback to the legacy switch.
-    return DEFAULT_PROFILE;
+    return { profile: DEFAULT_PROFILE, sequenceId: null };
   }
 
   const tenantId_ = await getTenantProfileId(tenantId);
   if (tenantId_) {
-    return PROFILES_BY_ID[tenantId_];
+    return { profile: PROFILES_BY_ID[tenantId_], sequenceId: null };
   }
-  return DEFAULT_PROFILE;
+  return { profile: DEFAULT_PROFILE, sequenceId: null };
 }
 
 /**

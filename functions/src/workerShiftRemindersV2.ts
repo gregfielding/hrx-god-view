@@ -10,6 +10,11 @@ import { sendWorkerMessageInternal } from './twilio';
 import { shouldSendNotification } from './utils/notificationSettings';
 import { markLifecycleEventIfFirst, releaseLifecycleEvent } from './messaging/lifecycleDedupe';
 import { planReminderSchedule } from './cadence/reminderSchedulePlanner';
+import {
+  getSequenceCopyOverride,
+  getTenantSmsBrand,
+  renderCadenceTemplate,
+} from './cadence/sequenceCopyOverrides';
 import { buildWorkerAssignmentUrl } from './utils/workerUrls';
 import {
   TWILIO_ACCOUNT_SID,
@@ -559,7 +564,7 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   // Resolve which profile applies (default two-step vs CORT extended cadence).
-  const profile = await resolveShiftReminderProfile({ tenantId, assignment });
+  const { profile, sequenceId } = await resolveShiftReminderProfile({ tenantId, assignment });
 
   const debugOverrideMinutes = await getDebugOverrideMinutes(tenantId);
   const scheduleMode = debugOverrideMinutes ? 'debug_short' : 'production_default';
@@ -678,6 +683,10 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
       scheduleMode,
       scheduledOffsetMinutes: Math.round(stepPlan.offsetHours * 60),
       reminderProfile: profile.id,
+      // Which messagingSequences doc governed this materialization (null for
+      // fences/overrides/legacy switch) — dispatch uses it to load the
+      // sequence's per-step copy overrides.
+      sequenceId: sequenceId ?? admin.firestore.FieldValue.delete(),
       // Stamp schedule-repair deferral (floor lift, ladder re-space, late
       // fill) so we can spot in Firestore which reminders had their natural
       // T-N fire-time moved.
@@ -770,6 +779,7 @@ function buildReminderMessage(
   assignmentId: string,
   reminderProfile?: string,
   lang: 'en' | 'es' = 'en',
+  brand: string = 'C1 Staffing',
 ) {
   const startLabel = formatStartInTimezone(payload.startTime, payload.timezone);
   const assignmentUrl = buildWorkerAssignmentUrl(assignmentId);
@@ -797,7 +807,7 @@ function buildReminderMessage(
       shiftId: payload.shiftId,
       jobOrderId: payload.jobOrderId,
     };
-    return buildCadenceMessage(reminderType, cadencePayload, lang);
+    return buildCadenceMessage(reminderType, cadencePayload, lang, brand);
   }
 
   // Late-fill ask (gig tracks): the worker was assigned inside the 24h
@@ -812,12 +822,12 @@ function buildReminderMessage(
       ? {
           title: 'Confirma tu turno',
           body: `Estás en el equipo: ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar.`,
-          sms: `C1 Staffing: Estás en el equipo — ${payload.jobTitle} el ${startLabel} en ${payload.locationName}.${addr} Responde SI para confirmar o CANCELAR si no puedes ir.`,
+          sms: `${brand}: Estás en el equipo — ${payload.jobTitle} el ${startLabel} en ${payload.locationName}.${addr} Responde SI para confirmar o CANCELAR si no puedes ir.`,
         }
       : {
           title: 'Confirm your shift',
           body: `You're on the crew: ${payload.jobTitle} at ${startLabel}. Reply YES to confirm.`,
-          sms: `C1 Staffing: You're on the crew — ${payload.jobTitle} at ${startLabel} at ${payload.locationName}.${addr} Reply YES to confirm or CANCEL if you can't make it.`,
+          sms: `${brand}: You're on the crew — ${payload.jobTitle} at ${startLabel} at ${payload.locationName}.${addr} Reply YES to confirm or CANCEL if you can't make it.`,
         };
   }
 
@@ -830,12 +840,12 @@ function buildReminderMessage(
       ? {
           title: '¿Sigues disponible?',
           body: `${payload.jobTitle} el ${startLabel}. Responde SI para confirmar.`,
-          sms: `C1 Staffing: ¿Sigues disponible? ${payload.jobTitle} el ${startLabel} en ${payload.locationName}. Responde SI — o CANCELAR ahora para que podamos cubrir tu lugar.`,
+          sms: `${brand}: ¿Sigues disponible? ${payload.jobTitle} el ${startLabel} en ${payload.locationName}. Responde SI — o CANCELAR ahora para que podamos cubrir tu lugar.`,
         }
       : {
           title: 'Still good for your shift?',
           body: `${payload.jobTitle} at ${startLabel}. Reply YES to confirm.`,
-          sms: `C1 Staffing: Still good for your shift? ${payload.jobTitle} at ${startLabel} at ${payload.locationName}. Reply YES — or CANCEL now so we can cover your spot.`,
+          sms: `${brand}: Still good for your shift? ${payload.jobTitle} at ${startLabel} at ${payload.locationName}. Reply YES — or CANCEL now so we can cover your spot.`,
         };
   }
 
@@ -847,12 +857,12 @@ function buildReminderMessage(
       ? {
           title: `¡Bienvenido a ${payload.companyName}!`,
           body: `Tu primer día es el ${startLabel} en ${payload.locationName}.`,
-          sms: `C1 Staffing: ¡Bienvenido! Tu primer día con ${payload.companyName} es el ${startLabel} en ${payload.locationName}.${addr} Detalles: ${assignmentUrl}`,
+          sms: `${brand}: ¡Bienvenido! Tu primer día con ${payload.companyName} es el ${startLabel} en ${payload.locationName}.${addr} Detalles: ${assignmentUrl}`,
         }
       : {
           title: `Welcome to ${payload.companyName}!`,
           body: `Your first day is ${startLabel} at ${payload.locationName}.`,
-          sms: `C1 Staffing: Welcome! Your first day with ${payload.companyName} is ${startLabel} at ${payload.locationName}.${addr} Details: ${assignmentUrl}`,
+          sms: `${brand}: Welcome! Your first day with ${payload.companyName} is ${startLabel} at ${payload.locationName}.${addr} Details: ${assignmentUrl}`,
         };
   }
 
@@ -863,12 +873,12 @@ function buildReminderMessage(
       ? {
           title: 'Confirma tu turno',
           body: `Por favor confirma tu turno de ${payload.jobTitle} el ${startLabel}.`,
-          sms: `C1 Staffing: Todavía necesitamos tu respuesta para tu turno de ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar o CANCELAR para declinar.`,
+          sms: `${brand}: Todavía necesitamos tu respuesta para tu turno de ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar o CANCELAR para declinar.`,
         }
       : {
           title: 'Please confirm your shift',
           body: `Please confirm your ${payload.jobTitle} shift at ${startLabel}.`,
-          sms: `C1 Staffing: We still need a response for your ${payload.jobTitle} shift at ${startLabel}. Reply YES to confirm or CANCEL to decline.`,
+          sms: `${brand}: We still need a response for your ${payload.jobTitle} shift at ${startLabel}. Reply YES to confirm or CANCEL to decline.`,
         };
   }
   if (reminderType === 'assignment_reminder_22h_final') {
@@ -876,12 +886,12 @@ function buildReminderMessage(
       ? {
           title: 'Último aviso — confirma tu turno',
           body: `Último aviso: confirma ${payload.jobTitle} el ${startLabel}.`,
-          sms: `C1 Staffing: Último recordatorio para ${payload.jobTitle} el ${startLabel}. Responde SI para mantener tu turno o CANCELAR — si no respondes, puede que lo reasignemos.`,
+          sms: `${brand}: Último recordatorio para ${payload.jobTitle} el ${startLabel}. Responde SI para mantener tu turno o CANCELAR — si no respondes, puede que lo reasignemos.`,
         }
       : {
           title: 'Last call — confirm your shift',
           body: `Last call: please confirm ${payload.jobTitle} at ${startLabel}.`,
-          sms: `C1 Staffing: Last reminder for ${payload.jobTitle} at ${startLabel}. Reply YES to keep the shift or CANCEL — otherwise we may need to reassign it.`,
+          sms: `${brand}: Last reminder for ${payload.jobTitle} at ${startLabel}. Reply YES to keep the shift or CANCEL — otherwise we may need to reassign it.`,
         };
   }
 
@@ -891,19 +901,19 @@ function buildReminderMessage(
         ? {
             title: 'Confirma tu turno de mañana',
             body: `${payload.jobTitle} mañana el ${startLabel}. Responde SI para confirmar.`,
-            sms: `C1 Staffing: Estás programado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Responde SI para confirmar o CANCELAR para declinar.`,
+            sms: `${brand}: Estás programado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Responde SI para confirmar o CANCELAR para declinar.`,
           }
         : {
             title: 'Confirm your shift tomorrow',
             body: `${payload.jobTitle} tomorrow at ${startLabel}. Reply YES to confirm.`,
-            sms: `C1 Staffing: You're scheduled for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. Reply YES to confirm or CANCEL to decline.`,
+            sms: `${brand}: You're scheduled for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. Reply YES to confirm or CANCEL to decline.`,
           };
     }
     return es
       ? {
           title: 'Recordatorio de turno',
           body: `Estás confirmado para ${payload.jobTitle} mañana el ${startLabel}.`,
-          sms: `Recordatorio de C1 Staffing: Estás confirmado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Detalles: ${assignmentUrl}`,
+          sms: `Recordatorio de ${brand}: Estás confirmado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Detalles: ${assignmentUrl}`,
         }
       : {
           title: 'Shift Reminder',
@@ -918,19 +928,19 @@ function buildReminderMessage(
       ? {
           title: 'Hoy es tu primer día',
           body: `${payload.companyName} — ${startLabel} en ${payload.locationName}. ¡Éxito!`,
-          sms: `C1 Staffing: ¡Hoy es el día! ${payload.companyName} a las ${startLabel}, ${payload.locationName}. ¡Que te vaya muy bien!`,
+          sms: `${brand}: ¡Hoy es el día! ${payload.companyName} a las ${startLabel}, ${payload.locationName}. ¡Que te vaya muy bien!`,
         }
       : {
           title: 'Today’s the day',
           body: `${payload.companyName} — ${startLabel} at ${payload.locationName}. Good luck!`,
-          sms: `C1 Staffing: Today's the day! ${payload.companyName} at ${startLabel}, ${payload.locationName}. Have a great first day!`,
+          sms: `${brand}: Today's the day! ${payload.companyName} at ${startLabel}, ${payload.locationName}. Have a great first day!`,
         };
   }
   return es
     ? {
         title: 'Tu turno empieza pronto',
         body: `${payload.jobTitle} empieza el ${startLabel} en ${payload.locationName}.`,
-        sms: `Recordatorio de C1 Staffing: Tu turno de ${payload.jobTitle} empieza el ${startLabel} en ${payload.locationName}. Detalles: ${assignmentUrl}`,
+        sms: `Recordatorio de ${brand}: Tu turno de ${payload.jobTitle} empieza el ${startLabel} en ${payload.locationName}. Detalles: ${assignmentUrl}`,
       }
     : {
         title: 'Your shift starts soon',
@@ -1020,7 +1030,31 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   } catch {
     /* default en */
   }
-  const message = buildReminderMessage(reminder.reminderType, reminder.payload, reminder.assignmentId, reminderProfileId, workerLang);
+  const smsBrand = await getTenantSmsBrand(reminder.tenantId);
+  const message = buildReminderMessage(reminder.reminderType, reminder.payload, reminder.assignmentId, reminderProfileId, workerLang, smsBrand);
+  // Per-sequence copy override (Phase B): a recruiter-edited SMS template on
+  // the governing messagingSequences doc replaces the built-in body. Blank or
+  // missing override → built-in copy, so editing can never silence a step.
+  const overrideSequenceId = normalize((reminder as unknown as Record<string, unknown>).sequenceId);
+  if (overrideSequenceId) {
+    const tpl = await getSequenceCopyOverride(
+      reminder.tenantId,
+      overrideSequenceId,
+      canonicalReminderType,
+      workerLang,
+    );
+    if (tpl) {
+      message.sms = renderCadenceTemplate(tpl, {
+        brand: smsBrand,
+        jobTitle: reminder.payload.jobTitle,
+        startLabel: formatStartInTimezone(reminder.payload.startTime, reminder.payload.timezone),
+        locationName: reminder.payload.locationName,
+        address: reminder.payload.locationAddress,
+        clockInUrl: reminder.payload.clockInUrl,
+        companyName: reminder.payload.companyName,
+      });
+    }
+  }
   const delivery: NonNullable<ReminderDoc['delivery']> = {};
   let inboxSuccess = false;
   let pushSuccess = false;
@@ -1603,7 +1637,36 @@ export const onAssignmentConfirmedScheduleReminders = onDocumentWritten(
     const { tenantId, assignmentId } = event.params;
     const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null;
     const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null;
-    if (!after) return;
+    if (!after) {
+      // Assignment DELETED. Firestore never cascades subcollections, so the
+      // scheduled_notifications docs would sit forever matching the
+      // dispatcher's collection-group query (each one burning a claim
+      // transaction before being marked assignment_missing). Purge them.
+      if (before) {
+        try {
+          const orphans = await db
+            .collection(`tenants/${tenantId}/assignments/${assignmentId}/${REMINDER_SUBCOLLECTION}`)
+            .get();
+          if (!orphans.empty) {
+            const batch = db.batch();
+            orphans.docs.forEach((d) => batch.delete(d.ref));
+            await batch.commit();
+            logger.info('[worker_shift_reminders] purged reminders for deleted assignment', {
+              tenantId,
+              assignmentId,
+              count: orphans.size,
+            });
+          }
+        } catch (err: any) {
+          logger.warn('[worker_shift_reminders] orphan purge failed', {
+            tenantId,
+            assignmentId,
+            error: err?.message || String(err),
+          });
+        }
+      }
+      return;
+    }
 
     // Retroactive admin adds (see `addRetroactiveWorker` callable) record
     // shifts that already happened. Scheduling SMS reminders for a past

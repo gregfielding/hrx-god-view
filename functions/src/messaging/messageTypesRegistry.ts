@@ -265,7 +265,7 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     aiAllowedToDraft: false,
     aiAllowedToAutoSend: true,
     description:
-      'Final escalation sent 22h before start. If the worker has still not replied by this point, the server marks cortConfirmation.state=no_show and notifies the recruiter (Phase 2B).',
+      'Final escalation sent 22h before start. Sends the last-call SMS only — no state change or recruiter alert happens at 22h; the T+30m no-show probe is what flips state and notifies recruiters.',
     enabled: true,
   },
   {

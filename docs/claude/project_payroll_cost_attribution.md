@@ -2,6 +2,12 @@
 
 > "HRX→Everee payroll cost attribution — Payroll Costs report + Everee note/label tagging; entry-status vocab, attribution fallbacks, submit-day wire splits; P3/P4 next"
 
+> Leonard Frett calc-race CLOSED 2026-08-29: orphan Everee shifts
+> 4193388/4193397 deleted (verified gone), import entries marked
+> paid/off_cycle → off-cycle o3MG3Voj3zwTUk2pozqO ($289.08, pays Monday,
+> untouched). Two 0-hour draft entries same dates left as-is (harmless).
+> No double-pay possible from Wednesday's run.
+
 Greg's accounting problem (2026-07-27): money wired to Everee has no per-job-order attribution in QBO; bookkeeper (Tabitha) can't split a $10K wire across classes (classes = job order names). Built P1+P2 2026-07-28.
 
 **P1 — Payroll Costs report** (`getPayrollCostReport` onCall in functions/src/payroll/payrollCostReport.ts + src/pages/PayrollCostsPage.tsx at `/payroll-costs`, security level 6+, menu under Invoicing):
