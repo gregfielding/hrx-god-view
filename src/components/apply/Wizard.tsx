@@ -104,6 +104,13 @@ type WizardProps = {
   jobId?: string;
   uid: string | null;
   signupGroupId?: string | null;
+  /** Group display title (from validateUserGroupSignup) — stamped on the
+   *  group application so SMS copy reads "thanks for applying to X". */
+  signupGroupTitle?: string | null;
+  /** true = hire_everyone preset (membership auto-hires, no application);
+   *  false = score-gated (create an application so interview + orchestrator
+   *  thresholds decide); null/undefined = unknown → treated as auto-hire. */
+  signupGroupAutoHires?: boolean | null;
 };
 
 type DraftApplication = {
@@ -367,7 +374,9 @@ const PostSubmitRedirect: React.FC<PostSubmitRedirectProps> = ({
 // the whole wizard into their chunk. Re-exported for existing importers.
 export { isApplyHomeAddressValid };
 
-const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid, signupGroupId = null }) => {
+const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid, signupGroupId,
+  signupGroupTitle,
+  signupGroupAutoHires = null }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const t = useT();
@@ -3307,6 +3316,59 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             console.error('Apply wizard: submit auto-add to user groups failed', groupSubmitErr);
           }
         }
+
+        // Score-gated group signup (finding 3, Greg 2026-08-29: "the system
+        // decides" — adjustable interview/AI thresholds, no worker-facing
+        // pending state): hire_everyone groups auto-hire on membership and
+        // need no application; every OTHER preset needs an application doc
+        // as the substrate the thresholds evaluate. Creating it with
+        // status 'submitted' + groupId cascades the whole loop for free:
+        // the first-touch trigger texts the interview link for THIS
+        // application, interview submit stamps scores + orchestrator
+        // decision on it, and the (revived) application-signals reactor
+        // auto-hires when the decision is "advance". Workers below
+        // threshold simply stay group members — no rejection surfaced.
+        if (!jobId && tenantId && effectiveUid && signupGroupId && signupGroupAutoHires === false) {
+          try {
+            const groupAppRef = doc(
+              db,
+              'tenants',
+              tenantId,
+              'applications',
+              `${effectiveUid}_group_${signupGroupId}`,
+            );
+            await setDoc(
+              groupAppRef,
+              {
+                userId: effectiveUid,
+                tenantId,
+                jobId: null,
+                jobOrderId: null,
+                groupId: signupGroupId,
+                groupIds: [signupGroupId],
+                applicationKind: 'group_signup',
+                // Group title doubles as the "job title" so SMS/list copy
+                // reads naturally ("thanks for applying to VenueSmart").
+                jobTitle: (signupGroupTitle ?? '').trim() || null,
+                status: 'submitted',
+                appliedAt: serverTimestamp(),
+                submittedAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+                applicant: {
+                  firstName: personal.firstName || null,
+                  lastName: personal.lastName || null,
+                  phone: personal.phone || null,
+                  email: personal.email || null,
+                },
+              },
+              { merge: true },
+            );
+          } catch (groupAppErr) {
+            // Best-effort: the worker is still a group member; a recruiter
+            // can hire manually. Never block the signup on this write.
+            console.error('Apply wizard: group application create failed', groupAppErr);
+          }
+        }
       } catch (e) {
         console.error('Error saving application:', e);
         // Don't redirect if we didn't actually save the application doc.
@@ -3720,14 +3782,34 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     // by submit the Everee linkage exists and the hub renders their card.
     // General signups (no group, no job) still go to the dashboard — they
     // have no payroll to set up yet.
+    // Score-gated group signups aren't hired yet — their gate is the
+    // interview, so land them straight in it (same in-session pattern as
+    // job applies); auto-hire groups land on the Payroll hub as before.
+    const gatedGroupUid = auth.currentUser?.uid;
+    const isGatedGroup = Boolean(signupGroupId && signupGroupAutoHires === false && gatedGroupUid);
+    const gatedGroupTo = isGatedGroup
+      ? `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${gatedGroupUid}_group_${signupGroupId}`)}&entry=apply_group_inline`
+      : null;
     return (
       <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
         <PostSubmitRedirect
-          to={signupGroupId ? '/c1/workers/earnings' : '/c1/workers/dashboard'}
+          to={gatedGroupTo ?? (signupGroupId ? '/c1/workers/earnings' : '/c1/workers/dashboard')}
           delayMs={1500}
-          headlineKey="apply.hiredTitle"
-          subheadKey={signupGroupId ? 'apply.takingYouToPayroll' : 'apply.takingYouHome'}
-          helperKey={signupGroupId ? 'apply.payrollNowHint' : 'apply.payrollLaterHint'}
+          headlineKey={isGatedGroup ? 'apply.applicationSubmittedMessage' : 'apply.hiredTitle'}
+          subheadKey={
+            isGatedGroup
+              ? 'apply.nextInterviewSubhead'
+              : signupGroupId
+                ? 'apply.takingYouToPayroll'
+                : 'apply.takingYouHome'
+          }
+          helperKey={
+            isGatedGroup
+              ? 'apply.nextInterviewHelper'
+              : signupGroupId
+                ? 'apply.payrollNowHint'
+                : 'apply.payrollLaterHint'
+          }
           applicationsPath={applicationsPath}
           jobsBoardPath={jobsBoardPath}
           t={t}

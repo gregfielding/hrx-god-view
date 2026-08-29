@@ -33,6 +33,9 @@ const Apply: React.FC = () => {
 
   const [signupGroupId, setSignupGroupId] = useState<string | null>(null);
   const [signupGroupTitle, setSignupGroupTitle] = useState<string | null>(null);
+  /** null = unknown (validate failed) → wizard falls back to auto-hire
+   *  behavior, matching pre-2026-08-29 semantics. */
+  const [signupGroupAutoHires, setSignupGroupAutoHires] = useState<boolean | null>(null);
   const [groupLoading, setGroupLoading] = useState(false);
   const [localeLoading, setLocaleLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +81,17 @@ const Apply: React.FC = () => {
         const fn = httpsCallable(getFunctions(), 'validateUserGroupSignup');
         const res = await fn({ tenantId: C1_TENANT_ID, groupId: gid });
         const data = (res as any)?.data || {};
-        if (!cancelled) setSignupGroupTitle(String(data?.title || '').trim() || 'User Group');
+        if (!cancelled) {
+          setSignupGroupTitle(String(data?.title || '').trim() || 'User Group');
+          // hire_everyone → membership auto-hires (no application doc);
+          // anything else → score-gated, the wizard creates an application
+          // so interview + orchestrator thresholds decide. Unknown (older
+          // deployed callable without the flag) stays null → auto-hire
+          // fallback, matching pre-2026-08-29 behavior.
+          setSignupGroupAutoHires(
+            typeof data?.hireEveryone === 'boolean' ? data.hireEveryone === true : null,
+          );
+        }
       } catch {
         if (!cancelled) {
           setSignupGroupTitle(null);
@@ -159,6 +172,8 @@ const Apply: React.FC = () => {
           tenantName="C1 Staffing"
           uid={user?.uid || null}
           signupGroupId={signupGroupId}
+          signupGroupTitle={signupGroupTitle}
+          signupGroupAutoHires={signupGroupAutoHires}
         />
       </Box>
     </ThemeProvider>

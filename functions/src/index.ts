@@ -11019,11 +11019,18 @@ export const validateUserGroupSignup = onCall({
       throw new HttpsError('not-found', 'Group not found');
     }
     const data = snap.data() as any;
+    // Hiring flags (2026-08-29, signup-flow finding 3): the client wizard
+    // branches on these — hire_everyone groups auto-hire on membership (no
+    // application doc), score-gated groups get an application doc so the
+    // interview + orchestrator thresholds can decide ("the system decides").
+    const { isGroupHireEveryonePreset } = await import('./recruiter/userGroupHirePassedCandidates');
     return {
       success: true,
       groupId: String(groupId),
       tenantId: String(tenantId),
       title: String(data?.title || '').trim() || null,
+      hiringActive: data?.hiringConfig?.automation?.hiringActive === true,
+      hireEveryone: isGroupHireEveryonePreset(data ?? {}),
     };
   } catch (error: any) {
     if (error instanceof HttpsError) throw error;
