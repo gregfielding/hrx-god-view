@@ -391,6 +391,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     }
   }, [searchParams]);
 
+  /**
+   * Two-step signup (Greg 2026-08-29): a BRAND-NEW visitor arriving from a
+   * job posting only creates an account here (steps 0-1), then returns to
+   * the posting to actually apply — the posting's own authed apply flow
+   * (requirement acknowledgments, then the interview) takes over. This
+   * makes "join C1" and "apply to this job" visibly different acts.
+   * Authed arrivals (cert-completion jumps, quick-apply error fallbacks)
+   * keep the full wizard — the flag is frozen at mount so signing in at
+   * step 0 doesn't flip the mode mid-flow.
+   */
+  const wasUnauthedAtMountRef = useRef<boolean>(!auth.currentUser);
+  const accountOnly = Boolean(jobId && returnTo && wasUnauthedAtMountRef.current);
+
   // Phone prefill from the login page's "no account → sign up" handoff
   // (Slice 2): /c1/apply?phone=5551234567 seeds the personal form so the
   // worker only types their number once.
@@ -546,7 +559,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     // adding two taps for zero hiring-gate value. They live on in the Work
     // Profile checklist (profile → Experience / photo), where post-hire
     // nudges belong. Their render cases below are intentionally kept.
-    const all = [0, 1, 4, 6, 7, 8, 9, 13, 12];
+    // Account-only mode: just the signup spine — the job-specific steps
+    // (requirements, posting-required extras) live on the posting's apply
+    // flow now (2026-08-29 two-step signup).
+    const all = accountOnly ? [0, 1] : [0, 1, 4, 6, 7, 8, 9, 13, 12];
     let indices = [...all];
 
     // Position interests: job applicants already told us the position by
@@ -764,7 +780,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       indices = [12];
     }
     return indices;
-  }, [posting, hiringEntityName, userProfile, formData, uid, requirements, auth.currentUser?.uid, jobId]);
+  }, [posting, hiringEntityName, userProfile, formData, uid, requirements, auth.currentUser?.uid, jobId, accountOnly]);
 
   const actualStep = visibleStepIndices[Math.min(activeStep, visibleStepIndices.length - 1)] ?? 0;
 
@@ -3795,7 +3811,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         <PostSubmitRedirect
           to={gatedGroupTo ?? (signupGroupId ? '/c1/workers/earnings' : '/c1/workers/dashboard')}
           delayMs={1500}
-          headlineKey={isGatedGroup ? 'apply.applicationSubmittedMessage' : 'apply.hiredTitle'}
+          headlineKey={
+            isGatedGroup
+              ? 'apply.applicationSubmittedMessage'
+              : signupGroupId
+                ? 'apply.approvedTitle'
+                : 'apply.hiredTitle'
+          }
           subheadKey={
             isGatedGroup
               ? 'apply.nextInterviewSubhead'
@@ -3958,7 +3980,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               </Button>
               <Button
                 variant="contained"
-                onClick={isLastVisibleStep ? handleSubmit : handleNext}
+                onClick={
+                  isLastVisibleStep && accountOnly
+                    ? async () => {
+                        // Save the final signup step, then hand off to the
+                        // posting — no application is created here in
+                        // two-step mode (the posting's Apply does that).
+                        await handleNext();
+                        if (returnTo) navigate(returnTo);
+                      }
+                    : isLastVisibleStep
+                      ? handleSubmit
+                      : handleNext
+                }
                 disabled={
                   (isLastVisibleStep &&
                     actualStep === 12 &&
@@ -3978,7 +4012,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 }
               >
                 {isLastVisibleStep
-                  ? t('apply.submitApplication')
+                  ? accountOnly
+                    ? t('apply.continueToJob')
+                    : t('apply.submitApplication')
                   : actualStep === 2 || actualStep === 5 || (actualStep === 8 && hasMissingRequiredCerts)
                   ? t('apply.skipForNow')
                   : t('apply.next')}

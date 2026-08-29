@@ -1802,8 +1802,14 @@ const JobPostingDetail: React.FC = () => {
           if (result.success) {
             const { emitWorkerCardSignal } = await import('../utils/workerCardSignals');
             emitWorkerCardSignal({ type: 'job_applied', entityId: postId! });
-            // Stay on this job URL and reload application status (yellow “submitted” UI, etc.)
             setApplicationStatusReloadKey((k) => k + 1);
+            // Straight into the stand-out interview (2026-08-29 two-step
+            // signup): the application exists as {uid}_{postId}; the
+            // cumulative prescreen zero-delta auto-completes for workers
+            // who already interviewed, so repeat applicants sail through.
+            navigate(
+              `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${user.uid}_${postId}`)}&entry=post_apply_inline`,
+            );
             return;
           } else {
             // Error - show alert and navigate to wizard
