@@ -16,13 +16,9 @@ import { markLifecycleEventIfFirst } from '../messaging/lifecycleDedupe';
  * day; first claim wins, everything else that day is skipped/deferred.
  */
 async function claimDailyPrescreenSmsSlot(tenantId: string, userId: string): Promise<boolean> {
-  const day = new Date().toISOString().slice(0, 10);
-  return markLifecycleEventIfFirst({
-    tenantId,
-    dedupeKey: `worker_ai_prescreen_daily_sms__${tenantId}__${userId}__${day}`,
-    eventType: 'worker_ai_prescreen_daily_sms_slot',
-    context: { userId, day },
-  });
+  // Shared implementation since 2026-08-29 — all three prescreen SMS
+  // senders claim the same daily slot (see interviewCadence.ts).
+  return claimDailyPrescreenSmsSlotShared(markLifecycleEventIfFirst, tenantId, userId);
 }
 import {
   TWILIO_ACCOUNT_SID,
@@ -41,6 +37,7 @@ import {
   interviewCadencePastHardStop,
   newCadenceStartUserFields,
   shouldStampNewCadenceStart,
+  claimDailyPrescreenSmsSlotShared,
 } from './interviewCadence';
 import { userHasWorkerAiPrescreenWithFallback } from './hasWorkerAiPrescreenDenormalized';
 import { maybeAutoCompletePrescreenFromBank } from './autoCompletePrescreenFromBank';

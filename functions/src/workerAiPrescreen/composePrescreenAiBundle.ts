@@ -275,7 +275,12 @@ export async function composePrescreenAiBundle(args: {
   });
 
   const aiBlockCore: Record<string, unknown> = {
-    overallScore: scored.overallScore,
+    // 2026-08-29 (interview review F6): `overallScore` is now the SAME
+    // post-override score that produced `letterGrade` + `recommendation` —
+    // it used to be the pre-override base, up to 15 points away from the
+    // grade sitting next to it. The base lives (and always lived) in
+    // `baseInterviewScore`; every QA/consumer reads that field first.
+    overallScore: operationalOverride.adjustedScore,
     baseInterviewScore: scored.overallScore,
     overrideAdjustedScore: operationalOverride.adjustedScore,
     overrideScoreDelta: operationalOverride.scoreDelta,

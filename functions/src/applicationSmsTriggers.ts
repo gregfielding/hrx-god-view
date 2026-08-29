@@ -277,7 +277,7 @@ export const onApplicationCreated = onDocumentCreated(
           thanksDedupeKey: thanksKeyCreate,
           source: 'application_created',
         });
-        if (combinedResult === 'sent' || combinedResult === 'failed' || combinedResult === 'deduped_thanks') {
+        if (combinedResult === 'sent' || combinedResult === 'failed' || combinedResult === 'deduped_thanks' || combinedResult === 'daily_cap') {
           return { success: true };
         }
 
@@ -1008,7 +1008,7 @@ export const onApplicationStatusChanged = onDocumentUpdated(
               thanksDedupeKey: thanksDedupeKey,
               source: 'application_status_changed',
             });
-            if (combinedResult === 'sent' || combinedResult === 'failed' || combinedResult === 'deduped_thanks') {
+            if (combinedResult === 'sent' || combinedResult === 'failed' || combinedResult === 'deduped_thanks' || combinedResult === 'daily_cap') {
               return { success: true };
             }
 

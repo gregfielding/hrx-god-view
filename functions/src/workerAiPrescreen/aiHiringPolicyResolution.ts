@@ -44,9 +44,9 @@ export type ResolvedAiHiringPolicy = {
    */
   maximumNoShowRiskToAdvance?: number;
   /**
-   * When true, the prescreen LLM's `recommendation === 'review'` is treated as `proceed` so the
+   * When true, the rules scorer's `recommendation === 'review'` (deterministic score/flag band — no LLM exists in the prescreen) is treated as `proceed` so the
    * remaining hiring gates (score floor, flags, dynamic answers, capacity, no-show overlay) do
-   * the gating instead of the LLM's qualitative judgement.
+   * the gating instead of the scorer's review band.
    *
    * **User groups:** always `true` when `hiringConfig.quality` exists (`readGroupHiringConfigAsAiPartial`).
    * A legacy `userGroup.aiHiring.advanceOnReviewRecommendation: false` cannot disable this — see
@@ -106,7 +106,7 @@ const GROUP_HIRING_PRESET_SCORES: Record<string, { interview: number; jobFit: nu
  * is not explicitly set on the user group.
  *
  * Aggressive / Hire-everyone "fill seats" presets implicitly lift the no-show overlay (orchestrator
- * step 2) the same way they implicitly lift the LLM `review` block (`advanceOnReviewRecommendation: true`).
+ * step 2) the same way they implicitly lift the scorer's `review` band block (`advanceOnReviewRecommendation: true`).
  * Without this default, an aggressive preset still has every "high"/"critical" no-show-band candidate
  * downgraded to `review` regardless of the user's intent — which is what the “20 · Below score threshold
  * / orchestrator hold” diagnosis on `userGroups/DgpS7tIHXPcm65I8xR97` exposed.
@@ -169,7 +169,7 @@ function readGroupHiringConfigAsAiPartial(groupDoc: Record<string, unknown>): Pa
     out.maximumNoShowRiskToAdvance = GROUP_HIRING_PRESET_MAX_NS_RISK[presetKey];
   }
 
-  // User groups: never let the prescreen LLM's qualitative `review` verdict
+  // User groups: never let the rules scorer's `review` band (deterministic)
   // block automation on its own — score floor, flags, dynamic answers, job-fit
   // gate, capacity, and hard `decline` still gate. Preset only changes numeric
   // floors (Conservative / Balanced / Aggressive / Custom / Hire everyone).
@@ -236,7 +236,7 @@ export function mergeGroupUserDocAiHiringPartial(groupDoc: Record<string, unknow
   const fromAiHiringDoc = readAiHiringPartial(groupDoc.aiHiring);
   const merged = { ...fromHiringConfig, ...fromAiHiringDoc };
   // `hiringConfig.quality` always sets `advanceOnReviewRecommendation: true` for groups. A legacy
-  // `userGroup.aiHiring.advanceOnReviewRecommendation: false` must not resurrect LLM-only review holds.
+  // `userGroup.aiHiring.advanceOnReviewRecommendation: false` must not resurrect review-band-only holds.
   if (fromHiringConfig.advanceOnReviewRecommendation === true) {
     merged.advanceOnReviewRecommendation = true;
   }
