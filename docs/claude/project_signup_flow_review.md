@@ -8,10 +8,15 @@
 > signup (18+ closed), /earnings SMS links, auto-add dedupe, resume+headshot
 > out of the funnel, job applies land IN the AI interview post-submit,
 > ~645 dead lines deleted (both email/password branches, orphaned steps,
-> hidden nav bar). REMAINING: gated-group pending state + application doc
-> on group path (finding 3), write groupId on applications to revive the
-> signals door (finding 5) + kill the wrong-app fallback (finding 6),
-> consolidate the two group-resolution utils + two wizard shells (finding 7).
+> hidden nav bar). Findings 5/6/7 SHIPPED
+> 2026-08-29 (b831a17a): both application creators stamp groupId/groupIds
+> (signals auto-hire door LIVE — prescreen completion can now hire),
+> membership reactor's arbitrary-application fallback removed, quick apply
+> uses the wizard's shared group resolver, /c1/apply routes joined
+> ConditionalWorkerLayout (Apply.tsx gutter compensates when authed).
+> REMAINING: finding 3 only — gated-group pending state + application doc
+> on the group path (needs Greg's product call: what does a pending worker
+> see, who works the queue).
 
 ## The two paths (live code, 2026-08-28)
 
