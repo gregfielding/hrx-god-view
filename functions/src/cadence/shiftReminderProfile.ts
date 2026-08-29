@@ -135,36 +135,49 @@ async function getTenantProfileId(tenantId: string): Promise<ShiftReminderProfil
 }
 
 /**
- * Phase 2 (2026-08-27): the Settings → Messaging Sequences targeting doc
- * (`tenants/{t}/messagingSequences/cort_gig`) now GOVERNS which
- * assignments get the CORT cadence. When the doc has saved targeting it
- * wins over the legacy `messagingConfig/shiftReminderProfile` tenant
- * switch; when it has never been saved, the legacy switch still applies.
+ * Phase 2 (2026-08-27): the Settings → Messaging Sequences targeting docs
+ * (`tenants/{t}/messagingSequences/{sequenceId}`) GOVERN which assignments
+ * get the confirmation cadence. When any doc has saved targeting, the docs
+ * win over the legacy `messagingConfig/shiftReminderProfile` tenant switch;
+ * when none has ever been saved, the legacy switch still applies.
+ *
+ * 2026-08-29: generalized from the single hardcoded `cort_gig` doc to the
+ * whole collection so each sequence carries its own accounts + occurrence
+ * (CORT stays first_shift; the Oakland Arena pilot is every_shift), and
+ * added optional `locationIds` so a sequence can target one venue inside a
+ * national account (Oakland Arena lives under Legends National Account).
  */
 interface SequenceTargeting {
+  sequenceId: string;
   active: boolean;
   accountIds: string[];
+  locationIds: string[];
   workerTypes: string[];
   occurrence: 'first_shift' | 'every_shift';
 }
 
-async function getSequenceTargeting(tenantId: string): Promise<SequenceTargeting | null> {
+async function getSequenceTargetings(tenantId: string): Promise<SequenceTargeting[] | null> {
   if (!tenantId) return null;
   try {
-    const snap = await db.doc(`tenants/${tenantId}/messagingSequences/cort_gig`).get();
-    if (!snap.exists) return null;
-    const t = (snap.data() as Record<string, unknown> | undefined)?.targeting as
-      | Record<string, unknown>
-      | undefined;
-    if (!t) return null;
-    return {
-      active: t.active === true,
-      accountIds: Array.isArray(t.accountIds) ? t.accountIds.map((x) => String(x)) : [],
-      workerTypes: Array.isArray(t.workerTypes)
-        ? t.workerTypes.map((x) => String(x).toLowerCase())
-        : ['gig'],
-      occurrence: t.occurrence === 'every_shift' ? 'every_shift' : 'first_shift',
-    };
+    const snap = await db.collection(`tenants/${tenantId}/messagingSequences`).get();
+    const out: SequenceTargeting[] = [];
+    for (const doc of snap.docs) {
+      const t = (doc.data() as Record<string, unknown> | undefined)?.targeting as
+        | Record<string, unknown>
+        | undefined;
+      if (!t) continue;
+      out.push({
+        sequenceId: doc.id,
+        active: t.active === true,
+        accountIds: Array.isArray(t.accountIds) ? t.accountIds.map((x) => String(x)) : [],
+        locationIds: Array.isArray(t.locationIds) ? t.locationIds.map((x) => String(x)) : [],
+        workerTypes: Array.isArray(t.workerTypes)
+          ? t.workerTypes.map((x) => String(x).toLowerCase())
+          : ['gig'],
+        occurrence: t.occurrence === 'every_shift' ? 'every_shift' : 'first_shift',
+      });
+    }
+    return out.length > 0 ? out : null;
   } catch (err) {
     logger.warn('shiftReminderProfile.getSequenceTargeting_failed', {
       tenantId,
@@ -184,45 +197,61 @@ export async function resolveShiftReminderProfile(args: {
   assignment: Record<string, unknown>;
 }): Promise<ShiftReminderProfile> {
   const { tenantId, assignment } = args;
+
+  // Hard product fences (Greg, 2026-08-29): the confirm/check-in cadence is
+  // for gig SHIFT work only. Career placements and Open Shift (standing-crew,
+  // date-range) assignments always get the plain two-step reminders — no
+  // targeting doc, tenant switch, or per-assignment override can opt them in.
+  if (assignment?.isOpenShift === true) return DEFAULT_PROFILE;
+  if (String(assignment?.jobOrderType ?? '').trim().toLowerCase() === 'career') {
+    return DEFAULT_PROFILE;
+  }
+
   const perAssignmentId = normalizeProfileId(assignment?.shiftReminderProfile);
   if (perAssignmentId) {
     return PROFILES_BY_ID[perAssignmentId];
   }
 
-  const targeting = await getSequenceTargeting(tenantId);
-  if (targeting) {
-    if (!targeting.active || targeting.accountIds.length === 0) return DEFAULT_PROFILE;
+  const targetings = await getSequenceTargetings(tenantId);
+  if (targetings) {
     const acctId = String(assignment?.accountId ?? '').trim();
-    if (!acctId || !targeting.accountIds.includes(acctId)) return DEFAULT_PROFILE;
-    const workerType =
-      String(assignment?.jobOrderType ?? 'gig').toLowerCase() === 'career' ? 'career' : 'gig';
-    if (!targeting.workerTypes.includes(workerType)) return DEFAULT_PROFILE;
-    if (targeting.occurrence === 'first_shift') {
-      // "First shift at account (until completion)": once the worker has a
-      // COMPLETED/ended assignment at this account, later shifts drop to
-      // the default two-step cadence. Fail-open to the CORT profile.
-      const userId = String(assignment?.userId ?? assignment?.candidateId ?? '').trim();
-      if (userId) {
-        try {
-          const priorSnap = await db
-            .collection(`tenants/${tenantId}/assignments`)
-            .where('userId', '==', userId)
-            .where('accountId', '==', acctId)
-            .limit(10)
-            .get();
-          const hasCompletedPrior = priorSnap.docs.some((d) =>
-            ['completed', 'ended'].includes(String(d.data()?.status ?? '').trim().toLowerCase()),
-          );
-          if (hasCompletedPrior) return DEFAULT_PROFILE;
-        } catch (err) {
-          logger.warn('shiftReminderProfile.first_shift_lookup_failed', {
-            tenantId,
-            error: (err as Error)?.message || String(err),
-          });
+    const locId = String(assignment?.locationId ?? '').trim();
+    for (const targeting of targetings) {
+      if (!targeting.active || targeting.accountIds.length === 0) continue;
+      if (!acctId || !targeting.accountIds.includes(acctId)) continue;
+      if (targeting.locationIds.length > 0 && (!locId || !targeting.locationIds.includes(locId))) {
+        continue;
+      }
+      if (!targeting.workerTypes.includes('gig')) continue;
+      if (targeting.occurrence === 'first_shift') {
+        // "First shift at account (until completion)": once the worker has a
+        // COMPLETED/ended assignment at this account, later shifts drop to
+        // the default two-step cadence. Fail-open to the CORT profile.
+        const userId = String(assignment?.userId ?? assignment?.candidateId ?? '').trim();
+        if (userId) {
+          try {
+            const priorSnap = await db
+              .collection(`tenants/${tenantId}/assignments`)
+              .where('userId', '==', userId)
+              .where('accountId', '==', acctId)
+              .limit(10)
+              .get();
+            const hasCompletedPrior = priorSnap.docs.some((d) =>
+              ['completed', 'ended'].includes(String(d.data()?.status ?? '').trim().toLowerCase()),
+            );
+            if (hasCompletedPrior) continue;
+          } catch (err) {
+            logger.warn('shiftReminderProfile.first_shift_lookup_failed', {
+              tenantId,
+              error: (err as Error)?.message || String(err),
+            });
+          }
         }
       }
+      return PROFILES_BY_ID.cort_gig;
     }
-    return PROFILES_BY_ID.cort_gig;
+    // Targeting docs exist → they govern; no fallback to the legacy switch.
+    return DEFAULT_PROFILE;
   }
 
   const tenantId_ = await getTenantProfileId(tenantId);
@@ -240,6 +269,11 @@ export function resolveShiftReminderProfileSync(args: {
   tenantProfile: ShiftReminderProfileId | null | undefined;
   assignment: Record<string, unknown>;
 }): ShiftReminderProfile {
+  // Same hard fences as the async resolver: gig shift work only.
+  if (args.assignment?.isOpenShift === true) return DEFAULT_PROFILE;
+  if (String(args.assignment?.jobOrderType ?? '').trim().toLowerCase() === 'career') {
+    return DEFAULT_PROFILE;
+  }
   const perAssignmentId = normalizeProfileId(args.assignment?.shiftReminderProfile);
   if (perAssignmentId) return PROFILES_BY_ID[perAssignmentId];
   const tenantId = normalizeProfileId(args.tenantProfile);

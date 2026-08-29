@@ -419,6 +419,10 @@ function shouldResync(before: Record<string, unknown> | null, after: Record<stri
     'status',
     'userId',
     'candidateId',
+    // Changing the cadence profile must re-materialize the reminder set —
+    // without this, a per-assignment override never takes effect on an
+    // already-synced assignment.
+    'shiftReminderProfile',
     'startDateTime',
     'startDate',
     'startTime',
