@@ -1088,7 +1088,9 @@
     "positionInterest_customer_service": "Customer Service",
     "positionInterest_skilled_trades": "Skilled Trades",
     "takingYouToPayroll": "Taking you to payroll setup — 3 quick steps to get paid…",
-    "payrollNowHint": "It takes about 5 minutes. You can also finish later from the Payroll tab."
+    "payrollNowHint": "It takes about 5 minutes. You can also finish later from the Payroll tab.",
+    "nextInterviewSubhead": "Next: a quick interview — about 2 minutes…",
+    "nextInterviewHelper": "Answering now moves your application to the front of the line. You can also do it later from the link we text you."
   },
   "jobs": {
     "title": "Jobs",

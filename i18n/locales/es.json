@@ -1088,7 +1088,9 @@
     "positionInterest_customer_service": "Atención al cliente",
     "positionInterest_skilled_trades": "Oficios especializados",
     "takingYouToPayroll": "Te llevamos a la configuración de nómina: 3 pasos rápidos para recibir tu pago…",
-    "payrollNowHint": "Toma unos 5 minutos. También puedes terminarla después desde la pestaña Nómina."
+    "payrollNowHint": "Toma unos 5 minutos. También puedes terminarla después desde la pestaña Nómina.",
+    "nextInterviewSubhead": "Siguiente: una entrevista rápida de unos 2 minutos…",
+    "nextInterviewHelper": "Responder ahora pone tu solicitud al frente de la fila. También puedes hacerla después con el enlace que te enviaremos por texto."
   },
   "jobs": {
     "title": "Trabajos",
