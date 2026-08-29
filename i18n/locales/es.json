@@ -612,6 +612,12 @@
       "additional_notes": {
         "prompt": "¿Algo más que quieras que sepamos? (Opcional — los detalles concretos ayudan.)"
       }
+    },
+    "bank": {
+      "deltaBanner": "Guardamos tus respuestas de tu última entrevista — solo {count} preguntas rápidas para este trabajo.",
+      "allSetTitle": "Todo listo",
+      "allSetBody": "Ya tenemos tus respuestas de entrevista de una postulación reciente, así que no hay nada nuevo que completar para este trabajo. Confirma abajo y las usaremos para esta postulación.",
+      "allSetConfirmCta": "Usar mis respuestas guardadas"
     }
   },
   "workerSettings": {

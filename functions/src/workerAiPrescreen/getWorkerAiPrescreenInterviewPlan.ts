@@ -1,16 +1,91 @@
 /**
  * Read-only plan for worker UI: dynamic pre-screen steps for an application (no scoring side effects).
+ * Cumulative-interview mode also returns `bankCoverage` — which steps are satisfied by the worker's
+ * answer bank so the client renders only the delta (docs/prescreen-cumulative-interview.md).
  */
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { logger } from 'firebase-functions/v2';
 import { CALLABLE_BROWSER_CORS } from '../integrations/callableBrowserCors';
 import { buildAiInterviewContext, buildProfileFirstAiInterviewContext } from './buildAiInterviewContext';
 import { buildDynamicPrescreenSteps } from './buildDynamicPrescreenQuestions';
+import { applyPrescreenDynamicDedupe } from './prescreenDynamicDedupe';
+import {
+  computePrescreenBankDelta,
+  freshPrescreenBankAnswers,
+  type PrescreenBankAnswerValue,
+} from '../shared/prescreenAnswerBank';
+import { readPrescreenAnswerBank } from './prescreenAnswerBankStore';
+import { userDocNeedsLegalFirstNameConfirm } from './legalFirstNameConfirm';
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 const db = admin.firestore();
+
+export type PlanBankCoverage = {
+  coveredCoreStepIds: string[];
+  coveredDynamicStepIds: string[];
+  neededCoreStepIds: string[];
+  neededDynamicStepIds: string[];
+  zeroDelta: boolean;
+  /** Fresh carriable bank answers so the client can seed state (worker's own data). */
+  bankCoreAnswers: Record<string, PrescreenBankAnswerValue>;
+  bankDynamicAnswers: Record<string, string>;
+};
+
+/**
+ * Bank coverage for this worker + dynamic plan. Fail-open: any error returns null and the client
+ * runs the full interview.
+ */
+async function computePlanBankCoverage(
+  uid: string,
+  dynamicStepIds: string[],
+): Promise<PlanBankCoverage | null> {
+  try {
+    const [bank, userSnap] = await Promise.all([
+      readPrescreenAnswerBank(db, uid),
+      db.collection('users').doc(uid).get(),
+    ]);
+    if (Object.keys(bank).length === 0) return null;
+    const userDoc = (userSnap.data() || {}) as Record<string, unknown>;
+    const needsLegalNameConfirm = userDocNeedsLegalFirstNameConfirm(userDoc);
+
+    const fresh = freshPrescreenBankAnswers(bank, Date.now());
+    const dedupe = applyPrescreenDynamicDedupe(
+      dynamicStepIds.map((id) => ({ id })),
+      {
+        attendance_issues: String(fresh.coreAnswers.attendance_issues ?? ''),
+        transportation_plan: String(fresh.coreAnswers.transportation_plan ?? ''),
+        backup_transportation: String(fresh.coreAnswers.backup_transportation ?? ''),
+        physical_comfort: String(fresh.coreAnswers.physical_comfort ?? ''),
+      },
+      fresh.dynamicAnswers,
+    );
+    const delta = computePrescreenBankDelta({
+      fresh,
+      dynamicStepIds,
+      dedupeCoveredDynamicIds: dedupe.skipped.map((s) => s.id),
+      needsLegalNameConfirm,
+    });
+
+    return {
+      coveredCoreStepIds: delta.coveredCoreStepIds,
+      coveredDynamicStepIds: delta.coveredDynamicStepIds,
+      neededCoreStepIds: delta.neededCoreStepIds,
+      neededDynamicStepIds: delta.neededDynamicStepIds,
+      zeroDelta: delta.zeroDelta,
+      bankCoreAnswers: fresh.coreAnswers,
+      bankDynamicAnswers: { ...fresh.dynamicAnswers, ...dedupe.mergedDynamicAnswers },
+    };
+  } catch (e) {
+    logger.warn('getWorkerAiPrescreenInterviewPlan.bank_coverage_failed', {
+      uid,
+      message: e instanceof Error ? e.message : String(e),
+    });
+    return null;
+  }
+}
 
 export const getWorkerAiPrescreenInterviewPlan = onCall(
   { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS, memory: '512MiB' },
@@ -39,6 +114,7 @@ export const getWorkerAiPrescreenInterviewPlan = onCall(
           interviewMode: 'application' as const,
           workerAiPrescreenRequired: true,
           dynamicSteps: [],
+          bankCoverage: await computePlanBankCoverage(auth.uid, []),
         };
       }
 
@@ -57,6 +133,10 @@ export const getWorkerAiPrescreenInterviewPlan = onCall(
           options: s.options,
           module: s.module,
         })),
+        bankCoverage: await computePlanBankCoverage(
+          auth.uid,
+          steps.map((s) => s.id),
+        ),
       };
     }
 
@@ -78,6 +158,7 @@ export const getWorkerAiPrescreenInterviewPlan = onCall(
         interviewMode: 'profile_first' as const,
         workerAiPrescreenRequired: true,
         dynamicSteps: [],
+        bankCoverage: await computePlanBankCoverage(auth.uid, []),
       };
     }
 
@@ -95,6 +176,10 @@ export const getWorkerAiPrescreenInterviewPlan = onCall(
         options: s.options,
         module: s.module,
       })),
+      bankCoverage: await computePlanBankCoverage(
+        auth.uid,
+        steps.map((s) => s.id),
+      ),
     };
   },
 );

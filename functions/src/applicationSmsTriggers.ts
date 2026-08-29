@@ -14,6 +14,7 @@ import { sendApplicationStatusChangedNotification } from './messaging/unifiedWor
 import { markLifecycleEventIfFirst } from './messaging/lifecycleDedupe';
 import { maybeScheduleWorkerAiPrescreenReminder } from './workerAiPrescreen/scheduleWorkerAiPrescreenReminder';
 import { sendCombinedApplicationInterviewFirstTouch } from './workerAiPrescreen/combinedApplicationInterviewFirstTouch';
+import { maybeAutoCompletePrescreenFromBank } from './workerAiPrescreen/autoCompletePrescreenFromBank';
 import { shouldSkipStaleApplicationReceivedSms } from './messaging/applicationReceivedSmsGuards';
 import { normalizeApplicationStatus } from './utils/applicationStatusNormalize';
 import { DEFAULT_FIRESTORE_TRIGGER_MEMORY } from './utils/functionRuntimeDefaults';
@@ -216,6 +217,23 @@ export const onApplicationCreated = onDocumentCreated(
         if (!userData) {
           logger.warn(`User ${userId} not found for application ${applicationId}`);
           return { success: true };
+        }
+
+        // Cumulative prescreen: if the worker's answer bank covers every question this job would
+        // ask, complete the interview now — the invite/chase cadence below never starts.
+        const autoCompleteResult = await maybeAutoCompletePrescreenFromBank({
+          db,
+          tenantId,
+          applicationId,
+          userId: String(userId),
+          applicationData: applicationData as Record<string, unknown>,
+          userData: userData as Record<string, unknown>,
+          source: 'application_created',
+        });
+        if (autoCompleteResult === 'completed') {
+          // Local copy so the combined first-touch / reminder scheduling in this invocation see it.
+          (applicationData as Record<string, unknown>).workerAiPrescreenInterviewCompletedAt =
+            admin.firestore.Timestamp.now();
         }
 
         // Require at least one phone number (attempt send even if not verified)
@@ -462,6 +480,29 @@ export const onApplicationStatusChanged = onDocumentUpdated(
           newStatus: String(newStatus ?? ''),
         });
         return { success: true };
+      }
+
+      // Cumulative prescreen: on transition into `submitted`, try zero-delta auto-complete before
+      // any interview outreach is scheduled or sent from this invocation.
+      if (
+        isSubmittedApplicationStatus(newStatus) &&
+        !isSubmittedApplicationStatus(oldStatus)
+      ) {
+        const autoUserId = String(after.userId || after.candidateId || '').trim();
+        if (autoUserId) {
+          const autoCompleteResult = await maybeAutoCompletePrescreenFromBank({
+            db,
+            tenantId,
+            applicationId,
+            userId: autoUserId,
+            applicationData: after as Record<string, unknown>,
+            source: 'application_status_changed',
+          });
+          if (autoCompleteResult === 'completed') {
+            (after as Record<string, unknown>).workerAiPrescreenInterviewCompletedAt =
+              admin.firestore.Timestamp.now();
+          }
+        }
       }
 
       await maybeScheduleWorkerAiPrescreenReminder({

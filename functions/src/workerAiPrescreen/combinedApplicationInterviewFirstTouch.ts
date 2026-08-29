@@ -98,6 +98,12 @@ export async function shouldSendCombinedApplicationInterviewFirstTouch(args: {
 
   if (!userDocHasUsablePhone(userData)) return false;
 
+  // Interview already complete (e.g. zero-delta auto-complete from the answer bank) — never
+  // send an "answer a few questions" ask; caller falls back to plain application_received.
+  if (applicationData.workerAiPrescreenInterviewCompletedAt) {
+    return false;
+  }
+
   if (applicationData.workerAiPrescreenReminderSentAt) {
     return false;
   }

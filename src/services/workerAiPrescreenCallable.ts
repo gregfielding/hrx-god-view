@@ -21,6 +21,12 @@ export type SubmitWorkerAiPrescreenInput = {
    * Stored on the interview document when present; omit if unknown.
    */
   entry?: string | null;
+  /**
+   * Cumulative-interview delta mode: ids of steps actually rendered this session. Steps not listed
+   * were carried from the worker's answer bank (server tags stored rows `source: 'carried'` and
+   * keeps their bank freshness). Omit for full interviews.
+   */
+  askedStepIds?: string[] | null;
 };
 
 export type SubmitWorkerAiPrescreenResult = {
@@ -48,9 +54,22 @@ export async function submitWorkerAiPrescreenInterview(
     dynamicAnswers: input.dynamicAnswers ?? null,
     sessionProfileEnhancements: input.sessionProfileEnhancements ?? null,
     entry: input.entry ?? null,
+    askedStepIds: input.askedStepIds ?? null,
   });
   return res.data as SubmitWorkerAiPrescreenResult;
 }
+
+/** Which steps the worker's answer bank satisfies for this application (cumulative interview). */
+export type WorkerAiPrescreenPlanBankCoverage = {
+  coveredCoreStepIds: string[];
+  coveredDynamicStepIds: string[];
+  neededCoreStepIds: string[];
+  neededDynamicStepIds: string[];
+  zeroDelta: boolean;
+  /** Fresh carriable bank answers to seed wizard state (arrays for multi-select ids). */
+  bankCoreAnswers: Record<string, string | string[]>;
+  bankDynamicAnswers: Record<string, string>;
+};
 
 export type WorkerAiPrescreenInterviewPlanResult = {
   interviewType: 'worker_ai_prescreen';
@@ -58,6 +77,8 @@ export type WorkerAiPrescreenInterviewPlanResult = {
   interviewMode?: 'application' | 'profile_first';
   workerAiPrescreenRequired: boolean;
   dynamicSteps: WorkerAiPrescreenDynamicStep[];
+  /** Null/absent when the worker has no usable bank (full interview). */
+  bankCoverage?: WorkerAiPrescreenPlanBankCoverage | null;
 };
 
 export async function getWorkerAiPrescreenInterviewPlan(input: {

@@ -43,6 +43,7 @@ import {
   shouldStampNewCadenceStart,
 } from './interviewCadence';
 import { userHasWorkerAiPrescreenWithFallback } from './hasWorkerAiPrescreenDenormalized';
+import { maybeAutoCompletePrescreenFromBank } from './autoCompletePrescreenFromBank';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -179,6 +180,26 @@ async function processPrescreenChaseSms(args: {
       [pendingKey]: false,
       [outcomeKey]: 'skipped',
       [errKey]: 'no_user_id',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return 'skipped';
+  }
+
+  // Cumulative prescreen: the bank may have filled since the invite (e.g. an interview for a
+  // different application) — complete instead of chasing when zero-delta.
+  const autoCompleteResult = await maybeAutoCompletePrescreenFromBank({
+    db,
+    tenantId,
+    applicationId,
+    userId,
+    applicationData: data,
+    source: 'reminder_processor_chase',
+  });
+  if (autoCompleteResult === 'completed') {
+    await docSnap.ref.update({
+      workerAiPrescreenChase1Pending: false,
+      workerAiPrescreenChase2Pending: false,
+      [outcomeKey]: 'auto_completed_from_bank',
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return 'skipped';
@@ -651,6 +672,17 @@ export const processWorkerAiPrescreenReminders = onSchedule(
 
       const data = docSnap.data() as Record<string, unknown>;
 
+      if (data.workerAiPrescreenInterviewCompletedAt) {
+        await docSnap.ref.update({
+          workerAiPrescreenReminderPending: false,
+          workerAiPrescreenReminderLastOutcome: 'skipped',
+          workerAiPrescreenReminderLastError: 'interview_done',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        skipped += 1;
+        continue;
+      }
+
       if (data.workerAiPrescreenFirstTouchCombinedAt) {
         await docSnap.ref.update({
           workerAiPrescreenReminderPending: false,
@@ -713,6 +745,27 @@ export const processWorkerAiPrescreenReminders = onSchedule(
           workerAiPrescreenReminderPending: false,
           workerAiPrescreenReminderLastOutcome: 'skipped',
           workerAiPrescreenReminderLastError: 'policy_resolve_failed',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        skipped += 1;
+        continue;
+      }
+
+      // Cumulative prescreen: complete from the answer bank instead of nudging when zero-delta
+      // (covers rows queued before auto-complete shipped + banks filled after scheduling).
+      const autoCompleteResult = await maybeAutoCompletePrescreenFromBank({
+        db,
+        tenantId,
+        applicationId,
+        userId,
+        applicationData: data,
+        source: 'reminder_processor',
+      });
+      if (autoCompleteResult === 'completed') {
+        await docSnap.ref.update({
+          workerAiPrescreenReminderPending: false,
+          workerAiPrescreenReminderLastOutcome: 'skipped',
+          workerAiPrescreenReminderLastError: 'auto_completed_from_bank',
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         skipped += 1;
