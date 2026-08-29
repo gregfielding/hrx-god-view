@@ -126,6 +126,18 @@ https://claude.ai/code/artifact/d47711eb-a416-4ebc-a307-ab29f36f8542
    opt-in reply. Resync no longer stomps checked_in/no_show → pending.
 7. No-show recruiter-feed route fixed (`/assignments/{id}`).
 
+**OnTrac blockers CLOSED 2026-08-29 late** (commit 12e356bc,
+`cadence/reminderSchedulePlanner.ts` — pure, 10 jest tests):
+- Pre-8AM shifts: floored 24h/23h/22h ladder re-spaces to ask+2h/+4h
+  (was 3 texts in one dispatch batch at 8:00).
+- Late fills: `assignment_confirm_now` synthesized at materialization when
+  the 24h ask is past and start is ≥45min away — bilingual, CARRIES THE
+  ADDRESS, escalation ladder rebuilt off it. <45min = no ask.
+- T-4h re-confirm re-anchors to T-12h (previous evening) for 5–9 AM
+  starts; dropped when it collides (<30min) with the details step.
+- Retries are honest: `releaseLifecycleEvent` frees the dedupe key after a
+  FAILED send (claiming on first attempt made retries no-op "successes").
+
 **Open, ranked** (see artifact for detail): P0 late fills get no confirm
 ask + no address (<2h fills get NOTHING on default profile); P0 CANCEL
 never reopens the seat (status untouched → shift stays "filled", no
