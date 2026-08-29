@@ -207,7 +207,13 @@ export async function resolveShiftReminderProfile(args: {
     return DEFAULT_PROFILE;
   }
 
-  const perAssignmentId = normalizeProfileId(assignment?.shiftReminderProfile);
+  // Honor the override ONLY when the field is actually set: normalizeProfileId
+  // maps '' to 'default' (correct for the tenant-config doc), so feeding it an
+  // absent field made this branch return 'default' for EVERY assignment and
+  // left the targeting scan below unreachable (found 2026-08-29 when the
+  // Oakland pilot resolved to the default profile despite a matching doc).
+  const rawOverride = String(assignment?.shiftReminderProfile ?? '').trim();
+  const perAssignmentId = rawOverride ? normalizeProfileId(rawOverride) : null;
   if (perAssignmentId) {
     return PROFILES_BY_ID[perAssignmentId];
   }
@@ -274,7 +280,10 @@ export function resolveShiftReminderProfileSync(args: {
   if (String(args.assignment?.jobOrderType ?? '').trim().toLowerCase() === 'career') {
     return DEFAULT_PROFILE;
   }
-  const perAssignmentId = normalizeProfileId(args.assignment?.shiftReminderProfile);
+  // Same absent-field guard as the async resolver — '' normalizes to
+  // 'default' and must not count as an override.
+  const rawOverride = String(args.assignment?.shiftReminderProfile ?? '').trim();
+  const perAssignmentId = rawOverride ? normalizeProfileId(rawOverride) : null;
   if (perAssignmentId) return PROFILES_BY_ID[perAssignmentId];
   const tenantId = normalizeProfileId(args.tenantProfile);
   if (tenantId) return PROFILES_BY_ID[tenantId];

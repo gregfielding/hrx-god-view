@@ -66,5 +66,50 @@ no_show → Add-a-replacement button into the job order's Placements tab) and
   `workerShiftRemindersV2.ts` / `cadenceMessages.ts` (English-only) —
   targeting is the only recruiter-editable surface today.
 
+## Audit 2026-08-29 (Greg: "audit our entire messaging sequence system")
+
+Full review artifact (16 defect classes, competitor scan, tracks plan):
+https://claude.ai/code/artifact/d47711eb-a416-4ebc-a307-ab29f36f8542
+
+**Fixed + deployed same night** (commit 03b64b9d):
+1. ☠️ TIMEZONE: `startDate+startTime` were merged AS UTC → every reminder
+   fired hours early (7h for CA) and the 8AM floor ran at 1AM PT. Now
+   wall-clock via explicit tz → `worksiteState`→IANA map → LA fallback,
+   DST-safe two-pass offset. NOTE: nothing in prod writes
+   `assignment.timezone`/`startDateTime` — the state map is the live path.
+2. ☠️ RESYNC DEADLOCK: material edits cancel-then-upsert, and upsert
+   preserved `cancelled` as terminal → ANY edit to a confirmed assignment
+   permanently killed its reminders. `cancelled` now revives when the
+   recomputed time is future; only sent/failed stay terminal.
+3. Spanish reply grammar (SI/CANCELAR/AQUÍ + walk-off phrases) + all
+   cadence bodies/receipts bilingual via `preferredLanguage`.
+4. Walk-off classified BEFORE cancellation ("NO ONE IS HERE" was hitting
+   the bare `NO` token and cancelling the worker's NEXT shift). 'PASS'
+   removed from cancel tokens.
+5. CANCEL from a CONFIRMED worker now cancels the shift — it used to fall
+   through to the compliance STOP handler and globally unsubscribe them.
+6. Late YES near shift start confirms instead of triggering the START
+   opt-in reply. Resync no longer stomps checked_in/no_show → pending.
+7. No-show recruiter-feed route fixed (`/assignments/{id}`).
+
+**Open, ranked** (see artifact for detail): P0 late fills get no confirm
+ask + no address (<2h fills get NOTHING on default profile); P0 CANCEL
+never reopens the seat (status untouched → shift stays "filled", no
+backfill — Scheduling Health cards are the stopgap); P1 8AM floor
+collapses 24/23/22h onto one timestamp for pre-8AM shifts; P1 retries
+cosmetic (dedupe claims on attempt, not success); P1 `processing` docs
+strand forever (claim TTL never checked; 200 sequential sends vs 60s
+default timeout); P1 cadence bypasses rate limiter AND quiet hours, and
+no-show alerts silently no-op when the job order has no recruiter; P2
+orphaned reminder docs on delete, unscoped reply lookup, "C1 Staffing"
+hardcoded ×12, Settings copy promises behavior code doesn't do.
+
+**Tracks plan** (phases A–D in the artifact): A = multi-sequence targeting
+(shipped) + Settings page must render ALL sequence docs; B = steps/copy
+into the sequence doc (recruiter-editable, EN/ES pairs, compressed
+same-day track); C = consequences (unconfirmed→removed, CANCEL→seat
+reopens + offer blast to Tier-1 regulars); D = rolling reliability score
+feeding [[project_tiered_shift_access]].
+
 Related: [[project_sms_audit_2026_08]], [[project_open_shift_feature]],
 [[project_tiered_shift_access]].
