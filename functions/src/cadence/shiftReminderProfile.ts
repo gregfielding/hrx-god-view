@@ -39,6 +39,10 @@ export type ShiftReminderType =
   // Qwick-style second opt-in a few hours before start — plans change
   // overnight; a worker who re-confirms that afternoon shows up.
   | 'assignment_reconfirm_4h'
+  // Late-fill ask: synthesized at materialization when the 24h ask is
+  // already past (worker assigned inside the window). Fires ~now, carries
+  // the address, and re-anchors the escalation ladder.
+  | 'assignment_confirm_now'
   // Career-track welcome the evening before the first day (address, who to
   // ask for). Careers get this + a morning-of note, and nothing else.
   | 'career_first_day'
@@ -153,6 +157,7 @@ export const ALL_SHIFT_REMINDER_TYPES: ReadonlyArray<ShiftReminderType> = [
   'assignment_reminder_23h_escalate',
   'assignment_reminder_22h_final',
   'assignment_reconfirm_4h',
+  'assignment_confirm_now',
   'career_first_day',
   'assignment_noshow_check',
 ];
