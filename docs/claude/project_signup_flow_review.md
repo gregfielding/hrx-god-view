@@ -14,9 +14,18 @@
 > membership reactor's arbitrary-application fallback removed, quick apply
 > uses the wizard's shared group resolver, /c1/apply routes joined
 > ConditionalWorkerLayout (Apply.tsx gutter compensates when authed).
-> REMAINING: finding 3 only — gated-group pending state + application doc
-> on the group path (needs Greg's product call: what does a pending worker
-> see, who works the queue).
+> Finding 3 SHIPPED 2026-08-29 (6ddfd31e) per Greg's call — NO worker-facing
+> pending state; "the system decides" via adjustable interview/AI thresholds:
+> validateUserGroupSignup returns hireEveryone/hiringActive; hire_everyone
+> groups keep membership auto-hire (no application, Payroll-hub landing);
+> every other preset creates an application doc at submit ({uid}_group_{gid},
+> status submitted, groupId stamped, group title as jobTitle) → first-touch
+> texts the interview → interview submit stamps scores/orchestrator →
+> application-signals reactor auto-hires on 'advance'. Below-threshold
+> workers just stay group members. Score-gated signups land in the interview
+> in-session. ALL REVIEW FINDINGS NOW CLOSED. Watch items: first real
+> score-gated group signup end-to-end; recruiter Applications views showing
+> applicationKind 'group_signup' rows (jobId null) render acceptably.
 
 ## The two paths (live code, 2026-08-28)
 
