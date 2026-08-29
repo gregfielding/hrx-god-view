@@ -79,6 +79,27 @@ stale-tree rule).
    step 15/16 loses everything (the answer bank softens repeat pain but not
    first-run abandonment).
 
+## 2026-08-29 same-day execution (commits 5ba41f20, ac424dd4)
+
+Items 3-7 of the ranked list SHIPPED hours after the review:
+- **Bilingual Claude rubric** (`claudeNarrativeQuality.ts`, claude-sonnet-5,
+  8s race, kill switch `PRESCREEN_LLM_QUALITY=off`) is now the primary
+  answer-quality judge; regex is the fallback. Smoke-proven: identical
+  strong Spanish answers went from all-low + `vague_response` (regex) to
+  experience/communication high, +9 (rubric), 2.9s. `ai.answerQualitySource`
+  stamps provenance.
+- **`ai.overallScore` = post-override score** (matches letterGrade/
+  recommendation); base stays in `baseInterviewScore`.
+- **Daily prescreen-SMS slot shared across all three senders** + the
+  auto-invite's cadence anchor now gated by `shouldStampNewCadenceStart`.
+- **Truth-sweep** of the seven LLM-claiming comments + the stale
+  AI-provider doc.
+- **Test infra fixed** (`functions/jest.config.js`, ts-jest — the suite
+  was unrunnable) + 11 decision-ladder tests green.
+Still open from the list: save/resume for first-run interviews, dead-code
+sweep (client scorer copy, unemitted enums, walk_bike inconsistency,
+0.48 default compliance risk), stored-vs-shown question label drift.
+
 ## Recommendation (for Greg/Mark to prioritize)
 
 Keep the deterministic core (auditable, free, fast) but make it honest and
