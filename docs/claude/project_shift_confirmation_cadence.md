@@ -34,12 +34,46 @@ Both fences sit at the TOP of `resolveShiftReminderProfile` (and the sync
 variant) — no targeting doc, tenant switch, or per-assignment override can
 opt them in. Don't "fix" this by moving the fence below the override.
 
+## Standardized tracks (2026-08-29, Greg — built pre-OnTrac)
+
+Profiles in `shiftReminderProfile.ts`; sequence docs pick one via `track`:
+- **`gig_standard`**: 24h YES/CANCEL ask → 23h/22h escalations (while
+  silent) → **T-4h re-confirm** (Qwick-style second opt-in — deliberately
+  ALSO sent to already-confirmed workers; suppressed only on
+  cancelled/checked_in) → T-2h worksite details → T+0 "reply HERE" →
+  T+30m silent no-show probe. No 15m clock-in step.
+- **`cort_gig`**: gig_standard + T-15m clock-in step (CORT's QR
+  `clockInUrl` from shift extras).
+- **`career_placement`**: `career_first_day` welcome at T-15h (evening
+  before a morning start) + morning-of note. NO confirm demands, NO
+  probes. Careers are routed here BY THE FENCE (jobOrderType 'career'),
+  never by targeting — this replaced the bare default for careers.
+- **`default`**: 24h + 2h plain reminders — untargeted gig accounts and
+  Open Shifts.
+Reply handler: YES from an already-confirmed worker re-confirms
+idempotently (needed for the T-4h re-ask; used to fall through to the
+compliance START handler).
+
+☠️ Resolver trap (burned us 8/29): `normalizeProfileId('')` returns
+'default', so the per-assignment override check must treat an ABSENT
+`shiftReminderProfile` field as no-override (guard on raw string) — feeding
+undefined straight in makes every assignment resolve 'default' and turns
+the targeting scan into dead code. CORT assignments carry the field
+explicitly stamped, which masked this for months.
+
 ## Live sequences (prod, tenant BCiP2bQ9CgVOCTfV6MhD)
 
-| sequenceId | targeting | occurrence |
-|---|---|---|
-| `cort_gig` | account CORT `iNJQeuidEg6nJodNeWjc`, gig | first_shift (until completion) |
-| `oakland_arena_gig` | account Legends National `uhb5hq4ddyLWtSeJP9Te` + locationId `QGNUkDRD4jMej6RArOO4` (Oakland Arena only), gig | every_shift |
+| sequenceId | track | targeting | occurrence |
+|---|---|---|---|
+| `cort_gig` | cort_gig | account CORT `iNJQeuidEg6nJodNeWjc`, gig | first_shift (until completion) |
+| `oakland_arena_gig` | gig_standard | account Legends National `uhb5hq4ddyLWtSeJP9Te` + locationId `QGNUkDRD4jMej6RArOO4` (Oakland Arena only), gig | every_shift |
+
+Settings → Messaging Sequences now renders EVERY sequence doc as an
+editable card (track, accounts, location-ID filter, occurrence) + "Add
+sequence" (`SequenceTargetingCard.tsx`). OnTrac onboarding = Add sequence
+→ pick gig_standard → select the OnTrac account → Active. NOTE: if OnTrac
+runs as Open Shift standing crews, the isOpenShift fence excludes them —
+decide the OnTrac assignment shape first.
 
 Oakland pilot went live 2026-08-29; existing 8/30 assignments (71 workers)
 were re-synced via a stamp-then-clear of `shiftReminderProfile` (now a
