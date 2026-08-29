@@ -1257,14 +1257,25 @@ const PublicJobsBoard: React.FC = () => {
 
     try {
       // Check if user has existing application data
-      const { hasExistingApplicationData, getMissingRequiredCertifications, submitQuickApplication } = await import('../utils/quickApplicationSubmit');
+      const { hasExistingApplicationData, getMissingRequiredCertifications, getUnansweredRequirementAcks, submitQuickApplication } = await import('../utils/quickApplicationSubmit');
       
       const hasExistingData = await hasExistingApplicationData(user.uid);
       
       if (hasExistingData) {
         // Check if job requires certifications user doesn't have
         const missingCerts = await getMissingRequiredCertifications(user.uid, job);
-        
+
+        // Same gate as the posting page (2026-08-29): unanswered
+        // posting-specific requirement questions go to the wizard's
+        // requirements step instead of silently quick-applying past them.
+        if (missingCerts.length === 0) {
+          const unansweredAcks = await getUnansweredRequirementAcks(user.uid, job);
+          if (unansweredAcks.length > 0) {
+            navigate(`/apply/${job.tenantId}/${job.id}${jobOrderIdParam ? `?${jobOrderIdParam}&step=12` : '?step=12'}`);
+            return;
+          }
+        }
+
         if (missingCerts.length === 0) {
           // User has all required certs - submit directly
           // For gig jobs, use selectedJobShifts if available
@@ -1283,8 +1294,12 @@ const PublicJobsBoard: React.FC = () => {
           
           if (result.success) {
             handleCloseDialog();
-            // Open the job detail page so the worker sees updated status (same as applying from the posting page)
-            navigate(`/c1/jobs-board/${job.id}`, { replace: true });
+            // Straight into the stand-out interview, same as the posting
+            // page (2026-08-29) — the submitted state greets them when they
+            // come back to the posting.
+            navigate(
+              `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${user.uid}_${job.id}`)}&entry=post_apply_inline`,
+            );
             return;
           } else {
             // Error - show alert and navigate to wizard

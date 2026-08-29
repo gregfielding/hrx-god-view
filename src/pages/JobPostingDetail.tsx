@@ -1773,6 +1773,7 @@ const JobPostingDetail: React.FC = () => {
       const {
         hasExistingApplicationData,
         getMissingRequiredCertifications,
+        getUnansweredRequirementAcks,
         submitQuickApplication,
       } = await import('../utils/quickApplicationSubmit');
 
@@ -1781,6 +1782,17 @@ const JobPostingDetail: React.FC = () => {
       if (hasExistingData) {
         // Check if job requires certifications user doesn't have
         const missingCerts = await getMissingRequiredCertifications(user.uid, posting);
+
+        // Posting-specific requirement questions they've never answered
+        // route into the wizard's requirements step — the cert-only gate
+        // used to let quick applies skip these entirely (2026-08-29).
+        if (missingCerts.length === 0) {
+          const unansweredAcks = await getUnansweredRequirementAcks(user.uid, posting);
+          if (unansweredAcks.length > 0) {
+            navigate(`/apply/${posting.tenantId}/${postId}${buildApplyQueryParams({ step: 12 })}`);
+            return;
+          }
+        }
 
         if (missingCerts.length === 0) {
           // User has all required certs - submit directly

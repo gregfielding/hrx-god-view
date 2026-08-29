@@ -108,6 +108,39 @@ export async function getMissingRequiredCertifications(
 /**
  * Submit application directly without wizard (for returning applicants)
  */
+/**
+ * Requirement acknowledgments this posting asks that the worker has NEVER
+ * answered (attestationState 'unknown') — the quick-apply gate's twin to
+ * `getMissingRequiredCertifications` (2026-08-29, signup-flow follow-up:
+ * the cert-only gate let quick applies skip posting-specific requirement
+ * questions entirely). Items answered before — willing OR unwilling — are
+ * not re-asked, matching the wizard's own skip logic. Returns item labels;
+ * non-empty → route the worker into the wizard's requirements step.
+ */
+export async function getUnansweredRequirementAcks(
+  userId: string,
+  jobPosting: any
+): Promise<string[]> {
+  try {
+    const userSnap = await getDoc(doc(db, 'users', userId));
+    const userProfile = userSnap.exists() ? userSnap.data() : null;
+    const { getEligibilitySummary } = await import('./jobRequirementStatus');
+    const summary = getEligibilitySummary(jobPosting, userProfile, null);
+    const labels: string[] = [];
+    for (const cat of summary.categories ?? []) {
+      for (const item of cat.items ?? []) {
+        if ((item as any).attestationState === 'unknown') {
+          labels.push(String((item as any).label ?? cat.categoryLabel ?? 'requirement'));
+        }
+      }
+    }
+    return labels;
+  } catch {
+    // Fail open to quick apply — a broken gate must never block applying.
+    return [];
+  }
+}
+
 export async function submitQuickApplication(
   userId: string,
   tenantId: string,
