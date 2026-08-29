@@ -150,7 +150,10 @@ export async function notifyRecruitersOnWorkerEvent(
     return { notifiedRecruiterIds, skipped };
   }
 
-  const route = args.route || `/recruiter/assignments/${assignmentId}`;
+  // `/assignments/{id}` is the real route (App.tsx `assignments/:assignmentId`);
+  // the old `/recruiter/assignments/…` prefix matched nothing and bounced the
+  // recruiter to the home page via the catch-all redirect.
+  const route = args.route || `/assignments/${assignmentId}`;
   const now = admin.firestore.Timestamp.now();
 
   for (const recruiterId of recruiterIds) {

@@ -84,6 +84,15 @@ const CONFIRMATION_TOKENS = [
   'ACCEPT',
   'GOING',
   'WILL BE THERE',
+  // Spanish (2026-08-29 — the platform is bilingual; the grammar wasn't).
+  // normalize() does not strip accents, so both forms are listed.
+  'SI',
+  'SÍ',
+  'CONFIRMO',
+  'CONFIRMADO',
+  'CLARO',
+  'AHI ESTARE',
+  'AHÍ ESTARÉ',
 ];
 
 /**
@@ -111,11 +120,19 @@ const CANCELLATION_TOKENS = [
   'NOT ABLE',
   'DECLINE',
   'DECLINED',
-  'PASS',
+  // 'PASS' removed 2026-08-29 — "pass me the address" was cancelling shifts.
   'REJECT',
   'REJECTED',
   'WITHDRAW',
   'WITHDRAWN',
+  // Spanish
+  'CANCELAR',
+  'CANCELO',
+  'CANCELA',
+  'NO PUEDO',
+  'NO VOY',
+  'NO IRE',
+  'NO IRÉ',
 ];
 
 /**
@@ -145,6 +162,16 @@ const CHECKIN_TOKENS = [
   'CHECKED IN',
   'CHECK IN',
   'CHECKIN',
+  // Spanish
+  'AQUI',
+  'AQUÍ',
+  'ESTOY AQUI',
+  'ESTOY AQUÍ',
+  'YA LLEGUE',
+  'YA LLEGUÉ',
+  'LLEGUE',
+  'LLEGUÉ',
+  'PRESENTE',
 ];
 
 /**
@@ -161,6 +188,20 @@ const CHECKIN_TOKENS = [
  * distinguish that yet). Add cautiously.
  */
 const WALK_OFF_PHRASES = [
+  // Spanish — nobody's on site / can't find it
+  'NADIE ESTA AQUI',
+  'NADIE ESTÁ AQUÍ',
+  'NO HAY NADIE',
+  'NADIE AQUI',
+  'NADIE AQUÍ',
+  'NADIE RESPONDE',
+  'NADIE CONTESTA',
+  'NO ENCUENTRO EL LUGAR',
+  'NO ENCUENTRO LA ENTRADA',
+  'ESTA CERRADO',
+  'ESTÁ CERRADO',
+  'DIRECCION EQUIVOCADA',
+  'DIRECCIÓN EQUIVOCADA',
   // Nobody's on site
   'NO ONE IS HERE',
   'NO ONE HERE',
@@ -277,10 +318,13 @@ function matchesPhraseList(normalized: string, phrases: readonly string[]): stri
  * must treat intent + cadence-state as a pair.
  *
  * Priority order:
- *   1. Cancellation — explicit opt-out beats everything. A worker typing
- *      "CANCEL I can't make it" is not checking in.
- *   2. Walk-off warning — distress signals need recruiter attention even if
- *      the body also contains the string "HERE" ("no one is here").
+ *   1. Walk-off warning — distress signals need recruiter attention above
+ *      all else. This MUST run before cancellation: "NO ONE IS HERE"
+ *      prefix-matches the bare cancellation token "NO", and until 2026-08-29
+ *      that ordering bug cancelled a distressed worker's NEXT shift instead
+ *      of pulling in a recruiter.
+ *   2. Cancellation — explicit opt-out. A worker typing "CANCEL I can't
+ *      make it" is not checking in.
  *   3. Check-in — positive arrival. Only evaluated after walk-off rules out
  *      a distress phrase, because "HERE" is a substring of many walk-off
  *      phrases.
@@ -296,17 +340,18 @@ export function classifyCadenceReply(body: string): CadenceReplyClassification {
     return { intent: 'none', matchedToken: null, confidence: 0 };
   }
 
-  // 1. Cancellation
-  const cancelToken = matchesTokenList(normalized, CANCELLATION_TOKENS);
-  if (cancelToken) {
-    return { intent: 'cancellation', matchedToken: cancelToken, confidence: 1 };
-  }
-
-  // 2. Walk-off phrases (substring match — must come BEFORE check-in so
-  //    "NO ONE IS HERE" doesn't get stolen by the HERE keyword below).
+  // 1. Walk-off phrases (substring match — before everything: "NO ONE IS
+  //    HERE" must not be stolen by the bare "NO" cancellation token, and
+  //    "CANT FIND THE ENTRANCE" must not be stolen by "CANT").
   const walkOffPhrase = matchesPhraseList(normalized, WALK_OFF_PHRASES);
   if (walkOffPhrase) {
     return { intent: 'walk_off_warning', matchedToken: walkOffPhrase, confidence: 1 };
+  }
+
+  // 2. Cancellation
+  const cancelToken = matchesTokenList(normalized, CANCELLATION_TOKENS);
+  if (cancelToken) {
+    return { intent: 'cancellation', matchedToken: cancelToken, confidence: 1 };
   }
 
   // 3. Check-in

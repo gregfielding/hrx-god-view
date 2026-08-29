@@ -106,10 +106,12 @@ function normalizeUrl(raw?: string): string {
 export function buildCadenceMessage(
   reminderType: CadenceReminderType,
   payload: CadenceMessagePayload,
+  lang: 'en' | 'es' = 'en',
 ): BuiltMessage {
+  const es = lang === 'es';
   const startLabel = formatStartInTimezone(payload.startTime, payload.timezone);
-  const job = payload.shiftTitle || payload.jobTitle || 'shift';
-  const location = payload.locationName || 'your worksite';
+  const job = payload.shiftTitle || payload.jobTitle || (es ? 'turno' : 'shift');
+  const location = payload.locationName || (es ? 'tu lugar de trabajo' : 'your worksite');
   const address = truncate(payload.locationAddress || '', 120);
   const detail = pickDetailText(payload);
   const clockInUrl = normalizeUrl(payload.clockInUrl);
@@ -117,46 +119,67 @@ export function buildCadenceMessage(
   switch (reminderType) {
     case 'assignment_reminder_2h_instructions': {
       const parts = [
-        `C1 Staffing: Your ${job} shift at ${location} starts at ${startLabel}.`,
+        es
+          ? `C1 Staffing: Tu turno de ${job} en ${location} empieza el ${startLabel}.`
+          : `C1 Staffing: Your ${job} shift at ${location} starts at ${startLabel}.`,
       ];
-      if (address) parts.push(`Address: ${address}.`);
+      if (address) parts.push(es ? `Dirección: ${address}.` : `Address: ${address}.`);
       if (detail) parts.push(detail);
-      parts.push('Reply HELP if you need anything.');
+      parts.push(es ? 'Responde HELP si necesitas algo.' : 'Reply HELP if you need anything.');
       return {
-        title: 'Worksite details for today',
-        body: `${job} starts at ${startLabel}.${address ? ` ${address}.` : ''}${detail ? ` ${detail}` : ''}`,
+        title: es ? 'Detalles del lugar de trabajo' : 'Worksite details for today',
+        body: es
+          ? `${job} empieza el ${startLabel}.${address ? ` ${address}.` : ''}${detail ? ` ${detail}` : ''}`
+          : `${job} starts at ${startLabel}.${address ? ` ${address}.` : ''}${detail ? ` ${detail}` : ''}`,
         sms: parts.join(' ').trim(),
       };
     }
 
     case 'assignment_reminder_15m_clockin': {
       const parts = [
-        `C1 Staffing: ${job} starts at ${startLabel}.`,
+        es ? `C1 Staffing: ${job} empieza el ${startLabel}.` : `C1 Staffing: ${job} starts at ${startLabel}.`,
       ];
       if (clockInUrl) {
-        parts.push(`Clock in here: ${clockInUrl}`);
+        parts.push(es ? `Marca tu entrada aquí: ${clockInUrl}` : `Clock in here: ${clockInUrl}`);
       } else {
-        parts.push('Open the app to clock in when you arrive.');
+        parts.push(
+          es
+            ? 'Abre la app para marcar tu entrada cuando llegues.'
+            : 'Open the app to clock in when you arrive.',
+        );
       }
-      parts.push('Keep this thread open — we may send you instructions when you arrive.');
+      parts.push(
+        es
+          ? 'Mantén este chat abierto — podemos enviarte instrucciones cuando llegues.'
+          : 'Keep this thread open — we may send you instructions when you arrive.',
+      );
       return {
-        title: 'Clock in soon',
-        body: `${job} starts at ${startLabel}. ${clockInUrl ? `Clock-in: ${clockInUrl}` : 'Open the app to clock in.'}`,
+        title: es ? 'Marca tu entrada pronto' : 'Clock in soon',
+        body: es
+          ? `${job} empieza el ${startLabel}. ${clockInUrl ? `Entrada: ${clockInUrl}` : 'Abre la app para marcar tu entrada.'}`
+          : `${job} starts at ${startLabel}. ${clockInUrl ? `Clock-in: ${clockInUrl}` : 'Open the app to clock in.'}`,
         sms: parts.join(' ').trim(),
       };
     }
 
     case 'assignment_checkin_0h': {
-      const parts = [
-        `C1 Staffing: Your ${job} shift has started.`,
-        'Are you on site? Reply HERE once you arrive, or reply HELP if you need assistance.',
-      ];
-      if (location && location.toLowerCase() !== 'your worksite') {
-        parts.splice(1, 0, `Location: ${location}.`);
+      const parts = es
+        ? [
+            `C1 Staffing: Tu turno de ${job} ya empezó.`,
+            '¿Ya estás en el lugar? Responde AQUÍ cuando llegues, o HELP si necesitas ayuda.',
+          ]
+        : [
+            `C1 Staffing: Your ${job} shift has started.`,
+            'Are you on site? Reply HERE once you arrive, or reply HELP if you need assistance.',
+          ];
+      if (location && location.toLowerCase() !== 'your worksite' && location !== 'tu lugar de trabajo') {
+        parts.splice(1, 0, es ? `Lugar: ${location}.` : `Location: ${location}.`);
       }
       return {
-        title: 'Check in now',
-        body: `${job} just started at ${location}. Reply HERE when you arrive.`,
+        title: es ? 'Regístrate ahora' : 'Check in now',
+        body: es
+          ? `${job} acaba de empezar en ${location}. Responde AQUÍ cuando llegues.`
+          : `${job} just started at ${location}. Reply HERE when you arrive.`,
         sms: parts.join(' ').trim(),
       };
     }

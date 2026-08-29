@@ -311,10 +311,40 @@ function toTimestamp(value: unknown): admin.firestore.Timestamp | null {
   return null;
 }
 
-function combineDateAndTimeToTimestamp(dateValue: unknown, timeValue: unknown): admin.firestore.Timestamp | null {
-  // TODO(timezone-hardening): replace this UTC merge helper with a dedicated
-  // timezone-aware wall-clock conversion utility that takes (date, time, timezone)
-  // to correctly handle DST transitions and local scheduling semantics.
+/** Milliseconds the given IANA zone is ahead of UTC at `date`. */
+function tzOffsetMs(timeZone: string, date: Date): number {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const p: Record<string, string> = {};
+  for (const part of dtf.formatToParts(date)) p[part.type] = part.value;
+  const asUtc = Date.UTC(
+    Number(p.year),
+    Number(p.month) - 1,
+    Number(p.day),
+    Number(p.hour),
+    Number(p.minute),
+    Number(p.second),
+  );
+  return asUtc - date.getTime();
+}
+
+function combineDateAndTimeToTimestamp(
+  dateValue: unknown,
+  timeValue: unknown,
+  timeZone: string,
+): admin.firestore.Timestamp | null {
+  // Timezone hardening (2026-08-29): startDate + startTime are the WALL CLOCK
+  // at the worksite. The old helper merged them as UTC, which scheduled every
+  // reminder hours early (7h for a California shift) — the SMS bodies looked
+  // right because display formatting made the same mistake in reverse.
   const dateTs = toTimestamp(dateValue);
   if (!dateTs) return null;
   if (typeof timeValue !== 'string') return dateTs;
@@ -323,23 +353,40 @@ function combineDateAndTimeToTimestamp(dateValue: unknown, timeValue: unknown): 
   const hh = Math.max(0, Math.min(23, Number(m[1])));
   const mm = Math.max(0, Math.min(59, Number(m[2])));
   const d = dateTs.toDate();
-  const merged = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hh, mm, 0, 0));
-  return admin.firestore.Timestamp.fromDate(merged);
+  const utcGuess = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hh, mm, 0, 0);
+  try {
+    // Two-pass offset resolution handles DST boundaries: the offset at the
+    // guessed instant may differ from the offset at the corrected instant.
+    let instant = utcGuess - tzOffsetMs(timeZone, new Date(utcGuess));
+    const secondOffset = tzOffsetMs(timeZone, new Date(instant));
+    instant = utcGuess - secondOffset;
+    return admin.firestore.Timestamp.fromMillis(instant);
+  } catch {
+    // Unknown zone id — fall back to the historical UTC merge rather than drop
+    // the reminder set entirely.
+    return admin.firestore.Timestamp.fromMillis(utcGuess);
+  }
 }
 
-function resolveAssignmentStart(assignment: Record<string, unknown>): admin.firestore.Timestamp | null {
+function resolveAssignmentStart(
+  assignment: Record<string, unknown>,
+  timeZone: string,
+): admin.firestore.Timestamp | null {
   return (
     toTimestamp(assignment.startDateTime) ||
-    combineDateAndTimeToTimestamp(assignment.startDate, assignment.startTime) ||
+    combineDateAndTimeToTimestamp(assignment.startDate, assignment.startTime, timeZone) ||
     toTimestamp(assignment.startDate) ||
     null
   );
 }
 
-function resolveAssignmentEnd(assignment: Record<string, unknown>): admin.firestore.Timestamp | null {
+function resolveAssignmentEnd(
+  assignment: Record<string, unknown>,
+  timeZone: string,
+): admin.firestore.Timestamp | null {
   return (
     toTimestamp(assignment.endDateTime) ||
-    combineDateAndTimeToTimestamp(assignment.endDate || assignment.startDate, assignment.endTime) ||
+    combineDateAndTimeToTimestamp(assignment.endDate || assignment.startDate, assignment.endTime, timeZone) ||
     toTimestamp(assignment.endDate) ||
     null
   );
@@ -358,17 +405,54 @@ function resolveLocationAddress(assignment: Record<string, unknown>): string {
   return '';
 }
 
+/** Worksite-state → IANA zone for scheduling when no explicit timezone is
+ *  stored. Pacific/Mountain/Central listed; everything else is Eastern.
+ *  Split-zone states get their majority zone — an hour of imprecision beats
+ *  the old UTC merge's seven. */
+const STATE_TO_TIMEZONE: Record<string, string> = {
+  CA: 'America/Los_Angeles',
+  WA: 'America/Los_Angeles',
+  OR: 'America/Los_Angeles',
+  NV: 'America/Los_Angeles',
+  AZ: 'America/Phoenix',
+  CO: 'America/Denver',
+  UT: 'America/Denver',
+  NM: 'America/Denver',
+  MT: 'America/Denver',
+  WY: 'America/Denver',
+  ID: 'America/Denver',
+  TX: 'America/Chicago',
+  OK: 'America/Chicago',
+  KS: 'America/Chicago',
+  NE: 'America/Chicago',
+  SD: 'America/Chicago',
+  ND: 'America/Chicago',
+  MN: 'America/Chicago',
+  IA: 'America/Chicago',
+  MO: 'America/Chicago',
+  AR: 'America/Chicago',
+  LA: 'America/Chicago',
+  MS: 'America/Chicago',
+  AL: 'America/Chicago',
+  WI: 'America/Chicago',
+  IL: 'America/Chicago',
+  TN: 'America/Chicago',
+};
+
 function resolveTimezone(assignment: Record<string, unknown>, tenantData: Record<string, unknown> | null): string {
-  return (
-    normalize(
-      assignment.timezone ||
-      assignment.timeZone ||
-      assignment.worksiteTimezone ||
-      assignment.locationTimezone ||
-      tenantData?.timezone ||
-      tenantData?.timeZone
-    ) || 'UTC'
+  const explicit = normalize(
+    assignment.timezone ||
+    assignment.timeZone ||
+    assignment.worksiteTimezone ||
+    assignment.locationTimezone ||
+    tenantData?.timezone ||
+    tenantData?.timeZone,
   );
+  if (explicit) return explicit;
+  const state = normalize(assignment.worksiteState).toUpperCase();
+  if (state) return STATE_TO_TIMEZONE[state] || 'America/New_York';
+  // No zone, no state: default to the home market rather than UTC.
+  return 'America/Los_Angeles';
 }
 
 function buildPayload(
@@ -520,14 +604,14 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
 
   const tenantSnap = await db.doc(`tenants/${tenantId}`).get();
   const tenantData = tenantSnap.exists ? tenantSnap.data() as Record<string, unknown> : null;
-  const start = resolveAssignmentStart(assignment);
+  const resolvedTimezone = resolveTimezone(assignment, tenantData);
+  const start = resolveAssignmentStart(assignment, resolvedTimezone);
   if (!start) {
     logger.warn('[worker_shift_reminders] skip, missing assignment start', { tenantId, assignmentId });
     await cancelNonTerminalReminders(tenantId, assignmentId, 'missing_assignment_start');
     return;
   }
-  const end = resolveAssignmentEnd(assignment);
-  const resolvedTimezone = resolveTimezone(assignment, tenantData);
+  const end = resolveAssignmentEnd(assignment, resolvedTimezone);
 
   // Enrich with shift-level fields (clockInUrl, shiftDescription, emailIntro)
   // before building the payload so new cadence message types have what they
@@ -619,8 +703,14 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
 
     const existingSnap = await docRef.get();
     const existingStatus = existingSnap.exists ? normalizeStatus(existingSnap.get('status')) : '';
-    if (isTerminalReminderStatus(existingStatus)) {
-      // Preserve terminal states so reminders never re-enter send flow after sent/failed/cancelled.
+    // Preserve sent/failed so a reminder never re-enters the send flow after
+    // delivery was attempted. `cancelled` is NOT preserved (fixed 2026-08-29):
+    // this module's own resync path is cancel-then-upsert, so preserving
+    // cancelled meant ANY material edit to a confirmed assignment (start time,
+    // worksite, …) permanently killed all its future reminders. A cancelled
+    // doc whose recomputed time is in the future is revived to pending below;
+    // one whose time is past stays cancelled via the isPast branch.
+    if (existingStatus === 'sent' || existingStatus === 'failed') {
       // Keep metadata current for visibility/debuggability.
       writes.push(
         docRef.set(
@@ -703,7 +793,11 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
   if (profile.id === 'cort_gig') {
     const cort = (assignment.cortConfirmation as Record<string, unknown> | undefined) || {};
     const currentState = normalizeStatus(cort.state);
-    if (currentState !== 'confirmed' && currentState !== 'cancelled') {
+    // checked_in / no_show added 2026-08-29: a resync (material edit) was
+    // stomping those states back to 'pending' — erasing a real check-in and
+    // clearing the no-show flag recruiters act on.
+    const PRESERVED_STATES = ['confirmed', 'cancelled', 'checked_in', 'no_show'];
+    if (!PRESERVED_STATES.includes(currentState)) {
       writes.push(
         db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
           {
@@ -742,10 +836,12 @@ function buildReminderMessage(
   payload: ReminderPayload,
   assignmentId: string,
   reminderProfile?: string,
+  lang: 'en' | 'es' = 'en',
 ) {
   const startLabel = formatStartInTimezone(payload.startTime, payload.timezone);
   const assignmentUrl = buildWorkerAssignmentUrl(assignmentId);
   const isCortProfile = reminderProfile === 'cort_gig';
+  const es = lang === 'es';
 
   // Cadence-specific types (T-2h_instructions, T-15m_clockin, T+0_checkin) get
   // their bodies from the cadenceMessages module, which knows how to use the
@@ -766,45 +862,75 @@ function buildReminderMessage(
       shiftId: payload.shiftId,
       jobOrderId: payload.jobOrderId,
     };
-    return buildCadenceMessage(reminderType, cadencePayload);
+    return buildCadenceMessage(reminderType, cadencePayload, lang);
   }
 
   // Escalation reminders — only scheduled under cort_gig profile. Progressive
   // tone: 23h is a friendly nudge, 22h is "last call" before we reassign.
   if (reminderType === 'assignment_reminder_23h_escalate') {
-    return {
-      title: 'Please confirm your shift',
-      body: `Please confirm your ${payload.jobTitle} shift at ${startLabel}.`,
-      sms: `C1 Staffing: We still need a response for your ${payload.jobTitle} shift at ${startLabel}. Reply YES to confirm or CANCEL to decline.`,
-    };
+    return es
+      ? {
+          title: 'Confirma tu turno',
+          body: `Por favor confirma tu turno de ${payload.jobTitle} el ${startLabel}.`,
+          sms: `C1 Staffing: Todavía necesitamos tu respuesta para tu turno de ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar o CANCELAR para declinar.`,
+        }
+      : {
+          title: 'Please confirm your shift',
+          body: `Please confirm your ${payload.jobTitle} shift at ${startLabel}.`,
+          sms: `C1 Staffing: We still need a response for your ${payload.jobTitle} shift at ${startLabel}. Reply YES to confirm or CANCEL to decline.`,
+        };
   }
   if (reminderType === 'assignment_reminder_22h_final') {
-    return {
-      title: 'Last call — confirm your shift',
-      body: `Last call: please confirm ${payload.jobTitle} at ${startLabel}.`,
-      sms: `C1 Staffing: Last reminder for ${payload.jobTitle} at ${startLabel}. Reply YES to keep the shift or CANCEL — otherwise we may need to reassign it.`,
-    };
+    return es
+      ? {
+          title: 'Último aviso — confirma tu turno',
+          body: `Último aviso: confirma ${payload.jobTitle} el ${startLabel}.`,
+          sms: `C1 Staffing: Último recordatorio para ${payload.jobTitle} el ${startLabel}. Responde SI para mantener tu turno o CANCELAR — si no respondes, puede que lo reasignemos.`,
+        }
+      : {
+          title: 'Last call — confirm your shift',
+          body: `Last call: please confirm ${payload.jobTitle} at ${startLabel}.`,
+          sms: `C1 Staffing: Last reminder for ${payload.jobTitle} at ${startLabel}. Reply YES to keep the shift or CANCEL — otherwise we may need to reassign it.`,
+        };
   }
 
   if (reminderType === 'assignment_reminder_24h' || reminderType === 'shift_reminder_24h') {
     if (isCortProfile) {
-      return {
-        title: 'Confirm your shift tomorrow',
-        body: `${payload.jobTitle} tomorrow at ${startLabel}. Reply YES to confirm.`,
-        sms: `C1 Staffing: You're scheduled for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. Reply YES to confirm or CANCEL to decline.`,
-      };
+      return es
+        ? {
+            title: 'Confirma tu turno de mañana',
+            body: `${payload.jobTitle} mañana el ${startLabel}. Responde SI para confirmar.`,
+            sms: `C1 Staffing: Estás programado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Responde SI para confirmar o CANCELAR para declinar.`,
+          }
+        : {
+            title: 'Confirm your shift tomorrow',
+            body: `${payload.jobTitle} tomorrow at ${startLabel}. Reply YES to confirm.`,
+            sms: `C1 Staffing: You're scheduled for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. Reply YES to confirm or CANCEL to decline.`,
+          };
     }
-    return {
-      title: 'Shift Reminder',
-      body: `You’re confirmed for ${payload.jobTitle} tomorrow at ${startLabel}.`,
-      sms: `C1 Staffing reminder: You’re confirmed for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. View details: ${assignmentUrl}`,
-    };
+    return es
+      ? {
+          title: 'Recordatorio de turno',
+          body: `Estás confirmado para ${payload.jobTitle} mañana el ${startLabel}.`,
+          sms: `Recordatorio de C1 Staffing: Estás confirmado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Detalles: ${assignmentUrl}`,
+        }
+      : {
+          title: 'Shift Reminder',
+          body: `You’re confirmed for ${payload.jobTitle} tomorrow at ${startLabel}.`,
+          sms: `C1 Staffing reminder: You’re confirmed for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. View details: ${assignmentUrl}`,
+        };
   }
-  return {
-    title: 'Your shift starts soon',
-    body: `${payload.jobTitle} starts at ${startLabel} at ${payload.locationName}.`,
-    sms: `C1 Staffing reminder: Your shift for ${payload.jobTitle} starts at ${startLabel} at ${payload.locationName}. View details: ${assignmentUrl}`,
-  };
+  return es
+    ? {
+        title: 'Tu turno empieza pronto',
+        body: `${payload.jobTitle} empieza el ${startLabel} en ${payload.locationName}.`,
+        sms: `Recordatorio de C1 Staffing: Tu turno de ${payload.jobTitle} empieza el ${startLabel} en ${payload.locationName}. Detalles: ${assignmentUrl}`,
+      }
+    : {
+        title: 'Your shift starts soon',
+        body: `${payload.jobTitle} starts at ${startLabel} at ${payload.locationName}.`,
+        sms: `C1 Staffing reminder: Your shift for ${payload.jobTitle} starts at ${startLabel} at ${payload.locationName}. View details: ${assignmentUrl}`,
+      };
 }
 
 /**
@@ -873,7 +999,16 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   const maxAttempts = Number(reminder.maxAttempts || MAX_ATTEMPTS);
   const canonicalReminderType = toCanonicalReminderType(reminder.reminderType);
   const reminderProfileId = normalize((reminder as unknown as Record<string, unknown>).reminderProfile);
-  const message = buildReminderMessage(reminder.reminderType, reminder.payload, reminder.assignmentId, reminderProfileId);
+  // Worker language drives the message body (bodies were English-only until
+  // 2026-08-29). Fail-open to English on any read error.
+  let workerLang: 'en' | 'es' = 'en';
+  try {
+    const langSnap = await db.doc(`users/${reminder.workerId}`).get();
+    if (String(langSnap.get('preferredLanguage') ?? '').toLowerCase() === 'es') workerLang = 'es';
+  } catch {
+    /* default en */
+  }
+  const message = buildReminderMessage(reminder.reminderType, reminder.payload, reminder.assignmentId, reminderProfileId, workerLang);
   const delivery: NonNullable<ReminderDoc['delivery']> = {};
   let inboxSuccess = false;
   let pushSuccess = false;
@@ -906,7 +1041,10 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
 
   const assignmentData = assignmentSnap.data() as Record<string, unknown>;
   const assignmentStatus = normalizeStatus(assignmentData.status);
-  const assignmentStart = resolveAssignmentStart(assignmentData);
+  const assignmentStart = resolveAssignmentStart(
+    assignmentData,
+    resolveTimezone(assignmentData, null),
+  );
 
   // Most reminders are pre-shift and must be suppressed once the shift has
   // started. The exceptions are:

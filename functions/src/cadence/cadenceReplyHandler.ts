@@ -146,14 +146,18 @@ function resolveAssignmentStart(assignment: Record<string, unknown>): admin.fire
  * mirror that here for consistency. If ambiguity becomes a real problem the
  * correct fix is at the thread layer, not here.
  */
-async function findUserByPhone(phoneE164: string): Promise<{ userId: string } | null> {
+async function findUserByPhone(
+  phoneE164: string,
+): Promise<{ userId: string; lang: 'en' | 'es' } | null> {
   const snap = await db
     .collection('users')
     .where('phoneE164', '==', phoneE164)
     .limit(1)
     .get();
   if (snap.empty) return null;
-  return { userId: snap.docs[0].id };
+  const lang =
+    String(snap.docs[0].get('preferredLanguage') ?? '').toLowerCase() === 'es' ? 'es' : 'en';
+  return { userId: snap.docs[0].id, lang };
 }
 
 interface ActiveCadence {
@@ -210,6 +214,24 @@ function pickPendingCadence(cadences: ActiveCadence[]): ActiveCadence | null {
   const now = Date.now();
   const candidates = cadences.filter(
     (c) => c.state === 'pending' && c.startMs > now,
+  );
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.startMs - b.startMs);
+  return candidates[0];
+}
+
+/**
+ * Cancellation lookup — like pickPendingCadence but ALSO matches `confirmed`
+ * future shifts. A worker who replied YES yesterday and texts CANCEL today
+ * is cancelling that confirmed shift; before 2026-08-29 the pending-only
+ * filter dropped this reply, it fell through to the compliance STOP handler
+ * (CANCEL is a STOP synonym), and the worker was silently unsubscribed from
+ * ALL SMS while the shift stayed marked confirmed.
+ */
+function pickCancellableCadence(cadences: ActiveCadence[]): ActiveCadence | null {
+  const now = Date.now();
+  const candidates = cadences.filter(
+    (c) => (c.state === 'pending' || c.state === 'confirmed') && c.startMs > now,
   );
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => a.startMs - b.startMs);
@@ -528,33 +550,46 @@ async function sendReceipt(args: {
   assignmentId: string;
   intent: 'confirmation' | 'cancellation' | 'check_in' | 'walk_off_warning';
   assignment: Record<string, unknown>;
+  lang?: 'en' | 'es';
 }): Promise<void> {
   const { tenantId, userId, phoneE164, assignmentId, intent, assignment } = args;
+  const es = args.lang === 'es';
 
-  const job = normalize(assignment.jobTitle || assignment.jobOrderName || assignment.title) || 'your shift';
+  const job = normalize(assignment.jobTitle || assignment.jobOrderName || assignment.title) ||
+    (es ? 'tu turno' : 'your shift');
 
   let body = '';
   let messageTypeId = '';
 
   if (intent === 'confirmation') {
-    body = `C1 Staffing: Thanks — you're confirmed for ${job}. We'll send worksite details closer to start time.`;
+    body = es
+      ? `C1 Staffing: Gracias — estás confirmado para ${job}. Te enviaremos los detalles del lugar antes de empezar.`
+      : `C1 Staffing: Thanks — you're confirmed for ${job}. We'll send worksite details closer to start time.`;
     messageTypeId = 'assignment_confirmation_receipt';
   } else if (intent === 'cancellation') {
-    body = `C1 Staffing: Got it — we've cancelled ${job} and alerted your recruiter.`;
+    body = es
+      ? `C1 Staffing: Entendido — cancelamos ${job} y avisamos a tu reclutador.`
+      : `C1 Staffing: Got it — we've cancelled ${job} and alerted your recruiter.`;
     messageTypeId = 'assignment_cancellation_receipt';
   } else if (intent === 'check_in') {
-    body = `C1 Staffing: Got it — you're checked in for ${job}. Have a great shift. Reply HELP if anything goes wrong.`;
+    body = es
+      ? `C1 Staffing: Listo — registramos tu llegada a ${job}. ¡Buen turno! Responde HELP si algo sale mal.`
+      : `C1 Staffing: Got it — you're checked in for ${job}. Have a great shift. Reply HELP if anything goes wrong.`;
     messageTypeId = 'assignment_checked_in_receipt';
   } else {
     // walk_off_warning — this is the "don't walk off, you're being paid" copy.
     // Copy is intentionally reassuring. If the tenant has a driver-meeting
     // variant this is where we'd branch on assignment / jobOrder metadata;
     // for now the default covers the CORT use case.
-    body =
-      `C1 Staffing: Thanks for reaching out. You're paid from your scheduled start time — ` +
-      `please stay on site and wait at least 30 minutes for your supervisor or driver lead. ` +
-      `We've alerted your recruiter, who will reach out shortly. Reply HERE when you see them, ` +
-      `or reply HELP if you need support.`;
+    body = es
+      ? `C1 Staffing: Gracias por avisar. Tu pago cuenta desde tu hora de inicio programada — ` +
+        `por favor quédate en el lugar y espera al menos 30 minutos a tu supervisor. ` +
+        `Ya avisamos a tu reclutador y te contactará pronto. Responde AQUÍ cuando lo veas, ` +
+        `o HELP si necesitas ayuda.`
+      : `C1 Staffing: Thanks for reaching out. You're paid from your scheduled start time — ` +
+        `please stay on site and wait at least 30 minutes for your supervisor or driver lead. ` +
+        `We've alerted your recruiter, who will reach out shortly. Reply HERE when you see them, ` +
+        `or reply HELP if you need support.`;
     messageTypeId = 'assignment_walk_off_warning';
   }
 
@@ -602,12 +637,22 @@ export async function handleCadenceReply(
     return { handled: false, reason: 'no_cadence_assignments' };
   }
 
-  // Route to the right cadence depending on intent. YES/CANCEL only make
-  // sense against a future-start pending cadence; HERE / walk-off look for
-  // an active-or-very-recent cadence.
+  // Route to the right cadence depending on intent. YES matches a
+  // future-start pending cadence first, falling back to an
+  // around-the-shift pending cadence (a worker replying YES after start
+  // still means "I'm coming" — before 2026-08-29 that reply fell through
+  // to the compliance START handler and produced a bogus "you have been
+  // opted in" text). CANCEL matches pending OR confirmed future shifts.
+  // HERE / walk-off look for an active-or-very-recent cadence.
   let active: ActiveCadence | null = null;
-  if (classification.intent === 'confirmation' || classification.intent === 'cancellation') {
+  if (classification.intent === 'confirmation') {
     active = pickPendingCadence(allCadences);
+    if (!active) {
+      const nearShift = pickActiveOrRecentCadence(allCadences);
+      if (nearShift && nearShift.state === 'pending') active = nearShift;
+    }
+  } else if (classification.intent === 'cancellation') {
+    active = pickCancellableCadence(allCadences);
   } else {
     active = pickActiveOrRecentCadence(allCadences);
   }
@@ -637,6 +682,7 @@ export async function handleCadenceReply(
           assignmentId: active.assignmentId,
           intent: 'confirmation',
           assignment: active.assignment,
+          lang: user.lang,
         });
         break;
       case 'cancellation':
@@ -648,6 +694,7 @@ export async function handleCadenceReply(
           assignmentId: active.assignmentId,
           intent: 'cancellation',
           assignment: active.assignment,
+          lang: user.lang,
         });
         break;
       case 'check_in':
@@ -659,6 +706,7 @@ export async function handleCadenceReply(
           assignmentId: active.assignmentId,
           intent: 'check_in',
           assignment: active.assignment,
+          lang: user.lang,
         });
         break;
       case 'walk_off_warning':
@@ -670,6 +718,7 @@ export async function handleCadenceReply(
           assignmentId: active.assignmentId,
           intent: 'walk_off_warning',
           assignment: active.assignment,
+          lang: user.lang,
         });
         break;
       default:
