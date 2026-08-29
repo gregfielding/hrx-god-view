@@ -377,8 +377,8 @@
       "dyn_shift_punctuality": "Este turno comienza a las {startTime}. ¿Puedes llegar a tiempo para esta hora de inicio?",
       "dyn_worksite_commute": "El lugar de trabajo de esta vacante está en {location}. ¿Puedes llegar de forma confiable a esta ubicación para este empleo?",
       "dyn_job_drug_screen": "Esta vacante requiere un examen de drogas antes de empezar. ¿Puedes completarlo?",
-      "dyn_job_background_check": "Esta vacante requiere verificación de antecedentes. ¿Puedes aprobarla y completarla?",
-      "dyn_physical_job_fit": "En este puesto, el trabajo incluye tareas físicas como {list}. ¿Te sientes cómodo/a con eso para esta vacante?",
+      "dyn_job_background_check": "Este puesto requiere una verificación de antecedentes. ¿Estás de acuerdo con completarla?",
+      "dyn_physical_job_fit": "Para este puesto, el trabajo incluye tareas físicas como {list}. ¿Puedes realizar estas tareas, con o sin una adaptación razonable?",
       "dyn_cert_have": "Este trabajo requiere {cert}. ¿Tienes esta certificación?",
       "dyn_cert_willing": "Si aún no tienes {cert}, ¿estarías dispuesto/a a obtenerla antes o poco después de empezar?",
       "dyn_uniform_available": "Este rol requiere {uniformText}. ¿Los tienes disponibles?",
@@ -537,10 +537,10 @@
         "opt_general_labor": "Mano de obra general"
       },
       "motivation": {
-        "prompt": "¿Qué te atrajo a este tipo de trabajo y qué buscas ahora? Incluye:\n- qué tipo de rol o industria te interesa\n- una meta para los próximos meses"
+        "prompt": "¿Qué tipo de trabajo buscas ahora? Comparte también una meta que tengas para los próximos meses."
       },
       "experience_details": {
-        "prompt": "En pocas palabras, ¿qué trabajo has hecho recientemente? Incluye:\n- dónde (empleador o tipo de lugar)\n- más o menos cuánto tiempo (aproximado está bien)\n- tus responsabilidades principales"
+        "prompt": "Cuéntanos sobre tu trabajo reciente. Incluye:\n- dónde (empleador o tipo de lugar de trabajo)\n- aproximadamente cuánto tiempo\n- tus responsabilidades principales"
       },
       "work_confidence": {
         "prompt": "¿En qué tipo de trabajo te sientes con confianza? (Selecciona todas las que apliquen)",
@@ -553,18 +553,18 @@
         "opt_other": "Otro"
       },
       "pressure_situation": {
-        "prompt": "Cuéntanos una vez que el trabajo se puso estresante — ¿qué pasó, qué hiciste y cómo terminó?"
+        "prompt": "Cuéntanos de una vez que el trabajo se puso estresante o muy ocupado. ¿Qué pasó y qué hiciste?"
       },
       "attendance_issues": {
-        "prompt": "¿Has tenido problemas de asistencia o puntualidad en trabajos anteriores?",
+        "prompt": "En el último año, ¿hubo veces que no pudiste llegar al trabajo o llegaste tarde?",
         "opt_Yes": "Sí",
         "opt_No": "No"
       },
       "attendance_explanation": {
-        "prompt": "Si respondiste Sí arriba, explica qué pasó y cómo manejas la puntualidad ahora. Si respondiste No, puedes escribir «N/D»."
+        "prompt": "¿Qué pasó y qué es diferente ahora? Con una o dos frases basta."
       },
       "transportation_plan": {
-        "prompt": "¿Tienes una forma confiable de llegar al trabajo?",
+        "prompt": "¿Cómo llegarás normalmente al trabajo?",
         "opt_own_vehicle": "Manejo yo mismo",
         "opt_ride_from_someone_else": "Viaje con otra persona",
         "opt_public_transportation": "Transporte público",
@@ -573,41 +573,41 @@
         "opt_other": "Otro"
       },
       "backup_transportation": {
-        "prompt": "¿Tienes un plan alternativo si tu transporte habitual no está disponible?",
+        "prompt": "Si tu forma habitual de llegar falla, ¿tienes un plan alternativo?",
         "opt_Yes": "Sí",
         "opt_No": "No"
       },
       "physical_comfort": {
-        "prompt": "¿Te sientes cómodo con trabajos que pueden implicar estar de pie, levantar peso o tareas repetitivas?",
+        "prompt": "Muchos de nuestros puestos implican estar de pie, levantar peso o tareas repetitivas. ¿Puedes hacer este tipo de trabajo, con o sin una adaptación razonable?",
         "opt_Yes": "Sí",
         "opt_No": "No"
       },
       "drug_screen": {
-        "prompt": "Si el puesto requiere examen de drogas, ¿habría algo que debamos saber?",
+        "prompt": "Algunos trabajos requieren una prueba de drogas. Si tomaras una esta semana, ¿saldría algo que debamos saber?",
         "opt_no": "No",
         "opt_yes": "Sí",
         "opt_not_sure": "No estoy seguro"
       },
       "drug_screen_detail": {
-        "prompt": "Indicaste que podría aparecer algo en un examen de drogas. Explica brevemente qué debemos saber (fechas o contexto ayudan). Si elegiste Sí por error, vuelve atrás para cambiar tu respuesta."
+        "prompt": "Gracias por tu honestidad — el contexto nos ayuda a ubicarte bien. En breve, ¿qué debemos saber? Fechas aproximadas ayudan."
       },
       "background_check": {
-        "prompt": "Si el puesto requiere verificación de antecedentes, ¿hay algo que pudiera aparecer?",
+        "prompt": "Algunos trabajos requieren una verificación de antecedentes. ¿Hay algo que podría aparecer que quieras contarnos primero?",
         "opt_no": "No",
         "opt_yes": "Sí",
         "opt_not_sure": "No estoy seguro"
       },
       "background_check_detail": {
-        "prompt": "Indicaste que podría aparecer algo en una verificación de antecedentes. Explica brevemente qué debemos saber. Si elegiste Sí por error, vuelve atrás para cambiar tu respuesta."
+        "prompt": "Gracias por tu honestidad — el contexto nos ayuda a encontrar el puesto adecuado. En breve, ¿qué debemos saber?"
       },
       "background_offense_class": {
-        "prompt": "Opcional: si compartiste un antecedente penal, ¿fue generalmente un delito menor (misdemeanor) o un delito grave (felony)? (Puedes omitir esto si lo prefieres.)"
+        "prompt": "Opcional: ¿fue en general un delito menor o un delito grave? Puedes omitir esto si prefieres."
       },
       "background_offense_when": {
-        "prompt": "Opcional: ¿aproximadamente cuándo ocurrió eso (año o período)? Para colocaciones nos enfocamos aproximadamente en los últimos 7–10 años."
+        "prompt": "Opcional: ¿aproximadamente cuándo ocurrió? Un año o período está bien — para staffing, los últimos 7–10 años son lo más relevante."
       },
       "supervisor_feedback": {
-        "prompt": "¿Qué diría tu último supervisor sobre ti? Incluye:\n- una fortaleza que podría mencionar\n- un área en la que estabas trabajando (si aplica)"
+        "prompt": "¿Qué diría de ti tu supervisor más reciente? Incluye:\n- una fortaleza que mencionaría\n- algo en lo que estabas trabajando (si aplica)"
       },
       "additional_notes": {
         "prompt": "¿Algo más que quieras que sepamos? (Opcional — los detalles concretos ayudan.)"
