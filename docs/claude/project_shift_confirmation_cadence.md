@@ -138,6 +138,20 @@ https://claude.ai/code/artifact/d47711eb-a416-4ebc-a307-ab29f36f8542
 - Retries are honest: `releaseLifecycleEvent` frees the dedupe key after a
   FAILED send (claiming on first attempt made retries no-op "successes").
 
+**Phase B remainder + paper cuts CLOSED 2026-08-29 eve** (commit 1b76f25d):
+- `copyOverrides` on sequence docs: per-step SMS templates (EN/ES,
+  {brand}/{jobTitle}/{startLabel}/{address}/{clockInUrl} tokens) rendered
+  at dispatch (`cadence/sequenceCopyOverrides.ts`, 60s cache); reminder
+  docs stamp the governing `sequenceId`. Settings has the wording editor +
+  a venue picker (options = distinct locationId/worksiteName from the
+  account's own assignments).
+- SMS brand from `messagingConfig/branding.smsBrand` (default C1 Staffing).
+- Deleted assignments purge their scheduled_notifications (in the existing
+  onWrite trigger — no new function).
+- Settings step-table truth pass + reconfirm/late-fill rows;
+  jest 0-failure: `setupFiles` wiring was the root cause of all 8 broken
+  suites (setup.ts existed, never loaded); 2 emulator suites skip cleanly.
+
 **Open, ranked** (see artifact for detail): P0 late fills get no confirm
 ask + no address (<2h fills get NOTHING on default profile); P0 CANCEL
 never reopens the seat (status untouched → shift stays "filled", no
