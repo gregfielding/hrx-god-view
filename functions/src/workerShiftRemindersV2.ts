@@ -1621,6 +1621,11 @@ export const dispatchScheduledWorkerReminders = onSchedule(
   {
     schedule: 'every 5 minutes',
     timeZone: 'UTC',
+    // A full batch (limit 200, processed sequentially with several Firestore
+    // round trips + a Twilio call each) cannot finish inside the 60s default —
+    // a timeout mid-batch strands every claimed reminder in `processing`,
+    // which nothing revives. 540s comfortably covers the worst batch.
+    timeoutSeconds: 540,
     secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
   },
   async () => {
