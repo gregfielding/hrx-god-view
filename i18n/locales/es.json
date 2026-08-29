@@ -1553,7 +1553,8 @@
       "weeksAgo": "hace {count} semana(s)",
       "monthsAgo": "hace {count} mes(es)",
       "yearsAgo": "hace {count} año(s)"
-    }
+    },
+    "lastPayLabel": "Último pago"
   },
   "support": {
     "title": "Ayuda y soporte",

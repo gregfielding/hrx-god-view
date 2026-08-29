@@ -41,6 +41,7 @@ import {
   type PayrollWorkerKind,
 } from '../../../utils/payrollEntityDisplay';
 import PaymentIssueBanner from '../../../components/worker/PaymentIssueBanner';
+import { nextPayday } from '../../../utils/nextPayday';
 
 interface EvereeEntityInfo {
   label: string;
@@ -104,16 +105,6 @@ function useEvereeEntityInfos(
   return { infos, loading };
 }
 
-/** Next Friday (inclusive of today) — both entities pay on Fridays:
- *  Select for the prior Sun-Sat week, Events for the prior Mon-Sun week.
- *  See docs/claude/project_payroll_help_desk.md. */
-function nextPayday(now: Date = new Date()): { date: Date; isToday: boolean } {
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const day = d.getDay(); // 5 = Friday
-  const delta = (5 - day + 7) % 7;
-  d.setDate(d.getDate() + delta);
-  return { date: d, isToday: delta === 0 };
-}
 
 const WorkerPayrollIndex: React.FC = () => {
   const { user, tenantId, tenantIds } = useAuth();

@@ -24,7 +24,8 @@ import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import WorkerDashboardActionItems from '../../../components/worker/home/WorkerDashboardActionItems';
 import PaymentIssueHomeBanner from '../../../components/worker/PaymentIssueHomeBanner';
-import type { UpcomingShift } from '../../../components/worker/dashboard/WorkerDashboardHero';
+import WorkerDashboardHero, { type UpcomingShift } from '../../../components/worker/dashboard/WorkerDashboardHero';
+import WorkerDashboardEarningsStrip from '../../../components/worker/dashboard/WorkerDashboardEarningsStrip';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
   applyClientOnlyWorkerDashboardActionItemPersonalization,
@@ -211,7 +212,15 @@ const WorkerDashboard: React.FC = () => {
   return (
     <Box sx={{ maxWidth: 720, mx: 'auto', pb: 4 }}>
       <Stack spacing={{ xs: 3, sm: 3.5 }} sx={{ pt: { xs: 2, sm: 2.5 } }}>
+        {/* Home leads with the two answers workers open the app for: when
+            do I work next, and where's my money (2026-08-29). The hero
+            component existed since the redesign but was never mounted. */}
+        <WorkerDashboardHero
+          firstName={String(userDoc?.firstName ?? '').trim() || 'there'}
+          nextShift={!assignmentsLoading ? upcomingAssignments[0] ?? null : null}
+        />
         <PaymentIssueHomeBanner tenantId={tenantId} uid={user?.uid} />
+        <WorkerDashboardEarningsStrip />
         {user?.uid ? (
           <WorkerDashboardActionItems
             uid={user.uid}

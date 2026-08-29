@@ -103,6 +103,8 @@ const RATE_LIMIT_EXEMPT_MESSAGE_TYPES = new Set([
   // the worker can fix it — must not be starved by general caps.
   'payroll_payment_returned',
   'payroll_setup_blocking_pay',
+  // Post-shift earnings confirmation (2026-08-29) — wanted receipt, 1/day.
+  'payroll_hours_confirmed',
 ]);
 
 /**
@@ -118,6 +120,7 @@ const TYPE_DAILY_CAP_OVERRIDES: Record<string, number> = {
   bulk_direct_sms: 3,
   payroll_payment_returned: 1,
   payroll_setup_blocking_pay: 1,
+  payroll_hours_confirmed: 1,
 };
 
 /**

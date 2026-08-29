@@ -3,6 +3,7 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { CONFIG, isFeatureEnabled } from './utils/configReader';
 import { runPayrollPaymentIssueSweep } from './payroll/payrollPaymentIssueSweep';
+import { runHoursConfirmedNotifier } from './payroll/hoursConfirmedNotifier';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -439,6 +440,15 @@ async function runAutoCloseCompletedAssignments(): Promise<SubtaskResult> {
 
 // Subtask registry
 const SUBTASKS: SubtaskConfig[] = [
+  {
+    name: 'hours_confirmed_notifier',
+    // Post-shift earnings receipts; self-gates to every 6h.
+    enabled: isFeatureEnabled('hours_confirmed_notifier', true),
+    envFlag: 'ENABLE_HOURS_CONFIRMED_NOTIFIER',
+    handler: runHoursConfirmedNotifier,
+    maxDurationMs: 120000,
+    runParallel: false
+  },
   {
     name: 'payroll_payment_issue_sweep',
     // Always on — money-stuck detection; the sweep self-gates to every 6h
