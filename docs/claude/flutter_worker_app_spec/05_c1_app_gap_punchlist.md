@@ -77,9 +77,16 @@ question). Android intent filters for the new pay routes still TODO.
    entries (pay-history, payroll-settings) + Android intent filters note.
 
 ## Phase 2+ (not in Phase 1)
-- **Phone-OTP sign-in** — app is email+password ONLY; web is phone-first
-  with number-change recovery. Biggest auth gap.
-- The 26-step prescreen interview (nothing exists).
+- **Phone-OTP sign-in** — ✅ SHIPPED 2026-08-29 (c1_app e1d1fbe): 6-step
+  machine (send/check OTP callables, candidate pick, phone-change
+  recovery, new-worker names+DOB+language), last-login-method memory,
+  email login kept as secondary.
+- The 26-step prescreen interview — ✅ SHIPPED 2026-08-29 (c1_app
+  8c434f1): flow engine (nav gating, fast-path/expanded narrative,
+  dyn_job_* substitution, transport dedupe + synthetic yes, answer-bank
+  coverage, 9-word validation), 482 generated bilingual copy keys, plan +
+  submit callables, full wizard screen incl. zero-delta confirm card;
+  dashboard action items now deep-link into it. 10 unit tests.
 - Quick apply + acks gate + two-step signup parity (apply_screen is the
   old wizard, 2521 lines — needs diff vs spec 02).
 - Payroll help tickets; support assistant (support screen is static).
