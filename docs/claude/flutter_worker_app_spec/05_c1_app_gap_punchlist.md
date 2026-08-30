@@ -111,29 +111,35 @@ question). Android intent filters for the new pay routes still TODO.
   screening deep links; theme alignment decision.
 
 ## Watchouts
-- **Cold-start Riverpod race — MITIGATED, not fully fixed (c1_app
-  013ada7, 2026-08-29)**: intermittent cold-boot red screen "Concurrent
-  modification during iteration: _HashMap<ProviderElementBase, Object>".
-  riverpod 2.6.1 internals: `_maybeRebuildDependencies` runs
-  `visitAncestors((e) => e.flush())` over `_dependencies` and a flush
-  can re-add to that map mid-iteration (element.dart:337/834). Mitigation
-  that helped a lot: side-effect bootstrap providers moved from
-  ref.watch-in-build to a one-shot post-frame ref.read
-  (`_startSideEffectProviders`). Frequency went from ~2-of-3 cold
-  launches to rare (11+ consecutive clean launches; one recurrence seen
-  after). ☠️ DO NOT retry the remount-on-error "self-healing root": in a
+- **Cold-start Riverpod race — ✅ RESOLVED by riverpod 3 migration
+  (c1_app 4254ecc, 2026-08-30)**: the 2.6.1 cold-boot red screen
+  "Concurrent modification during iteration:
+  _HashMap<ProviderElementBase, Object>" (`_maybeRebuildDependencies`
+  re-entered its own `_dependencies` map mid-flush,
+  element.dart:337/834; purely load/timing-dependent, worst under debug
+  JIT + starved machine) is gone with the riverpod 3 core's rewritten
+  flush. Migrated to **flutter_riverpod 3.3.2** — the newest resolvable
+  on Dart 3.8/Flutter 3.32.6; 3.4.x needs Dart ^3.12, bump after the
+  next Flutter SDK upgrade. Verified 5/5 first-launch-after-install
+  cycles clean on iPhone 17 Pro sim (debug, 13s screenshot check),
+  analyze clean, 106/106 tests. Migration gotchas that matter for
+  future work in c1_app:
+  - Classic no-codegen style kept: StateNotifier/StateNotifierProvider/
+    StateProvider import from `flutter_riverpod/legacy.dart`.
+  - `valueOrNull` is REMOVED upstream; `.value` now means null-on-error
+    (what valueOrNull used to do).
+  - v3 auto-retries failing providers by default — DISABLED at the root
+    ProviderScope (`retry: (c, e) => null`) to keep fail-fast UX and
+    avoid endless permission-denied retry loops after sign-out.
+  - ☠️ v3 pauses a provider (incl. its internal `ref.listen`
+    subscriptions) when it has no active listeners — a one-shot
+    `ref.read` no longer keeps side-effect bootstrap providers live.
+    `_startSideEffectProviders` now uses `ref.listenManual` from the
+    root State (still post-frame). Any future side-effect provider must
+    get a real listener, never a bare read.
+  ☠️ Still DO NOT retry the remount-on-error "self-healing root": in a
   warm VM the remount re-races deterministically and strands the app on
-  a blank screen (tested, reverted). Bisect verdict (2026-08-29 late,
-  corrected): NO commit is implicated — under identical late-night
-  machine load, pre-Phase-2 e1d1fbe reds 2/5 and 817d523 reds 3/5;
-  earlier "clean" runs were low-load luck (and 6 console-pty "clean"
-  attempts were void — macOS has no `timeout`, nothing launched). The
-  race is PRE-EXISTING and purely load/timing-dependent: red frequency
-  tracks how starved the machine is, not the code revision. Debug JIT
-  is worst-case; release AOT boots faster but first-launch-after-install
-  is exactly what a new worker does — treat the riverpod 3 migration
-  (2.6.1 is the last 2.x) as a Phase 2 blocker before TestFlight, and
-  re-test boot rates on a quiet machine.
+  a blank screen (tested on 2.6.1, reverted).
 - `.cursorrules` lies (freezed/Either/arb claims) — trust the map above.
 - `payrollEvereeAccessProvider` hides the Payroll tab until provisioning
   loads — new Home earnings strip must not depend on the tab being visible.
