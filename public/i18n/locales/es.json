@@ -49,7 +49,7 @@
     "findWork": "Buscar turnos",
     "viewApplications": "Ver solicitudes",
     "prescreen": "Preselección",
-    "payroll": "Pagos"
+    "payroll": "Nómina"
   },
   "workerAccount": {
     "sectionProfile": "Perfil",
@@ -63,7 +63,8 @@
     "screeningPageSubtitle": "Antecedentes, verificación de empleo y comprobaciones relacionadas con tus asignaciones. Esta página es solo lectura; tu equipo de contratación puede contactarte.",
     "screeningSignInPrompt": "Inicia sesión para ver tu avance de contratación.",
     "screeningSelectWorkspace": "Selecciona un espacio de trabajo para ver las verificaciones previas al empleo.",
-    "sectionDocuments": "Documentos"
+    "sectionDocuments": "Documentos",
+    "sectionPayroll": "Nómina"
   },
   "workerEmploymentHub": {
     "statusNotStarted": "Sin iniciar",
@@ -376,8 +377,8 @@
       "dyn_shift_punctuality": "Este turno comienza a las {startTime}. ¿Puedes llegar a tiempo para esta hora de inicio?",
       "dyn_worksite_commute": "El lugar de trabajo de esta vacante está en {location}. ¿Puedes llegar de forma confiable a esta ubicación para este empleo?",
       "dyn_job_drug_screen": "Esta vacante requiere un examen de drogas antes de empezar. ¿Puedes completarlo?",
-      "dyn_job_background_check": "Esta vacante requiere verificación de antecedentes. ¿Puedes aprobarla y completarla?",
-      "dyn_physical_job_fit": "En este puesto, el trabajo incluye tareas físicas como {list}. ¿Te sientes cómodo/a con eso para esta vacante?",
+      "dyn_job_background_check": "Este puesto requiere una verificación de antecedentes. ¿Estás de acuerdo con completarla?",
+      "dyn_physical_job_fit": "Para este puesto, el trabajo incluye tareas físicas como {list}. ¿Puedes realizar estas tareas, con o sin una adaptación razonable?",
       "dyn_cert_have": "Este trabajo requiere {cert}. ¿Tienes esta certificación?",
       "dyn_cert_willing": "Si aún no tienes {cert}, ¿estarías dispuesto/a a obtenerla antes o poco después de empezar?",
       "dyn_uniform_available": "Este rol requiere {uniformText}. ¿Los tienes disponibles?",
@@ -399,7 +400,9 @@
     "successBodyNoJob2": "Siguiente paso: vuelve a tu panel. Cuando postules, los empleadores pueden ver este resumen de perfil — mantén actualizado tu contacto.",
     "referenceLabel": "Referencia: {id}",
     "loadingJobQuestions": "Cargando preguntas del puesto…",
+    "loadingProfileQuestions": "Cargando tus preguntas de entrevista…",
     "alertChooseTenant": "Elige tu empleador en la parte superior si no ves los datos del puesto — eso ayuda a cargar las preguntas de esta solicitud.",
+    "alertChooseTenantProfileFirst": "Elige tu empleador en la parte superior para comenzar — así podemos cargar la entrevista correcta para ti.",
     "fallbackRoleTitle": "Este puesto",
     "submit": "Enviar",
     "strengthen": {
@@ -536,10 +539,10 @@
         "opt_general_labor": "Mano de obra general"
       },
       "motivation": {
-        "prompt": "¿Qué te atrajo a este tipo de trabajo y qué buscas ahora? Incluye:\n- qué tipo de rol o industria te interesa\n- una meta para los próximos meses"
+        "prompt": "¿Qué tipo de trabajo buscas ahora? Comparte también una meta que tengas para los próximos meses."
       },
       "experience_details": {
-        "prompt": "En pocas palabras, ¿qué trabajo has hecho recientemente? Incluye:\n- dónde (empleador o tipo de lugar)\n- más o menos cuánto tiempo (aproximado está bien)\n- tus responsabilidades principales"
+        "prompt": "Cuéntanos sobre tu trabajo reciente. Incluye:\n- dónde (empleador o tipo de lugar de trabajo)\n- aproximadamente cuánto tiempo\n- tus responsabilidades principales"
       },
       "work_confidence": {
         "prompt": "¿En qué tipo de trabajo te sientes con confianza? (Selecciona todas las que apliquen)",
@@ -552,18 +555,18 @@
         "opt_other": "Otro"
       },
       "pressure_situation": {
-        "prompt": "Cuéntanos una vez que el trabajo se puso estresante — ¿qué pasó, qué hiciste y cómo terminó?"
+        "prompt": "Cuéntanos de una vez que el trabajo se puso estresante o muy ocupado. ¿Qué pasó y qué hiciste?"
       },
       "attendance_issues": {
-        "prompt": "¿Has tenido problemas de asistencia o puntualidad en trabajos anteriores?",
+        "prompt": "En el último año, ¿hubo veces que no pudiste llegar al trabajo o llegaste tarde?",
         "opt_Yes": "Sí",
         "opt_No": "No"
       },
       "attendance_explanation": {
-        "prompt": "Si respondiste Sí arriba, explica qué pasó y cómo manejas la puntualidad ahora. Si respondiste No, puedes escribir «N/D»."
+        "prompt": "¿Qué pasó y qué es diferente ahora? Con una o dos frases basta."
       },
       "transportation_plan": {
-        "prompt": "¿Tienes una forma confiable de llegar al trabajo?",
+        "prompt": "¿Cómo llegarás normalmente al trabajo?",
         "opt_own_vehicle": "Manejo yo mismo",
         "opt_ride_from_someone_else": "Viaje con otra persona",
         "opt_public_transportation": "Transporte público",
@@ -572,45 +575,51 @@
         "opt_other": "Otro"
       },
       "backup_transportation": {
-        "prompt": "¿Tienes un plan alternativo si tu transporte habitual no está disponible?",
+        "prompt": "Si tu forma habitual de llegar falla, ¿tienes un plan alternativo?",
         "opt_Yes": "Sí",
         "opt_No": "No"
       },
       "physical_comfort": {
-        "prompt": "¿Te sientes cómodo con trabajos que pueden implicar estar de pie, levantar peso o tareas repetitivas?",
+        "prompt": "Muchos de nuestros puestos implican estar de pie, levantar peso o tareas repetitivas. ¿Puedes hacer este tipo de trabajo, con o sin una adaptación razonable?",
         "opt_Yes": "Sí",
         "opt_No": "No"
       },
       "drug_screen": {
-        "prompt": "Si el puesto requiere examen de drogas, ¿habría algo que debamos saber?",
+        "prompt": "Algunos trabajos requieren una prueba de drogas. Si tomaras una esta semana, ¿saldría algo que debamos saber?",
         "opt_no": "No",
         "opt_yes": "Sí",
         "opt_not_sure": "No estoy seguro"
       },
       "drug_screen_detail": {
-        "prompt": "Indicaste que podría aparecer algo en un examen de drogas. Explica brevemente qué debemos saber (fechas o contexto ayudan). Si elegiste Sí por error, vuelve atrás para cambiar tu respuesta."
+        "prompt": "Gracias por tu honestidad — el contexto nos ayuda a ubicarte bien. En breve, ¿qué debemos saber? Fechas aproximadas ayudan."
       },
       "background_check": {
-        "prompt": "Si el puesto requiere verificación de antecedentes, ¿hay algo que pudiera aparecer?",
+        "prompt": "Algunos trabajos requieren una verificación de antecedentes. ¿Hay algo que podría aparecer que quieras contarnos primero?",
         "opt_no": "No",
         "opt_yes": "Sí",
         "opt_not_sure": "No estoy seguro"
       },
       "background_check_detail": {
-        "prompt": "Indicaste que podría aparecer algo en una verificación de antecedentes. Explica brevemente qué debemos saber. Si elegiste Sí por error, vuelve atrás para cambiar tu respuesta."
+        "prompt": "Gracias por tu honestidad — el contexto nos ayuda a encontrar el puesto adecuado. En breve, ¿qué debemos saber?"
       },
       "background_offense_class": {
-        "prompt": "Opcional: si compartiste un antecedente penal, ¿fue generalmente un delito menor (misdemeanor) o un delito grave (felony)? (Puedes omitir esto si lo prefieres.)"
+        "prompt": "Opcional: ¿fue en general un delito menor o un delito grave? Puedes omitir esto si prefieres."
       },
       "background_offense_when": {
-        "prompt": "Opcional: ¿aproximadamente cuándo ocurrió eso (año o período)? Para colocaciones nos enfocamos aproximadamente en los últimos 7–10 años."
+        "prompt": "Opcional: ¿aproximadamente cuándo ocurrió? Un año o período está bien — para staffing, los últimos 7–10 años son lo más relevante."
       },
       "supervisor_feedback": {
-        "prompt": "¿Qué diría tu último supervisor sobre ti? Incluye:\n- una fortaleza que podría mencionar\n- un área en la que estabas trabajando (si aplica)"
+        "prompt": "¿Qué diría de ti tu supervisor más reciente? Incluye:\n- una fortaleza que mencionaría\n- algo en lo que estabas trabajando (si aplica)"
       },
       "additional_notes": {
         "prompt": "¿Algo más que quieras que sepamos? (Opcional — los detalles concretos ayudan.)"
       }
+    },
+    "bank": {
+      "deltaBanner": "Guardamos tus respuestas de tu última entrevista — solo {count} preguntas rápidas para este trabajo.",
+      "allSetTitle": "Todo listo",
+      "allSetBody": "Ya tenemos tus respuestas de entrevista de una postulación reciente, así que no hay nada nuevo que completar para este trabajo. Confirma abajo y las usaremos para esta postulación.",
+      "allSetConfirmCta": "Usar mis respuestas guardadas"
     }
   },
   "workerSettings": {
@@ -876,7 +885,11 @@
     "aboutDeleteRequested": "Eliminación solicitada — nuestro equipo te contactará.",
     "aboutDeleteExplainer": "Esto envía una solicitud de eliminación a nuestro equipo. Los registros que la ley nos obliga a conservar (como nómina e impuestos) se retienen por el período requerido; todo lo demás se elimina. Te confirmaremos por texto o correo.",
     "aboutDeleteConfirm": "Solicitar eliminación",
-    "phoneSignInHelp": "Inicias sesión con tu número de celular: te enviamos un código por mensaje de texto. No necesitas contraseña."
+    "phoneSignInHelp": "Inicias sesión con tu número de celular: te enviamos un código por mensaje de texto. No necesitas contraseña.",
+    "sectionDirectDepositTitle": "Depósito directo",
+    "sectionDirectDepositDescription": "La cuenta bancaria donde se deposita tu pago.",
+    "sectionSsnTaxTitle": "SSN y formularios de impuestos",
+    "sectionSsnTaxDescription": "Termina la configuración de nómina o actualiza tus datos fiscales en el portal seguro."
   },
   "apply": {
     "availableShifts": "Turnos disponibles",
@@ -1081,7 +1094,13 @@
     "positionInterest_hospitality": "Hospitalidad y hoteles",
     "positionInterest_general_labor": "Trabajo general",
     "positionInterest_customer_service": "Atención al cliente",
-    "positionInterest_skilled_trades": "Oficios especializados"
+    "positionInterest_skilled_trades": "Oficios especializados",
+    "takingYouToPayroll": "Te llevamos a la configuración de nómina: 3 pasos rápidos para recibir tu pago…",
+    "payrollNowHint": "Aún no tienes turnos; terminar la configuración te deja listo en cuanto se abran turnos. Toma unos 5 minutos.",
+    "nextInterviewSubhead": "Siguiente: haz que tu solicitud destaque con una entrevista rápida de unos 2 minutos…",
+    "nextInterviewHelper": "Tus respuestas nos ayudan a asignarte los turnos correctos y ponen tu solicitud al frente de la fila.",
+    "approvedTitle": "¡Estás aprobado para trabajar con C1! 🎉",
+    "continueToJob": "Continuar al trabajo"
   },
   "jobs": {
     "title": "Trabajos",
@@ -1536,7 +1555,8 @@
       "weeksAgo": "hace {count} semana(s)",
       "monthsAgo": "hace {count} mes(es)",
       "yearsAgo": "hace {count} año(s)"
-    }
+    },
+    "lastPayLabel": "Último pago"
   },
   "support": {
     "title": "Ayuda y soporte",
@@ -1960,7 +1980,7 @@
     }
   },
   "earnings": {
-    "chooseEmployer": "Elige tu empleador para abrir tu registro de nómina o tu portal de pagos.",
+    "chooseEmployer": "Historial de pagos, depósito directo y formularios de impuestos: todo sobre tu pago.",
     "recentPay": "Pagos recientes",
     "statusPaid": "Pagado",
     "statusPending": "En proceso",
@@ -1976,7 +1996,28 @@
     "viewPdf": "Ver comprobante en PDF",
     "noPdf": "El comprobante en PDF aún no está disponible.",
     "noPayments": "Aún no hay pagos.",
-    "statementError": "No se pudo cargar este comprobante — inténtalo de nuevo."
+    "statementError": "No se pudo cargar este comprobante — inténtalo de nuevo.",
+    "w2Title": "Empleado W-2",
+    "contractorTitle": "Contratista independiente",
+    "issueDepositTitle": "No se pudo depositar un pago",
+    "issueDepositBody": "Tu banco devolvió un pago reciente. Verifica tu número de ruta y de cuenta; una vez corregidos, el depósito se reintenta automáticamente.",
+    "issueFixDepositCta": "Corregir depósito directo",
+    "issueSetupTitle": "Termina la configuración de nómina para recibir tu pago",
+    "issueSetupBody": "Un pago reciente no se pudo procesar porque tu configuración de nómina no está terminada.",
+    "issueFinishSetupCta": "Terminar configuración",
+    "settingsHeading": "Configuración de nómina",
+    "finishSetupCard": "Terminar configuración de nómina",
+    "w2TaxForms": "Formularios de impuestos W-2",
+    "contractorTaxForms": "Formularios de impuestos de contratista",
+    "nextPaydayLabel": "Próximo día de pago",
+    "paydayTodayLabel": "Hoy es día de pago; los depósitos suelen llegar antes del final del día.",
+    "firstPaydayNote": "Te pagamos por depósito directo el viernes después de tu primera semana de trabajo.",
+    "grossShort": "Bruto",
+    "stepSsn": "Número de Seguro Social",
+    "stepBank": "Depósito directo",
+    "stepTaxForms": "Formularios de impuestos y firmas",
+    "setupTimeShort": "quedan unos 2 minutos",
+    "setupTimeLong": "unos 5 minutos"
   },
   "payrollHelp": {
     "title": "Ayuda con la nómina",
@@ -2016,5 +2057,58 @@
     "genericError": "Algo salió mal — inténtalo de nuevo.",
     "emailOptional": "Opcional — te lo pediremos después si la nómina lo necesita.",
     "mustBe18": "Debes tener al menos 18 años para trabajar con C1 Staffing."
+  },
+  "workerPayroll": {
+    "bankFirst": {
+      "title": "Configura tu depósito directo",
+      "intro": "Agrega tu cuenta bancaria ahora y la configuración de nómina será un paso más corta: solo te quedarán tu SSN y los formularios de impuestos.",
+      "bankName": "Nombre del banco",
+      "accountName": "Nombre en la cuenta",
+      "accountType": "Tipo de cuenta",
+      "checking": "Corriente (checking)",
+      "savings": "Ahorros (savings)",
+      "routingNumber": "Número de ruta (9 dígitos)",
+      "accountNumber": "Número de cuenta",
+      "confirmAccountNumber": "Confirma el número de cuenta",
+      "routingInvalid": "Ese número de ruta no parece correcto; verifícalo con un cheque o tu aplicación bancaria.",
+      "accountInvalid": "El número de cuenta debe tener de 4 a 17 dígitos.",
+      "accountMismatch": "Los números de cuenta no coinciden.",
+      "requiredFields": "Por favor completa todos los campos.",
+      "submit": "Guardar y continuar",
+      "skip": "Omitir por ahora — lo agregaré durante la configuración",
+      "pushFailedContinue": "No pudimos guardar tu cuenta bancaria, así que la configuración de nómina te la pedirá.",
+      "privacy": "Los datos de tu cuenta van directamente a nuestro socio de nómina Everee por una conexión cifrada. HRX ONE nunca los guarda."
+    }
+  },
+  "bankDialog": {
+    "addTitle": "Agregar cuenta bancaria",
+    "replaceTitle": "Reemplazar cuenta bancaria",
+    "bankName": "Nombre del banco",
+    "accountName": "Nombre en la cuenta",
+    "accountType": "Tipo de cuenta",
+    "checking": "Corriente (checking)",
+    "savings": "Ahorros (savings)",
+    "routingNumber": "Número de ruta (9 dígitos)",
+    "accountNumber": "Número de cuenta",
+    "confirmAccountNumber": "Confirma el número de cuenta",
+    "requiredFields": "Por favor completa todos los campos.",
+    "routingInvalid": "Ese número de ruta no parece correcto; verifícalo con un cheque o tu aplicación bancaria.",
+    "accountInvalid": "El número de cuenta debe tener de 4 a 17 dígitos.",
+    "accountMismatch": "Los números de cuenta no coinciden.",
+    "rejected": "No se pudo guardar la cuenta bancaria. Verifica los números e inténtalo de nuevo.",
+    "privacy": "Los datos de tu cuenta van directamente a nuestro socio de nómina Everee por una conexión cifrada. HRX ONE nunca los guarda. Los pagos pendientes irán a la cuenta nueva.",
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "saving": "Guardando…"
+  },
+  "payrollSettings": {
+    "title": "Depósito directo",
+    "intro": "La cuenta bancaria donde se deposita tu pago, por cada empleador.",
+    "noAccount": "Aún no hay una cuenta bancaria registrada.",
+    "bankFallback": "Cuenta bancaria",
+    "blocked": "Depósitos bloqueados",
+    "loadError": "No pudimos cargar los datos de tu cuenta en este momento. Inténtalo de nuevo más tarde.",
+    "empty": "La configuración de nómina aún no ha comenzado; cuando te contraten, el depósito directo aparecerá aquí.",
+    "saved": "Cuenta bancaria actualizada."
   }
 }

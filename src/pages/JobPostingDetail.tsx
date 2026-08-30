@@ -1834,7 +1834,8 @@ const JobPostingDetail: React.FC = () => {
           }
         } else {
           // Missing certs - navigate to wizard starting at certifications step
-          navigate(`/apply/${posting.tenantId}/${postId}${buildApplyQueryParams({ step: 7 })}`);
+          // step 8 = licenses/certifications (7 was Education — off-by-one, fixed 2026-08-29)
+          navigate(`/apply/${posting.tenantId}/${postId}${buildApplyQueryParams({ step: 8 })}`);
           return;
         }
       } else {

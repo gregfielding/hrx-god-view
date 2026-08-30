@@ -1319,7 +1319,8 @@ const PublicJobsBoard: React.FC = () => {
             ? selectedJobShifts.map((s: any) => s.id || s).filter(Boolean)
             : [];
           const shiftsParam = shiftsToUse.length > 0 ? `shifts=${encodeURIComponent(shiftsToUse.join(','))}` : '';
-          const params = [`step=7`, shiftsParam, jobOrderIdParam].filter(Boolean).join('&');
+          // step 8 = licenses/certifications (7 was Education — off-by-one, fixed 2026-08-29)
+          const params = [`step=8`, shiftsParam, jobOrderIdParam].filter(Boolean).join('&');
           navigate(`/apply/${job.tenantId}/${job.id}?${params}`);
           handleCloseDialog(); // Close dialog when navigating
           return;

@@ -400,7 +400,9 @@
     "successBodyNoJob2": "Next: go back to your dashboard. When you apply to a job, employers may see this profile snapshot — keep your contact info up to date.",
     "referenceLabel": "Reference: {id}",
     "loadingJobQuestions": "Loading job-specific questions…",
+    "loadingProfileQuestions": "Loading your interview questions…",
     "alertChooseTenant": "Choose your employer in the header if job details do not appear — that helps load questions for this application.",
+    "alertChooseTenantProfileFirst": "Choose your employer in the header to start — that lets us load the right interview for you.",
     "fallbackRoleTitle": "This role",
     "submit": "Submit",
     "strengthen": {

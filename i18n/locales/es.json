@@ -400,7 +400,9 @@
     "successBodyNoJob2": "Siguiente paso: vuelve a tu panel. Cuando postules, los empleadores pueden ver este resumen de perfil — mantén actualizado tu contacto.",
     "referenceLabel": "Referencia: {id}",
     "loadingJobQuestions": "Cargando preguntas del puesto…",
+    "loadingProfileQuestions": "Cargando tus preguntas de entrevista…",
     "alertChooseTenant": "Elige tu empleador en la parte superior si no ves los datos del puesto — eso ayuda a cargar las preguntas de esta solicitud.",
+    "alertChooseTenantProfileFirst": "Elige tu empleador en la parte superior para comenzar — así podemos cargar la entrevista correcta para ti.",
     "fallbackRoleTitle": "Este puesto",
     "submit": "Enviar",
     "strengthen": {
