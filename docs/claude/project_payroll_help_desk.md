@@ -219,3 +219,46 @@ direct deposit. When this ever changes, update ALL FOUR:
    (public copies regenerate on build — commit them too)
 The ticket AI context is entity-tagged (linkage lines + `[entityId]`
 payments), so it answers with the worker's specific entity's schedule.
+
+## Consolidated into ONE help door (2026-08-30, Greg)
+
+Greg: "I am concerned about Support vs payroll help. Is it confusing to have
+2 channels?" It was worse than two — the web had THREE overlapping surfaces:
+`/c1/workers/support` (Claude Q&A, no ticket, no record),
+`/c1/workers/payroll-help` (this queue), and the app's new Support desk.
+
+Competitor scan (Instawork / Qwick / Wonolo): every one runs a SINGLE help
+entry with categories at intake. Wonolo puts AI on the AGENT side (Einstein
+drafts replies, ~20% handle-time cut) rather than gating the human. Nobody
+runs parallel worker-facing channels.
+
+**Decision — one door, AI first, ticket always available:**
+- Topic chips at intake (payroll | shifts_jobs | app_issue | other) →
+  grounded assistant answers → "That answered it" (nothing filed;
+  deflection) or "Still need help" (files into THIS queue with the exchange
+  attached as an `ai` message).
+- ☠️ The recruiter is NOT the failure fallback — that's the untracked
+  channel this desk was built to replace. Claude may *suggest* contacting a
+  recruiter for on-shift urgency (Instawork's on-site-contact pattern), but
+  every unresolved request still becomes a ticket.
+- Contextual entries (payroll hub, assignment page) open the same door with
+  the topic preset — `?topic=` on web, `initialTopic:` in the app.
+
+**Grounding (`functions/src/support/workerSupportContext.ts`)**: the answer
+path previously had NO worker data — it was a keyword classifier over ~7
+policy entries that escalated on anything account-specific, so "where's my
+shift tomorrow?" returned generic guidance. It now reads upcoming/recent
+assignments, the next job order's staffInstructions, and payroll setup
+booleans. Same PII rule as the diagnosis: no SSN/last-4/bank numbers.
+
+**Always-human categories** (`requiresHuman`): credentials (password,
+login, SSN, bank/routing) and anything implying money movement (not paid,
+wrong amount, refund). An answer can't resolve those — someone has to act.
+
+**Realistic deflection**: 60–75% once grounded, NOT 90%. The remainder need
+a human action, not an answer.
+
+**Renames**: staff desk is "Worker Help Desk"; `/payroll-tickets` route and
+the `payroll_tickets` collection keep their names for data continuity.
+`topic` defaults to `'payroll'` so every pre-existing ticket and the SMS/
+email intakes stay valid.

@@ -241,6 +241,31 @@ now requires a same-session Flutter update or a punch-list entry here.
   (all auth screens); selector removed from the shell app bar (web is
   logo + bell; language lives in Profile).
 
+## ✅ Polish pass + support re-engineering (2026-08-30, final block)
+
+**Polish (c1_app 397d943, 5da86a2, 6b0ac31)** — 136/136 tests:
+- Assignment-surface i18n sweep (offer sheet, decline dialog, every offer
+  snackbar in both the flow and the schedule screen).
+- O*NET skills autocomplete (842-entry list bundled as an asset).
+- Per-shift W-2 / 1099 chips on board cards + an explainer card on job
+  detail, derived from hiringEntityId with workerTypeLabels.ts's rule.
+  ☠️ Unknown entity renders NOTHING — never guess a tax classification.
+- Wizard comfort answers are tri-state Yes/No/**Maybe** with the follow-up
+  explanation field; Maybe only counts as answered once explained.
+- ☠️ **Career weekly schedules never rendered**: `weeklySchedule` is a
+  day-keyed MAP, but the provider tested `is String`, so every career
+  posting showed a blank schedule. Ported formatWeeklyScheduleSummary to
+  Dart (9 tests) and added the 2+-shift picker with preferredShiftId.
+- ☠️ Transport values were app-only ('Public Transportation', 'Carpool')
+  and unrecognized by the web. Now the web's canonical five, with icon
+  chips and legacy normalization on load.
+- /apply/:tenantId with no posting no longer dead-ends; it mirrors the
+  web's "Finish your profile" and routes to the profile hub.
+
+**Support (c1_app 5ae2755; hrx 217b6ad6)** — see
+[[project-payroll-help-desk]] for the full decision. One help door,
+grounded assistant, one queue, no dead ends; standalone web Q&A retired.
+
 ## Watchouts
 - **Cold-start Riverpod race — MITIGATED, not fully fixed (c1_app
   013ada7, 2026-08-29)**: intermittent cold-boot red screen "Concurrent
