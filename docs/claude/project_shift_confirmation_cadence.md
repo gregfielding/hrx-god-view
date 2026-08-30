@@ -90,6 +90,22 @@ no_show → Add-a-replacement button into the job order's Placements tab) and
 
 ## Footguns
 
+- **☠️ TWO deployed inbound-SMS webhooks wrap ONE source (incident
+  2026-08-29 night)**: Twilio's "C1 Messaging" service
+  (MGe3edf114c7b9c270ee66928816d65b25, useInboundWebhookOnNumber=false)
+  posts inbound to `twilioInboundSmsWebhook` — a thin wrapper around
+  `handleInboundSms` — while the number-level smsUrl points at
+  `handleInboundSms` directly (bypassed for service numbers). Named-list
+  deploys of `functions:handleInboundSms` do NOT refresh the wrapper's
+  bundled copy, so the LIVE inbound path served months-stale code with no
+  cadence-reply claim: all 34 Oakland pilot YES/SI replies on 8/29 were
+  eaten as START opt-in keywords ("re-subscribed" texts) and
+  cortConfirmation stayed pending. Fix deployed: redeploy
+  `functions:twilioInboundSmsWebhook` WHENEVER inboundSmsWebhook.ts or
+  cadenceReplyHandler.ts changes — always deploy the pair. Better fix
+  (needs Greg): repoint the messaging service inboundRequestUrl to
+  handleInboundSms and delete the wrapper. Also: number ***3750 still
+  points at Twilio's demo URL.
 - The Settings → Messaging Sequences page
   (`src/pages/TenantViews/settings/MessagingSequencesPage.tsx`) is still
   HARDCODED to the `cort_gig` doc — the Oakland sequence doc is invisible
