@@ -5,6 +5,7 @@
  */
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { stampPlanFetch, saveSessionProgress, loadSessionDrafts } from './interviewSession';
+import { resolvePrescreenPositionContext } from './positionTypeQuestionPacks';
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { CALLABLE_BROWSER_CORS } from '../integrations/callableBrowserCors';
@@ -157,10 +158,16 @@ export const getWorkerAiPrescreenInterviewPlan = onCall(
       }
 
       const steps = buildDynamicPrescreenSteps(ctx);
+      // INT-2b: position-type packs + opening-block trim (relevance over
+      // generic prefs when the worker applied to a specific job).
+      const position = resolvePrescreenPositionContext(ctx);
+      steps.push(...position.packSteps);
       const ri = ctx.hiringPolicy?.resolvedInterview;
       return {
         interviewType: ri?.interviewType ?? 'worker_ai_prescreen',
         interviewMode: 'application' as const,
+        positionType: position.positionType,
+        trimmedCoreStepIds: position.trimmedCoreStepIds,
         workerAiPrescreenRequired: ri?.workerAiPrescreenRequired ?? true,
         dynamicSteps: steps.map((s) => ({
           id: s.id,

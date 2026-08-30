@@ -84,6 +84,7 @@ export type PrescreenAlternatePaths = {
 export type DynamicPrescreenModule =
   | 'shift'
   | 'location'
+  | 'position_fit'
   | 'compliance_drug'
   | 'compliance_background'
   | 'physical'

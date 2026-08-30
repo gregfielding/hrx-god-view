@@ -90,6 +90,10 @@ export type WorkerAiPrescreenInterviewPlanResult = {
   bankCoverage?: WorkerAiPrescreenPlanBankCoverage | null;
   /** Resumable drafts from a prior abandoned session (INT-2). */
   savedSession?: WorkerAiPrescreenSavedSession | null;
+  /** INT-2b: resolved position type for application-mode plans. */
+  positionType?: string | null;
+  /** INT-2b: generic opening steps to skip (no synthetic answers — just not asked). */
+  trimmedCoreStepIds?: string[];
 };
 
 export async function getWorkerAiPrescreenInterviewPlan(input: {

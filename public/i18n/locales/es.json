@@ -382,7 +382,22 @@
       "dyn_cert_have": "Este trabajo requiere {cert}. ¿Tienes esta certificación?",
       "dyn_cert_willing": "Si aún no tienes {cert}, ¿estarías dispuesto/a a obtenerla antes o poco después de empezar?",
       "dyn_uniform_available": "Este rol requiere {uniformText}. ¿Los tienes disponibles?",
-      "dyn_gig_path_willing": "Podemos tener turnos tipo gig antes de que abra un rol de tiempo completo. ¿Estarías dispuesto/a a tomar turnos gig mientras tanto?"
+      "dyn_gig_path_willing": "Podemos tener turnos tipo gig antes de que abra un rol de tiempo completo. ¿Estarías dispuesto/a a tomar turnos gig mientras tanto?",
+      "dyn_pos_industrial_lifting": "Este tipo de puesto implica levantar peso repetidamente, a menudo hasta 50 libras. ¿Puedes hacerlo, con o sin una adaptación razonable?",
+      "dyn_pos_industrial_equipment": "¿Has usado equipo de almacén como patines hidráulicos o carretillas de mano?",
+      "dyn_pos_industrial_early_starts": "Los turnos de almacén y obra suelen comenzar temprano en la mañana. ¿Te funcionan los horarios de inicio temprano?",
+      "dyn_pos_events_standing": "Los turnos de eventos suelen implicar estar de pie de 6 a 8+ horas. ¿Puedes hacerlo, con o sin una adaptación razonable?",
+      "dyn_pos_events_crowds": "¿Te sientes cómodo trabajando en lugares ruidosos y llenos de gente?",
+      "dyn_pos_events_weekends": "Los eventos son principalmente por las tardes y los fines de semana. ¿Te funciona ese horario?",
+      "dyn_pos_hospitality_guest_facing": "¿Te sientes cómodo en puestos de cara al huésped donde importan la presentación y la amabilidad?",
+      "dyn_pos_hospitality_standards": "Los clientes de hospitalidad establecen estándares de uniforme y presentación personal. ¿Estás de acuerdo en seguirlos?",
+      "dyn_pos_hospitality_peak_days": "Los hoteles y recintos están más ocupados los fines de semana y días festivos. ¿Puedes trabajar esos días?",
+      "dyn_pos_clerical_computer": "¿Te sientes cómodo con trabajo básico de computadora — correo, hojas de cálculo y captura de datos?",
+      "dyn_pos_clerical_phones": "¿Te sientes cómodo contestando teléfonos y hablando con clientes de manera profesional?",
+      "dyn_pos_clerical_accuracy": "El trabajo de oficina depende de la precisión con detalles como nombres y números. ¿Es una de tus fortalezas?",
+      "dyn_pos_healthcare_environment": "¿Has trabajado antes en un entorno de salud o de cuidado de personas?",
+      "dyn_pos_healthcare_discretion": "Los entornos de salud requieren paciencia y discreción con los pacientes. ¿Te sientes cómodo con eso?",
+      "dyn_pos_healthcare_screenings": "Los clientes de salud a menudo requieren registros de vacunación o exámenes adicionales. ¿Puedes completarlos?"
     },
     "signInPrompt": "Inicia sesión para completar esta entrevista.",
     "addressGate": {

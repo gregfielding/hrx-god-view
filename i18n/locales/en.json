@@ -382,7 +382,22 @@
       "dyn_cert_have": "This job requires {cert}. Do you have this certification?",
       "dyn_cert_willing": "If you don't already have {cert}, are you willing to obtain it before or shortly after starting?",
       "dyn_uniform_available": "This role requires {uniformText}. Do you have these available?",
-      "dyn_gig_path_willing": "We may have gig shifts available before a full-time role opens. Would you be willing to take gig shifts in the meantime?"
+      "dyn_gig_path_willing": "We may have gig shifts available before a full-time role opens. Would you be willing to take gig shifts in the meantime?",
+      "dyn_pos_industrial_lifting": "This kind of role involves repetitive lifting, often up to 50 lbs. Are you able to do that, with or without a reasonable accommodation?",
+      "dyn_pos_industrial_equipment": "Have you used warehouse equipment like pallet jacks or hand trucks before?",
+      "dyn_pos_industrial_early_starts": "Warehouse and site shifts often start early in the morning. Do early start times work for you?",
+      "dyn_pos_events_standing": "Event shifts usually mean being on your feet for 6–8+ hours. Are you able to do that, with or without a reasonable accommodation?",
+      "dyn_pos_events_crowds": "Are you comfortable working in loud, crowded venues?",
+      "dyn_pos_events_weekends": "Events mostly run evenings and weekends. Does that schedule work for you?",
+      "dyn_pos_hospitality_guest_facing": "Are you comfortable in guest-facing roles where presentation and friendliness matter?",
+      "dyn_pos_hospitality_standards": "Hospitality clients set uniform and grooming standards. Are you okay following them?",
+      "dyn_pos_hospitality_peak_days": "Hotels and venues are busiest on weekends and holidays. Can you work those days?",
+      "dyn_pos_clerical_computer": "Are you comfortable with basic computer work — email, spreadsheets, and data entry?",
+      "dyn_pos_clerical_phones": "Are you comfortable answering phones and speaking with customers professionally?",
+      "dyn_pos_clerical_accuracy": "Clerical work depends on accuracy with details like names and numbers. Is that a strength of yours?",
+      "dyn_pos_healthcare_environment": "Have you worked in a healthcare or care-facility environment before?",
+      "dyn_pos_healthcare_discretion": "Healthcare settings call for patience and discretion around patients. Are you comfortable with that?",
+      "dyn_pos_healthcare_screenings": "Healthcare clients often require immunization records or extra screenings. Are you able to complete those?"
     },
     "signInPrompt": "Sign in to complete this interview.",
     "addressGate": {

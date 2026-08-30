@@ -481,6 +481,8 @@ const WorkerAiPrescreenPage: React.FC = () => {
   const [pressureFollowupOptional, setPressureFollowupOptional] = useState('');
   /** INT-2 resume: saved-session cursor applied once nav length is known. */
   const [pendingResumeIndex, setPendingResumeIndex] = useState<number | null>(null);
+  /** INT-2b: generic opening steps trimmed by the plan (position type known). */
+  const [trimmedCoreStepIds, setTrimmedCoreStepIds] = useState<string[]>([]);
   const [resumedFromSave, setResumedFromSave] = useState(false);
   const [supervisorFollowupOptional, setSupervisorFollowupOptional] = useState('');
   /** Sticky session: once a follow-up is in the path, keep it so step count does not churn while editing. */
@@ -539,8 +541,10 @@ const WorkerAiPrescreenPage: React.FC = () => {
   }, [t, i18nWorkerPrescreenReady]);
 
   const coveredCoreStepIdSet = useMemo(
-    () => new Set(bankCoverage?.coveredCoreStepIds ?? []),
-    [bankCoverage],
+    // Bank-covered steps carry answers; trimmed steps are simply not asked
+    // (position type known — the generic opening block is irrelevant).
+    () => new Set([...(bankCoverage?.coveredCoreStepIds ?? []), ...trimmedCoreStepIds]),
+    [bankCoverage, trimmedCoreStepIds],
   );
   const coveredDynamicStepIdSet = useMemo(
     () => new Set(bankCoverage?.coveredDynamicStepIds ?? []),
@@ -950,6 +954,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
         });
         if (cancelled) return;
         setWorkerAiPrescreenRequired(plan.workerAiPrescreenRequired !== false);
+        setTrimmedCoreStepIds(plan.trimmedCoreStepIds ?? []);
         const steps = plan.dynamicSteps;
         setDynamicSteps(Array.isArray(steps) ? steps : []);
         const coverage = plan.bankCoverage ?? null;
