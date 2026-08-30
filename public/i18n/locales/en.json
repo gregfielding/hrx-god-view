@@ -1808,7 +1808,8 @@
       "footer": "All rights reserved.",
       "linksTerms": "Terms of Use",
       "linksSMS": "SMS Consent",
-      "linksSMSPrivacy": "SMS Privacy Notice"
+      "linksSMSPrivacy": "SMS Privacy Notice",
+      "s2L4": "Mobile app data: if you use the C1 Staffing mobile app, we collect a push notification token so we can send you shift and payroll alerts, a device identifier, and crash and performance diagnostics. With your permission, the app also accesses your camera and photo library so you can take or upload a profile photo, documents, and certifications, and your device location so we can sort nearby jobs and show distance. You can revoke any of these permissions at any time in your device settings."
     },
     "terms": {
       "title": "Terms of Use",

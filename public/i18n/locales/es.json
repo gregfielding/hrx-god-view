@@ -1808,7 +1808,8 @@
       "footer": "Todos los derechos reservados.",
       "linksTerms": "Términos de uso",
       "linksSMS": "Consentimiento SMS",
-      "linksSMSPrivacy": "Aviso de privacidad SMS"
+      "linksSMSPrivacy": "Aviso de privacidad SMS",
+      "s2L4": "Datos de la aplicación móvil: si usas la aplicación de C1 Staffing, recopilamos un token de notificaciones push para enviarte avisos sobre turnos y nómina, un identificador del dispositivo, y diagnósticos de fallos y rendimiento. Con tu permiso, la aplicación también accede a tu cámara y a tu galería de fotos para que puedas tomar o subir una foto de perfil, documentos y certificaciones, y a la ubicación de tu dispositivo para ordenar los trabajos cercanos y mostrar la distancia. Puedes revocar cualquiera de estos permisos en cualquier momento desde la configuración de tu dispositivo."
     },
     "terms": {
       "title": "Términos de uso",

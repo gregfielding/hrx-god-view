@@ -3,12 +3,20 @@
     "apps": [],
     "details": [
       {
-        "appID": "REPLACE_WITH_APPLE_TEAM_ID.REPLACE_WITH_IOS_BUNDLE_ID",
+        "appID": "REPLACE_WITH_APPLE_TEAM_ID.com.hrxone.c1.worker",
         "paths": [
-          "/c1/workers/*",
+          "/c1/workers/assignments/*",
+          "/c1/workers/applications/*",
+          "/c1/workers/my-employment*",
+          "/c1/workers/payroll*",
+          "/c1/workers/earnings*",
+          "/c1/workers/pay-history*",
+          "/c1/workers/prescreen*",
+          "/c1/workers/documents*",
+          "/c1/workers/notifications*",
+          "/c1/workers/support*",
           "/c1/jobs/*",
-          "/c1/jobs-board/*",
-          "/c1/*"
+          "/c1/jobs-board/*"
         ]
       }
     ]
