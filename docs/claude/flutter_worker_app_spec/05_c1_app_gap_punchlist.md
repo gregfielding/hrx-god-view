@@ -98,12 +98,13 @@ question). Android intent filters for the new pay routes still TODO.
   option + Maybe-detail prompts in the wizard step, transport icon
   chips, two-step signup parity, account-only wizard mode (route
   exists but dead-ends).
-- Interview parity with web INT-2 (2026-08-30): the app's prescreen
-  should pass `entry` to getWorkerAiPrescreenInterviewPlan, restore
-  `savedSession` drafts from the plan response, and debounce
-  `mode: 'saveProgress'` calls (same wire API the web now uses) — plus
-  show the resume banner. Small, additive; wire copy in
-  docs/claude/project_interview_metrics_int123.md.
+- Interview parity with web INT-2 — ✅ SHIPPED 2026-08-30 (c1_app
+  d4b50b6): entry attribution, savedSession restore (drafts win over
+  bank seeds, follow-up keys mapped to the web's reserved
+  __followup_* so drafts resume CROSS-DEVICE), debounced fail-open
+  saveProgress on all inputs + step advance, bilingual resume banner.
+  Note: riverpod 3.3.2 migration also landed same day (4254ecc, other
+  session) — cold-boot race fix.
 - Payroll help tickets; support assistant (support screen is static).
 - Foreground push display — ✅ SHIPPED 2026-08-29 (c1_app c1136a2):
   onMessage in-app toast + shared push→model mapper + root scaffold
