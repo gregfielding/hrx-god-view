@@ -17,6 +17,8 @@ import {
   TicketRateLimitedError,
   type PayrollTicketStatus,
   type PayrollLinkKind,
+  SUPPORT_TICKET_TOPICS,
+  type SupportTicketTopic,
 } from './payroll/payrollTicketsCore';
 import { approvePhoneChange, rejectPhoneChange } from './phoneChangeCore';
 import {
@@ -216,8 +218,12 @@ export const workerSupportAssistant = onCall(
       const text = String(request.data?.text || '').trim();
       if (!tenantId || !text) throw new HttpsError('invalid-argument', 'tenantId and text are required.');
       if (text.length > 2000) throw new HttpsError('invalid-argument', 'Message is too long.');
+      const rawTopic = String(request.data?.topic || '').trim();
+      const topic = (SUPPORT_TICKET_TOPICS as readonly string[]).includes(rawTopic)
+        ? (rawTopic as SupportTicketTopic)
+        : 'payroll';
       try {
-        return await createPayrollTicket({ uid: request.auth.uid, tenantId, text, channel: 'app' });
+        return await createPayrollTicket({ uid: request.auth.uid, tenantId, text, channel: 'app', topic });
       } catch (e) {
         throw toTicketHttpsError(e);
       }

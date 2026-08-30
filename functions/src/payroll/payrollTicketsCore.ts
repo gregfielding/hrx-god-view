@@ -392,11 +392,17 @@ async function maybeAutoResolveFixIt(input: {
   }
 }
 
+export const SUPPORT_TICKET_TOPICS = ['payroll', 'shifts_jobs', 'app_issue', 'other'] as const;
+export type SupportTicketTopic = (typeof SUPPORT_TICKET_TOPICS)[number];
+
 export async function createPayrollTicket(input: {
   uid: string;
   tenantId: string;
   text: string;
   channel?: 'app' | 'sms' | 'email';
+  /** General support desk (2026-08-30): same queue, topic-tagged. Defaults
+   *  to 'payroll'; non-payroll topics skip the payroll AI diagnosis. */
+  topic?: SupportTicketTopic;
 }): Promise<{ ticketId: string; diagnosis: { category: string; severity: string } | null }> {
   const userSnap = await db.collection('users').doc(input.uid).get();
   const u = (userSnap.data() ?? {}) as Record<string, unknown>;
@@ -427,6 +433,7 @@ export async function createPayrollTicket(input: {
     status: 'open' satisfies PayrollTicketStatus,
     lane: 'fix_it' satisfies PayrollTicketLane,
     channel: input.channel ?? 'app',
+    topic: input.topic ?? 'payroll',
     subject: input.text.slice(0, 120),
     workerName,
     workerEmail: trim(u.email) || null,
@@ -445,11 +452,15 @@ export async function createPayrollTicket(input: {
     createdAt: now,
   });
 
-  const diagnosis = await runPayrollTicketDiagnosis({
-    tenantId: input.tenantId,
-    uid: input.uid,
-    ticketText: input.text,
-  });
+  // The diagnosis engine is payroll-specific (Everee linkages, timesheets)
+  // — non-payroll topics go straight to the queue for a human.
+  const diagnosis = (input.topic ?? 'payroll') === 'payroll'
+    ? await runPayrollTicketDiagnosis({
+        tenantId: input.tenantId,
+        uid: input.uid,
+        ticketText: input.text,
+      })
+    : null;
   if (diagnosis) {
     // Category/severity/confidence live on the ticket (queue chips; fine for
     // the worker to see about their own issue). The staff-facing summary and
