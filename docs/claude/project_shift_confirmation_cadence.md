@@ -106,6 +106,21 @@ no_show → Add-a-replacement button into the job order's Placements tab) and
   (needs Greg): repoint the messaging service inboundRequestUrl to
   handleInboundSms and delete the wrapper. Also: number ***3750 still
   points at Twilio's demo URL.
+- **☠️ Reply-eating incident layer 2 (found 2026-08-30 AM)**: even after
+  the wrapper redeploy, replies still fell to START — the Phase B rework
+  gave `handleCadenceReply` a `collectionGroup('assignments').where
+  ('userId'==…)` lookup and the COLLECTION_GROUP index for
+  assignments.userId was never created. The query threw
+  FAILED_PRECONDITION on every reply; the webhook's compliance-safety
+  catch swallowed it, and the error was invisible to log greps because
+  functions logger.error lands in jsonPayload while
+  `--format=value(textPayload)` shows blanks. Index created 2026-08-30
+  via the field-exemption REST API. TWO lessons: (1) any new
+  collectionGroup query needs its index verified with a scratch run
+  BEFORE relying on it in a swallow-errors path; (2) when grepping
+  function logs, always ALSO read jsonPayload
+  (`--format=json` or value(jsonPayload.message)) or you'll miss every
+  logger.error/warn.
 - The Settings → Messaging Sequences page
   (`src/pages/TenantViews/settings/MessagingSequencesPage.tsx`) is still
   HARDCODED to the `cort_gig` doc — the Oakland sequence doc is invisible
