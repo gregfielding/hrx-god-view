@@ -9,12 +9,21 @@
 
 - **Flutter**, not a web-view wrapper, for the worker-facing iOS/Android
   apps.
-- Implication accepted: the worker UI gets REBUILT in Dart/Flutter rather
-  than reusing the React pages. Slower to first ship than a wrapper, but
-  true native feel, one codebase for both stores, and no CRA baggage.
 - Scope: WORKER app first (Home/next shift, assignments + confirmations,
   earnings/payroll hub, profile/bank, prescreen interview). Recruiter/admin
   stays web.
+
+## ⚠️ 2026-08-29 discovery: the app already exists — RESUME it
+
+`../c1_app` (sibling repo) is a 186-file, 13-feature Flutter app, last
+commit **2026-05-05** (22 commits, FA.1 phases). It has auth/assignments/
+dashboard-action-items/jobs/notifications/screening/documents/profile and
+OLD payroll (full-widget Everee), but none of the May→August web work
+(payroll hub, bank editing, shrunken widget, the entire prescreen
+interview, Home hero/strip, two-step signup). Plan: **gap-audit against
+`docs/claude/flutter_worker_app_spec/` and bring it current — not a
+rewrite.** Full web spec (every screen/field/error) lives in that
+directory.
 
 ## Ground rules when this starts
 
