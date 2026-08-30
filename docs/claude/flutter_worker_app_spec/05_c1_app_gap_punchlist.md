@@ -19,9 +19,10 @@
   key-map escape hatch (`dashboardActionItemString`) for server i18n keys.
 - UI: `AppSectionCard`/`SectionTitle`/`MetaText`/`StatusChip`/
   `EmptyStateView`/`SkeletonList` + `AppSpacing`/`AppRadii`.
-- Theme: brandBlue `#0F2D5C` + yellow `#F2C300` + Poppins — **differs from
-  web worker theme (#111/#FFC700/system font)**. Build in APP tokens;
-  re-theming is a separate product decision for Greg.
+- Theme: ink `#111111` primary + gold `#FFC700` secondary (matches web
+  workerTheme since wave 5, 2026-08-30 — colorScheme, FilledButton, and
+  bottomNavigationBarTheme all ink-led; gold is selected-state/badge only).
+  Poppins retained (web uses system stack — open question).
 
 ## Already solved (reuse, don't rebuild)
 - ✅ Everee WebView bridge (`payroll_embed_screen.dart`): dynamic channel
@@ -110,12 +111,59 @@ question). Android intent filters for the new pay routes still TODO.
   onMessage in-app toast + shared push→model mapper + root scaffold
   messenger key; Android intent filters added for payroll/earnings/
   prescreen/pay-history/payroll-settings deep links.
-- Nav parity decisions for Greg: labels (Dashboard/Find Work/My
-  Assignments/My Account vs web Home/Find Shifts/Schedule/Profile),
-  tab ORDER (app swaps Payroll/Profile), conditionally-hidden Payroll tab.
+- Nav parity — ✅ RESOLVED by Greg's 2026-08-30 "match the web"
+  instruction (wave 2, dc0ad18): web labels (Home/Find Shifts/Schedule/
+  Payroll/Profile), web tab order, Payroll unconditional, logo-only
+  AppBar with bell + 9+ badge.
 - Legacy resolver deletion (V2 §4) after flag soak; documents-upload
   reality (web is stub dialogs too); Android intent filters for payroll/
   screening deep links; theme alignment decision.
+
+
+## ✅ Parity waves 1–6 SHIPPED 2026-08-30 (screen-by-screen audit session)
+
+Greg: "work independently… screen by screen, matching content and
+functionality with our web app." Four audit passes (shell/home, jobs/apply,
+assignments/employment/documents, payroll/profile/support) produced a
+graded gap list; six fix waves landed same-day, all pushed, 124/124 tests.
+
+- **Wave 1 (756c080)**: quick-apply union merge (shiftIds/Dates/Assignments
+  union + status-downgrade guard — fixed a self-introduced E4 data bug),
+  post-submit inline prescreen handoff (?entry=apply_wizard_inline),
+  dyn_pos_* position-pack keys EN/ES + promptParams interpolation.
+- **Wave 2 (dc0ad18)**: dashboard denylist/today filtering, web nav parity
+  (labels, order, unconditional Payroll), deep-link fallthrough for action
+  items.
+- **Wave 3 (a4a4f39)**: assignment status mapper (pending→offerPending,
+  worker-cancelled, in_progress), recruiter-read hardening, clock-in URL
+  tile, startTime/endTime combined datetimes, account-deletion request doc
+  (account_deletion_requests/{uid}, web parity).
+- **Wave 4 (800672e)**: showPayRate gate on board cards, Gig chip, isPast
+  gig rows (24h-after-end, overnight-aware) disable Apply as "Past",
+  withdraw confirm dialogs, worker_cancel decision on offer declines.
+- **Wave 5 (bac93cc)**: last-4 SSN fully read-only (editor field + hub
+  display removed; retired add_tax_identity_last4 card dropped — backend
+  retired it 2026-08-21), certifications dual-write to canonical
+  workerProfile.credentials.certifications, ☠️ fixed
+  FieldValue.serverTimestamp() inside array elements (Firestore rejects
+  sentinels in arrays — cert add/delete was failing at runtime),
+  emergency-contact clear, profile Language row → app-language sheet (was
+  misrouting to spoken-languages), notifications filter chips + once-per-
+  visit auto-mark-all-read (web P0 parity), recent pay 5→10, ink theme
+  swap + bottomNavigationBarTheme (the shell uses BottomNavigationBar, so
+  the old M3 navigationBarTheme never applied).
+- **Wave 6 (eceb2be)**: B1 board eligibility (job_board_eligibility.dart:
+  private hidden / restricted needs group intersection / DNR
+  accountId+parentAccountId / separation hiringEntityId — workers could
+  previously see barred postings; repo also no longer drops unknown
+  visibility values the web shows), canonical
+  workerProfile.preferences.{shiftPreferences,shift} dual-write + read.
+
+Remaining flagged gaps (graded, unfixed) live in the session's
+"C1 Worker App Parity" artifact — biggest: B2 gig job orders absent from
+the board query, first-login language dialog, Home hero/un-gating parity,
+support desk, documents 3-tab, calendar view, i18n on status matrix +
+wizard steps, favorites, skills/bio editors, About & Legal.
 
 ## Watchouts
 - **Cold-start Riverpod race — MITIGATED, not fully fixed (c1_app
