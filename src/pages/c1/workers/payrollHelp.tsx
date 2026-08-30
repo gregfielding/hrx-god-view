@@ -38,6 +38,7 @@ import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
 import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
+import GetHelpPanel, { type SupportTopic } from '../../../components/worker/support/GetHelpPanel';
 
 interface TicketRow {
   id: string;
@@ -74,6 +75,16 @@ const PayrollHelp: React.FC = () => {
   const [tickets, setTickets] = useState<TicketRow[]>([]);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Contextual entry (?topic=shifts_jobs from an assignment page, etc.)
+  // presets the chip — same idea as the app's initialTopic.
+  const initialTopic = ((): SupportTopic => {
+    const raw = new URLSearchParams(window.location.search).get('topic') ?? '';
+    return (['payroll', 'shifts_jobs', 'app_issue', 'other'] as const).includes(
+      raw as SupportTopic,
+    )
+      ? (raw as SupportTopic)
+      : 'payroll';
+  })();
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -232,7 +243,7 @@ const PayrollHelp: React.FC = () => {
     <Box>
       <WorkerPageHeader
         title={t('payrollHelp.title')}
-        backTo="/c1/workers/support"
+        backTo="/c1/workers/profile"
         description={t('payrollHelp.subtitle')}
       />
 
@@ -257,37 +268,15 @@ const PayrollHelp: React.FC = () => {
         </CardContent>
       </Card>
 
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="subtitle1" sx={{ mb: 1.5 }}>
-            {t('payrollHelp.newTicketHeading')}
-          </Typography>
-          <Stack spacing={1.5}>
-            <TextField
-              fullWidth
-              multiline
-              minRows={3}
-              placeholder={t('payrollHelp.newTicketPlaceholder')}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              disabled={sending}
-            />
-            {error && (
-              <Alert severity="error" onClose={() => setError(null)}>
-                {error}
-              </Alert>
-            )}
-            <Button
-              variant="contained"
-              disabled={sending || !text.trim()}
-              onClick={() => void send()}
-              sx={{ alignSelf: 'flex-end', px: 4 }}
-            >
-              {sending ? t('payrollHelp.sending') : t('payrollHelp.send')}
-            </Button>
-          </Stack>
-        </CardContent>
-      </Card>
+      {/* ONE help door: the grounded assistant answers first; anything it
+          can't resolve files a ticket into this same queue. */}
+      {tenantId && (
+        <GetHelpPanel
+          tenantId={tenantId}
+          initialTopic={initialTopic}
+          onTicketCreated={(newId) => navigate(`/c1/workers/payroll-help/${newId}`)}
+        />
+      )}
 
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>

@@ -103,7 +103,7 @@ export function getNotificationUrl(n: WorkerNotification & { id: string }): stri
   if (n.entity?.kind === 'job_post' && n.entity?.id) {
     return WORKER_CANONICAL_PATHS.jobPostDetail(n.entity.id);
   }
-  return n.threadId ? '/c1/workers/support' : '';
+  return n.threadId ? '/c1/workers/payroll-help' : '';
 }
 
 export type WorkerNotificationFilterKey =
@@ -192,7 +192,7 @@ export async function getNotificationUrlAsync(
 
   // Priority 5: related legacy inbox thread (MVP routes to Support)
   const threadId = extractThreadId(n);
-  if (threadId) return '/c1/workers/support';
+  if (threadId) return '/c1/workers/payroll-help';
 
   // Additional compatibility lookup for old application notifications
   if (n.type === 'application' && n.tenantId && uid) {

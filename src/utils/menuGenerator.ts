@@ -309,7 +309,7 @@ export async function generateMenuItems(
       // Payroll help desk — worker payroll tickets + AI diagnosis
       // (Slice 1, Greg 2026-08-24). Recruiters see their workers' issues.
       ...([{
-        text: 'Payroll Help Desk',
+        text: 'Worker Help Desk',
         to: '/payroll-tickets',
         icon: 'support_agent',
         accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],

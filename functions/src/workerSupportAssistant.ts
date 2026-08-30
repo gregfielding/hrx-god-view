@@ -20,6 +20,7 @@ import {
   SUPPORT_TICKET_TOPICS,
   type SupportTicketTopic,
 } from './payroll/payrollTicketsCore';
+import { buildWorkerSupportContext } from './support/workerSupportContext';
 import { approvePhoneChange, rejectPhoneChange } from './phoneChangeCore';
 import {
   TWILIO_ACCOUNT_SID,
@@ -150,20 +151,27 @@ function detectTopics(question: string): SupportTopic[] {
   return Array.from(new Set(topics));
 }
 
-function looksAccountSpecific(question: string): boolean {
-  const accountSpecificPatterns = [
-    /my account/i,
-    /my paycheck/i,
-    /why wasn't i paid/i,
-    /my assignment id/i,
+/**
+ * Questions that must reach a human no matter how confident the model is.
+ *
+ * Narrowed 2026-08-30: shift/schedule questions used to land here and force
+ * "contact your recruiter" — they're now answerable from the worker's own
+ * assignment data. What stays: credentials (we never handle those), and
+ * anything that implies moving money, which needs a person to act, not an
+ * answer.
+ */
+function requiresHuman(question: string): boolean {
+  const patterns = [
     /password/i,
-    /login/i,
-    /ssn/i,
+    /log ?in/i,
+    /ssn|social security/i,
     /routing number/i,
     /bank account/i,
-    /specific case/i,
+    /wasn'?t paid|not paid|missing pay|short ?paid|underpaid/i,
+    /wrong amount|paid wrong/i,
+    /refund|reimburse/i,
   ];
-  return accountSpecificPatterns.some((p) => p.test(question));
+  return patterns.some((p) => p.test(question));
 }
 
 function buildKnowledgeSnippet(topics: SupportTopic[]): string {
@@ -222,8 +230,20 @@ export const workerSupportAssistant = onCall(
       const topic = (SUPPORT_TICKET_TOPICS as readonly string[]).includes(rawTopic)
         ? (rawTopic as SupportTicketTopic)
         : 'payroll';
+      const priorQuestion = String(request.data?.priorQuestion || '').trim();
+      const priorAnswer = String(request.data?.priorAnswer || '').trim();
       try {
-        return await createPayrollTicket({ uid: request.auth.uid, tenantId, text, channel: 'app', topic });
+        return await createPayrollTicket({
+          uid: request.auth.uid,
+          tenantId,
+          text,
+          channel: 'app',
+          topic,
+          priorExchange:
+            priorQuestion && priorAnswer
+              ? { question: priorQuestion.slice(0, 2000), answer: priorAnswer.slice(0, 4000) }
+              : undefined,
+        });
       } catch (e) {
         throw toTicketHttpsError(e);
       }
@@ -360,26 +380,54 @@ export const workerSupportAssistant = onCall(
     }
 
     const topics = detectTopics(trimmedQuestion);
-    const accountSpecific = looksAccountSpecific(trimmedQuestion);
+    const mustEscalate = requiresHuman(trimmedQuestion);
     const knowledgeSnippet = buildKnowledgeSnippet(topics);
 
+    // Ground the answer in THIS worker's shifts, instructions, and payroll
+    // state (2026-08-30) — without it the assistant could only recite policy.
+    let workerContext = '';
+    if (tenantId) {
+      try {
+        const context = await buildWorkerSupportContext({
+          uid: request.auth.uid,
+          tenantId,
+        });
+        workerContext = context.text;
+      } catch (error) {
+        logger.warn('workerSupportAssistant.context_failed', {
+          uid: request.auth.uid,
+          tenantId,
+          message: (error as Error)?.message,
+        });
+      }
+    }
+
     const systemPrompt = [
-      'You are an HRX worker support assistant.',
-      'Answer ONLY from provided approved support knowledge.',
-      'Do not guess, do not invent policy, and do not make legal/payroll guarantees.',
-      'If unsure OR the issue is account-specific, set escalate=true.',
+      'You are the C1 Staffing worker support assistant.',
+      "Answer from THIS WORKER'S DATA below plus the approved support knowledge.",
+      'The worker data is authoritative for their shifts, times, locations, and instructions —',
+      'quote it directly (day, time, site) instead of telling them to go look it up.',
+      'Never invent a shift, time, address, pay amount, or policy that is not in the data.',
+      'If the data does not contain the answer, say so plainly and set escalate=true.',
+      'Never make legal, tax, or pay-amount guarantees.',
+      'Set escalate=true whenever the worker needs someone to ACT (fix pay, replace them',
+      'on a shift, change an account) — answering is not the same as resolving.',
       'Return strict JSON only with shape:',
       '{"answer":string,"confidence":number,"suggestedActions":string[],"followUps":string[],"escalate":boolean}',
-      'Answer should be short and practical (2-5 sentences).',
+      'Answer should be short, warm, and practical (2-5 sentences).',
     ].join('\n');
 
     const userPrompt = [
       `Worker question: ${trimmedQuestion}`,
-      `Account specific detected: ${accountSpecific ? 'yes' : 'no'}`,
+      mustEscalate
+        ? 'This category ALWAYS needs a human: answer helpfully but set escalate=true.'
+        : 'This category can be resolved by a good answer when the data supports it.',
+      "THIS WORKER'S DATA:",
+      workerContext || '(no worker data available)',
       'Approved support knowledge:',
       knowledgeSnippet,
       'Allowed suggestedActions values:',
-      '["Contact recruiter","Open inbox","View assignments","Open profile"]',
+      '["Contact recruiter","Open inbox","View assignments","Open profile","Open payroll"]',
     ].join('\n\n');
 
     // Claude-backed since 2026-08-21 (was OpenAI Responses API) — utils/claudeChat.
@@ -425,12 +473,13 @@ export const workerSupportAssistant = onCall(
         confidence: clampConfidence(parsed.confidence),
         suggestedActions: toStringArray(parsed.suggestedActions).slice(0, 3),
         followUps: toStringArray(parsed.followUps).slice(0, 3),
-        escalate: Boolean(parsed.escalate),
+        escalate: Boolean(parsed.escalate) || mustEscalate,
         sourceTopics: topics,
       };
 
-      // Deterministic escalation hardening for account-specific or low-confidence responses.
-      if (accountSpecific || response.confidence < 0.45) {
+      // Deterministic escalation hardening: must-human categories and
+      // low-confidence answers always reach a person.
+      if (mustEscalate || response.confidence < 0.45) {
         response.escalate = true;
       }
       if (response.suggestedActions.length === 0) {
@@ -443,12 +492,12 @@ export const workerSupportAssistant = onCall(
         questionLength: trimmedQuestion.length,
         topicCount: topics.length,
         topics,
-        accountSpecific,
+        mustEscalate,
         confidence: response.confidence,
         escalate: response.escalate,
         suggestedActionCount: response.suggestedActions.length,
         followUpCount: response.followUps.length,
-        model: 'gpt-5-mini',
+        model: 'claude-opus-5',
       });
 
       return response;

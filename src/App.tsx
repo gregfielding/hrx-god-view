@@ -122,7 +122,6 @@ const C1WorkerDocuments = lazy(() => import('./pages/c1/workers/documents'));
 const C1WorkerMyEmployment = lazy(() => import('./pages/c1/workers/myEmployment'));
 const C1WorkerMyEmploymentDetail = lazy(() => import('./pages/c1/workers/myEmploymentDetail'));
 const C1WorkerScreening = lazy(() => import('./pages/c1/workers/screening'));
-const C1WorkerSupport = lazy(() => import('./pages/c1/workers/support'));
 const C1WorkerNotifications = lazy(() => import('./pages/c1/workers/notifications'));
 const WorkerPayrollIndex = lazy(() => import('./pages/c1/workers/WorkerPayrollIndex'));
 const WorkerPayrollEvereeTenant = lazy(() => import('./pages/c1/workers/WorkerPayrollEvereeTenant'));
@@ -241,7 +240,6 @@ const googleMapsApiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '';
 // C1 worker pages: use same names as default exports to avoid TS "Cannot find name" when referenced in routes
 const WorkerDashboard = C1WorkerDashboard;
 const WorkerProfile = C1WorkerProfile;
-const WorkerSupport = C1WorkerSupport;
 
 // Static libraries array to prevent performance warnings (shared across app)
 // Shared constant — see src/utils/googleMapsLoader.ts (all loaders must
@@ -635,7 +633,10 @@ function App() {
             <Route path="find-work" element={<Navigate to="/c1/jobs-board" replace />} />
             <Route path="job-readiness" element={<Navigate to="/c1/workers/dashboard#home-readiness-summary" replace />} />
             <Route path="documents" element={<C1WorkerDocuments />} />
-            <Route path="support" element={<WorkerSupport />} />
+            {/* The standalone Q&A page is retired (2026-08-30): the grounded
+                assistant now lives inside the ONE help door on payroll-help,
+                which also files tickets. Old links land there. */}
+            <Route path="support" element={<Navigate to="/c1/workers/payroll-help" replace />} />
             <Route path="payroll-help" element={<C1WorkerPayrollHelp />} />
             <Route path="payroll-settings" element={<WorkerRoute><C1WorkerPayrollSettings /></WorkerRoute>} />
             <Route path="pay-history" element={<WorkerRoute><C1WorkerPayHistory /></WorkerRoute>} />

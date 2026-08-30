@@ -403,6 +403,9 @@ export async function createPayrollTicket(input: {
   /** General support desk (2026-08-30): same queue, topic-tagged. Defaults
    *  to 'payroll'; non-payroll topics skip the payroll AI diagnosis. */
   topic?: SupportTicketTopic;
+  /** The assistant exchange that preceded this ticket, so staff open it
+   *  already knowing what the worker was told and why it didn't resolve. */
+  priorExchange?: { question: string; answer: string };
 }): Promise<{ ticketId: string; diagnosis: { category: string; severity: string } | null }> {
   const userSnap = await db.collection('users').doc(input.uid).get();
   const u = (userSnap.data() ?? {}) as Record<string, unknown>;
@@ -451,6 +454,19 @@ export async function createPayrollTicket(input: {
     text: input.text,
     createdAt: now,
   });
+
+  // Carry the assistant exchange the worker just had, so the thread reads in
+  // order and staff never re-answer what was already tried.
+  const prior = input.priorExchange;
+  if (prior && prior.question.trim() && prior.answer.trim()) {
+    await ref.collection('messages').add({
+      at: now,
+      by: 'ai',
+      text: `Worker asked: ${prior.question.trim()}\n\nAssistant answered: ${prior.answer.trim()}\n\n(The worker said this did not resolve their issue.)`,
+      createdAt: now,
+      assistantTranscript: true,
+    });
+  }
 
   // The diagnosis engine is payroll-specific (Everee linkages, timesheets)
   // — non-payroll topics go straight to the queue for a human.

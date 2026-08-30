@@ -2056,7 +2056,21 @@
     "sendError": "Couldn't send — please try again.",
     "loadingThread": "Loading conversation…",
     "entryTitle": "Payroll help",
-    "entrySubtitle": "Pay, direct deposit, or setup issues"
+    "entrySubtitle": "Pay, direct deposit, or setup issues",
+    "helpTitle": "Get help",
+    "topicLabel": "Topic",
+    "topicPayroll": "Pay / Payroll",
+    "topicShifts": "Shifts & Jobs",
+    "topicApp": "App issue",
+    "topicOther": "Other",
+    "ask": "Ask",
+    "thinking": "Checking your shifts…",
+    "thatHelped": "That answered it",
+    "stillNeedHelp": "Still need help",
+    "resolvedThanks": "Glad that helped — nothing was filed.",
+    "escalateNote": "This one needs a person. We'll send your question to the team.",
+    "filing": "Sending to the team…",
+    "assistant": "Assistant"
   },
   "phoneSignup": {
     "title": "Verify your phone to create your account",

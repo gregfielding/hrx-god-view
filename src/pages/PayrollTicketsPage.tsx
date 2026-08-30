@@ -1,5 +1,7 @@
 /**
- * Payroll Help Desk — /payroll-tickets (staff, level 5+).
+ * Worker Help Desk — /payroll-tickets (staff, level 5+). Carries every
+ * worker request now, not just payroll (topic-tagged, 2026-08-30); route and
+ * collection names kept for data continuity.
  *
  * Staff console for the worker payroll help desk (Slice 1, Greg 2026-08-24).
  * Queue of `payroll_tickets` with the AI diagnosis (category, severity,
@@ -55,6 +57,8 @@ interface Ticket {
   workerPhone: string | null;
   preferredLanguage: string;
   lane: 'fix_it' | 'money';
+  /** General support desk (2026-08-30): payroll | shifts_jobs | app_issue | other. */
+  topic: string;
   resolutionNote: string | null;
   lastMessageAt: Date | null;
   lastMessageBy: string;
@@ -162,6 +166,7 @@ const PayrollTicketsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [statusTab, setStatusTab] = useState<0 | 1 | 2>(0);
   const [laneFilter, setLaneFilter] = useState<'all' | 'fix_it' | 'money'>('all');
+  const [topicFilter, setTopicFilter] = useState<string>('all');
   const [resolveOpen, setResolveOpen] = useState(false);
   const [resolveNote, setResolveNote] = useState('');
   const [selected, setSelected] = useState<Ticket | null>(null);
@@ -205,6 +210,7 @@ const PayrollTicketsPage: React.FC = () => {
                 workerPhone: (x.workerPhone as string) ?? null,
                 preferredLanguage: String(x.preferredLanguage || 'en'),
                 lane: (x.lane as 'fix_it' | 'money') || 'fix_it',
+                topic: String(x.topic ?? 'payroll'),
                 resolutionNote: (x.resolutionNote as string) ?? null,
                 lastMessageAt: tsToDate(x.lastMessageAt),
                 lastMessageBy: String(x.lastMessageBy || ''),
@@ -312,9 +318,12 @@ const PayrollTicketsPage: React.FC = () => {
   const filtered = useMemo(() => {
     const wanted: TicketStatus[] = statusTab === 0 ? ['open'] : statusTab === 1 ? ['waiting_worker'] : ['resolved'];
     return tickets.filter(
-      (x) => wanted.includes(x.status) && (laneFilter === 'all' || x.lane === laneFilter),
+      (x) =>
+        wanted.includes(x.status) &&
+        (laneFilter === 'all' || x.lane === laneFilter) &&
+        (topicFilter === 'all' || x.topic === topicFilter),
     );
-  }, [tickets, statusTab, laneFilter]);
+  }, [tickets, statusTab, laneFilter, topicFilter]);
 
   const counts = useMemo(
     () => ({
@@ -417,7 +426,7 @@ const PayrollTicketsPage: React.FC = () => {
   return (
     <Box sx={{ p: 2 }}>
       <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>
-        Payroll Help Desk
+        Worker Help Desk
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Worker payroll tickets with an AI diagnosis of each worker's Everee/timesheet state.
@@ -452,6 +461,29 @@ const PayrollTicketsPage: React.FC = () => {
             color={laneFilter === value ? 'primary' : 'default'}
             variant={laneFilter === value ? 'filled' : 'outlined'}
             onClick={() => setLaneFilter(value)}
+          />
+        ))}
+      </Stack>
+
+      {/* Topic filter — the desk now carries shift/app requests too, not just
+          payroll (one queue, Greg 2026-08-30). */}
+      <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', rowGap: 1 }}>
+        {(
+          [
+            ['all', 'All topics'],
+            ['payroll', 'Pay / Payroll'],
+            ['shifts_jobs', 'Shifts & Jobs'],
+            ['app_issue', 'App issue'],
+            ['other', 'Other'],
+          ] as const
+        ).map(([value, label]) => (
+          <Chip
+            key={value}
+            label={label}
+            size="small"
+            color={topicFilter === value ? 'primary' : 'default'}
+            variant={topicFilter === value ? 'filled' : 'outlined'}
+            onClick={() => setTopicFilter(value)}
           />
         ))}
       </Stack>

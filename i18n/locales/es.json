@@ -2056,7 +2056,21 @@
     "sendError": "No se pudo enviar — inténtalo de nuevo.",
     "loadingThread": "Cargando conversación…",
     "entryTitle": "Ayuda con la nómina",
-    "entrySubtitle": "Problemas de pago, depósito directo o configuración"
+    "entrySubtitle": "Problemas de pago, depósito directo o configuración",
+    "helpTitle": "Obtener ayuda",
+    "topicLabel": "Tema",
+    "topicPayroll": "Pago / Nómina",
+    "topicShifts": "Turnos y trabajos",
+    "topicApp": "Problema con la app",
+    "topicOther": "Otro",
+    "ask": "Preguntar",
+    "thinking": "Revisando tus turnos…",
+    "thatHelped": "Eso resolvió mi duda",
+    "stillNeedHelp": "Aún necesito ayuda",
+    "resolvedThanks": "Nos alegra ayudar. No se creó ninguna solicitud.",
+    "escalateNote": "Esto necesita a una persona. Enviaremos tu pregunta al equipo.",
+    "filing": "Enviando al equipo…",
+    "assistant": "Asistente"
   },
   "phoneSignup": {
     "title": "Verifica tu teléfono para crear tu cuenta",
