@@ -95,6 +95,20 @@
 > `not_applicable` skip) — Everee drains MUST use `resolveWorkerOnboardingLink`, not
 > `loadEntityPayrollInviteContext`.
 
+> **HIRE-MOMENT COPY REWRITE SHIPPED (2026-08-30, Greg-approved).** workerHiredDispatch default
+> SMS/email/push bodies now lead with classification + entity ("...independent contractor (1099),
+> no taxes withheld" / "on-call W-2 employee, taxes withheld every paycheck"), name the tax form
+> (W-9 vs W-4+I-9), template the employer-of-record ({hiringEntityName} — supports C1 Workforce
+> LLC with zero copy changes), NO overtime/WC claims (Greg's call), and carry a best-effort
+> inline payroll link. Based on "The Hire Moment" competitor research artifact
+> (claude.ai/code/artifact/31ef433e-7970-4ef6-a1a3-cf2fd9a5dc93). ☠️ Deploy lesson applied:
+> ALL NINE functions bundling workerHiredDispatch were deployed together (logAssignmentUpdated,
+> placements trio, startOnCall pair, evereeAdminRecreateWorkerOnboarding,
+> processWorkerOnboardingReminders, resendOnboardingPayrollLink) — never just one, or the others
+> serve stale copy. Drain wave-2 script copy updated to classification-led framing. Tenant
+> automation rules still override defaults. REMAINING copy surfaces not yet touched: R1–R5
+> reminder bodies (buildOnboardingReminderSmsBody), payrollInviteResend generic text.
+
 > Greg: workers "sign up with us and then have to sign up again with Everee — both need emails and
 > passwords; we ask last-4 SSN, Everee asks the whole thing." Compared unfavorably to Instawork /
 > Qwick. Greg + Mark independently concluded: **phone-number auth instead of email/password.**
