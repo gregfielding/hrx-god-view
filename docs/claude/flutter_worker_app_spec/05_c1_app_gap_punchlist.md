@@ -123,16 +123,17 @@ question). Android intent filters for the new pay routes still TODO.
   launches to rare (11+ consecutive clean launches; one recurrence seen
   after). ☠️ DO NOT retry the remount-on-error "self-healing root": in a
   warm VM the remount re-races deterministically and strands the app on
-  a blank screen (tested, reverted). Bisect evidence (2026-08-29 late):
-  e1d1fbe boots clean 3/3 incl. first-after-install; 8c434f1+ reds on
-  the FIRST launch after a fresh `simctl install` (cold dyld/JIT caches
-  → slow first frame → wide race window) and is mostly clean on warm
-  relaunches — i.e. the race is PRE-EXISTING and timing-dependent; the
-  night's added code (~100KB copy strings + providers) widened the
-  window rather than introducing the bug. Release AOT timing differs,
-  but first-launch-after-install is exactly what a new worker does —
-  treat the riverpod 3 migration (2.6.1 is the last 2.x) as a Phase 2
-  blocker before TestFlight.
+  a blank screen (tested, reverted). Bisect verdict (2026-08-29 late,
+  corrected): NO commit is implicated — under identical late-night
+  machine load, pre-Phase-2 e1d1fbe reds 2/5 and 817d523 reds 3/5;
+  earlier "clean" runs were low-load luck (and 6 console-pty "clean"
+  attempts were void — macOS has no `timeout`, nothing launched). The
+  race is PRE-EXISTING and purely load/timing-dependent: red frequency
+  tracks how starved the machine is, not the code revision. Debug JIT
+  is worst-case; release AOT boots faster but first-launch-after-install
+  is exactly what a new worker does — treat the riverpod 3 migration
+  (2.6.1 is the last 2.x) as a Phase 2 blocker before TestFlight, and
+  re-test boot rates on a quiet machine.
 - `.cursorrules` lies (freezed/Either/arb claims) — trust the map above.
 - `payrollEvereeAccessProvider` hides the Payroll tab until provisioning
   loads — new Home earnings strip must not depend on the tab being visible.
