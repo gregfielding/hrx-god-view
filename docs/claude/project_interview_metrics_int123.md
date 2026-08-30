@@ -65,10 +65,21 @@ that sized this) and the eight-area roadmap artifact ("HRX Next Four").
   "advance" makes the worker auto-hire-eligible where a group toggle is
   on; that is the point, but know it.
 
+## INT-2b — position-type packs + opening trim (built 2026-08-30, same day)
+
+Greg overrode the wait-for-data plan: relevance now. `positionTypeQuestionPacks.ts`
+resolves a position type from the job title (industrial/events/hospitality/
+clerical/healthcare; role words beat venue words; unknown → null = generic
+interview). Application-mode plans append 2-3 `dyn_pos_{type}_*` dynamics
+(module `position_fit`, YNNS, ADA framing, bilingual promptKeys) and return
+`trimmedCoreStepIds` — the generic opening block minus the matched type's own
+experience step. Clients merge trim into their covered-set nav filter
+(no synthetic answers). Old clients ignore trim (packs-only) — safe rollout.
+☠️ The pack questions are code constants — recruiter-editable config is the
+v2 (same lesson as cadence copy-in-doc).
+
 ## Open / deferred
 
-- INT-2 "tighter question set per position type" — needs Greg's product
-  input (which questions per position type); not built.
 - Chase-effectiveness attribution (completions caused by chase 1/2) —
   v2; needs invite-to-completion joins.
 - Language split in the report — needs a users join; deferred.
