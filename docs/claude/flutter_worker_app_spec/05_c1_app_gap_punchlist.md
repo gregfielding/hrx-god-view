@@ -206,6 +206,41 @@ wizard steps, favorites, skills/bio editors, About & Legal.
 **Standing rule (Greg, in CLAUDE.md)**: any worker-facing web view change
 now requires a same-session Flutter update or a punch-list entry here.
 
+## ✅ Waves 11–14 SHIPPED 2026-08-30 (feature block, Greg: "Do Wave 11-14")
+
+- **Wave 11 (c1_app 65f8552; hrx e1e5ac08)**: in-app shift-confirmation
+  card on Home — gold-bordered Confirm / Can't-make-it when an upcoming
+  assignment's `cortConfirmation.state == 'pending'`. Backend:
+  `respondToAssignment` gained `cadence_confirm` / `cadence_cancel`
+  decisions via NEW `functions/src/cadence/appConfirmationWrites.ts` —
+  an app-channel mirror of the SMS reply writes (cortConfirmation,
+  escalation/reminder cancellation, recruiter alert +
+  needsRecruiterAttention on cancel). ☠️ Deliberately NOT a refactor of
+  cadenceReplyHandler (no SMS-webhook redeploy mid-pilot); the reply
+  handler stays canonical if they drift. Full placementsApi bundle
+  (11 functions) deployed.
+- **Wave 12 (a6f9ba9)**: documents center — Compliance | Credentials |
+  Job Files tabs at the documents route (web /c1/workers/documents
+  parity): onboarding.checklist with web expiration rules + compliance %,
+  synthesized work-eligibility item, credentials rows linking the app's
+  WORKING editors, screening-orders read-only list, job files walked
+  applicationIds → application → job_order staffInstructions (fail-open).
+- **Wave 13 (17b0ca2)**: Schedule month-calendar tab (first tab, web
+  default) — day dots in the web color language (confirmed blue →
+  assignment detail; offered green / submitted goldenrod → posting), day
+  bottom sheet, legend; schedule tab labels localized. Home gains the
+  web's Upcoming Assignments list (next 3, whole row navigates).
+- **Wave 14 (d274eac; hrx 23996d77)**: support desk — Greg's call: NOT
+  freeform AI chat (grounded chat = v2 needing its own guardrails).
+  Topic-tagged tickets (payroll / shifts_jobs / app_issue / other) on the
+  payroll-help rails: `payroll_create_ticket` takes an allowlisted
+  `topic` (default payroll; non-payroll skips the payroll AI diagnosis),
+  app gets my-requests list + create sheet + live thread on
+  /c1/workers/support/:ticketId. workerSupportAssistant deployed.
+- Also: sign-in language selector rewritten to the web's EN | ES toggle
+  (all auth screens); selector removed from the shell app bar (web is
+  logo + bell; language lives in Profile).
+
 ## Watchouts
 - **Cold-start Riverpod race — MITIGATED, not fully fixed (c1_app
   013ada7, 2026-08-29)**: intermittent cold-boot red screen "Concurrent
