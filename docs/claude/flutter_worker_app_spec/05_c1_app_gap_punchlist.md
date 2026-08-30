@@ -98,6 +98,12 @@ question). Android intent filters for the new pay routes still TODO.
   option + Maybe-detail prompts in the wizard step, transport icon
   chips, two-step signup parity, account-only wizard mode (route
   exists but dead-ends).
+- Interview parity with web INT-2 (2026-08-30): the app's prescreen
+  should pass `entry` to getWorkerAiPrescreenInterviewPlan, restore
+  `savedSession` drafts from the plan response, and debounce
+  `mode: 'saveProgress'` calls (same wire API the web now uses) — plus
+  show the resume banner. Small, additive; wire copy in
+  docs/claude/project_interview_metrics_int123.md.
 - Payroll help tickets; support assistant (support screen is static).
 - Foreground push display — ✅ SHIPPED 2026-08-29 (c1_app c1136a2):
   onMessage in-app toast + shared push→model mapper + root scaffold
