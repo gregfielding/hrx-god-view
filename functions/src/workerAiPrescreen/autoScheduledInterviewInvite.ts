@@ -445,6 +445,11 @@ export const processScheduledInterviewInvites = onSchedule(
         source: 'system',
         messageTypeId: applicationId ? 'auto_new_user_interview_invite' : 'profile_first_interview_invite',
         systemContext: true,
+        inbox: {
+          title: preferredLanguage === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+          type: 'opportunity',
+          deepLink: url,
+        },
       });
 
       const sentAt = admin.firestore.Timestamp.now();

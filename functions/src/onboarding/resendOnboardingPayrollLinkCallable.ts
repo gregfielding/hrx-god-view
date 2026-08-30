@@ -226,6 +226,11 @@ export const resendOnboardingPayrollLink = onCall(
       userId,
       messageTypeId: 'onboarding_reminder',
       source: 'onboarding_reminder_manual_resend',
+      inbox: {
+        title: lang === 'es' ? 'Configuración de pago — tu enlace' : 'Payroll setup — your link',
+        type: 'payroll',
+        deepLink: link,
+      },
       // Distinct from the scheduler's `${pipelineId}__r{N}` so audit logs
       // can tell automated cadence reminders apart from manual resends at
       // a glance. Includes initiating recruiter uid for accountability.

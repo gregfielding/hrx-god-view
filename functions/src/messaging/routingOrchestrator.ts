@@ -198,6 +198,18 @@ export async function sendMessage(context: MessageContext): Promise<SendMessageR
       context
     );
     
+    // 3.5 Persistent inbox record — written for EVERY routed worker message,
+    // before and independent of channel delivery (notifications-parity fix,
+    // 2026-08-30). The bell is the record; channels are best-effort delivery.
+    const inboxContent = await writeRoutedMessageInboxDoc(context, messageTypeConfig, userData);
+    if (inboxContent) {
+      context.variables = {
+        ...(context.variables ?? {}),
+        _inboxTitle: inboxContent.title,
+        _inboxBody: inboxContent.body,
+      };
+    }
+
     if (!routingDecision.shouldSend || routingDecision.channels.length === 0) {
       logger.info(`No channels available for message ${context.messageTypeId} to user ${context.userId}: ${routingDecision.reason}`);
       
@@ -1625,6 +1637,123 @@ function stripHtml(html: string): string {
  * 
  * Implements: HRX One Messaging Phase 4 Spec — Section 2.4 Wire Push into Orchestrator
  */
+/**
+ * Derive the worker-facing title/body for a routed message — shared by the
+ * persistent inbox write (sendMessage) and push delivery so the bell and the
+ * push always say the same thing. Extracted 2026-08-30 (notifications-parity
+ * fix): the inbox write used to live INSIDE deliverPush behind its early
+ * returns, so quiet hours / rate limits / missing tokens silently dropped the
+ * permanent record on every surface.
+ */
+async function buildWorkerMessageContent(
+  context: MessageContext,
+  messageTypeConfig: MessageTypeConfig,
+  userData: admin.firestore.DocumentData,
+): Promise<{ title: string; body: string; preferredLanguage: 'en' | 'es' }> {
+  const { resolveTemplateVariables } = await import('../utils/templateVariableResolver');
+  const preferredLanguage = (userData.preferredLanguage || 'en') as 'en' | 'es';
+
+  let title = '';
+  let body = '';
+
+  const isDirectMessage = context.variables?._directMessage === true || !messageTypeConfig.requiresTemplate;
+  const unifiedMessage = context.variables?._message as string | undefined;
+
+  const stripHtml = (html: string): string => {
+    return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
+  };
+
+  let usedExplicitPushContent = false;
+  if (context.messageTypeId === 'worker_hired') {
+    const pt = context.variables?.pushTitle as string | undefined;
+    const pb = context.variables?.pushBody as string | undefined;
+    if (pt && pb && typeof pt === 'string' && typeof pb === 'string') {
+      title = pt.length > 80 ? `${pt.substring(0, 77)}...` : pt;
+      body = pb.length > 200 ? `${pb.substring(0, 197)}...` : pb;
+      usedExplicitPushContent = true;
+    }
+  }
+
+  const extractTitle = (html: string, maxLength: number = 50): string => {
+    const text = stripHtml(html);
+    const firstSentenceMatch = text.match(/^[^.!?]+[.!?]/);
+    if (firstSentenceMatch) {
+      return firstSentenceMatch[0].trim().substring(0, maxLength);
+    }
+    const firstLine = text.split('\n')[0].trim();
+    return firstLine.substring(0, maxLength);
+  };
+
+  if (!usedExplicitPushContent && isDirectMessage && unifiedMessage) {
+    const providedSubject = context.variables?._subject as string | undefined;
+    title = providedSubject || extractTitle(unifiedMessage, 50) || messageTypeConfig.label;
+    const textBody = stripHtml(unifiedMessage);
+    const titleInBody = textBody.startsWith(title);
+    body = titleInBody ? textBody.substring(title.length).trim() : textBody;
+    if (body.length > 200) {
+      body = body.substring(0, 197) + '...';
+    }
+  } else if (!usedExplicitPushContent) {
+    const template = await getTemplate(
+      context.tenantId,
+      context.messageTypeId,
+      'push',
+      preferredLanguage
+    );
+    if (template) {
+      const templateContext = {
+        userId: context.userId,
+        userData,
+        tenantId: context.tenantId,
+        ...context.variables,
+      } as TemplateVariableContext;
+      const variables = await resolveTemplateVariables(templateContext);
+      const renderedBody = await renderTemplate(template, variables, context.tenantId);
+      title = template.name || messageTypeConfig.label;
+      body = stripHtml(renderedBody);
+    } else {
+      title = messageTypeConfig.label;
+      body = context.variables?.message || `You have a new ${messageTypeConfig.label.toLowerCase()}.`;
+    }
+  }
+  return { title, body, preferredLanguage };
+}
+
+/** Persistent inbox doc for a routed worker message — the bell's record,
+ *  written regardless of which delivery channels fire. Fail-open. */
+async function writeRoutedMessageInboxDoc(
+  context: MessageContext,
+  messageTypeConfig: MessageTypeConfig,
+  userData: admin.firestore.DocumentData,
+): Promise<{ title: string; body: string } | null> {
+  try {
+    const { title, body } = await buildWorkerMessageContent(context, messageTypeConfig, userData);
+    const deepLink = context.metadata?.ctaUrl ?? context.variables?.ctaUrl ?? '';
+    const entityId = context.metadata?.assignmentId ?? context.metadata?.applicationId ?? context.metadata?.jobPostId ?? context.metadata?.entityId ?? '';
+    const inboxType = context.messageTypeId === 'assignment_created' ? 'assignment'
+      : (context.messageTypeId || '').startsWith('application_') ? 'application'
+      : 'general';
+    await writeWorkerInboxNotification({
+      uid: context.userId,
+      tenantId: context.tenantId,
+      title,
+      body,
+      type: inboxType,
+      deepLink: deepLink || undefined,
+      entityId: entityId || undefined,
+      source: 'automation',
+    });
+    return { title, body };
+  } catch (inboxErr: any) {
+    logger.warn('Failed to write routed-message inbox notification', {
+      userId: context.userId,
+      messageTypeId: context.messageTypeId,
+      error: inboxErr?.message,
+    });
+    return null;
+  }
+}
+
 async function deliverPush(
   context: MessageContext,
   messageTypeConfig: MessageTypeConfig,
@@ -1648,90 +1777,21 @@ async function deliverPush(
       };
     }
     
-    // 2. Resolve push template (or derive title/body from unified message)
-    let title = '';
-    let body = '';
-    
-    // Check if this is a direct message with unified content
-    const isDirectMessage = context.variables?._directMessage === true || !messageTypeConfig.requiresTemplate;
-    const unifiedMessage = context.variables?._message as string | undefined;
-    
-    // Helper function to strip HTML
-    const stripHtml = (html: string): string => {
-      return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
-    };
-
-    let usedExplicitPushContent = false;
-    if (context.messageTypeId === 'worker_hired') {
-      const pt = context.variables?.pushTitle as string | undefined;
-      const pb = context.variables?.pushBody as string | undefined;
-      if (pt && pb && typeof pt === 'string' && typeof pb === 'string') {
-        title = pt.length > 80 ? `${pt.substring(0, 77)}...` : pt;
-        body = pb.length > 200 ? `${pb.substring(0, 197)}...` : pb;
-        usedExplicitPushContent = true;
-      }
-    }
-    
-    // Helper function to extract title from message (first line or first sentence)
-    const extractTitle = (html: string, maxLength: number = 50): string => {
-      const text = stripHtml(html);
-      // Try to get first sentence (ends with . ! or ?)
-      const firstSentenceMatch = text.match(/^[^.!?]+[.!?]/);
-      if (firstSentenceMatch) {
-        return firstSentenceMatch[0].trim().substring(0, maxLength);
-      }
-      // Otherwise get first line
-      const firstLine = text.split('\n')[0].trim();
-      return firstLine.substring(0, maxLength);
-    };
-    
-    if (!usedExplicitPushContent && isDirectMessage && unifiedMessage) {
-      // Use provided subject/title if available, otherwise extract from first line/sentence
-      const providedSubject = context.variables?._subject as string | undefined;
-      title = providedSubject || extractTitle(unifiedMessage, 50) || messageTypeConfig.label;
-      // Use rest of message as body (strip HTML, limit to reasonable length)
-      const textBody = stripHtml(unifiedMessage);
-      // Remove the title part from body if it's at the start
-      const titleInBody = textBody.startsWith(title);
-      body = titleInBody ? textBody.substring(title.length).trim() : textBody;
-      // Limit body length for push notifications (typically 200-300 chars)
-      if (body.length > 200) {
-        body = body.substring(0, 197) + '...';
-      }
+    // 2. Title/body via the shared builder (same content as the inbox doc);
+    // sendMessage may have precomputed it — reuse to avoid double template reads.
+    const precomputedTitle = context.variables?._inboxTitle as string | undefined;
+    const precomputedBody = context.variables?._inboxBody as string | undefined;
+    let title: string;
+    let body: string;
+    if (typeof precomputedTitle === 'string' && typeof precomputedBody === 'string') {
+      title = precomputedTitle;
+      body = precomputedBody;
     } else {
-      // Use template-based approach
-      const template = await getTemplate(
-        context.tenantId,
-        context.messageTypeId,
-        'push',
-        preferredLanguage
-      );
-      
-      if (template) {
-        // Build template context
-        const templateContext = {
-          userId: context.userId,
-          userData,
-          tenantId: context.tenantId,
-          ...context.variables,
-        } as TemplateVariableContext;
-        
-        // Resolve variables
-        const variables = await resolveTemplateVariables(templateContext);
-        
-        // Render template
-        const renderedBody = await renderTemplate(template, variables, context.tenantId);
-        
-        // For push, use template name as title, body as notification body
-        title = template.name || messageTypeConfig.label;
-        body = stripHtml(renderedBody);
-      } else {
-        // Fallback: derive from message type
-        title = messageTypeConfig.label;
-        body = context.variables?.message || `You have a new ${messageTypeConfig.label.toLowerCase()}.`;
-      }
+      const built = await buildWorkerMessageContent(context, messageTypeConfig, userData);
+      title = built.title;
+      body = built.body;
     }
-    
+
     // PHASE 5.1: Check rate limits before sending
     const rateLimitCheck = await checkRateLimits({
       tenantId: context.tenantId,
@@ -1851,26 +1911,11 @@ async function deliverPush(
     
     await logRef.set(logDoc);
     
-    // 4. Persistent inbox: every push creates a notification doc so Inbox is the permanent record (worker Notification Center).
+    // (Persistent inbox doc is written by sendMessage BEFORE channel delivery
+    // since 2026-08-30 — quiet hours / rate limits / missing tokens no longer
+    // drop the permanent record.)
     const deepLink = context.metadata?.ctaUrl ?? context.variables?.ctaUrl ?? '';
     const entityId = context.metadata?.assignmentId ?? context.metadata?.applicationId ?? context.metadata?.jobPostId ?? context.metadata?.entityId ?? '';
-    const inboxType = context.messageTypeId === 'assignment_created' ? 'assignment'
-      : (context.messageTypeId || '').startsWith('application_') ? 'application'
-      : 'general';
-    try {
-      await writeWorkerInboxNotification({
-        uid: context.userId,
-        tenantId: context.tenantId,
-        title,
-        body,
-        type: inboxType,
-        deepLink: deepLink || undefined,
-        entityId: entityId || undefined,
-        source: 'automation',
-      });
-    } catch (inboxErr: any) {
-      logger.warn('Failed to write worker inbox notification (push still sent)', { userId: context.userId, error: inboxErr?.message });
-    }
     
     // 5. Send via PushProvider — include deepLink for SW notificationclick (HRX-FCM-Messaging-Complete)
     const pushProvider = getPushProvider();

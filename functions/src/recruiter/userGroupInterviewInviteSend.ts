@@ -553,6 +553,14 @@ async function runSend(
         source: 'recruiter',
         sourceId: authUid,
         messageTypeId,
+        inbox: {
+          title:
+            workerInterviewInviteLang(userData as Record<string, unknown>) === 'es'
+              ? 'Invitación a entrevista — C1 Staffing'
+              : 'Interview invitation — C1 Staffing',
+          type: 'opportunity',
+          deepLink: link,
+        },
       });
 
       if (sms.success) {

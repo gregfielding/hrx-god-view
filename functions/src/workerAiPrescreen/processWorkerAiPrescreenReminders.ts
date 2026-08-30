@@ -330,6 +330,11 @@ async function processPrescreenChaseSms(args: {
     source: 'system',
     messageTypeId,
     systemContext: true,
+    inbox: {
+      title: preferredLanguage === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+      type: 'opportunity',
+      deepLink: prescreenUrl,
+    },
   });
 
   const sentAt = admin.firestore.Timestamp.now();
@@ -541,6 +546,11 @@ async function processProfileFirstPrescreenChaseUserSms(args: {
     source: 'system',
     messageTypeId,
     systemContext: true,
+    inbox: {
+      title: preferredLanguage === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+      type: 'opportunity',
+      deepLink: prescreenUrl,
+    },
   });
 
   const sentAt = admin.firestore.Timestamp.now();
@@ -861,6 +871,11 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         messageTypeId:
           outcome === 'eligible_invite' ? 'worker_ai_prescreen_invite' : 'worker_ai_prescreen_gap_interview_invite',
         systemContext: true,
+        inbox: {
+          title: preferredLanguage === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+          type: 'opportunity',
+          deepLink: outcome === 'eligible_invite' ? prescreenUrl : prescreenGapUrl,
+        },
       });
 
       const sentAt = admin.firestore.Timestamp.now();
@@ -1088,6 +1103,11 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         source: 'system',
         messageTypeId: 'worker_ai_prescreen_invite',
         systemContext: true,
+        inbox: {
+          title: preferredLanguage === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+          type: 'opportunity',
+          deepLink: prescreenUrl,
+        },
       });
 
       const sentAt = admin.firestore.Timestamp.now();

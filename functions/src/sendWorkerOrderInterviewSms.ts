@@ -160,6 +160,11 @@ export const sendWorkerOrderInterviewSms = onCall(
       userId: targetUid,
       source: 'recruiter',
       sourceId: actorUid,
+      inbox: {
+        title: lang === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+        type: 'opportunity',
+        deepLink: url,
+      },
       messageTypeId: 'recruiter_profile_order_interview',
       systemContext: true,
     });

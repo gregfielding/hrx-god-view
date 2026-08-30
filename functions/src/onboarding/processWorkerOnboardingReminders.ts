@@ -108,16 +108,19 @@ export function buildOnboardingReminderSmsBody(
   // "I-9 and payroll setup" was actively confusing them. Direct-payroll link
   // also drops them straight into the Everee Embed for the right tenant
   // instead of the My Employment landing page that lists every employment.
+  // Classification-led copy (Greg-approved 2026-08-30): every reminder
+  // restates the worker relationship + tax consequence in one sentence,
+  // matching the worker_hired hire-moment message.
   if (variant === 'events') {
     if (lang === 'es') {
-      return `Hola ${fn}, este es un recordatorio para completar tu configuración de pago con Everee y poder recibir tu pago.\n\nTermina aquí (toma menos de 5 minutos):\n${safeLink}\n\nResponde si necesitas ayuda.`;
+      return `Hola ${fn}, recordatorio de C1 Events: trabajas con nosotros como contratista independiente (1099) — no se retienen impuestos de tu pago. Completa tu W-9 y la configuración de pago para que podamos pagarte (menos de 5 minutos):\n${safeLink}\n\nResponde si necesitas ayuda.`;
     }
-    return `Hi ${fn}, this is a reminder to finish your Everee payroll setup so we can pay you.\n\nFinish here (takes under 5 minutes):\n${safeLink}\n\nReply if you need help.`;
+    return `Hi ${fn}, reminder from C1 Events: you work with us as an independent contractor (1099) — no taxes are withheld from your pay. Finish your W-9 and payment setup so we can pay you (takes under 5 minutes):\n${safeLink}\n\nReply if you need help.`;
   }
   if (lang === 'es') {
-    return `Hola ${fn}, este es un recordatorio para completar tu proceso para próximas oportunidades de trabajo.\n\nPor favor completa tu I-9 y configuración de pago aquí:\n${safeLink}\n\nResponde si necesitas ayuda.`;
+    return `Hola ${fn}, recordatorio de C1 Staffing: eres empleado(a) W-2 on-call — se retienen impuestos de cada cheque. Completa tu W-4, I-9 y configuración de pago para próximas oportunidades de trabajo:\n${safeLink}\n\nResponde si necesitas ayuda.`;
   }
-  return `Hi ${fn}, this is a reminder to complete your onboarding for upcoming work.\n\nPlease finish your I-9 and payroll setup here:\n${safeLink}\n\nReply if you need help.`;
+  return `Hi ${fn}, reminder from C1 Staffing: you're an on-call W-2 employee — taxes are withheld from every paycheck. Finish your W-4, I-9, and payroll setup for upcoming work:\n${safeLink}\n\nReply if you need help.`;
 }
 
 function tenantIdFromEmploymentRef(ref: admin.firestore.DocumentReference): string | null {
@@ -368,6 +371,11 @@ async function sendOnboardingReminderSms(args: {
     userId,
     messageTypeId: 'onboarding_reminder',
     source: 'onboarding_reminder_scheduler',
+    inbox: {
+      title: lang === 'es' ? 'Configuración de pago — tu enlace' : 'Payroll setup — your link',
+      type: 'payroll',
+      deepLink: link,
+    },
     sourceId: `${pipelineId}__r${args.reminderNumber}`,
   });
   if (!result.success) {
