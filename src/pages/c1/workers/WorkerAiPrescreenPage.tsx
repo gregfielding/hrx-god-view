@@ -36,6 +36,7 @@ import {
 } from '../../../constants/workerAiPrescreenQuestions';
 import {
   getWorkerAiPrescreenInterviewPlan,
+  saveWorkerAiPrescreenProgress,
   submitWorkerAiPrescreenInterview,
   type WorkerAiPrescreenPlanBankCoverage,
 } from '../../../services/workerAiPrescreenCallable';
@@ -478,6 +479,9 @@ const WorkerAiPrescreenPage: React.FC = () => {
   /** Client-only follow-up merged into `experience_details` on submit (not a server key). */
   const [experienceFollowupOptional, setExperienceFollowupOptional] = useState('');
   const [pressureFollowupOptional, setPressureFollowupOptional] = useState('');
+  /** INT-2 resume: saved-session cursor applied once nav length is known. */
+  const [pendingResumeIndex, setPendingResumeIndex] = useState<number | null>(null);
+  const [resumedFromSave, setResumedFromSave] = useState(false);
   const [supervisorFollowupOptional, setSupervisorFollowupOptional] = useState('');
   /** Sticky session: once a follow-up is in the path, keep it so step count does not churn while editing. */
   const [sessionFollowupLocks, setSessionFollowupLocks] = useState<PrescreenSessionFollowupLocks>({
@@ -655,6 +659,62 @@ const WorkerAiPrescreenPage: React.FC = () => {
     });
     prevNavLenRef.current = n;
   }, [navEntries.length]);
+
+  // INT-2 resume: jump to the saved cursor once the nav exists (clamped —
+  // the nav can be shorter than at save time if answers changed visibility).
+  useEffect(() => {
+    if (pendingResumeIndex == null) return;
+    const n = navEntries.length;
+    if (n <= 0) return;
+    setStepIndex(Math.min(Math.max(0, pendingResumeIndex), n - 1));
+    setPendingResumeIndex(null);
+  }, [pendingResumeIndex, navEntries.length]);
+
+  // INT-2 auto-save: debounce in-progress answers to the server session doc
+  // so a closed tab resumes. Fire-and-forget; never blocks the interview.
+  const autoSaveArmedRef = useRef(false);
+  useEffect(() => {
+    if (!user?.uid || done || submitting || planLoading || navEntries.length === 0) return;
+    // Skip the very first render pass so restore itself doesn't trigger a save.
+    if (!autoSaveArmedRef.current) {
+      autoSaveArmedRef.current = true;
+      return;
+    }
+    const entry = navEntries[Math.min(stepIndex, navEntries.length - 1)];
+    const lastStepId =
+      entry.kind === 'core' || entry.kind === 'dynamic'
+        ? entry.step.id
+        : `followup_${entry.followup}`;
+    const timer = window.setTimeout(() => {
+      const draftAnswers: Record<string, string> = {};
+      const draftMultiAnswers: Record<string, string[]> = {};
+      for (const [id, v] of Object.entries(answers as Record<string, unknown>)) {
+        if (Array.isArray(v)) {
+          if (v.length > 0) draftMultiAnswers[id] = v.map((x) => String(x));
+        } else if (typeof v === 'string' && v.trim() !== '') {
+          draftAnswers[id] = v;
+        }
+      }
+      for (const [id, v] of Object.entries(dynamicAnswers)) {
+        if (typeof v === 'string' && v.trim() !== '') draftAnswers[id] = v;
+      }
+      if (experienceFollowupOptional.trim()) draftAnswers.__followup_experience = experienceFollowupOptional;
+      if (pressureFollowupOptional.trim()) draftAnswers.__followup_pressure = pressureFollowupOptional;
+      if (Object.keys(draftAnswers).length === 0 && Object.keys(draftMultiAnswers).length === 0) return;
+      void saveWorkerAiPrescreenProgress({
+        applicationId: applicationId || null,
+        lastStepId,
+        lastStepIndex: stepIndex,
+        totalSteps: navEntries.length,
+        draftAnswers,
+        draftMultiAnswers,
+      }).catch(() => {
+        /* fail-open — never surface save errors mid-interview */
+      });
+    }, 1500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers, dynamicAnswers, stepIndex, experienceFollowupOptional, pressureFollowupOptional, done, submitting, planLoading]);
 
   useEffect(() => {
     if (String(answers.attendance_issues ?? '').trim().toLowerCase() === 'yes') return;
@@ -886,6 +946,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
         const plan = await getWorkerAiPrescreenInterviewPlan({
           applicationId: applicationId || null,
           tenantId,
+          entry: entryQuery,
         });
         if (cancelled) return;
         setWorkerAiPrescreenRequired(plan.workerAiPrescreenRequired !== false);
@@ -901,6 +962,33 @@ const WorkerAiPrescreenPage: React.FC = () => {
         if (coverage && Object.keys(coverage.bankCoreAnswers || {}).length > 0) {
           const patch = answersPatchFromBankCore(coverage.bankCoreAnswers);
           setAnswers((prev) => ({ ...prev, ...patch }));
+        }
+        // INT-2 resume: drafts from an abandoned session win over bank seeds
+        // (they're newer and worker-typed).
+        const saved = plan.savedSession ?? null;
+        if (saved) {
+          const dynIds = new Set((steps || []).map((st) => st.id));
+          const corePatch: Record<string, unknown> = {};
+          const dynPatch: Record<string, string> = {};
+          for (const [id, v] of Object.entries(saved.draftAnswers || {})) {
+            if (id === '__followup_experience') setExperienceFollowupOptional(String(v));
+            else if (id === '__followup_pressure') setPressureFollowupOptional(String(v));
+            else if (dynIds.has(id)) dynPatch[id] = String(v);
+            else corePatch[id] = String(v);
+          }
+          for (const [id, v] of Object.entries(saved.draftMultiAnswers || {})) {
+            corePatch[id] = (Array.isArray(v) ? v : []).map((x) => String(x));
+          }
+          if (Object.keys(corePatch).length > 0) {
+            setAnswers((prev) => ({ ...prev, ...(corePatch as Partial<WorkerAiPrescreenAnswers>) }));
+          }
+          if (Object.keys(dynPatch).length > 0) {
+            setDynamicAnswers((prev) => ({ ...prev, ...dynPatch }));
+          }
+          if (Number.isFinite(saved.lastStepIndex) && saved.lastStepIndex > 0) {
+            setPendingResumeIndex(saved.lastStepIndex);
+          }
+          setResumedFromSave(true);
         }
       } catch (e) {
         if (!cancelled) {
@@ -1346,6 +1434,14 @@ const WorkerAiPrescreenPage: React.FC = () => {
         >
           <Typography variant="body2" sx={{ lineHeight: 1.45 }}>
             {t('workerAiPrescreen.bank.deltaBanner', { count: totalSteps })}
+          </Typography>
+        </Alert>
+      ) : null}
+
+      {resumedFromSave && !done ? (
+        <Alert severity="success" variant="outlined" sx={{ mb: 1.25, py: 0.75 }}>
+          <Typography variant="body2" sx={{ lineHeight: 1.45 }}>
+            {t('workerAiPrescreen.resumeBanner')}
           </Typography>
         </Alert>
       ) : null}

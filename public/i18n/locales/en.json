@@ -401,6 +401,7 @@
     "referenceLabel": "Reference: {id}",
     "loadingJobQuestions": "Loading job-specific questions…",
     "loadingProfileQuestions": "Loading your interview questions…",
+    "resumeBanner": "Welcome back — we saved your answers, so you're picking up right where you left off.",
     "alertChooseTenant": "Choose your employer in the header if job details do not appear — that helps load questions for this application.",
     "alertChooseTenantProfileFirst": "Choose your employer in the header to start — that lets us load the right interview for you.",
     "fallbackRoleTitle": "This role",

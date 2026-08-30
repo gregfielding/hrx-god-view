@@ -2,6 +2,7 @@
  * Worker submits AI pre-screen; server scores, writes users/{uid}/interviews/{id}, updates scoreSummary.
  */
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { markSessionCompleted } from './interviewSession';
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { CALLABLE_BROWSER_CORS } from '../integrations/callableBrowserCors';
@@ -705,6 +706,9 @@ export async function performPrescreenSubmission(args: PerformPrescreenSubmissio
         message: e instanceof Error ? e.message : String(e),
       });
     }
+
+    // INT-1/INT-2: close the session doc (funnel 'completed', clears drafts).
+    await markSessionCompleted(auth.uid);
 
     try {
       await userRef.set(

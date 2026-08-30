@@ -401,6 +401,7 @@
     "referenceLabel": "Referencia: {id}",
     "loadingJobQuestions": "Cargando preguntas del puesto…",
     "loadingProfileQuestions": "Cargando tus preguntas de entrevista…",
+    "resumeBanner": "Bienvenido de nuevo — guardamos tus respuestas, así que continúas justo donde lo dejaste.",
     "alertChooseTenant": "Elige tu empleador en la parte superior si no ves los datos del puesto — eso ayuda a cargar las preguntas de esta solicitud.",
     "alertChooseTenantProfileFirst": "Elige tu empleador en la parte superior para comenzar — así podemos cargar la entrevista correcta para ti.",
     "fallbackRoleTitle": "Este puesto",

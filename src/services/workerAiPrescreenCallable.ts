@@ -71,6 +71,15 @@ export type WorkerAiPrescreenPlanBankCoverage = {
   bankDynamicAnswers: Record<string, string>;
 };
 
+/** INT-2 save/resume: in-progress answers stored server-side (users/{uid}/prescreen/session). */
+export type WorkerAiPrescreenSavedSession = {
+  lastStepId: string;
+  lastStepIndex: number;
+  draftAnswers: Record<string, string>;
+  draftMultiAnswers: Record<string, string[]>;
+  savedAt: number | null;
+};
+
 export type WorkerAiPrescreenInterviewPlanResult = {
   interviewType: 'worker_ai_prescreen';
   /** Server: `application` when `applicationId` was sent; `profile_first` when only tenant-based plan. */
@@ -79,16 +88,45 @@ export type WorkerAiPrescreenInterviewPlanResult = {
   dynamicSteps: WorkerAiPrescreenDynamicStep[];
   /** Null/absent when the worker has no usable bank (full interview). */
   bankCoverage?: WorkerAiPrescreenPlanBankCoverage | null;
+  /** Resumable drafts from a prior abandoned session (INT-2). */
+  savedSession?: WorkerAiPrescreenSavedSession | null;
 };
 
 export async function getWorkerAiPrescreenInterviewPlan(input: {
   applicationId?: string | null;
   tenantId?: string | null;
+  /** Invite-channel attribution for the funnel's "started" stage. */
+  entry?: string | null;
 }): Promise<WorkerAiPrescreenInterviewPlanResult> {
   const fn = httpsCallable(functions, 'getWorkerAiPrescreenInterviewPlan');
   const res = await fn({
     applicationId: input.applicationId ?? null,
     tenantId: input.tenantId ?? null,
+    entry: input.entry ?? null,
   });
   return res.data as WorkerAiPrescreenInterviewPlanResult;
+}
+
+/** INT-2: persist in-progress answers (debounced from the page) so a closed
+ *  tab resumes where it left off. Rides the plan callable's saveProgress mode. */
+export async function saveWorkerAiPrescreenProgress(input: {
+  applicationId?: string | null;
+  lastStepId: string;
+  lastStepIndex: number;
+  totalSteps: number;
+  draftAnswers: Record<string, string>;
+  draftMultiAnswers: Record<string, string[]>;
+}): Promise<void> {
+  const fn = httpsCallable(functions, 'getWorkerAiPrescreenInterviewPlan');
+  await fn({
+    mode: 'saveProgress',
+    applicationId: input.applicationId ?? null,
+    progress: {
+      lastStepId: input.lastStepId,
+      lastStepIndex: input.lastStepIndex,
+      totalSteps: input.totalSteps,
+      draftAnswers: input.draftAnswers,
+      draftMultiAnswers: input.draftMultiAnswers,
+    },
+  });
 }

@@ -7,6 +7,7 @@
  */
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { buildInterviewMetrics } from './interviewMetrics';
 import { logger } from 'firebase-functions/v2';
 import { canManageOnboarding } from '../onboarding/workerOnboardingPipeline';
 import { extractPrescreenAnswersFromInterviewDoc } from './extractPrescreenAnswersFromInterviewDoc';
@@ -153,7 +154,38 @@ export const backfillPrescreenCategoryScores = onCall(
       limit?: unknown;
       tenantId?: unknown;
       force?: unknown;
+      mode?: unknown;
+      startMs?: unknown;
+      endMs?: unknown;
     };
+
+    // INT-1 (2026-08-30): read-only interview-funnel aggregation for
+    // /reports/interview-metrics rides this callable (mode-flag convention —
+    // no new functions at the Cloud Run cap). Same tenant gate as backfill.
+    if (raw.mode === 'interviewMetrics') {
+      if (!request.auth?.uid) {
+        throw new HttpsError('unauthenticated', 'Authentication required');
+      }
+      const mTenantId =
+        typeof raw.tenantId === 'string' && raw.tenantId.trim() ? raw.tenantId.trim() : null;
+      if (!mTenantId) {
+        throw new HttpsError('invalid-argument', 'tenantId is required for interviewMetrics');
+      }
+      if (!(await canManageOnboarding(request.auth, mTenantId, request.auth!.uid))) {
+        throw new HttpsError('permission-denied', 'Not authorized for this tenant');
+      }
+      const endMs =
+        typeof raw.endMs === 'number' && Number.isFinite(raw.endMs) ? raw.endMs : Date.now();
+      const startMs =
+        typeof raw.startMs === 'number' && Number.isFinite(raw.startMs)
+          ? raw.startMs
+          : endMs - 30 * 24 * 3600 * 1000;
+      if (endMs <= startMs || endMs - startMs > 366 * 24 * 3600 * 1000) {
+        throw new HttpsError('invalid-argument', 'range must be positive and at most 366 days');
+      }
+      const metrics = await buildInterviewMetrics({ tenantId: mTenantId, startMs, endMs });
+      return { interviewMetrics: metrics } as unknown as BackfillPrescreenCategoryScoresResult;
+    }
 
     let limit = typeof raw.limit === 'number' && Number.isFinite(raw.limit) ? Math.floor(raw.limit) : DEFAULT_LIMIT;
     if (limit < 1) limit = 1;

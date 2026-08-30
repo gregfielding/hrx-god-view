@@ -28,12 +28,14 @@ import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
 import PendingActionsOutlinedIcon from '@mui/icons-material/PendingActionsOutlined';
 import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
 import WaterfallChartOutlinedIcon from '@mui/icons-material/WaterfallChartOutlined';
+import QueryStatsOutlinedIcon from '@mui/icons-material/QueryStatsOutlined';
 
 export type ReportCategory =
   | 'Payroll'
   | "Workers' comp & insurance"
   | 'Finance & receivables'
   | 'Forecast & budgeting'
+  | 'Usage & metrics'
   | 'Compliance';
 
 /** Render order for category sections on the index page. */
@@ -42,6 +44,7 @@ export const REPORT_CATEGORY_ORDER: ReportCategory[] = [
   'Finance & receivables',
   'Forecast & budgeting',
   "Workers' comp & insurance",
+  'Usage & metrics',
   'Compliance',
 ];
 
@@ -61,6 +64,15 @@ export interface ReportDef {
 }
 
 export const REPORTS: ReportDef[] = [
+  {
+    slug: 'interview-metrics',
+    title: 'Interview Metrics',
+    description:
+      'AI prescreen funnel — invited, started, completed, passed — with drop-off by question, splits by job order, signup group, and language, and SMS-chase effectiveness.',
+    category: 'Usage & metrics',
+    minLevel: 6,
+    icon: <QueryStatsOutlinedIcon />,
+  },
   {
     slug: 'payroll',
     title: 'Payroll Cost Report',

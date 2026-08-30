@@ -64,6 +64,8 @@ export interface RecruiterUser {
   hasWorkerAiPrescreenInterview?: boolean;
   interviewStatus?: string;
   lastInterviewCompletedAt?: unknown;
+  /** Last interview-invite SMS of any kind (auto invite + chases advance it). */
+  lastInterviewInvitedAt?: unknown;
   /** Last time a recruiter triggered the "Order Interview" SMS from the profile / list. */
   recruiterOrderInterviewSmsLastSentAt?: unknown;
   /** Job titles from work experience (most recent first), for Users-style tables */

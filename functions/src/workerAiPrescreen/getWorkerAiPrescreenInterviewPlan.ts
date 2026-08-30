@@ -4,6 +4,7 @@
  * answer bank so the client renders only the delta (docs/prescreen-cumulative-interview.md).
  */
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { stampPlanFetch, saveSessionProgress, loadSessionDrafts } from './interviewSession';
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { CALLABLE_BROWSER_CORS } from '../integrations/callableBrowserCors';
@@ -95,12 +96,49 @@ export const getWorkerAiPrescreenInterviewPlan = onCall(
       throw new HttpsError('unauthenticated', 'Must be signed in');
     }
 
-    const data = request.data as { applicationId?: unknown; tenantId?: unknown };
+    const data = request.data as {
+      applicationId?: unknown;
+      tenantId?: unknown;
+      mode?: unknown;
+      entry?: unknown;
+      progress?: unknown;
+    };
     const applicationId = String(data.applicationId ?? '').trim().slice(0, 200);
     const tenantId =
       data.tenantId == null || data.tenantId === ''
         ? null
         : String(data.tenantId).trim().slice(0, 120) || null;
+
+    // INT-2 save/resume: mode 'saveProgress' persists in-progress answers to
+    // users/{uid}/prescreen/session and returns — no plan build.
+    if (data.mode === 'saveProgress') {
+      const progress = (data.progress ?? {}) as {
+        lastStepId?: unknown;
+        lastStepIndex?: unknown;
+        totalSteps?: unknown;
+        draftAnswers?: unknown;
+        draftMultiAnswers?: unknown;
+      };
+      const saved = await saveSessionProgress({
+        uid: auth.uid,
+        lastStepId: String(progress.lastStepId ?? ''),
+        lastStepIndex: Number(progress.lastStepIndex ?? 0),
+        totalSteps: Number(progress.totalSteps ?? 0),
+        draftAnswers: (progress.draftAnswers ?? {}) as Record<string, string>,
+        draftMultiAnswers: (progress.draftMultiAnswers ?? {}) as Record<string, string[]>,
+        applicationId: applicationId || null,
+      });
+      return { ok: saved.ok };
+    }
+
+    // INT-1 "started" stage: best-effort, fail-open, first-fetch-wins.
+    await stampPlanFetch({
+      uid: auth.uid,
+      applicationId: applicationId || null,
+      entry: data.entry == null ? null : String(data.entry).slice(0, 80),
+      tenantId,
+    });
+    const savedSession = await loadSessionDrafts(auth.uid);
 
     if (applicationId) {
       const ctx = await buildAiInterviewContext(db, {
@@ -137,6 +175,7 @@ export const getWorkerAiPrescreenInterviewPlan = onCall(
           auth.uid,
           steps.map((s) => s.id),
         ),
+        savedSession,
       };
     }
 
@@ -180,6 +219,7 @@ export const getWorkerAiPrescreenInterviewPlan = onCall(
         auth.uid,
         steps.map((s) => s.id),
       ),
+      savedSession,
     };
   },
 );
