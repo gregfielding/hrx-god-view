@@ -165,6 +165,47 @@ the board query, first-login language dialog, Home hero/un-gating parity,
 support desk, documents 3-tab, calendar view, i18n on status matrix +
 wizard steps, favorites, skills/bio editors, About & Legal.
 
+## ✅ Parity waves 7–10 SHIPPED 2026-08-30 (second autonomous block)
+
+- **Wave 7 (4b1809e)**: B2 — gig job orders (jobType=='gig',
+  status=='open') merged into the board stream (deduped vs postings'
+  jobOrderId, status forced 'active', worksite address/coords/name
+  hydrated from locations, fail-open combineLatest — no rxdart, hand
+  combineLatest2 in the repo); jobDetailProvider runs the board
+  eligibility gate (deep links can't open barred postings); gig-row
+  buttons/labels localized (17 strings); favorites (device-local
+  shared_preferences, web localStorage parity, riverpod 3 Notifier)
+  with heart toggle + filter chip.
+- **Wave 8 (89d403e)**: first-login EN/ES language dialog (no
+  preferredLanguage on user doc → non-dismissable modal, web WorkerAppBar
+  parity; syncs via language preference controller); Home hero card
+  (WorkerDashboardHero port — next shift or no-shift state) replacing the
+  bare welcome + duplicate next-assignment card. Un-gating verified
+  already done (no payrollEvereeAccess gates remained).
+- **Wave 9 (dbb41c7)**: ?intent=accept opens the offer ack sheet /
+  ?intent=decline runs the decline flow on job detail (idempotent,
+  pending-only, params threaded through all 3 route builders); **My
+  Employment RESTORED** (asg#6 — FA.1.P1 deleted the screens but the web
+  kept serving /c1/workers/my-employment, so I-9 links dead-ended;
+  restored from b81601d^, patched valueOrNull→value (riverpod 3),
+  backgrounds-compliance→screening, dead Everee sheets→payroll hub;
+  routes + deep-link parser re-pointed); multi-day offer accept now
+  day-scoped (was picking an arbitrary same-shiftId sibling). Once-per-JO
+  ack cache: VERIFIED NO GAP — web resets acks each sheet open.
+- **Wave 10 (4e99354)**: skills editor (dual-write workerProfile.skills),
+  bio editor (professionalBio), Notification Preferences screen (4
+  toggles, smsOptIn/smsBlockedSystem side-writes; set(merge) preserves
+  system-stamped siblings the web's whole-map write clobbers), About &
+  Legal (terms/privacy/sms-privacy + version via package_info_plus, NEW
+  DEP). Profile hub rows for all four.
+
+☠️ Riverpod 3 gotchas hit: StateNotifierProvider needs
+`flutter_riverpod/legacy.dart` (prefer modern Notifier for new code);
+`valueOrNull` is gone — use `.value`.
+
+**Standing rule (Greg, in CLAUDE.md)**: any worker-facing web view change
+now requires a same-session Flutter update or a punch-list entry here.
+
 ## Watchouts
 - **Cold-start Riverpod race — MITIGATED, not fully fixed (c1_app
   013ada7, 2026-08-29)**: intermittent cold-boot red screen "Concurrent
