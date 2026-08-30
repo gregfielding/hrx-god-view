@@ -87,11 +87,22 @@ question). Android intent filters for the new pay routes still TODO.
   coverage, 9-word validation), 482 generated bilingual copy keys, plan +
   submit callables, full wizard screen incl. zero-delta confirm card;
   dashboard action items now deep-link into it. 10 unit tests.
-- Quick apply + acks gate + two-step signup parity (apply_screen is the
-  old wizard, 2521 lines — needs diff vs spec 02).
+- Quick apply + acks gate — ✅ SHIPPED 2026-08-29 (c1_app 4f29909 +
+  817d523): pure gates (quick_apply_gates.dart), submitQuickApplication
+  port (quick_apply_repository.dart — deliberately NOT ported:
+  jobScoreSummary, smart-group geo update, activity log), decision-tree
+  flow behind both job-detail CTAs, stable ?section= wizard jump,
+  wizard requirements step made gate-coherent (top-level
+  comfortablePass* writes + per-item additional-screening /
+  screening-package questions). REMAINING from this cluster: Maybe
+  option + Maybe-detail prompts in the wizard step, transport icon
+  chips, two-step signup parity, account-only wizard mode (route
+  exists but dead-ends).
 - Payroll help tickets; support assistant (support screen is static).
-- Foreground push display (NO onMessage handler — notifications while
-  foregrounded are dropped on Android).
+- Foreground push display — ✅ SHIPPED 2026-08-29 (c1_app c1136a2):
+  onMessage in-app toast + shared push→model mapper + root scaffold
+  messenger key; Android intent filters added for payroll/earnings/
+  prescreen/pay-history/payroll-settings deep links.
 - Nav parity decisions for Greg: labels (Dashboard/Find Work/My
   Assignments/My Account vs web Home/Find Shifts/Schedule/Profile),
   tab ORDER (app swaps Payroll/Profile), conditionally-hidden Payroll tab.
