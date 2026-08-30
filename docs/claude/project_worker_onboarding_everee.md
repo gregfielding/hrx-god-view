@@ -79,6 +79,22 @@
 > tax-forms-only session/experienceOptions. Full-native shelved unless the one embedded step
 > measurably loses workers.
 
+> **EVENTS DRAIN WAVE 1 SENT (2026-08-30, Greg-approved copy + pacing).** Fresh census: Events
+> 876 stuck `created` (was 860), Select 624/795 (78%) — Select intentionally deferred (I-9
+> document-set question with Piers outstanding; Events is 1099 = no I-9, sandbox contractor flow
+> verified clean). Wave 1 = 50 workers (all 35 with hours in last 60d prioritized), bilingual SMS
+> with per-worker `/c1/workers/payroll/{evereeTenantId}` link via `resolveWorkerOnboardingLink` +
+> `sendWorkerMessageInternal` (same rails as the manual "Resend payroll link" button; audit rows
+> in `onboarding_reminder_audit` source `events_drain_wave1`). Result: 49 sent (Twilio sampled
+> `delivered`), 1 correctly refused (smsOptIn=false). Filters held back: 152 no-address, 31
+> duplicate-phone, 22 orphaned-uid links, 7 bad phones — each needs its own repair pass before
+> those cohorts can be drained. Links stamped `drainWave: 1`; track conversions with
+> `.scratch/check-drain-wave-status.ts` (status flips created→onboarding_complete). Next waves:
+> scale to ~150/day if wave-1 conversion looks healthy after ~48h. ☠️ Script gotcha: the generic
+> `payrollInviteResend` path is dead for Everee entities (entity `payrollSettings` is null →
+> `not_applicable` skip) — Everee drains MUST use `resolveWorkerOnboardingLink`, not
+> `loadEntityPayrollInviteContext`.
+
 > Greg: workers "sign up with us and then have to sign up again with Everee — both need emails and
 > passwords; we ask last-4 SSN, Everee asks the whole thing." Compared unfavorably to Instawork /
 > Qwick. Greg + Mark independently concluded: **phone-number auth instead of email/password.**
