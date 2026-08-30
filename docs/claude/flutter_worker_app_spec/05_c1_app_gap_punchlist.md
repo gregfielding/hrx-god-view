@@ -111,16 +111,20 @@ question). Android intent filters for the new pay routes still TODO.
   screening deep links; theme alignment decision.
 
 ## Watchouts
-- **Cold-start Riverpod race — FIXED 2026-08-29 (c1_app 013ada7)**: the
-  debug app intermittently red-screened at cold boot (2 of 3 launches)
-  with "Concurrent modification during iteration:
-  _HashMap<ProviderElementBase, Object>". Cause: five side-effect
-  bootstrap providers ref.watch'ed inside `C1AppBootstrap.build`, wiring
-  their listen-graphs during the first build's element flush. Fix: a
-  one-shot post-frame `ref.read` (`_startSideEffectProviders`) — they're
-  non-autoDispose so they stay alive. 8 consecutive clean cold launches
-  after. If it EVER recurs, the next suspect is the appRouterProvider
-  chain still created in build.
+- **Cold-start Riverpod race — MITIGATED, not fully fixed (c1_app
+  013ada7, 2026-08-29)**: intermittent cold-boot red screen "Concurrent
+  modification during iteration: _HashMap<ProviderElementBase, Object>".
+  riverpod 2.6.1 internals: `_maybeRebuildDependencies` runs
+  `visitAncestors((e) => e.flush())` over `_dependencies` and a flush
+  can re-add to that map mid-iteration (element.dart:337/834). Mitigation
+  that helped a lot: side-effect bootstrap providers moved from
+  ref.watch-in-build to a one-shot post-frame ref.read
+  (`_startSideEffectProviders`). Frequency went from ~2-of-3 cold
+  launches to rare (11+ consecutive clean launches; one recurrence seen
+  after). ☠️ DO NOT retry the remount-on-error "self-healing root": in a
+  warm VM the remount re-races deterministically and strands the app on
+  a blank screen (tested, reverted). Durable fix: riverpod 3 migration
+  (2.6.1 is the last 2.x). Watch for it before TestFlight.
 - `.cursorrules` lies (freezed/Either/arb claims) — trust the map above.
 - `payrollEvereeAccessProvider` hides the Payroll tab until provisioning
   loads — new Home earnings strip must not depend on the tab being visible.
