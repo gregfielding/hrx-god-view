@@ -35,7 +35,25 @@
 - ✅ Action Items V2: entity/parser/repo/provider/section done behind
   `ENABLE_WORKER_ACTION_ITEMS_V2` (default false); i18n maps added.
 
-## Phase 1 build list (money + Home) — IN PROGRESS
+## ✅ Phase 1 SHIPPED 2026-08-29 (c1_app commits 8d830a9 + 37d464e)
+
+Everything below landed same-day: hub rebuild (auto-redirect removed,
+payday strip, recent pay, setup checklist, payment-issue banner), pay
+history + statement screens (NET headline), bank editing (BankAccountForm
++ sheet, ABA util, evereeAdminGetWorker write-through), embed preflight +
+bank-first card + bankPush notice + already-finished escape, Home hero +
+earnings strip + banner, ~50 EN/ES strings, routes + deep-link parser
+(/earnings aliases). Action Items V2 flag default ON. Dead everee sheets
+deleted; pay callables moved employment→payroll. 83/83 tests green.
+
+**Theme decision RESOLVED (Greg): black + gold.** design_tokens.dart now
+carries web workerTheme values (ink #111111, gold #FFC700, bg #FAFAF8,
+hairline #E6E6E3); white app bar with ink text; native splash regenerated
+#111111. `brandBlue` kept as a legacy ALIAS of ink (prefer `brandInk` in
+new code). Poppins font retained for now (web uses system stack — open
+question). Android intent filters for the new pay routes still TODO.
+
+## Phase 1 build list (original, for reference) — DONE
 1. Commit the May WIP + analyzer fix (it's coherent lint cleanup + the V2
    migration); flip V2 flag default → true (backend snapshots live in prod;
    web reads them today). Legacy resolver deletion stays deferred.
