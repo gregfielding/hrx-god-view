@@ -123,8 +123,16 @@ question). Android intent filters for the new pay routes still TODO.
   launches to rare (11+ consecutive clean launches; one recurrence seen
   after). ☠️ DO NOT retry the remount-on-error "self-healing root": in a
   warm VM the remount re-races deterministically and strands the app on
-  a blank screen (tested, reverted). Durable fix: riverpod 3 migration
-  (2.6.1 is the last 2.x). Watch for it before TestFlight.
+  a blank screen (tested, reverted). Bisect evidence (2026-08-29 late):
+  e1d1fbe boots clean 3/3 incl. first-after-install; 8c434f1+ reds on
+  the FIRST launch after a fresh `simctl install` (cold dyld/JIT caches
+  → slow first frame → wide race window) and is mostly clean on warm
+  relaunches — i.e. the race is PRE-EXISTING and timing-dependent; the
+  night's added code (~100KB copy strings + providers) widened the
+  window rather than introducing the bug. Release AOT timing differs,
+  but first-launch-after-install is exactly what a new worker does —
+  treat the riverpod 3 migration (2.6.1 is the last 2.x) as a Phase 2
+  blocker before TestFlight.
 - `.cursorrules` lies (freezed/Either/arb claims) — trust the map above.
 - `payrollEvereeAccessProvider` hides the Payroll tab until provisioning
   loads — new Home earnings strip must not depend on the tab being visible.
