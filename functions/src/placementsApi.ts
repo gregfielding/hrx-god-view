@@ -40,6 +40,7 @@ import {
   buildWorkerAssignmentUrl,
 } from './utils/workerUrls';
 import { assertWorkerHeadshotApproved } from './avatar/headshotAcceptGate';
+import { applyAppShiftConfirmation, applyAppShiftCancellation } from './cadence/appConfirmationWrites';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -95,7 +96,7 @@ const ONBOARDING_LIFECYCLE_CORE: HiringLifecycleCore = {
 //                   cancelled their application on the jobs board) →
 //                   distinct status 'worker-cancelled' so the jobs board
 //                   can offer "Re-apply to Shift".
-type AssignmentDecision = 'accept' | 'decline' | 'worker_cancel';
+type AssignmentDecision = 'accept' | 'decline' | 'worker_cancel' | 'cadence_confirm' | 'cadence_cancel';
 
 export function toDateOnly(value: any): string {
   if (!value) return '';
@@ -1642,8 +1643,13 @@ export const respondToAssignment = onCall(
     decision?: AssignmentDecision;
   };
 
-  if (!tenantId || !assignmentId || !decision || !['accept', 'decline', 'worker_cancel'].includes(decision)) {
-    throw new HttpsError('invalid-argument', 'tenantId, assignmentId, and decision (accept|decline|worker_cancel) are required');
+  if (
+    !tenantId ||
+    !assignmentId ||
+    !decision ||
+    !['accept', 'decline', 'worker_cancel', 'cadence_confirm', 'cadence_cancel'].includes(decision)
+  ) {
+    throw new HttpsError('invalid-argument', 'tenantId, assignmentId, and decision (accept|decline|worker_cancel|cadence_confirm|cadence_cancel) are required');
   }
 
   const uid = request.auth.uid;
@@ -1654,6 +1660,31 @@ export const respondToAssignment = onCall(
   const assignment = assignmentSnap.data() || {};
   if (assignment.userId !== uid && assignment.candidateId !== uid) {
     throw new HttpsError('permission-denied', 'This assignment does not belong to the current user');
+  }
+
+  // In-app shift-confirmation card (worker app Home, 2026-08-30): same
+  // effect as the SMS YES / CANCEL replies, written via the app-channel
+  // mirror of the cadence reply handler. Only touches cortConfirmation —
+  // never the assignment's own status (recruiters triage cancels).
+  if (decision === 'cadence_confirm' || decision === 'cadence_cancel') {
+    const cort = assignment.cortConfirmation as Record<string, unknown> | undefined;
+    const state = String(cort?.state || '').toLowerCase();
+    if (!cort) {
+      throw new HttpsError('failed-precondition', 'No shift confirmation is pending on this assignment.');
+    }
+    if (decision === 'cadence_confirm') {
+      // SMS parity: re-confirm is idempotent; only cancelled / checked_in block it.
+      if (state === 'cancelled' || state === 'checked_in') {
+        throw new HttpsError('failed-precondition', `Cannot confirm from state '${state}'.`);
+      }
+      await applyAppShiftConfirmation({ tenantId, assignmentId, uid });
+      return { ok: true, state: 'confirmed' };
+    }
+    if (state === 'cancelled' || state === 'checked_in') {
+      throw new HttpsError('failed-precondition', `Cannot cancel from state '${state}'.`);
+    }
+    await applyAppShiftCancellation({ tenantId, assignmentId, uid, assignment });
+    return { ok: true, state: 'cancelled' };
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
