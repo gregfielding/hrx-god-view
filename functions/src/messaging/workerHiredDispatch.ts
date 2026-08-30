@@ -8,6 +8,7 @@ import { sendMessage } from './routingOrchestrator';
 import { markLifecycleEventIfFirst } from './lifecycleDedupe';
 import { SYSTEM_TRIGGER_KEYS } from './triggerRegistry';
 import { workerTypeLabelForEntityKey, type WorkerTypeLanguage } from './workerTypeLabels';
+import { resolveWorkerOnboardingLink } from '../integrations/everee/resolveWorkerOnboardingLink';
 import { userIsInActiveMigration, MIGRATION_SUPPRESSION_LOG_TAG } from './migrationSuppress';
 
 const db = admin.firestore();
@@ -24,69 +25,155 @@ function plainEmailToHtml(text: string): string {
     .join('');
 }
 
-function renderSms(
-  lang: WorkerTypeLanguage,
-  vars: { firstName: string; workerTypeLabel: string; hiringEntityName: string },
-): string {
-  if (lang === 'es') {
-    return `¡Felicidades, ${vars.firstName}! Has sido oficialmente contratado(a) como ${vars.workerTypeLabel} en ${vars.hiringEntityName}. En breve te enviaremos un enlace para configurar tu nómina y completar tu incorporación — y, si el puesto lo requiere, otro para verificación de antecedentes o examen antidoping. ¡Bienvenido(a) al equipo!`;
+/** Brand name for SMS: legal entity minus the "LLC" tail ("C1 Events LLC" →
+ *  "C1 Events"). W-2 messages lead with the C1 Staffing brand; the legal
+ *  entity is named in the email so paystubs/W-2s match what workers were told
+ *  (Greg-approved classification copy, 2026-08-30). */
+function brandFromEntityName(entityName: string): string {
+  return entityName.replace(/,?\s*LLC\.?$/i, '').trim() || entityName;
+}
+
+interface HiredCopyVars {
+  firstName: string;
+  hiringEntityName: string;
+  isContractor: boolean;
+  /** Payroll/onboarding link resolved inline when possible; null → "watch for
+   *  the next message" fallback (the payroll invite automation still sends it). */
+  onboardingLink: string | null;
+}
+
+function renderSms(lang: WorkerTypeLanguage, vars: HiredCopyVars): string {
+  const brand = vars.isContractor ? brandFromEntityName(vars.hiringEntityName) : 'C1 Staffing';
+  const fn = vars.firstName;
+  if (vars.isContractor) {
+    if (lang === 'es') {
+      const next = vars.onboardingLink
+        ? `Siguiente paso: completa tu W-9 y la configuración de pago aquí (~2 min): ${vars.onboardingLink}`
+        : 'Siguiente paso: en nuestro próximo mensaje recibirás el enlace para tu W-9 y la configuración de pago.';
+      return `¡Felicidades ${fn}! ${brand} te ofrece trabajo como contratista independiente (1099). Tú eliges tus turnos y no se retienen impuestos de tu pago — tú te encargas de los tuyos. ${next}`;
+    }
+    const next = vars.onboardingLink
+      ? `Next step: complete your W-9 and payment setup here (takes ~2 min): ${vars.onboardingLink}`
+      : 'Next step: watch for our next message — it has your W-9 and payment setup link.';
+    return `Congrats ${fn}! ${brand} is offering you work as an independent contractor (1099). You pick your gigs, and no taxes are withheld from your pay — you handle your own. ${next}`;
   }
-  return `Congratulations, ${vars.firstName}! You're officially hired as an ${vars.workerTypeLabel} at ${vars.hiringEntityName}. We'll follow up shortly with a link to set up your payroll and onboarding — and, if your role requires it, a link for background checks or drug screens. Welcome to the team!`;
+  if (lang === 'es') {
+    const next = vars.onboardingLink
+      ? `Siguiente paso: completa tu W-4, I-9 y la configuración de pago aquí: ${vars.onboardingLink}`
+      : 'Siguiente paso: en nuestro próximo mensaje recibirás el enlace para tu W-4, I-9 y la configuración de pago.';
+    return `¡Felicidades ${fn}! ${brand} te contrata como empleado W-2 on-call. Se retienen impuestos de cada cheque. ${next}`;
+  }
+  const next = vars.onboardingLink
+    ? `Next step: complete your W-4, I-9, and payment setup here: ${vars.onboardingLink}`
+    : 'Next step: watch for our next message — it has your W-4, I-9, and payment setup link.';
+  return `Congrats ${fn}! ${brand} is hiring you as an on-call W-2 employee. Taxes are withheld from every paycheck. ${next}`;
 }
 
-function renderEmailSubject(lang: WorkerTypeLanguage, vars: { hiringEntityName: string }): string {
-  if (lang === 'es') return `Bienvenido(a) a ${vars.hiringEntityName} — ¡has sido contratado(a)!`;
-  return `Welcome to ${vars.hiringEntityName} — you're officially hired!`;
-}
-
-function renderEmailBody(
+function renderEmailSubject(
   lang: WorkerTypeLanguage,
-  vars: { firstName: string; workerTypeLabel: string; hiringEntityName: string },
+  vars: { hiringEntityName: string; isContractor: boolean },
 ): string {
+  const brand = vars.isContractor ? brandFromEntityName(vars.hiringEntityName) : 'C1 Staffing';
+  if (vars.isContractor) {
+    return lang === 'es'
+      ? `Estás aprobado(a) para trabajar eventos con ${brand} (contratista independiente)`
+      : `You're approved to work events with ${brand} (independent contractor)`;
+  }
+  return lang === 'es'
+    ? `Bienvenido(a) a ${brand} — estás contratado(a) como empleado(a) W-2 on-call`
+    : `Welcome to ${brand} — you're hired as an on-call W-2 employee`;
+}
+
+function renderEmailBody(lang: WorkerTypeLanguage, vars: HiredCopyVars): string {
+  const brand = vars.isContractor ? brandFromEntityName(vars.hiringEntityName) : 'C1 Staffing';
+  const linkLineEn = vars.onboardingLink
+    ? `Next step (about 2 minutes): ${vars.onboardingLink}`
+    : `Next step: watch for our next message — it has your setup link.`;
+  const linkLineEs = vars.onboardingLink
+    ? `Siguiente paso (unos 2 minutos): ${vars.onboardingLink}`
+    : `Siguiente paso: en nuestro próximo mensaje recibirás tu enlace de configuración.`;
+  if (vars.isContractor) {
+    if (lang === 'es') {
+      return [
+        `¡Felicidades, ${vars.firstName} — estás aprobado(a) para tomar turnos con ${brand}!`,
+        ``,
+        `Datos rápidos sobre cómo funciona:`,
+        ``,
+        `• Trabajarás como contratista independiente (1099) de ${vars.hiringEntityName} — no como empleado. Ese es el nombre que verás en tus pagos y en tu formulario de impuestos.`,
+        `• No se retienen impuestos de tu pago. Tú eres responsable de tus propios impuestos — muchos contratistas apartan el 15–20% de cada pago.`,
+        `• Si ganas $600 o más este año, recibirás un Formulario 1099 en enero.`,
+        `• Tú eliges qué turnos tomar. Ningún turno es obligatorio.`,
+        ``,
+        `${linkLineEs} Completa tu W-9 y la configuración de pago para que podamos pagarte.`,
+        ``,
+        `¿Preguntas? Responde a este mensaje o envíanos un texto — con gusto te explicamos.`,
+      ].join('\n');
+    }
+    return [
+      `Congrats, ${vars.firstName} — you're approved to pick up shifts with ${brand}!`,
+      ``,
+      `Quick facts about how this works:`,
+      ``,
+      `• You'll work as a 1099 independent contractor of ${vars.hiringEntityName} — not an employee. That's the name you'll see on your payments and your tax form.`,
+      `• No taxes are withheld from your pay. You're responsible for your own taxes — many contractors set aside 15–20% of each payment.`,
+      `• If you earn $600 or more this year, you'll receive a Form 1099 in January.`,
+      `• You choose which shifts to take. No shift is ever required.`,
+      ``,
+      `${linkLineEn} Complete your W-9 and payment setup so we can pay you.`,
+      ``,
+      `Questions about any of this? Reply here or text us — we're happy to explain.`,
+    ].join('\n');
+  }
   if (lang === 'es') {
     return [
-      `Hola ${vars.firstName},`,
+      `¡Bienvenido(a), ${vars.firstName} — estás contratado(a)!`,
       ``,
-      `¡Felicidades! Has sido oficialmente contratado(a) como ${vars.workerTypeLabel} en ${vars.hiringEntityName}. Nos alegra mucho tenerte en el equipo.`,
+      `Datos rápidos sobre cómo funciona:`,
       ``,
-      `Estos son los próximos pasos:`,
+      `• Eres empleado(a) W-2 on-call. Tu empleador registrado es ${vars.hiringEntityName} (parte de C1 Staffing) — ese es el nombre que verás en tus talones de pago y en tu W-2.`,
+      `• Los impuestos se retienen automáticamente de cada cheque, y recibirás un talón de pago por cada uno.`,
+      `• On-call significa que tomas turnos cuando se ofrecen — ningún turno está garantizado y puedes declinar.`,
+      `• Recibirás un Formulario W-2 en enero.`,
       ``,
-      `• En un mensaje aparte recibirás un enlace para configurar tu nómina y completar tu incorporación (formularios fiscales, depósito directo y formulario I-9 si aplica).`,
-      `• Si tu puesto lo requiere, también recibirás un enlace para completar una verificación de antecedentes o examen antidoping.`,
+      `${linkLineEs} Completa tu W-4, I-9 y la configuración de pago.`,
       ``,
-      `Si tienes alguna pregunta, solo responde — tu reclutador estará en contacto.`,
-      ``,
-      `¡Bienvenido(a) a bordo!`,
-      `El equipo de ${vars.hiringEntityName}`,
+      `¿Preguntas? Responde aquí o envíanos un texto cuando quieras.`,
     ].join('\n');
   }
   return [
-    `Hi ${vars.firstName},`,
+    `Welcome aboard, ${vars.firstName} — you're hired!`,
     ``,
-    `Congratulations! You've officially been hired as an ${vars.workerTypeLabel} at ${vars.hiringEntityName}. We're excited to have you on the team.`,
+    `Quick facts about how this works:`,
     ``,
-    `Here's what happens next:`,
+    `• You're an on-call W-2 employee. Your employer of record is ${vars.hiringEntityName} (part of C1 Staffing) — that's the name you'll see on paystubs and your W-2.`,
+    `• Taxes are withheld automatically from every paycheck, and you'll get a paystub for each one.`,
+    `• On-call means you pick up shifts when they're offered — no shift is guaranteed, and you can decline.`,
+    `• You'll receive a Form W-2 in January.`,
     ``,
-    `• In a separate message, you'll receive a link to set up your payroll and complete onboarding paperwork (tax forms, direct deposit, and I-9 if applicable).`,
-    `• If your role requires it, you'll also receive a link to complete a background check or drug screen.`,
+    `${linkLineEn} Complete your W-4, I-9, and payment setup.`,
     ``,
-    `If you have any questions, just reply — your recruiter will be in touch.`,
-    ``,
-    `Welcome aboard,`,
-    `The ${vars.hiringEntityName} team`,
+    `Questions? Reply here or text us anytime.`,
   ].join('\n');
 }
 
-function renderPushTitle(lang: WorkerTypeLanguage, vars: { hiringEntityName: string }): string {
-  if (lang === 'es') return `¡Bienvenido(a) a ${vars.hiringEntityName}!`;
-  return `Welcome to ${vars.hiringEntityName}!`;
+function renderPushTitle(
+  lang: WorkerTypeLanguage,
+  vars: { hiringEntityName: string; isContractor: boolean },
+): string {
+  const brand = vars.isContractor ? brandFromEntityName(vars.hiringEntityName) : 'C1 Staffing';
+  if (lang === 'es') return `¡Bienvenido(a) a ${brand}!`;
+  return `Welcome to ${brand}!`;
 }
 
-function renderPushBody(lang: WorkerTypeLanguage, vars: { workerTypeLabel: string }): string {
-  if (lang === 'es') {
-    return `Has sido oficialmente contratado(a) como ${vars.workerTypeLabel}. Revisa tus mensajes para los próximos pasos.`;
+function renderPushBody(lang: WorkerTypeLanguage, vars: { isContractor: boolean }): string {
+  if (vars.isContractor) {
+    return lang === 'es'
+      ? 'Estás aprobado(a) como contratista independiente (1099) — no se retienen impuestos de tu pago. Revisa tus mensajes para configurar tu pago.'
+      : "You're approved as an independent contractor (1099) — no taxes are withheld from your pay. Check your messages to set up payment.";
   }
-  return `You're officially hired as a ${vars.workerTypeLabel}. Check your messages for next steps.`;
+  return lang === 'es'
+    ? 'Estás contratado(a) como empleado(a) W-2 on-call — los impuestos se retienen de cada cheque. Revisa tus mensajes para los próximos pasos.'
+    : "You're hired as an on-call W-2 employee — taxes are withheld from every paycheck. Check your messages for next steps.";
 }
 
 export async function dispatchWorkerHired(args: {
@@ -160,13 +247,43 @@ export async function dispatchWorkerHired(args: {
   const workerTypeLabel = workerTypeLabelForEntityKey(entityKey, preferredLanguage);
   const workerTypeLabelEn = workerTypeLabelForEntityKey(entityKey, 'en');
   const workerTypeLabelEs = workerTypeLabelForEntityKey(entityKey, 'es');
+  const isContractor = String(entityKey || '').trim().toLowerCase() === 'events';
 
-  const smsBody = renderSms(preferredLanguage, { firstName, workerTypeLabel, hiringEntityName: entityName });
-  const emailSubject = renderEmailSubject(preferredLanguage, { hiringEntityName: entityName });
-  const emailPlain = renderEmailBody(preferredLanguage, { firstName, workerTypeLabel, hiringEntityName: entityName });
+  // Best-effort inline payroll/onboarding link so the hire message carries
+  // the W-9 / W-4+I-9 setup step directly (Greg-approved copy 2026-08-30).
+  // Never blocks the hire message — the payroll-invite automation still
+  // follows up with the link either way.
+  let onboardingLink: string | null = null;
+  try {
+    const resolved = await resolveWorkerOnboardingLink({
+      tenantId,
+      entityId,
+      pipelineId,
+      context: 'workerHiredDispatch',
+    });
+    onboardingLink = resolved.link || null;
+  } catch {
+    onboardingLink = null;
+  }
+
+  const copyVars: HiredCopyVars = {
+    firstName,
+    hiringEntityName: entityName,
+    isContractor,
+    onboardingLink,
+  };
+  const smsBody = renderSms(preferredLanguage, copyVars);
+  const emailSubject = renderEmailSubject(preferredLanguage, {
+    hiringEntityName: entityName,
+    isContractor,
+  });
+  const emailPlain = renderEmailBody(preferredLanguage, copyVars);
   const emailHtml = plainEmailToHtml(emailPlain);
-  const pushTitle = renderPushTitle(preferredLanguage, { hiringEntityName: entityName });
-  const pushBody = renderPushBody(preferredLanguage, { workerTypeLabel });
+  const pushTitle = renderPushTitle(preferredLanguage, {
+    hiringEntityName: entityName,
+    isContractor,
+  });
+  const pushBody = renderPushBody(preferredLanguage, { isContractor });
 
   const variables: Record<string, unknown> = {
     firstName,
