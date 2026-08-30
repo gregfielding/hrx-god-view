@@ -111,13 +111,16 @@ question). Android intent filters for the new pay routes still TODO.
   screening deep links; theme alignment decision.
 
 ## Watchouts
-- **Cold-start Riverpod race (seen once, 2026-08-29)**: on a heavily
-  loaded machine the debug app red-screened at boot with "Concurrent
-  modification during iteration: _HashMap<ProviderElementBase, Object>";
-  immediate relaunch was clean. Likely the `ref.watch(...Bootstrap...)`
-  cluster inside `C1AppBootstrap.build` racing async provider init on a
-  slow first frame. Not reproduced; if it recurs, move those bootstrap
-  watches out of the FutureBuilder builder.
+- **Cold-start Riverpod race — FIXED 2026-08-29 (c1_app 013ada7)**: the
+  debug app intermittently red-screened at cold boot (2 of 3 launches)
+  with "Concurrent modification during iteration:
+  _HashMap<ProviderElementBase, Object>". Cause: five side-effect
+  bootstrap providers ref.watch'ed inside `C1AppBootstrap.build`, wiring
+  their listen-graphs during the first build's element flush. Fix: a
+  one-shot post-frame `ref.read` (`_startSideEffectProviders`) — they're
+  non-autoDispose so they stay alive. 8 consecutive clean cold launches
+  after. If it EVER recurs, the next suspect is the appRouterProvider
+  chain still created in build.
 - `.cursorrules` lies (freezed/Either/arb claims) — trust the map above.
 - `payrollEvereeAccessProvider` hides the Payroll tab until provisioning
   loads — new Home earnings strip must not depend on the tab being visible.
