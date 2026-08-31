@@ -237,15 +237,26 @@ Deployed: `handleInboundSms`, `twilioInboundSmsWebhook`,
 
 **Still open from the same investigation** (ranked):
 
-1. **`no_show` cannot see clock-ins.** `assignment_noshow_check` reads ONLY
-   `cortConfirmation.state`, and the sole writer of `checked_in` is the
-   worker texting HERE (`cadenceReplyHandler` stamps `channel: 'sms'`).
-   `clockInUrl` is just a link in the message body — the engine never reads
-   timesheet data. 14-day production numbers: **65 `no_show` vs 14
-   `checked_in`**. A worker who shows up and clocks in normally but doesn't
-   text is flagged and pages a recruiter. This is why recruiters still
-   manually check timesheets every morning (see the gig tab of the
-   recruiting-process sheet) — the alert cries wolf.
+1. ~~**`no_show` cannot see clock-ins.**~~ **MUTED 2026-08-31** (`b4f32d55`).
+   Greg's framing is the correct one: *we have no real-time attendance
+   signal, so we cannot detect a no-show in real time.* The probe was
+   inferring one from absence of evidence — the only writer of `checked_in`
+   is the worker texting HERE (14 of 118 cadenced shifts in 14 days), and
+   timesheets arrive as BATCH imports well after the fact, so "just read the
+   clock-in data" would not have produced a real-time signal either.
+   Production: 65 `no_show` against 14 `checked_in`, all of them Aug 2026.
+   Now gated behind `messagingConfig/noShowDetection {enabled:true}`,
+   defaulting to muted and failing closed on a config read error. The probe
+   still runs and logs `noshow_check muted` with `wouldHaveFlaggedNoShow`, so
+   the false-positive rate stays measurable while the alert is off.
+   **Re-enabling needs a real attendance signal first** — a worker check-in
+   in the app (natural home: the shift card that already carries Confirm /
+   Can't make it) or a live clock-in feed. The flag alone reproduces the bug.
+   Leftover contamination: **65 assignment records still carry
+   `state: 'no_show'` and 67 carry `needsRecruiterAttention`** — not
+   backfilled, because we cannot tell the real no-shows from the false ones
+   without cross-referencing `timesheet_entries` for that worker + date.
+
 2. **No per-worker daily cap on cadence SMS.** Each assignment runs an
    independent ladder with nothing deduplicating across them. Note the
    shift-invite blast DOES have one — `tryClaimDailySmsSlot` in
