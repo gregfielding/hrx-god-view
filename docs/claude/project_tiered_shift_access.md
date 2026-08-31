@@ -93,6 +93,93 @@ demote to a recruiter-priority queue ([[project_signup_flow_review]]).
 - **Vocabulary doctrine** already shipped: approved ≠ booked; only assignments say
   "you're working."
 
+## ⚠️ The awareness layer — missing from the original brief (Greg, 2026-08-31)
+
+Greg, reading this brief back: *"If Tier 1 workers get first dibs on a job, then they
+need to be notified first. Currently we send new-shift updates to user groups set to
+auto-message on the job order, or manually blast everyone within 30 miles. It's
+conceivable a Tier 1 worker isn't in a group and lives 32 miles away — how would they
+be notified?"*
+
+He is right, and it is a real hole in this document. **This brief designs who may
+CLAIM a shift and when. It never designs who gets TOLD.** Phase 1 says Find Shifts
+*filters* by effective tier — that is pull. A release window nobody knows has opened is
+worth nothing, and "first dibs" a worker cannot perceive is not a benefit.
+
+### Why the 32-mile worker falls through
+
+Both existing mechanisms are **set-based push**: compute an audience (group members, or
+everyone within 30 mi) and send to all of it. Tiering is **rank-based**: order
+candidates by relationship quality and release in waves. Bolting one onto the other
+produces exactly this gap.
+
+The fix is one conceptual move: **distance and group membership stop being gates and
+become ranking inputs.** Three layers that are currently conflated:
+
+1. **Eligibility — hard gates only.** Classification/entity, credentials, DNR
+   (accountId + parentAccountId), separation (hiringEntityId), restricted-group
+   intersection. All already implemented (see `job_board_eligibility.dart`).
+   **Distance does not belong in this layer.**
+2. **Ranking — soft signals.** Effective tier (dominant term), affinity (worked this
+   account / this role / this venue before), reliability, and distance **as a cost, not
+   a cutoff**.
+3. **Delivery.** Which ranked band is told, when, on which channel.
+
+A Tier 1 worker at 32 miles then ranks above a Tier 3 at 5 miles. We never widen the
+radius; we stop treating radius as a boolean. Group membership likewise becomes a
+boost, not a door. **Wave 1's audience is simply "eligible workers whose effective tier
+for THIS account is 1"** — read from `workerTiers.accounts[accountId]`, which Phase 0
+already seeds from both user groups and historical assignments. Danny's Oakland Arena
+regulars qualify whether or not anyone put them in a group.
+
+### "How does this shift connect to them, vs 50 others posted nationally?"
+
+Two separate problems:
+
+- **Push.** A Tier-1 notification must be a *different message*, not the same blast
+  sent earlier. Name the venue they already know; state the exclusivity and the
+  deadline: *"You're first in line — Oakland Arena, Sat 6 PM, $24/hr. Yours to claim
+  until 8 PM."* If the copy doesn't say they have first dibs, the mechanic is invisible.
+- **Pull.** The app needs a **"For you"** surface distinct from "All shifts", ranked by
+  the same score, with a claim badge and a countdown. The other 50 shifts never enter
+  it because the worker isn't eligible for them.
+
+### ☠️ The daily SMS cap collides with wave-based release
+
+`tryClaimDailySmsSlot` (`functions/src/jobOrderAutoMessaging.ts`) caps shift-invite SMS
+at **one per worker per 24 h, globally and transactionally**. Against tiered waves that
+misfires badly: a worker invited to shift A this morning cannot be texted about shift B
+tonight — and workers who are Tier 1 at *several* accounts hit the cap first. **The cap
+would systematically silence exactly our best workers.** This is not a bug in the cap
+(it exists for good reason — see the 2026-08-31 over-texting incident in
+[[project_shift_confirmation_cadence]]); it is a genuine conflict between anti-spam and
+relevance, and it has to be resolved deliberately rather than discovered in production.
+
+Recommended resolution: **push for tier waves, SMS only for the open/fallback wave.**
+Push is uncapped, free, instant, and the app now exists. It also produces a strategic
+side effect worth engineering on purpose — *"install the app to get first dibs"* is an
+honest, concrete reason for a worker to install it. **Tiering supplies the carrot for
+app adoption, and app adoption supplies the uncapped channel tiering needs.** If SMS
+must carry a tier wave, digest it (one message, several shifts) rather than one send
+per shift.
+
+### ☠️ Phase 0 would compute Tier 1 = nobody at Oakland Arena
+
+Phase 0 derives reliability from "timesheet entries vs assignments". Two findings from
+2026-08-31 break that:
+
+- Attendance data is not trustworthy — there is **no real-time check-in signal** at all;
+  the no-show detector has been muted and 65 unfounded flags cleared
+  ([[project_shift_confirmation_cadence]]).
+- **Oakland Arena has zero timesheet coverage across 166 assignments.** A per-account
+  "completed shifts" count computed from timesheets therefore returns **0 for precisely
+  the crew that most deserves Tier 1**.
+
+So: compute completed-shift counts from **assignments**, never timesheets, and treat
+**recruiter curation as the primary Tier-1 seed** with computation as an additive path.
+That is also the fastest route — Danny's and Rosa's lists make Tier 1 real on day one,
+with no dependency on attendance data we do not yet have.
+
 ## Integration plan (phased, each phase independently shippable)
 
 **Phase 0 — reliability + tier computation (server, no UI).**
@@ -110,7 +197,9 @@ Shift posting gains a tier schedule (defaults: Tier 1 at post, Tier 2 +12h, Tier
 +24h; per-post editable; "everyone now" remains one click for fire drills). Claim =
 existing hire path creating a confirmed assignment, capacity-capped; waitlist beyond
 capacity with auto-promote on drops. Find Shifts filters by the worker's effective
-tier vs the shift's clock. Recruiters can still place anyone manually at any time —
+tier vs the shift's clock — and **each wave opening must also PUSH** to that wave's
+ranked audience (see the awareness-layer section above; pull alone leaves the
+window invisible). Recruiters can still place anyone manually at any time —
 tiering gates *self-serve claiming*, never recruiter action.
 
 **Phase 2 — worker-facing transparency.**
@@ -137,6 +226,13 @@ overbook margins per venue, waitlist SMS ("a spot opened for Saturday").
 3. Worker-facing status names — "Crew / Pro / Member"? Avoid exposing "Tier 3".
 4. Does Tier-1 auto-book need per-worker opt-in (Greg's parked designation implies
    recruiter-designated, worker-consented)?
+6. **Channel split for tier waves** — push-only for Tier 1/2 with SMS reserved for the
+   open wave (recommended above), or tier-aware SMS caps? This decision unblocks the
+   rest of the awareness layer.
+7. **Ranking weights** — how much does distance cost relative to one tier step? Tier 1
+   at 40 miles vs Tier 2 at 5: who hears first, and does that flip for a 6 AM shift?
+8. **Wave audience size** — release to ALL of Tier 1, or the top N by rank? All of
+   Tier 1 is simpler and likely right for venue crews; top-N matters once crews grow.
 5. Sequencing vs the roster board — Phase 0+1 don't depend on it, but Phase 3's crew
    curation is much better WITH it. Build order opinion wanted.
 
