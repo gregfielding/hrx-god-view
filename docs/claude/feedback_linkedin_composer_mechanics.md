@@ -100,3 +100,32 @@ the invite goes out bare.
 
 - Sends are lost unless the session stamps: [feedback_linkedin_unstamped_session.md](feedback_linkedin_unstamped_session.md)
 - Queue/ICP/skip semantics: the `linkedin-daily-session` scheduled task
+
+## Re-screenshot before clicking Send too, not just before typing (2026-08-31)
+
+The typed message *grows the box upward*, so Send does not stay where it was
+when the composer opened — a 5–6 line message lifts the whole footer by a few
+pixels. Clicking the pre-typing Send coordinate misses and fails silently, and
+the failure then cascades:
+
+- clicking the composer X with text still in the box raises a
+  **"Leave? / Are you sure you want to discard this message?"** modal
+  (Cancel ~(794, 306), Discard ~(880, 306)) — hit **Cancel**, then Send at the
+  coordinate from the *current* screenshot;
+- a `navigate` while that text is pending is rejected outright with
+  `Navigation was blocked by a "Leave site?" dialog`, which aborts the rest of
+  the batch mid-cycle.
+
+So the safe cycle is two calls per contact, not one: **(1)** click Message,
+wait, click box, type, screenshot; **(2)** click Send *from that screenshot*,
+wait, screenshot to confirm, close, navigate to the next profile, screenshot.
+Batching type-then-Send blind into a single call is what triggers both traps
+above. Confirmed over 25 sends on 2026-08-31.
+
+## Screenshot-confirm the *composer header*, not just the profile
+
+The composer header shows "Name · 1st" plus the live headline, so the same
+screenshot that verifies the typed text also verifies you are messaging the
+right person with a current title. That caught two #OPENTOWORK contacts
+(Clifford O'Rear, John Elstro) and three stale CRM titles on 2026-08-31 without
+any extra profile loads.
