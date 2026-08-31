@@ -85,6 +85,12 @@ const QboClassesPage: React.FC = () => {
   const [joOptions, setJoOptions] = useState<JoOption[]>([]);
   const [acctOptions, setAcctOptions] = useState<AcctOption[]>([]);
   const [lens, setLens] = useState<'classes' | 'tree'>('classes');
+  // Date range for activity columns (Greg 2026-08-31, mid accounting
+  // meeting): was hardcoded YTD; the callable always took arbitrary dates.
+  // Changing a date does NOT auto-reload (the report can take minutes) —
+  // pick dates, then Refresh.
+  const [startDate, setStartDate] = useState(yearStartIso());
+  const [endDate, setEndDate] = useState(todayIso());
   // Map dialog state.
   const [mapTarget, setMapTarget] = useState<ClassRow | null>(null);
   const [mapKind, setMapKind] = useState<MapKind>('job_order');
@@ -104,8 +110,8 @@ const QboClassesPage: React.FC = () => {
       const fn = httpsCallable(functions, 'getPayrollCostReport', { timeout: 300000 });
       const res = await fn({
         tenantId,
-        startDate: yearStartIso(),
-        endDate: todayIso(),
+        startDate,
+        endDate,
         includeClassCatalog: true,
       });
       const d = res.data as { classCatalog: CatalogData | null; classCatalogError: string | null };
@@ -376,6 +382,24 @@ const QboClassesPage: React.FC = () => {
             <Button variant="contained" onClick={() => void load()} disabled={loading}>
               {loading ? 'Loading…' : 'Refresh'}
             </Button>
+            <TextField
+              label="From"
+              type="date"
+              size="small"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              sx={{ width: 160 }}
+            />
+            <TextField
+              label="To"
+              type="date"
+              size="small"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              sx={{ width: 160 }}
+            />
             <Button variant="outlined" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
               Add class (creates in QBO)
             </Button>
@@ -421,8 +445,8 @@ const QboClassesPage: React.FC = () => {
               <TableHead>
                 <TableRow sx={{ bgcolor: 'grey.50' }}>
                   <TableCell sx={{ fontWeight: 600 }}>{lens === 'tree' ? 'Account / class' : 'QBO class'}</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 600 }}>Billed (YTD)</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 600 }}>Expenses (YTD)</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 600 }}>Billed</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 600 }}>Expenses</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>Mapped to</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>Actions</TableCell>
                 </TableRow>
