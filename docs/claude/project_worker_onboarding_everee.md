@@ -1,5 +1,50 @@
 # Worker onboarding + Everee without the embedded widget — investigation (2026-08-21)
 
+> **2026-08-31 — ☠️ THE 48h WAVE GATE IS WRONG. Onboarding takes WEEKS, not days.**
+> Re-count before scheduling EV-1 (Greg's ask), and it corrected two things this doc previously
+> implied.
+>
+> **Completion curve, measured on August-invited C1 Events workers who finished (n=213):**
+> median **6.8 days** invite→complete, p75 16.9d, p90 **22.7d**. Only **15% finish within 1 day**,
+> 30% within 3, 51% within 7. Nothing about this process resolves in 48 hours.
+>
+> - **Therefore drain-wave conversion CANNOT be judged at 48h** (the gate written in the
+>   2026-08-30 wave-1 entry below). Wave 1 sent 2026-08-30 08:58 PT; at 31h it showed 1/50 (2%),
+>   which is roughly what a normal-but-modest conversion looks like that early — NOT evidence of
+>   failure. Judge a wave at **~7 days minimum**, ideally 14. Scaling to 150/day on a 48h read is
+>   deciding on noise.
+> - **"The backlog replenishes ~100/month" is FALSE** — an artifact of measuring a cohort before
+>   it has had time to complete. Of the 113 August-invited links sitting at `created`, **107 are
+>   still inside the p90 completion window** and only **6** are genuinely beyond it. August is
+>   leaking ~6, not ~113. Any month-over-month stuck count taken less than ~23 days after invite
+>   overstates the leak, badly.
+>
+> **Census 2026-08-31**: Events **876** stuck / 3,043 (29%), Select **624** / 795 (78%, still
+> deferred on the I-9 document-set question with Piers). 1,500 total. Events 860 → 876 is cohort
+> aging, not new breakage.
+>
+> **The recruiter-proxy hypothesis does NOT hold for the August cohort.** Comparing the 113
+> stalled against the 213 completed, every data-quality marker in "Why recruiter-proxied
+> onboarding backfires" (below) either fails to discriminate or points the wrong way:
+>
+> | marker | stalled | completed |
+> |---|---|---|
+> | no home address | 3% | **12%** |
+> | shared phone | 2% | 0% |
+> | shared email | 0% | 0% |
+> | smsOptIn false | 2% | 1% |
+>
+> The stalled cohort is *cleaner* than the completed one, and origin mix is near-identical
+> (phone_signup 38% vs 30%, public_jobs_board 57% vs 55%). Whatever produced the legacy pile is
+> not operating now — **August completion is 65% and still climbing** as in-flight links land.
+> Do not carry the recruiter-proxy explanation forward to recent cohorts without re-testing it.
+>
+> **What this means for EV-1**: it IS a bounded legacy cleanup, not a moving leak — there is no
+> source problem to fix first. The real drain target is **May (231) + June (172) = 403 links**,
+> all 60+ days past invite and unambiguously cold. Sizing note: only 598 of the 876 stuck links
+> can be dated at all (via `worker_payroll_accounts` invite stamps — `everee_workers` docs carry
+> NO usable date field); the other 278 are the true undated legacy bulk.
+
 > **2026-08-28 — widget punch-list audit DONE** (Greg's pre-removal ask, OnTrac-driven; artifact
 > https://claude.ai/code/artifact/7d3e1400-e182-4180-a137-128722d43c87). Key findings on top of the
 > 2026-08-21 investigation below:
