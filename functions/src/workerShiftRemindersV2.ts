@@ -200,6 +200,48 @@ async function getDebugOverrideMinutes(tenantId: string): Promise<number[] | nul
   }
 }
 
+/**
+ * Is automated no-show detection allowed to flip state / page recruiters?
+ *
+ * MUTED BY DEFAULT since 2026-08-31 (Greg).
+ *
+ * We have no real-time attendance signal, so we cannot detect a no-show in
+ * real time — the probe was inferring one from absence of evidence. The only
+ * writer of `checked_in` is the worker texting HERE, which almost nobody does
+ * (14 of 118 cadenced shifts over the preceding 14 days), and timesheets
+ * arrive as batch imports well after the fact. Result: 65 `no_show` against
+ * those 14 check-ins. Workers who showed up on time were flagged and paged a
+ * recruiter, which is why recruiters stopped trusting the alert and built a
+ * manual morning timesheet sweep instead. The bad `no_show` writes also
+ * poison the reliability data that tiered shift access is meant to run on.
+ *
+ * While muted the probe still runs and LOGS what it would have done
+ * (`noshow_check_muted`, with the state it would have flipped from), so the
+ * false-positive rate can be measured before re-enabling.
+ *
+ * Re-enabling requires a real attendance signal first — a worker-facing
+ * check-in in the app (the natural home is the shift card that already
+ * carries Confirm / Can't make it) or a live clock-in feed. A config flag
+ * alone is NOT sufficient; turning this on without that signal reproduces
+ * exactly the failure above:
+ *   tenants/{tenantId}/messagingConfig/noShowDetection  { enabled: true }
+ */
+async function isNoShowDetectionEnabled(tenantId: string): Promise<boolean> {
+  if (!tenantId) return false;
+  try {
+    const snap = await db.doc(`tenants/${tenantId}/messagingConfig/noShowDetection`).get();
+    if (!snap.exists) return false;
+    return (snap.data() as Record<string, unknown>)?.enabled === true;
+  } catch (err) {
+    // Fail closed: a config read failure must not resurrect the noisy alert.
+    logger.warn('[worker_shift_reminders] noShowDetection config read failed; staying muted', {
+      tenantId,
+      error: String(err),
+    });
+    return false;
+  }
+}
+
 function normalize(value: unknown): string {
   return String(value ?? '').trim();
 }
@@ -1218,6 +1260,34 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   //                     safety; recruiter would rather get a false ping than
   //                     miss a real no-show.
   if (reminder.reminderType === 'assignment_noshow_check') {
+    // Muted (see isNoShowDetectionEnabled): dismiss without flipping state or
+    // paging anyone, but log what we WOULD have done so the false-positive
+    // rate is measurable from logs while the alert is off.
+    if (!(await isNoShowDetectionEnabled(reminder.tenantId))) {
+      await docSnap.ref.update({
+        status: 'sent',
+        sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        assignmentStatusSnapshot: assignmentStatus || reminder.assignmentStatusSnapshot,
+        delivery: {
+          inbox: { attemptedAt: nowTs, success: true, error: 'noshow_check_muted' },
+        },
+        cancelReason: admin.firestore.FieldValue.delete(),
+        lastError: admin.firestore.FieldValue.delete(),
+        lock: admin.firestore.FieldValue.delete(),
+      });
+      logger.info('[worker_shift_reminders] noshow_check muted', {
+        assignmentId: reminder.assignmentId,
+        userId: reminder.workerId,
+        reminderType: canonicalReminderType,
+        cortState,
+        // What the un-muted probe would have done with this state.
+        wouldHaveFlaggedNoShow: cortState !== 'checked_in' && cortState !== 'no_show' && cortState !== 'cancelled',
+        reason: 'no_realtime_checkin_signal',
+      });
+      return;
+    }
+
     if (cortState === 'checked_in' || cortState === 'no_show') {
       // Already resolved (worker arrived, or recruiter was already alerted by
       // an earlier pass and the state stuck). Dismiss silently.
