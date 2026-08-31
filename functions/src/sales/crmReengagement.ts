@@ -28,6 +28,7 @@ import * as admin from 'firebase-admin';
 
 import { ensureInternalStaff, gmailClientFor } from './sodexoReplies';
 import { isSuppressed, loadSuppressions } from './outreachSuppressions';
+import { buildMimeMessage } from './mimeHeaders';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -89,14 +90,9 @@ function template(touch: number, firstName: string, company: string): { subject:
 }
 
 function buildMime(from: string, to: string, subject: string, body: string): string {
-  const msg =
-    `From: Greg Fielding <${from}>\r\n` +
-    `To: ${to}\r\n` +
-    `Subject: ${subject}\r\n` +
-    `MIME-Version: 1.0\r\n` +
-    `Content-Type: text/plain; charset="UTF-8"\r\n\r\n` +
-    body;
-  return Buffer.from(msg).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  // Subjects are ASCII today, but they interpolate CRM company names — one
+  // accented name and this would mojibake the same way sodexoOutreach did.
+  return buildMimeMessage({ fromName: 'Greg Fielding', fromEmail: from, to, subject, body });
 }
 
 interface Candidate {
