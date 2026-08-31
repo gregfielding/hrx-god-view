@@ -269,3 +269,31 @@ Also observed: much of the historical `never_asked` state is **backfilled
 assignments materialized after their start date**, not a coverage gap —
 don't read that number as broken automation without checking `createdAt`
 against `startDate` first.
+
+### 2026-08-31 — the 65 no_show flags were cleared
+
+Cross-referencing them against `timesheet_entries` could not adjudicate a
+single one, for a reason worth remembering: **all 65 came from one account —
+Legends Global / Oakland Arena** (Usher, Ticket Taker, Wardrobe Attendant,
+Elevator Attendant), and that venue has **166 assignments and ZERO timesheet
+entries**. The join itself is sound (60/60 non-flagged August assignments
+matched a timesheet; Kelly Idarraga has 15 timesheets all time, all
+`sent_to_everee` with real hours, all from a different job order). So the
+flags cluster perfectly on the one venue that records no attendance data of
+any kind — which is also why nothing ever stamped `checked_in` there.
+
+Cleared anyway (Greg's call, and the right one): a conclusion produced by a
+process with no valid input is not evidence. Of the 65, **38 had explicitly
+confirmed** ("YES") before being flagged a no-show.
+
+Each record now carries `cortConfirmation.clearedNoShow` — `previousState`,
+`restoredTo`, `clearedAt`, `clearedBy`, and the reason — and state was
+restored to the detector's own recorded `priorState` (38 confirmed, 27
+pending). Reversible from that audit block. `needsRecruiterAttention` went
+67 → 2. **If tiered shift access ever consumes attendance data, ignore
+everything before the detector was muted.**
+
+**Unresolved and possibly material**: those 166 Legends Global assignments
+have no timesheet entries at all. Either that work is billed through
+Legends' own system, or it is unbilled revenue plus workers whose hours
+never reached payroll. Not yet checked — flagging, not concluding.
