@@ -27,6 +27,7 @@ import * as admin from 'firebase-admin';
 import type { gmail_v1 } from 'googleapis';
 
 import { gmailClientFor, ensureInternalStaff } from './sodexoReplies';
+import { sweepVenueSmartPoEmails } from '../integrations/quickbooks/venuesmartPoClasses';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -503,6 +504,27 @@ export const inboxTriageCron = onSchedule(
     const cfg = await db.doc(CFG_PATH(PRIMARY_TENANT)).get();
     if (cfg.exists && cfg.get('enabled') === false) return;
     await triageInboxCore(PRIMARY_TENANT);
+    // VenueSmart PO → QBO class sweep (Greg 2026-08-31). Rides this cron
+    // instead of its own function (Cloud Run services cap). Failure here
+    // must never break triage.
+    if (!cfg.exists || cfg.get('venuesmartPoSweep') !== false) {
+      try {
+        const client = await gmailClientFor(PRIMARY_TENANT);
+        if (client) {
+          const res = await sweepVenueSmartPoEmails({ tenantId: PRIMARY_TENANT, gmail: client.gmail });
+          if (res.scanned > 0) {
+            logger.info('[inbox_triage] venuesmart PO sweep', {
+              scanned: res.scanned,
+              created: res.created.length,
+              matchedExisting: res.matchedExisting.length,
+              skipped: res.skipped,
+            });
+          }
+        }
+      } catch (err) {
+        logger.error('[inbox_triage] venuesmart PO sweep failed', { error: String(err) });
+      }
+    }
   },
 );
 
