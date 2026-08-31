@@ -180,6 +180,120 @@ So: compute completed-shift counts from **assignments**, never timesheets, and t
 That is also the fastest route — Danny's and Rosa's lists make Tier 1 real on day one,
 with no dependency on attendance data we do not yet have.
 
+## ✅ AGREED SPEC — Greg + Danny + Rosa + Mark, 2026-08-31
+
+This supersedes the exploratory model above where they differ. Recruiters were
+consulted directly; these are decisions, not proposals.
+
+### Tier assignment
+
+- **Everyone starts Tier 3** (general population). New signups start Tier 3.
+- **Recruiters promote manually**, 3→2 or 3→1, from within user groups.
+- **AI "Tier Score"** reviews Tier 3s for promotion to **Tier 2 only** (never
+  straight to 1). Inputs: interview scoring, resume upload, profile
+  completeness, qualifications, and app download/usage. **Be picky.**
+  - App-usage input **takes effect 2026-10-01**, not before — at launch nobody
+    has the app and it would suppress every promotion.
+  - App usage is a **light thumb on the scale, not a major term.** It
+    correlates with owning a current smartphone; given the AEDT note above,
+    keep it minor and defensible.
+- **Automatic movement** (both directions, no human in the loop):
+  - **40 hours worked with no penalized no-show → up one tier.**
+  - **One penalized no-show → down one tier.**
+  - **40 hours restores** the original tier. The counter **resets to zero** on
+    demotion.
+
+### User groups = notification groups
+
+Groups are *not* the tier. They are who gets SMS/push when a job order
+publishes new shifts — which is what they already do today. Their new job is to
+be **the recruiter's to-do list**: work through the members of your commonly
+used groups and promote the ones who have earned it.
+
+### Notification schedule (all offsets from PUBLISH)
+
+| When | Who |
+|---|---|
+| T+0 | Tier 1 |
+| T+8h | Tier 1, second notification |
+| T+10h | Tier 2 **+ any unassigned Tier 1** |
+| T+24h | Tier 3 **+ any unassigned Tier 1 and Tier 2** |
+
+Jobs-board visibility follows the same clock: Tier 1 immediately, Tier 2 at
++10h, Tier 3 at +24h.
+
+☠️ **Volume.** An unassigned Tier 1 receives **four touches per shift**. Five
+eligible shifts published in a day is twenty notifications — the Kelly Idarraga
+over-texting incident, doubled, by design rather than by bug.
+**SMS must be throttled and digested** (`tryClaimDailySmsSlot` already caps
+invites at 1/worker/24h, so on SMS the ladder silently collapses to one message
+anyway). Push is instant and unlimited per Greg. Noted risk, Greg's call:
+spammed iOS users revoke notification permission outright and essentially never
+re-grant it, which would cost the T+0 Tier-1 channel permanently — a digest
+("3 shifts you're first in line for") protects the channel without a cap.
+
+Later waves must **exclude workers already confirmed for an overlapping
+shift** — "unassigned" means *not booked at that time*, not *not booked on this
+shift*. Mechanism still to be worked out.
+
+### Claiming
+
+**Claim Shift** → confirmation toast (uniform / transportation / will be there
+on date+time) → confirm → **immediately CONFIRMED**. No Pending, Applied, or
+Accepted. The only states are **CONFIRMED / Cancelled / No-Show**.
+
+Claim must be **transactional against remaining capacity**. There is no
+waitlist state left in the model, so the loser of a race gets an honest
+message — *"this shift just filled"* — not a state.
+
+### Exception: Open shifts
+
+Open shifts **post immediately and are visible to everyone until filled**, with
+no tier gating. They keep the **existing Apply button and Applied state** — no
+Claim button. Their purpose is to feed the "feeder" user group, whose members
+then receive real shift notifications when actual orders land.
+
+### No-shows and penalties
+
+On the **timesheet entry layout**, where hours are missing, the recruiter marks
+**No-Show with Penalty** or **No-Show No Penalty**. Unmarked items are swept
+**Friday night to No-Show *No* Penalty** — defaulting to not punishing, so the
+team chooses whom to penalize rather than the system choosing by default.
+
+A penalized worker **is told**: they've been penalized for a no-show and may
+see fewer shifts as a result. 40 clean hours restores their tier.
+
+☠️ **Scope the Friday sweep by import, not by assignment.** Claiming creates an
+**assignment**; it does **not** create a timesheet row. There is no
+assignment→timesheet materializer — entries come only from
+`createDraftTimesheetEntryCallable` (manual) or the import pipeline
+(`saveImportTimesheetRows` / `submitImportTimesheetBatch` /
+`importTimesheetMatchWorkers`, ingesting a client's timesheet file). Over the
+60 days to 2026-08-31: 2,962 assignments, **2,083 with a timesheet (70%)**,
+**63 zero-hour** (the true review candidates, ~8/week — very manageable), and
+**879 with no row at all (30%)**.
+
+Therefore: **the sweep applies only to assignments whose (account, week) had a
+timesheet import actually processed.** Where no import landed, assignments are
+out of scope — not reviewed, not defaulted, not recorded. Without this rule the
+Friday sweep stamps ~879 people as no-shows, which is the 65-flag incident at
+13× scale, and now worker-visible.
+
+### 🚩 Unresolved: hours-based movement stalls where imports don't land
+
+The 40-hour rule runs on imported hours. Four Oakland Arena job orders (Usher,
+Ticket Taker, Wardrobe Attendant, Elevator Attendant) have **166 assignments and
+zero timesheet rows** — re-verified by worker+date, not just jobOrderId.
+Account-wide Legends Global is at 74%, so this is specific to those four.
+
+Greg 2026-08-31: cause unknown; the historical pile will be cleared Friday and
+ignored. That resolves the backlog. It does **not** resolve the ongoing flow:
+until those job orders produce timesheets, **Danny's Oakland Arena crew
+accumulates zero hours forever and can never be promoted** — the people the
+tier system exists to reward are invisible to the mechanic that rewards them.
+Either Legends starts sending those hours, or hours-based movement needs a
+fallback (count completed **assignments** where no import exists).
+
 ## Integration plan (phased, each phase independently shippable)
 
 **Phase 0 — reliability + tier computation (server, no UI).**
