@@ -204,3 +204,57 @@ feeding [[project_tiered_shift_access]].
 
 Related: [[project_sms_audit_2026_08]], [[project_open_shift_feature]],
 [[project_tiered_shift_access]].
+
+---
+
+## 2026-08-31 — reply routing bug (FIXED, deployed)
+
+**Symptom** (reported by Danny, worker Kelly Idarraga): 12 SMS in a rolling
+day, three "Si" replies, a "last reminder — we may reassign your shift"
+23 min AFTER she confirmed, a false `no_show`, and then a job-invite blast
+for the shift she was working.
+
+**Root cause**: `pickPendingCadence` sorted candidates by start time only,
+so a worker holding TWO pending shifts on one day had every reply bound to
+the EARLIER shift. The later shift's escalation ladder was never cancelled
+(the cancel code itself was correct — it ran on the wrong assignment), so
+it kept asking. She had 1:00 PM and 6:00 PM Usher shifts from two different
+job orders; each ran its own independent 7–9 step ladder.
+
+**Fix** (`db23873f`): the reminder engine stamps
+`cortConfirmation.lastAskedAt` whenever a `CONFIRMATION_ASK_REMINDER_TYPES`
+reminder sends; reply lookups now prefer the most-recently-asked shift and
+fall back to earliest-start only when nothing has been asked. Receipts now
+name the shift ("Aug 30, 6:00 PM") — built from the raw `startDate` /
+`startTime` strings, because **assignments carry no `timezone` field** and
+real conversion would relabel an 18:00 gig as 1:00 AM. A YES on an
+already-confirmed shift now says "you were already confirmed" instead of
+repeating the receipt verbatim. Regression tests in
+`src/cadence/__tests__/cadenceReplyRouting.test.ts`.
+
+Deployed: `handleInboundSms`, `twilioInboundSmsWebhook`,
+`dispatchScheduledWorkerReminders`, `onAssignmentConfirmedScheduleReminders`.
+
+**Still open from the same investigation** (ranked):
+
+1. **`no_show` cannot see clock-ins.** `assignment_noshow_check` reads ONLY
+   `cortConfirmation.state`, and the sole writer of `checked_in` is the
+   worker texting HERE (`cadenceReplyHandler` stamps `channel: 'sms'`).
+   `clockInUrl` is just a link in the message body — the engine never reads
+   timesheet data. 14-day production numbers: **65 `no_show` vs 14
+   `checked_in`**. A worker who shows up and clocks in normally but doesn't
+   text is flagged and pages a recruiter. This is why recruiters still
+   manually check timesheets every morning (see the gig tab of the
+   recruiting-process sheet) — the alert cries wolf.
+2. **No per-worker daily cap on cadence SMS.** Each assignment runs an
+   independent ladder with nothing deduplicating across them. Note the
+   shift-invite blast DOES have one — `tryClaimDailySmsSlot` in
+   `jobOrderAutoMessaging.ts`, transactional, 24h global — and its comment
+   describes exactly this failure mode. Mirror it for the cadence.
+3. **Invite blasts don't exclude already-assigned workers.** The 24h cap
+   works; there's no "already working this job order" exclusion.
+
+Also observed: much of the historical `never_asked` state is **backfilled
+assignments materialized after their start date**, not a coverage gap —
+don't read that number as broken automation without checking `createdAt`
+against `startDate` first.
