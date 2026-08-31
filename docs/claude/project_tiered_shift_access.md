@@ -279,20 +279,34 @@ out of scope — not reviewed, not defaulted, not recorded. Without this rule th
 Friday sweep stamps ~879 people as no-shows, which is the 65-flag incident at
 13× scale, and now worker-visible.
 
-### 🚩 Unresolved: hours-based movement stalls where imports don't land
+### ✅ Resolved: hours DO arrive — they just lag by days
 
-The 40-hour rule runs on imported hours. Four Oakland Arena job orders (Usher,
-Ticket Taker, Wardrobe Attendant, Elevator Attendant) have **166 assignments and
-zero timesheet rows** — re-verified by worker+date, not just jobOrderId.
-Account-wide Legends Global is at 74%, so this is specific to those four.
+An earlier draft of this section claimed four Oakland Arena job orders had zero
+timesheet coverage and that Danny's crew could therefore never be promoted.
+**That was wrong** and is retracted; see [[project_shift_confirmation_cadence]]
+for the root error (an assignment doc-id prefix is a `shiftId`, not a
+`jobOrderId`).
 
-Greg 2026-08-31: cause unknown; the historical pile will be cleared Friday and
-ignored. That resolves the backlog. It does **not** resolve the ongoing flow:
-until those job orders produce timesheets, **Danny's Oakland Arena crew
-accumulates zero hours forever and can never be promoted** — the people the
-tier system exists to reward are invisible to the mechanic that rewards them.
-Either Legends starts sending those hours, or hours-based movement needs a
-fallback (count completed **assignments** where no import exists).
+Corrected picture: Legends Global / Oakland Arena is ONE job order
+(`Nx0abe5F6tOUBevOX8eO`), **91% timesheeted** (912/1,004 assignments). Danny
+enters their paper timesheets on Tuesdays for that week's payroll. The 166
+"missing" assignments were simply the preceding weekend, not yet keyed.
+
+**The real design constraint this exposes** (Greg, 2026-08-31): with a draft row
+per assignment, *not yet entered* and *worked zero hours* are the same value.
+A shift from last Saturday that Danny hasn't reached looks identical to a
+no-show. So hours alone can never drive the Friday sweep.
+
+**The signal must be a human completion marker, not the hours.** Danny finishes
+his Tuesday pass and marks that (account, week) as entered; only then do its
+zero-hour rows become reviewable. Until he marks it, nothing in that week
+sweeps and nothing is defaulted. One checkbox in a workflow he already runs,
+and it makes false no-shows structurally impossible rather than merely unlikely.
+
+Corollary for the 40-hour rule: hours are correct but **late**. Tier movement
+must be computed on a lag (recompute weekly, after the entry window) rather than
+nightly, or workers appear to lose progress they have simply not been credited
+for yet.
 
 ## Integration plan (phased, each phase independently shippable)
 

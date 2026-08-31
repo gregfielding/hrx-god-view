@@ -293,7 +293,25 @@ pending). Reversible from that audit block. `needsRecruiterAttention` went
 67 → 2. **If tiered shift access ever consumes attendance data, ignore
 everything before the detector was muted.**
 
-**Unresolved and possibly material**: those 166 Legends Global assignments
-have no timesheet entries at all. Either that work is billed through
-Legends' own system, or it is unbilled revenue plus workers whose hours
-never reached payroll. Not yet checked — flagging, not concluding.
+**RETRACTED 2026-08-31 (same day).** The "166 Legends Global assignments with
+no timesheet entries — possibly unbilled revenue" flag above was WRONG, and the
+error is worth keeping as a lesson.
+
+☠️ **An assignment doc-id prefix is a `shiftId`, NOT a `jobOrderId`.**
+Doc ids are `{shiftId}__{userId}__{date}`. Reading the prefix as a job order
+turned "four shifts" into "four job orders" and made a routine weekend look
+like a systemic billing gap. Always join timesheet entries to assignments on
+the full `assignmentId`, or read the assignment's own `jobOrderId` field.
+
+Corrected: all four are shifts under ONE job order (`Nx0abe5F6tOUBevOX8eO`,
+Legends Global / Oakland Arena). That job order is **91% timesheeted**
+(912/1,004). All 166 un-entered assignments are dated **2026-08-29/30** — the
+weekend immediately before the check — and **none** are older than 10 days.
+Danny enters Legends' paper timesheets on Tuesdays; the check ran on a Monday.
+Nothing was wrong.
+
+**The durable lesson**: hours lag the shift by days, so *absence of a timesheet
+is not evidence of anything* until the entry window has passed. Any check on
+timesheet coverage must exclude the trailing ~10 days or it manufactures alarms
+— the same shape of mistake as reading `never_asked` on backfilled assignments
+as a cadence failure.
