@@ -68,6 +68,44 @@ function renderSections(doc) {
   return parts.join('\n');
 }
 
+/**
+ * Support is a purpose-built page rather than a numbered-section legal doc,
+ * so it renders from its own key set. Both stores REQUIRE a working support
+ * URL; c1staffing.com/support is a 404.
+ */
+function renderSupportPage(docsByLocale) {
+  const SUPPORT_EMAIL = 'support@c1staffing.com';
+  const blocks = LOCALES.map((locale) => {
+    const d = docsByLocale[locale];
+    if (!d || !d.title) return '';
+    return `
+    <section lang="${locale}" id="${locale}">
+      <h1>${esc(d.title)}</h1>
+      <p class="intro">${esc(d.intro)}</p>
+
+      <h2>${esc(d.inAppTitle)}</h2>
+      <p>${esc(d.inAppBody)}</p>
+
+      <h2>${esc(d.emailTitle)}</h2>
+      <p>${esc(d.emailBody)} <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a></p>
+
+      <h2>${esc(d.textTitle)}</h2>
+      <p>${esc(d.textBody)}</p>
+
+      <h2>${esc(d.hoursTitle)}</h2>
+      <p>${esc(d.hoursBody)}</p>
+
+      <h2>${esc(d.accountTitle)}</h2>
+      <p>${esc(d.accountBody)}</p>
+
+      <p class="meta">C1 Staffing, LLC</p>
+    </section>`;
+  }).join('\n<hr />\n');
+
+  return wrapHtml('Support', 'support', blocks,
+    'How to get help with your C1 Staffing account, shifts, or pay.');
+}
+
 function renderPage(kind, docsByLocale) {
   const primary = docsByLocale.en;
   const title = primary.title || (kind === 'privacy' ? 'Privacy Policy' : 'Terms of Use');
@@ -89,13 +127,18 @@ function renderPage(kind, docsByLocale) {
     </section>`;
   }).join('\n<hr />\n');
 
+  return wrapHtml(title, kind, localeBlocks,
+    `${title} for C1 Staffing, LLC and the C1 Staffing worker mobile app.`);
+}
+
+function wrapHtml(title, kind, bodyBlocks, description) {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${esc(title)} · C1 Staffing</title>
-<meta name="description" content="${esc(title)} for C1 Staffing, LLC and the C1 Staffing worker mobile app." />
+<meta name="description" content="${esc(description)}" />
 <link rel="canonical" href="https://hrxone.com/legal/${kind}.html" />
 <style>
   :root { color-scheme: light dark; }
@@ -123,10 +166,11 @@ function renderPage(kind, docsByLocale) {
 <body>
 <nav>
   ${LOCALES.map((l) => `<a href="#${l}">${LOCALE_LABEL[l]}</a>`).join('')}
+  <a href="/legal/support.html">Support</a>
   <a href="/legal/privacy.html">Privacy Policy</a>
   <a href="/legal/terms.html">Terms of Use</a>
 </nav>
-${localeBlocks}
+${bodyBlocks}
 </body>
 </html>
 `;
@@ -140,6 +184,15 @@ function main() {
   }
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
+
+  const supportDocs = {};
+  for (const locale of LOCALES) supportDocs[locale] = byLocale[locale].support || {};
+  if (supportDocs.en && supportDocs.en.title) {
+    const supportPath = path.join(OUT_DIR, 'support.html');
+    const supportHtml = renderSupportPage(supportDocs);
+    fs.writeFileSync(supportPath, supportHtml);
+    console.log(`wrote ${path.relative(ROOT, supportPath)} (${supportHtml.length} bytes)`);
+  }
 
   for (const kind of ['privacy', 'terms']) {
     const docs = {};

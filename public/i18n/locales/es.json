@@ -1973,6 +1973,20 @@
       "s8P2": "El uso continuo de nuestros servicios tras una actualización constituye reconocimiento del Aviso revisado.",
       "s9Title": "9. Contáctanos",
       "s9P1": "Si tienes preguntas o inquietudes sobre Comunicaciones móviles o privacidad, contáctanos en:"
+    },
+    "support": {
+      "title": "Soporte",
+      "intro": "¿Necesitas ayuda con tu cuenta de C1 Staffing, un turno o tu pago? Así puedes comunicarte con nosotros.",
+      "inAppTitle": "Lo más rápido: usa la aplicación",
+      "inAppBody": "Abre la aplicación de C1 Staffing y toca Ayuda en la pestaña de Perfil (o en la pantalla de Nómina para preguntas de pago). Elige un tema, describe lo que necesitas y recibirás una respuesta de inmediato; cualquier caso que requiera a una persona se envía directamente a nuestro equipo y puedes seguir la conversación en la aplicación.",
+      "emailTitle": "Correo electrónico",
+      "emailBody": "Escríbenos en cualquier momento a",
+      "textTitle": "Mensajes de texto",
+      "textBody": "Si te enviamos un mensaje sobre un turno, puedes responder directamente a ese mensaje; las respuestas llegan al mismo equipo.",
+      "hoursTitle": "Tiempos de respuesta",
+      "hoursBody": "Respondemos las solicitudes de soporte en horario laboral, de lunes a viernes. Los problemas urgentes de turnos se escalan automáticamente a tu reclutador.",
+      "accountTitle": "Eliminar tu cuenta",
+      "accountBody": "Puedes solicitar la eliminación de tu cuenta en la aplicación, en Perfil y luego Eliminar cuenta. Lo confirmamos por mensaje de texto y completamos la eliminación tras un breve periodo de gracia; conservamos los registros de pago que la ley nos obliga a retener y eliminamos el resto."
     }
   },
   "avatarVerification": {

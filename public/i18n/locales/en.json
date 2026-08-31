@@ -1973,6 +1973,20 @@
       "s8P2": "Continued use of our Services after an update constitutes acknowledgment of the revised Notice.",
       "s9Title": "9. Contact Us",
       "s9P1": "If you have questions or concerns regarding Mobile Communications or privacy, contact us at:"
+    },
+    "support": {
+      "title": "Support",
+      "intro": "Need help with your C1 Staffing account, a shift, or your pay? Here is how to reach us.",
+      "inAppTitle": "Fastest: use the app",
+      "inAppBody": "Open the C1 Staffing app and tap Help on the Profile tab (or on the Payroll screen for pay questions). Pick a topic, describe what you need, and you will get an answer right away — anything that needs a person is sent straight to our team and you can follow the conversation in the app.",
+      "emailTitle": "Email",
+      "emailBody": "Write to us any time at",
+      "textTitle": "Text us",
+      "textBody": "If we have texted you about a shift, you can reply directly to that message — replies reach the same team.",
+      "hoursTitle": "Response times",
+      "hoursBody": "We answer support requests during business hours, Monday through Friday. Urgent shift issues are escalated to your recruiter automatically.",
+      "accountTitle": "Deleting your account",
+      "accountBody": "You can request account deletion in the app under Profile, then Delete account. We confirm by text and complete the deletion after a short grace period; pay records we are legally required to retain are kept and the rest is removed."
     }
   },
   "avatarVerification": {
