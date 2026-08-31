@@ -162,6 +162,22 @@ export const ALL_SHIFT_REMINDER_TYPES: ReadonlyArray<ShiftReminderType> = [
   'assignment_noshow_check',
 ];
 
+/**
+ * The reminder types that ASK the worker to reply YES / CANCEL. When one of
+ * these sends we stamp `cortConfirmation.lastAskedAt` on the assignment so an
+ * inbound "YES" can be bound to the shift the worker was actually asked
+ * about — a worker holding two pending shifts the same day (Kelly Idarraga,
+ * 2026-08-30) otherwise had every reply bound to the EARLIER one, leaving the
+ * later shift's escalation ladder live and re-asking her all evening.
+ */
+export const CONFIRMATION_ASK_REMINDER_TYPES: ReadonlyArray<ShiftReminderType> = [
+  'assignment_reminder_24h',
+  'assignment_reminder_23h_escalate',
+  'assignment_reminder_22h_final',
+  'assignment_reconfirm_4h',
+  'assignment_confirm_now',
+];
+
 function normalizeProfileId(raw: unknown): ShiftReminderProfileId | null {
   const s = String(raw ?? '').trim().toLowerCase();
   if (s === 'cort_gig' || s === 'cort' || s === 'gig') return 'cort_gig';

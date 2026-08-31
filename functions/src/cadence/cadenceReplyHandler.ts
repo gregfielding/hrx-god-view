@@ -161,12 +161,28 @@ async function findUserByPhone(
   return { userId: snap.docs[0].id, lang };
 }
 
-interface ActiveCadence {
+export interface ActiveCadence {
   tenantId: string;
   assignmentId: string;
   assignment: Record<string, unknown>;
   startMs: number;
   state: string;
+  /** When we last ASKED this worker to confirm this shift (0 = never). */
+  lastAskedAtMs: number;
+}
+
+/**
+ * Order two candidate shifts by "which one is this reply about?".
+ *
+ * The worker is answering the message they just received, so the shift we most
+ * recently asked about wins. Only when neither has been asked (or both were
+ * asked at the same instant) do we fall back to the earliest start, which was
+ * the sole rule before 2026-08-31 — and which mis-routed every reply from any
+ * worker holding two pending shifts on one day.
+ */
+export function compareByAskThenStart(a: ActiveCadence, b: ActiveCadence): number {
+  if (a.lastAskedAtMs !== b.lastAskedAtMs) return b.lastAskedAtMs - a.lastAskedAtMs;
+  return a.startMs - b.startMs;
 }
 
 /**
@@ -195,12 +211,15 @@ async function loadWorkerCadenceAssignments(workerId: string): Promise<ActiveCad
     const tenantId = docSnap.ref.parent.parent?.id;
     if (!tenantId) continue;
 
+    const lastAsked = cort?.lastAskedAt as admin.firestore.Timestamp | undefined;
+
     out.push({
       tenantId,
       assignmentId: docSnap.id,
       assignment: data,
       startMs: start.toMillis(),
       state,
+      lastAskedAtMs: typeof lastAsked?.toMillis === 'function' ? lastAsked.toMillis() : 0,
     });
   }
   return out;
@@ -211,13 +230,13 @@ async function loadWorkerCadenceAssignments(workerId: string): Promise<ActiveCad
  * matches assignments whose state is still `pending` and whose start is in
  * the future. Returns the earliest one.
  */
-function pickPendingCadence(cadences: ActiveCadence[]): ActiveCadence | null {
+export function pickPendingCadence(cadences: ActiveCadence[]): ActiveCadence | null {
   const now = Date.now();
   const candidates = cadences.filter(
     (c) => c.state === 'pending' && c.startMs > now,
   );
   if (candidates.length === 0) return null;
-  candidates.sort((a, b) => a.startMs - b.startMs);
+  candidates.sort(compareByAskThenStart);
   return candidates[0];
 }
 
@@ -235,7 +254,7 @@ function pickCancellableCadence(cadences: ActiveCadence[]): ActiveCadence | null
     (c) => (c.state === 'pending' || c.state === 'confirmed') && c.startMs > now,
   );
   if (candidates.length === 0) return null;
-  candidates.sort((a, b) => a.startMs - b.startMs);
+  candidates.sort(compareByAskThenStart);
   return candidates[0];
 }
 
@@ -544,6 +563,41 @@ function truncateSnippet(body: string, limit = 160): string {
  * always on the cadence registry so logging + quiet-hours treat these as
  * operational.
  */
+/**
+ * Human label for the shift this receipt is about, e.g. "Aug 30, 6:00 PM".
+ *
+ * Built from the raw `startDate` / `startTime` strings rather than the
+ * resolved Timestamp: assignments carry no `timezone` field, so any real
+ * timezone conversion would relabel the shift (an 18:00 gig reading back as
+ * 1:00 AM). These strings are what the worker was quoted in the ask, so
+ * echoing them is both correct and consistent. Returns '' when unavailable —
+ * callers must degrade to the unqualified copy rather than print a partial.
+ */
+export function shiftWhenLabel(assignment: Record<string, unknown>, es: boolean): string {
+  const rawDate = normalize(assignment.startDate);
+  const m = rawDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '';
+
+  const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const MONTHS_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  const monthIdx = Number(m[2]) - 1;
+  if (monthIdx < 0 || monthIdx > 11) return '';
+  const day = Number(m[3]);
+  const datePart = es
+    ? `${day} ${MONTHS_ES[monthIdx]}`
+    : `${MONTHS_EN[monthIdx]} ${day}`;
+
+  const rawTime = normalize(assignment.startTime);
+  const t = rawTime.match(/^(\d{1,2}):(\d{2})$/);
+  if (!t) return datePart;
+  const hh24 = Number(t[1]);
+  const mm = t[2];
+  if (hh24 > 23 || Number(mm) > 59) return datePart;
+  const suffix = hh24 >= 12 ? 'PM' : 'AM';
+  const hh12 = hh24 % 12 === 0 ? 12 : hh24 % 12;
+  return `${datePart}, ${hh12}:${mm} ${suffix}`;
+}
+
 async function sendReceipt(args: {
   tenantId: string;
   userId: string;
@@ -552,6 +606,12 @@ async function sendReceipt(args: {
   intent: 'confirmation' | 'cancellation' | 'check_in' | 'walk_off_warning';
   assignment: Record<string, unknown>;
   lang?: 'en' | 'es';
+  /**
+   * True when the worker was ALREADY confirmed for this shift before this
+   * reply (the T-4h re-confirm ask, or a worker replying YES twice). Sends a
+   * distinct acknowledgement instead of repeating the first receipt verbatim.
+   */
+  alreadyConfirmed?: boolean;
 }): Promise<void> {
   const { tenantId, userId, phoneE164, assignmentId, intent, assignment } = args;
   const es = args.lang === 'es';
@@ -560,18 +620,28 @@ async function sendReceipt(args: {
   const job = normalize(assignment.jobTitle || assignment.jobOrderName || assignment.title) ||
     (es ? 'tu turno' : 'your shift');
 
+  // Name the specific shift. A worker holding two shifts the same day gets one
+  // receipt per shift; without the date/time they read as the bot repeating
+  // itself, which is exactly how three legitimate receipts landed as noise.
+  const when = shiftWhenLabel(assignment, es);
+  const jobWhen = when ? `${job} (${when})` : job;
+
   let body = '';
   let messageTypeId = '';
 
   if (intent === 'confirmation') {
-    body = es
-      ? `${brand}: Gracias — estás confirmado para ${job}. Te enviaremos los detalles del lugar antes de empezar.`
-      : `${brand}: Thanks — you're confirmed for ${job}. We'll send worksite details closer to start time.`;
+    body = args.alreadyConfirmed
+      ? (es
+        ? `${brand}: Ya te teníamos confirmado para ${jobWhen} — todo listo, no necesitas hacer nada más.`
+        : `${brand}: You were already confirmed for ${jobWhen} — you're all set, nothing else needed.`)
+      : (es
+        ? `${brand}: Gracias — estás confirmado para ${jobWhen}. Te enviaremos los detalles del lugar antes de empezar.`
+        : `${brand}: Thanks — you're confirmed for ${jobWhen}. We'll send worksite details closer to start time.`);
     messageTypeId = 'assignment_confirmation_receipt';
   } else if (intent === 'cancellation') {
     body = es
-      ? `${brand}: Entendido — cancelamos ${job} y avisamos a tu reclutador.`
-      : `${brand}: Got it — we've cancelled ${job} and alerted your recruiter.`;
+      ? `${brand}: Entendido — cancelamos ${jobWhen} y avisamos a tu reclutador.`
+      : `${brand}: Got it — we've cancelled ${jobWhen} and alerted your recruiter.`;
     messageTypeId = 'assignment_cancellation_receipt';
   } else if (intent === 'check_in') {
     body = es
@@ -683,7 +753,9 @@ export async function handleCadenceReply(
 
   try {
     switch (classification.intent) {
-      case 'confirmation':
+      case 'confirmation': {
+        // Captured BEFORE applyConfirmation flips the state.
+        const wasAlreadyConfirmed = active.state === 'confirmed';
         await applyConfirmation(active, context);
         await sendReceipt({
           tenantId: active.tenantId,
@@ -693,8 +765,10 @@ export async function handleCadenceReply(
           intent: 'confirmation',
           assignment: active.assignment,
           lang: user.lang,
+          alreadyConfirmed: wasAlreadyConfirmed,
         });
         break;
+      }
       case 'cancellation':
         await applyCancellation(active, context);
         await sendReceipt({

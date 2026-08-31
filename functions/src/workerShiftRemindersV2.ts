@@ -25,6 +25,7 @@ import {
 import {
   resolveShiftReminderProfile,
   ALL_SHIFT_REMINDER_TYPES,
+  CONFIRMATION_ASK_REMINDER_TYPES,
   type ShiftReminderType,
   type ShiftReminderStep,
 } from './cadence/shiftReminderProfile';
@@ -1578,6 +1579,31 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
         lastError: admin.firestore.FieldValue.delete(),
         lock: admin.firestore.FieldValue.delete(),
       });
+
+      // Record that THIS shift is the one we just asked about, so an inbound
+      // YES/CANCEL binds here rather than to whichever pending shift happens
+      // to start earliest. Best-effort: a failed stamp only degrades reply
+      // routing back to the old earliest-first behaviour.
+      if (CONFIRMATION_ASK_REMINDER_TYPES.includes(canonicalReminderType as ShiftReminderType)) {
+        try {
+          await db.doc(`tenants/${reminder.tenantId}/assignments/${reminder.assignmentId}`).set(
+            {
+              cortConfirmation: {
+                lastAskedAt: admin.firestore.FieldValue.serverTimestamp(),
+                lastAskedReminderType: canonicalReminderType,
+              },
+            },
+            { merge: true },
+          );
+        } catch (err) {
+          logger.warn('[worker_shift_reminders] lastAskedAt stamp failed', {
+            assignmentId: reminder.assignmentId,
+            reminderType: canonicalReminderType,
+            error: String(err),
+          });
+        }
+      }
+
       logger.info('[worker_shift_reminders] reminder send success', {
         assignmentId: reminder.assignmentId,
         userId: reminder.workerId,
