@@ -7,8 +7,7 @@
       "namespace": "android_app",
       "package_name": "com.c1staffing.worker",
       "sha256_cert_fingerprints": [
-        "REPLACE_WITH_ANDROID_RELEASE_SHA256_FINGERPRINT",
-        "REPLACE_WITH_PLAY_APP_SIGNING_SHA256_FINGERPRINT"
+        "D3:9E:8D:11:CE:BB:92:46:83:30:56:05:2F:7B:55:E2:EC:35:76:77:70:14:1C:A9:DE:0E:71:52:CC:05:E7:C3"
       ]
     }
   }
