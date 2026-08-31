@@ -3,7 +3,7 @@
     "apps": [],
     "details": [
       {
-        "appID": "REPLACE_WITH_APPLE_TEAM_ID.com.hrxone.c1.worker",
+        "appID": "REPLACE_WITH_APPLE_TEAM_ID.com.c1staffing.worker",
         "paths": [
           "/c1/workers/assignments/*",
           "/c1/workers/applications/*",
