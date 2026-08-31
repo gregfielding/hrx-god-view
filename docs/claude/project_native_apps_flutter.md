@@ -46,3 +46,46 @@ directory.
 Related: [[project_worker_app_redesign]] (the web worker UI it will
 mirror), [[project_shift_confirmation_cadence]] (confirm flows the app
 should surface natively).
+
+
+## Launch-readiness audit + code-side fixes (2026-08-30)
+
+Greg: "What else is left to be done before we could actually launch?"
+Audited the real repo state rather than a generic checklist.
+
+**Fixed in code this pass** (c1_app 2ad2a92, hrx a2ef8bae):
+- ☠️ `NSFaceIDUsageDescription` was MISSING while `local_auth` runs with
+  `biometricOnly: true` — iOS terminates the process at the Face ID prompt.
+  That was a live crash, not just a review risk.
+- ☠️ `aps-environment` was absent from `Runner.entitlements` and
+  `AppDelegate.swift` was the bare template (no APNs registration, no
+  UNUserNotificationCenter delegate) — every push feature we shipped was
+  inert in TestFlight/App Store builds regardless of the Dart wiring.
+- ☠️ Android `POST_NOTIFICATIONS` was undeclared with targetSdk 35, so the
+  Android 13+ runtime prompt never appeared.
+- App-level `ios/Runner/PrivacyInfo.xcprivacy` added (pods ship their own;
+  Runner had none). Must stay in sync with the App Store privacy label AND
+  hrxone.com/privacy — Apple compares them.
+- Crashlytics + Analytics added; there was NO crash reporting and no
+  `runZonedGuarded`/`FlutterError.onError` at all. Collection is
+  release-only. User identification is UID-only by policy — never name,
+  phone, or email in an event or crash key.
+- Signup consent: the app created accounts with no terms/privacy step while
+  the backend (twilio.ts) stamped `termsOfUse`/`privacyPolicy` agreement
+  records unconditionally. The stamp is now truthful.
+- ☠️ Legal pages are SPA routes — a store crawler fetching /privacy gets
+  "You need to enable JavaScript". `scripts/generate-legal-static.js` renders
+  bilingual static twins at `/legal/{privacy,terms}.html` from the same i18n
+  keys. **Store listings must use the /legal/*.html URLs.**
+- Privacy policy now discloses camera/photos, push token, device id, and
+  crash diagnostics (it covered only web-style data collection before).
+- ☠️ Reviewer password was committed in 3 tracked files. Scrubbed, and
+  `key.properties`/`*.jks`/`*.keystore` gitignored. **The old password is in
+  git history — it must be rotated.**
+
+**Still blocked on Greg's accounts** (see c1_app/RELEASE_CHECKLIST.md §D):
+Android upload keystore (release build currently gets NO signing config →
+unsigned bundle), iOS `DEVELOPMENT_TEAM` (zero occurrences in the pbxproj),
+APNs auth key upload, the Apple team ID + SHA-256 fingerprints in the
+association files (universal links cannot verify until then), version bump
+per upload, and the two store privacy questionnaires.
