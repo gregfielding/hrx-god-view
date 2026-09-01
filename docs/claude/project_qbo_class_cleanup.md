@@ -318,3 +318,52 @@ reload May → push. Overrides beat every heuristic. The ~156-worker tail
 Hours" (Vargas, Karol). June–Aug JEs carry their own $2.4K remainder
 inside posted JEs — patching those means editing JEs, only worth it if
 Mark's answers cover them.
+
+## Phase 4 incident + remediation (2026-08-31 late night)
+
+**The first live June–Aug push silently skipped 26 wires / $525K.** The
+dialog said "Created: 54 · Skipped: 39" — 23 more skips than the dry-run
+predicted. Two causes in the original idempotency: DocNumber `EV Alloc
+{MMDD} {ENT}` is only unique per day+entity (multi-wire days collapsed —
+7/31 had five C1 Select wires), and the "any unclassed 5010 credit within
+$1" heuristic false-matched across unrelated wires. Worse, it also
+DOUBLE-created 3 JEs that Tabitha's month-end "EV Pay Alloc" batches (all
+dated 7/31, up to 30d after their wires, amounts a few $100 off current
+Everee data) already covered.
+
+**Also found: Everee pagination was nondeterministic** — the payment walk
+broke on the first page with no fresh items, and with Everee actively
+syncing (voids/corrections landing same evening), items shift across page
+boundaries mid-walk: wire totals drifted ±$300 run-to-run. Fixed: walk
+every page to totalPages.
+
+**Remediation executed (scratch, snapshot-first):**
+- Every allocation JE (54 mine + Tabitha's 17, minus deletions) now
+  carries `[wire:{fundingId}@{ENT}]` in PrivateNote — exact idempotency
+  keyed on Everee's stable companyFundingId. 70 tagged; her `EV Pay Alloc
+  0715` covers BOTH 7/15 wires (22,046.12+206.72=22,252.84 exactly) and
+  got two tags; her 0723 #2 covers the 7/24 SEL wire (dated a day early).
+- Deleted my 3 duplicates of her JEs (0708 SEL / 0713 SEL / 0715 EVT,
+  $26,762.41; backups in .scratch/backup_deleted_je_*.json).
+- Created the 22 truly-missing JEs ($233,126.30), incl. the $128,751.89
+  `[wire:none@EVT]` aggregate (payments with NO companyFundingId, lumped:
+  P&L-correct, not bank-line-matchable).
+- **Flex subclass fix**: Indeed Flex channel job orders have role-y names
+  ("Warehouse Associate") — buildWireJournal now labels them by the JO's
+  ACCOUNT (Cort, Domino's, ORS Nasco, Carrier, Continental, Purolator,
+  Hyatt, Mattress, OnTrac) so labor lands on Indeed Flex:{client}. ~$45K
+  of parent-classed Flex debits repatched across 15 of my JEs (recomputed
+  full splits, credit untouched, balance verified).
+- Final verify: 93/93 June–Aug wires tagged, 0 untagged, all JEs balanced.
+
+**Left for Tabitha (bank rec)**: 3 JEs whose Everee wire total moved AFTER
+posting (0806 EVT, 0820 EVT, 0730 EVT — deltas $105–$1,304, late voids/
+corrections; the JE credit should match the actual bank wire, so hers to
+adjudicate). ~$2.4K parent-Flex debits inside her own 3 July JEs left
+untouched. The callable now reports `allocated_amount_drift` rows with the
+delta instead of hiding drift; `[wire:none@…]` aggregates that grow later
+surface the same way.
+
+**Rule for future pushes**: never push a wire dated within the last ~3
+days — Everee keeps attaching corrections to fresh fundings (the 8/31
+wires changed twice during this session).
