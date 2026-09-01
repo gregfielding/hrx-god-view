@@ -262,8 +262,11 @@ export const savePayrollVenueMapping = onCall(
       };
 
       // QBO context: the 5010 account, class ids, existing allocation JEs.
-      const acctRes = (await qboQuery(tenantId, "SELECT Id, Name FROM Account WHERE AcctNum = '5010'")) as Record<string, any>;
-      const acct5010 = (acctRes.QueryResponse?.Account ?? acctRes.Account ?? [])[0];
+      // (AcctNum is not queryable in the v3 API — fetch and filter locally.)
+      const acctRes = (await qboQuery(tenantId, "SELECT * FROM Account WHERE AccountType = 'Cost of Goods Sold' MAXRESULTS 1000")) as Record<string, any>;
+      const acct5010 = ((acctRes.QueryResponse?.Account ?? acctRes.Account ?? []) as Array<Record<string, any>>).find(
+        (a) => String(a.AcctNum ?? '') === '5010' || /^5010\b/.test(String(a.Name ?? '')),
+      );
       if (!acct5010) throw new HttpsError('failed-precondition', 'Account 5010 (Direct Labor) not found.');
       const ACCT = String(acct5010.Id);
       const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class MAXRESULTS 1000')) as Record<string, any>;
