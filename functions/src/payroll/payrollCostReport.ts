@@ -1345,6 +1345,26 @@ export async function buildWireJournal(
     });
   }
 
+  // ── JO date-splits (Greg 2026-09-01, the Governors Ball→FIFA NY crew
+  //    roll): when a crew moves events but keeps clocking under the old
+  //    JO, a payroll_jo_date_splits doc {jobOrderId, fromDate, toDate?,
+  //    class} redirects that JO's worker-days in the date range — a
+  //    one-doc fix, no code change per incident. ──
+  const joDateSplits: Array<{ jobOrderId: string; fromDate: string; toDate: string; cls: string }> = [];
+  const splitSnap = await db.collection(`tenants/${tenantId}/payroll_jo_date_splits`).get().catch(() => null);
+  if (splitSnap) {
+    splitSnap.forEach((d) => {
+      const x = d.data();
+      if (trim(x.jobOrderId) && trim(x.fromDate) && trim(x.class)) {
+        joDateSplits.push({ jobOrderId: trim(x.jobOrderId), fromDate: trim(x.fromDate), toDate: trim(x.toDate) || '9999-12-31', cls: trim(x.class) });
+      }
+    });
+  }
+  const joLabelForDate = (joId: string, workDate: string): string | undefined => {
+    const split = joDateSplits.find((s) => s.jobOrderId === joId && workDate >= s.fromDate && workDate <= s.toDate);
+    return split ? split.cls : joNameById.get(joId);
+  };
+
   // ── Entry index: uid|workDate → JO name. Work precedes funding, so
   //    index a wide window behind the wire range. ──
   const idxStart = new Date(Date.parse(startDate) - 60 * 86400000).toISOString().slice(0, 10);
@@ -1367,7 +1387,8 @@ export async function buildWireJournal(
     if (!uid || !wd) return;
     const key = `${uid}|${wd}`;
     const joId = trim(e.jobOrderId);
-    if (joId && joNameById.has(joId)) classByWorkerDate.set(key, joNameById.get(joId)!);
+    const dated = joId ? joLabelForDate(joId, wd) : undefined;
+    if (dated) classByWorkerDate.set(key, dated);
     else if (trim(e.assignmentId)) needAssignment.push({ key, assignmentId: trim(e.assignmentId) });
   });
   const asnIds = Array.from(new Set(needAssignment.map((n) => n.assignmentId)));
@@ -1378,13 +1399,14 @@ export async function buildWireJournal(
     snaps.forEach((s) => {
       if (!s.exists) return;
       const joId = trim(s.data()?.jobOrderId);
-      if (joId && joNameById.has(joId)) joByAsn.set(s.id, joNameById.get(joId)!);
+      if (joId) joByAsn.set(s.id, joId);
     });
   }
   for (const n of needAssignment) {
-    if (!classByWorkerDate.has(n.key) && joByAsn.has(n.assignmentId)) {
-      classByWorkerDate.set(n.key, joByAsn.get(n.assignmentId)!);
-    }
+    const joId = joByAsn.get(n.assignmentId);
+    if (classByWorkerDate.has(n.key) || !joId) continue;
+    const dated = joLabelForDate(joId, n.key.split('|')[1] ?? '');
+    if (dated) classByWorkerDate.set(n.key, dated);
   }
 
   // ── Assignment index: fill worker-days timesheets don't cover.
@@ -1400,16 +1422,14 @@ export async function buildWireJournal(
       const sd = trim(a.startDate);
       const ed = trim(a.endDate) || sd;
       if (!uid || !sd || ed < idxStart || sd > endDate) return;
-      const cls =
-        classForAccount(trim(a.accountId), trim(a.companyName)) ??
-        (trim(a.jobOrderId) ? joNameById.get(trim(a.jobOrderId)) : undefined) ??
-        null;
-      if (!cls) return;
+      const acctCls = classForAccount(trim(a.accountId), trim(a.companyName));
       let t = Math.max(Date.parse(sd), Date.parse(idxStart));
       const tEnd = Math.min(Date.parse(ed), Date.parse(endDate));
       for (let i = 0; t <= tEnd && i < 185; t += 86400000, i++) {
-        const key = `${uid}|${new Date(t).toISOString().slice(0, 10)}`;
-        if (!classByWorkerDate.has(key)) classByWorkerDate.set(key, cls);
+        const day = new Date(t).toISOString().slice(0, 10);
+        const key = `${uid}|${day}`;
+        const cls = acctCls ?? (trim(a.jobOrderId) ? joLabelForDate(trim(a.jobOrderId), day) : undefined) ?? null;
+        if (cls && !classByWorkerDate.has(key)) classByWorkerDate.set(key, cls);
       }
     });
   }
