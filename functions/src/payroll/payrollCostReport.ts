@@ -1212,6 +1212,32 @@ export async function buildWireJournal(
     // (Greg 2026-09-01).
     { re: /^contigo/i, leaf: 'Contigo Catering' },
   ];
+  // Mapping-driven account classification (Greg 2026-09-01: "the company
+  // ID on the assignment should drive classification for most scenarios"):
+  // any class mapped account-kind in qbo_class_mappings classifies that
+  // account's labor — data-driven, no code change for new clients. An
+  // accountId mapped to MULTIPLE classes (VenueSmart's event classes all
+  // point at the VS account) is ambiguous and skipped: those stay
+  // event-level by JO name.
+  const acctClassCount = new Map<string, number>();
+  const acctClassByAccountId = new Map<string, string>();
+  const mapSnap = await db.collection(`tenants/${tenantId}/qbo_class_mappings`).get().catch(() => null);
+  if (mapSnap) {
+    mapSnap.forEach((d) => {
+      const m = d.data();
+      const aid = trim(m.accountId);
+      if (trim(m.targetKind) !== 'account' || !aid) return;
+      acctClassCount.set(aid, (acctClassCount.get(aid) ?? 0) + 1);
+      acctClassByAccountId.set(aid, trim(m.fqn) || trim(m.className));
+    });
+    for (const [aid, n] of acctClassCount) if (n > 1) acctClassByAccountId.delete(aid);
+  }
+  const classForAccount = (accountId: string, accountName: string): string | null => {
+    const mapped = accountId ? acctClassByAccountId.get(accountId) : undefined;
+    if (mapped) return mapped;
+    const rule = accountName ? ACCOUNT_CLASS_RULES.find((r) => r.re.test(accountName)) : undefined;
+    return rule ? rule.leaf : null;
+  };
   const joNameById = new Map<string, string>();
   const joNameByNumber = new Map<string, string>();
   for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
@@ -1219,9 +1245,7 @@ export async function buildWireJournal(
     if (!snap) continue;
     snap.forEach((d) => {
       const j = d.data();
-      const acct = trim(j.accountName);
-      const rule = acct ? ACCOUNT_CLASS_RULES.find((r) => r.re.test(acct)) : undefined;
-      const name = rule ? rule.leaf : trim(j.jobOrderName) || trim(j.title);
+      const name = classForAccount(trim(j.accountId), trim(j.accountName)) ?? (trim(j.jobOrderName) || trim(j.title));
       if (!name) return;
       if (!joNameById.has(d.id)) joNameById.set(d.id, name);
       const num = trim(j.jobOrderNumber);
@@ -1269,6 +1293,33 @@ export async function buildWireJournal(
     if (!classByWorkerDate.has(n.key) && joByAsn.has(n.assignmentId)) {
       classByWorkerDate.set(n.key, joByAsn.get(n.assignmentId)!);
     }
+  }
+
+  // ── Assignment index: fill worker-days timesheets don't cover.
+  //    Assignments are the point of truth (Greg 2026-09-01: "the company
+  //    ID on the assignment should drive classification for most
+  //    scenarios") — Contigo's crews have 1 timesheet but real
+  //    assignments; a worker assigned somewhere on a date worked there. ──
+  const allAsnSnap = await db.collection(`tenants/${tenantId}/assignments`).get().catch(() => null);
+  if (allAsnSnap) {
+    allAsnSnap.forEach((d) => {
+      const a = d.data();
+      const uid = trim(a.userId) || trim(a.workerId) || trim(a.candidateId);
+      const sd = trim(a.startDate);
+      const ed = trim(a.endDate) || sd;
+      if (!uid || !sd || ed < idxStart || sd > endDate) return;
+      const cls =
+        classForAccount(trim(a.accountId), trim(a.companyName)) ??
+        (trim(a.jobOrderId) ? joNameById.get(trim(a.jobOrderId)) : undefined) ??
+        null;
+      if (!cls) return;
+      let t = Math.max(Date.parse(sd), Date.parse(idxStart));
+      const tEnd = Math.min(Date.parse(ed), Date.parse(endDate));
+      for (let i = 0; t <= tEnd && i < 185; t += 86400000, i++) {
+        const key = `${uid}|${new Date(t).toISOString().slice(0, 10)}`;
+        if (!classByWorkerDate.has(key)) classByWorkerDate.set(key, cls);
+      }
+    });
   }
 
   // ── Venue-token resolver (unique ≥5-char tokens; STOP applies to note
