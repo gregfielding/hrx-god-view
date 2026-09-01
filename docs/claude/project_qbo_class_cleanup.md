@@ -150,6 +150,40 @@ $69,595 + 13 held Indeed Flex $7,700). The income side of the books now
 reconciles precisely to the open-items list. Remaining Not-Specified is COGS
 $1.2M + Expenses $513K = the wire-split push (Phase 4).
 
+## Indeed Flex channel decomposed (2026-08-31, Greg's portal CSV)
+
+**SBUS-numbered "Indeed Flex Inc" invoices are agency-channel billing for
+OTHER clients** — the Flex portal export (agency-invoices CSV) maps each
+SBUS invoice to its true end client. Reclassed the 2026 book accordingly:
+**CORT $124,653** (WBI/Woodridge warehouses etc.), **Domino's $13,249** —
+which SOLVES the "Domino's has 37 JOs but $0 classed revenue" mystery (it
+was riding the Flex channel) — plus ORS Nasco, Carrier, Continental
+Battery, Hyatt, and a new `Purolator International` class (created+mapped).
+Residual: 26 C1-issued 606xxxxx April weeklies ($7,700) have no venue text
+anywhere — they stay on the `Indeed Flex` class as the honest channel-level
+residual (class kept active for exactly this purpose). Curiosity for the
+Austin question: $7,894 of Flex lines were already classed `Austin`.
+
+## The 14 pre-May VS invoices — email forensics verdict (2026-08-31)
+
+Greg's Gmail was scanned end to end for the era: PO emails (ledgered),
+Angie's remittances, and the weekly billing threads. Findings:
+- Mark's PDF-per-event batch process **began 5/13** ("Invoices Moving
+  Forward" thread — where Angie also first asked for PO numbers). The 4/26
+  and 5/3 batches predate it (Lone Oak/TempWorks payment era).
+- Angie's "Invoices Paid" (5/1) and "C1 Paid Invoices 5/6" carry AP
+  SCREENSHOTS (read via Gmail attachment fetch + vision): they confirm all
+  14 invoice numbers/amounts and the "dba Lone Oak Payroll" routing — but
+  **contain no event names**. (Side detail: VenueSmart's AP amounts run
+  $1–9 under QBO's — their Connecteam per-user fee deductions.)
+- **Conclusion: the invoice→event link for these 14 exists only in Mark's
+  Connecteam exports / memory.** He billed them weekly from Connecteam
+  reports. Punch list (2 batches: 4/26 ×5 incl. the $42,154 one; 5/3 ×9)
+  goes to Mark; candidate events that fortnight: Texas MotoGP, Austin Blues
+  Fest, SRO GT, Pop Up Picnic, Lamb of God, Urban Music Fest, plus the
+  Moody concert run (Don Toliver/Subtronics/Mau P/Junior H/Miguel).
+  Do NOT guess amounts into the books.
+
 ## Open
 
 - 58 invoices / $303,490 still on the bare VS parent: 17 stay (non-factored),
