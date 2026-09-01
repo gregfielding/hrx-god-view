@@ -1057,7 +1057,7 @@ const Layout: React.FC = function Layout() {
       'Accounts': <AccountBalanceIcon />,
       'Invoicing': <AttachMoneyIcon />,
       'Payroll Costs': <AttachMoneyIcon />,
-      'Payroll Help Desk': <AttachMoneyIcon />,
+      'Worker Help Desk': <AttachMoneyIcon />,
       'Workers Comp': <HealthAndSafetyIcon />,
       'Contacts': <PersonIcon />,
       'Companies': <BusinessIcon />,

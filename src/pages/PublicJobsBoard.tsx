@@ -1257,14 +1257,25 @@ const PublicJobsBoard: React.FC = () => {
 
     try {
       // Check if user has existing application data
-      const { hasExistingApplicationData, getMissingRequiredCertifications, submitQuickApplication } = await import('../utils/quickApplicationSubmit');
+      const { hasExistingApplicationData, getMissingRequiredCertifications, getUnansweredRequirementAcks, submitQuickApplication } = await import('../utils/quickApplicationSubmit');
       
       const hasExistingData = await hasExistingApplicationData(user.uid);
       
       if (hasExistingData) {
         // Check if job requires certifications user doesn't have
         const missingCerts = await getMissingRequiredCertifications(user.uid, job);
-        
+
+        // Same gate as the posting page (2026-08-29): unanswered
+        // posting-specific requirement questions go to the wizard's
+        // requirements step instead of silently quick-applying past them.
+        if (missingCerts.length === 0) {
+          const unansweredAcks = await getUnansweredRequirementAcks(user.uid, job);
+          if (unansweredAcks.length > 0) {
+            navigate(`/apply/${job.tenantId}/${job.id}${jobOrderIdParam ? `?${jobOrderIdParam}&step=12` : '?step=12'}`);
+            return;
+          }
+        }
+
         if (missingCerts.length === 0) {
           // User has all required certs - submit directly
           // For gig jobs, use selectedJobShifts if available
@@ -1283,8 +1294,17 @@ const PublicJobsBoard: React.FC = () => {
           
           if (result.success) {
             handleCloseDialog();
-            // Open the job detail page so the worker sees updated status (same as applying from the posting page)
-            navigate(`/c1/jobs-board/${job.id}`, { replace: true });
+            // First-time interviewees go into the stand-out interview;
+            // repeat workers see the posting's submitted state — their
+            // application auto-completes from the answer bank server-side.
+            const { hasCompletedPrescreen } = await import('../utils/quickApplicationSubmit');
+            if (await hasCompletedPrescreen(user.uid)) {
+              navigate(`/c1/jobs-board/${job.id}`, { replace: true });
+            } else {
+              navigate(
+                `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${user.uid}_${job.id}`)}&entry=post_apply_inline`,
+              );
+            }
             return;
           } else {
             // Error - show alert and navigate to wizard
@@ -1299,7 +1319,8 @@ const PublicJobsBoard: React.FC = () => {
             ? selectedJobShifts.map((s: any) => s.id || s).filter(Boolean)
             : [];
           const shiftsParam = shiftsToUse.length > 0 ? `shifts=${encodeURIComponent(shiftsToUse.join(','))}` : '';
-          const params = [`step=7`, shiftsParam, jobOrderIdParam].filter(Boolean).join('&');
+          // step 8 = licenses/certifications (7 was Education — off-by-one, fixed 2026-08-29)
+          const params = [`step=8`, shiftsParam, jobOrderIdParam].filter(Boolean).join('&');
           navigate(`/apply/${job.tenantId}/${job.id}?${params}`);
           handleCloseDialog(); // Close dialog when navigating
           return;

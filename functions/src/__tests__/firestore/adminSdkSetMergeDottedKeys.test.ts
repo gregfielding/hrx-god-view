@@ -31,8 +31,7 @@
  * To run:
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 \
  *     GCLOUD_PROJECT=demo-test \
- *     npx mocha -r ts-node/register -r src/__tests__/setup.ts \
- *     src/__tests__/firestore/adminSdkSetMergeDottedKeys.test.ts
+ *     npx jest src/__tests__/firestore/adminSdkSetMergeDottedKeys.test.ts --maxWorkers=1
  *
  * Without the emulator, the test is skipped.
  */
@@ -40,14 +39,16 @@
 import { expect } from 'chai';
 import * as admin from 'firebase-admin';
 
+import '../setup'; // initializes firebase-admin against the emulator project
+
 const USE_EMULATOR = !!process.env.FIRESTORE_EMULATOR_HOST;
 const TEST_COLLECTION = 'admin_sdk_dotted_key_pinning_test';
 
-function skipWithoutEmulator(this: { skip(): void }) {
-  if (!USE_EMULATOR) this.skip();
-}
+// Jest has no mocha-style runtime `this.skip()`; gate the whole emulator-backed
+// suite at collection time instead.
+const describeWithEmulator = USE_EMULATOR ? describe : describe.skip;
 
-describe('Admin SDK semantic — set/merge vs update with dotted-string keys', () => {
+describeWithEmulator('Admin SDK semantic — set/merge vs update with dotted-string keys', () => {
   afterEach(async function () {
     if (!USE_EMULATOR) return;
     const db = admin.firestore();
@@ -56,7 +57,6 @@ describe('Admin SDK semantic — set/merge vs update with dotted-string keys', (
   });
 
   it('set({"a.b": v}, { merge: true }) writes a LITERAL field "a.b" (NOT nested)', async function () {
-    skipWithoutEmulator.call(this);
     const db = admin.firestore();
     const ref = db.collection(TEST_COLLECTION).doc('case-set-merge');
 
@@ -82,7 +82,6 @@ describe('Admin SDK semantic — set/merge vs update with dotted-string keys', (
   });
 
   it('update({"a.b": v}) writes NESTED a.b = v (correct field-path semantic)', async function () {
-    skipWithoutEmulator.call(this);
     const db = admin.firestore();
     const ref = db.collection(TEST_COLLECTION).doc('case-update');
 
@@ -105,7 +104,6 @@ describe('Admin SDK semantic — set/merge vs update with dotted-string keys', (
   });
 
   it('update() supports deep dotted paths (3+ levels) as field paths', async function () {
-    skipWithoutEmulator.call(this);
     const db = admin.firestore();
     const ref = db.collection(TEST_COLLECTION).doc('case-deep');
 
@@ -133,7 +131,6 @@ describe('Admin SDK semantic — set/merge vs update with dotted-string keys', (
   });
 
   it('set with NESTED objects + merge:true correctly merges leaf-level (safe alternative pattern)', async function () {
-    skipWithoutEmulator.call(this);
     const db = admin.firestore();
     const ref = db.collection(TEST_COLLECTION).doc('case-nested-set');
 

@@ -31,6 +31,7 @@ import * as admin from 'firebase-admin';
 import { google } from 'googleapis';
 import type { Response } from 'express';
 import { isSuppressed, loadSuppressions } from './outreachSuppressions';
+import { buildMimeMessage } from './mimeHeaders';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -218,14 +219,10 @@ function renderTouch(touch: number, firstName: string, campus: string): { subjec
 }
 
 function buildMime(from: string, to: string, subject: string, body: string): string {
-  const msg =
-    `From: Greg Fielding <${from}>\r\n` +
-    `To: ${to}\r\n` +
-    `Subject: ${subject}\r\n` +
-    `MIME-Version: 1.0\r\n` +
-    `Content-Type: text/plain; charset="UTF-8"\r\n\r\n` +
-    body;
-  return Buffer.from(msg).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  // Subjects here carry em dashes ("One shift, zero risk — {campus}"), which
+  // MUST be RFC 2047 encoded — raw UTF-8 in a header reaches inboxes as
+  // mojibake. See mimeHeaders.ts.
+  return buildMimeMessage({ fromName: 'Greg Fielding', fromEmail: from, to, subject, body });
 }
 
 // ─────────────────────────────────────────────────────────────────────

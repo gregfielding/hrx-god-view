@@ -53,3 +53,27 @@ export async function markLifecycleEventIfFirst(args: {
     return true;
   }
 }
+
+/**
+ * Release a claimed dedupe key after a FAILED send so a retry can claim it
+ * again. Without this, claiming on the first *attempt* made every retry a
+ * "dedupe_skip_already_sent" success — a worker whose SMS bounced at Twilio
+ * was recorded as reminded and received nothing (audit 2026-08-29, B9).
+ * Best-effort: a failed release just means the retry is suppressed, which
+ * is the old behavior, never a double-send.
+ */
+export async function releaseLifecycleEvent(args: {
+  tenantId: string;
+  dedupeKey: string;
+}): Promise<void> {
+  const { tenantId, dedupeKey } = args;
+  try {
+    await db.doc(`tenants/${tenantId}/notification_dedupe/${dedupeKey}`).delete();
+  } catch (error: any) {
+    logger.warn('Lifecycle dedupe release failed; retry will be suppressed', {
+      tenantId,
+      dedupeKey,
+      error: error?.message || String(error),
+    });
+  }
+}

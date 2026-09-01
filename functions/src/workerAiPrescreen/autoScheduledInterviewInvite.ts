@@ -31,6 +31,8 @@ import {
   CHASE_2_MS,
   scheduleInterviewChaseFields,
   newCadenceStartUserFields,
+  shouldStampNewCadenceStart,
+  claimDailyPrescreenSmsSlotShared,
 } from './interviewCadence';
 import { userHasWorkerAiPrescreenWithFallback } from './hasWorkerAiPrescreenDenormalized';
 import {
@@ -421,12 +423,33 @@ export const processScheduledInterviewInvites = onSchedule(
           : `Hola ${firstName}, responde unas preguntas rápidas para prepararte para trabajar y emparejarte con empleos. Empieza aquí: ${url}`;
       const body = preferredLanguage === 'es' ? spanish : english;
 
+      // Daily prescreen-SMS slot — shared with the reminders cron and
+      // first-touch sender since 2026-08-29 (interview review F7): one
+      // prescreen text per worker per day, whichever sender gets there
+      // first. Slot taken → defer, don't drop.
+      if (!(await claimDailyPrescreenSmsSlotShared(markLifecycleEventIfFirst, tenantId, uid))) {
+        await docSnap.ref.set(
+          {
+            interviewInviteScheduledAt: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS),
+            interviewInviteLastOutcome: 'daily_cap_deferred',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        continue;
+      }
+
       const smsResult = await sendWorkerMessageInternal(phone, body, {
         tenantId,
         userId: uid,
         source: 'system',
         messageTypeId: applicationId ? 'auto_new_user_interview_invite' : 'profile_first_interview_invite',
         systemContext: true,
+        inbox: {
+          title: preferredLanguage === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+          type: 'opportunity',
+          deepLink: url,
+        },
       });
 
       const sentAt = admin.firestore.Timestamp.now();
@@ -457,8 +480,10 @@ export const processScheduledInterviewInvites = onSchedule(
           interviewStatus: 'invited',
           interviewInviteSentAt: sentAt,
           lastInterviewInvitedAt: sentAt,
-          // Anchor the 5-day cadence hard stop (cold invite, cooldown-gated).
-          ...newCadenceStartUserFields(sentAt),
+          // Anchor the 5-day cadence hard stop ONLY for a genuinely new
+          // cadence — unconditional stamping re-anchored the window on every
+          // send, sliding the hard stop forward (interview review F7).
+          ...(shouldStampNewCadenceStart(docSnap.data()) ? newCadenceStartUserFields(sentAt) : {}),
           interviewSource: 'auto_new_user',
           interviewInviteLastError: admin.firestore.FieldValue.delete(),
           interviewInviteLastOutcome: 'sent',

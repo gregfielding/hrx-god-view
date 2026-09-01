@@ -21,10 +21,11 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
-import { qboQuery, qboEntityCreate } from '../integrations/quickbooks/qboAuth';
+import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
 import { evereeRequest } from '../integrations/everee/evereeHttp';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { buildWcCoverageReport } from '../workersComp/coverageGaps';
+import { buildDataHealthReport } from './dataHealthReport';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -96,8 +97,11 @@ interface VenueMapping {
   accountName: string | null;
 }
 
+// 540s/1GiB: the pushWireAllocations action rebuilds the wire journal
+// (~2 min of Everee pagination) then creates ~80 QBO JEs — 60s killed it
+// mid-build ("internal" in the UI, incident 2026-08-31).
 export const savePayrollVenueMapping = onCall(
-  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 60 },
+  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 540 },
   async (request) => {
     const tenantId = trim(request.data?.tenantId);
     const action = trim(request.data?.action);
@@ -123,6 +127,391 @@ export const savePayrollVenueMapping = onCall(
         { merge: true },
       );
       return { ok: true, workerId, date: date || null };
+    }
+
+    // ── Indeed Flex invoice mirror (Greg 2026-08-31): the Flex portal's
+    //    agency-invoices CSV is the source of truth for SBUS billing.
+    //    Mirror each FINALIZED row into QBO so payments have an invoice
+    //    to land on and A/R is accurate — the Fieldglass/Sodexo pattern.
+    //    Existing invoices are verified (amount) and class-fixed; missing
+    //    ones are created: customer "Indeed Flex Inc", item "Staffing",
+    //    venue as description, class = Indeed Flex:{client} (subclass
+    //    auto-created for new clients). Idempotent by DocNumber. Level 7.
+    if (action === 'mirrorFlexInvoices') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const dryRun = request.data?.dryRun === true;
+      const rows = Array.isArray(request.data?.rows) ? (request.data.rows as Array<Record<string, unknown>>) : [];
+      if (rows.length === 0 || rows.length > 400) {
+        throw new HttpsError('invalid-argument', 'rows required (1–400 per call).');
+      }
+
+      const custRes = (await qboQuery(tenantId, "SELECT Id, DisplayName FROM Customer WHERE DisplayName = 'Indeed Flex Inc'")) as Record<string, any>;
+      const customer = (custRes.QueryResponse?.Customer ?? custRes.Customer ?? [])[0];
+      if (!customer) throw new HttpsError('failed-precondition', 'QBO customer "Indeed Flex Inc" not found.');
+      const itemRes = (await qboQuery(tenantId, "SELECT Id, Name FROM Item WHERE Name = 'Staffing'")) as Record<string, any>;
+      const item = (itemRes.QueryResponse?.Item ?? itemRes.Item ?? [])[0];
+      if (!item) throw new HttpsError('failed-precondition', 'QBO item "Staffing" not found.');
+
+      const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class MAXRESULTS 1000')) as Record<string, any>;
+      const classes: Array<Record<string, any>> = clsRes.QueryResponse?.Class ?? clsRes.Class ?? [];
+      const flexParent = classes.find((c) => c.FullyQualifiedName === 'Indeed Flex');
+      if (!flexParent) throw new HttpsError('failed-precondition', 'Class "Indeed Flex" not found.');
+      const subByName = new Map<string, Record<string, any>>(
+        classes
+          .filter((c) => String(c.FullyQualifiedName).startsWith('Indeed Flex:'))
+          .map((c) => [String(c.Name).toLowerCase(), c]),
+      );
+      const classForClient = async (client: string): Promise<Record<string, any>> => {
+        // Known naming drift: portal "CORT" ↔ class "Cort".
+        const key = client.toLowerCase() === 'cort' ? 'cort' : client.toLowerCase();
+        const hit = subByName.get(key);
+        if (hit) return hit;
+        const created = (await qboEntityCreate(tenantId, 'Class', {
+          Name: client,
+          ParentRef: { value: String(flexParent.Id) },
+        })) as Record<string, any>;
+        const c = created.Class ?? created;
+        subByName.set(key, c);
+        await db.doc(`tenants/${tenantId}/qbo_class_mappings/${String(c.Id)}`).set({
+          classId: String(c.Id), className: client,
+          fqn: String(c.FullyQualifiedName ?? `Indeed Flex:${client}`),
+          targetKind: 'account', jobOrderId: null, jobOrderName: null, jobOrderIds: [], jobOrderNames: [],
+          accountId: null, accountName: null,
+          source: 'flex_invoice_mirror', mappedBy: request.auth?.uid ?? null,
+          mappedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return c;
+      };
+
+      const created: string[] = []; const fixedClass: string[] = []; const verified: string[] = [];
+      const skipped: string[] = []; const mismatched: string[] = [];
+      for (const raw of rows) {
+        const doc = trim(raw.invoice);
+        const client = trim(raw.client);
+        const venue = trim(raw.venue);
+        const status = trim(raw.status).toUpperCase();
+        const date = trim(raw.date);
+        const amount = Number(String(raw.amount ?? '').replace(/[$,]/g, ''));
+        if (!doc || !client || !Number.isFinite(amount)) { skipped.push(`${doc || '(no #)'}: bad row`); continue; }
+        if (status === 'UPCOMING') { skipped.push(`${doc}: UPCOMING — not finalized yet`); continue; }
+        if (date && date < '2026-01-01') { skipped.push(`${doc}: pre-2026`); continue; }
+
+        const q = (await qboQuery(tenantId, `SELECT * FROM Invoice WHERE DocNumber = '${doc.replace(/'/g, '')}'`)) as Record<string, any>;
+        const existing = (q.QueryResponse?.Invoice ?? q.Invoice ?? [])[0];
+        const cls = await classForClient(client);
+
+        if (existing) {
+          if (Math.abs(Number(existing.TotalAmt) - amount) > 0.01) {
+            mismatched.push(`${doc}: QBO $${existing.TotalAmt} vs portal $${amount.toFixed(2)}`);
+            continue;
+          }
+          let changed = 0;
+          for (const line of existing.Line ?? []) {
+            const d = line.SalesItemLineDetail;
+            if (d && (!d.ClassRef || String(d.ClassRef.value) === String(flexParent.Id))) {
+              d.ClassRef = { value: String(cls.Id), name: String(cls.FullyQualifiedName) };
+              changed++;
+            }
+          }
+          if (changed && !dryRun) {
+            await qboEntityUpdate(tenantId, 'Invoice', { ...existing, sparse: false });
+            fixedClass.push(doc);
+          } else verified.push(doc);
+          continue;
+        }
+
+        if (dryRun) { created.push(`${doc} (would create) $${amount.toFixed(2)} → ${client}`); continue; }
+        await qboEntityCreate(tenantId, 'Invoice', {
+          CustomerRef: { value: String(customer.Id) },
+          DocNumber: doc,
+          TxnDate: date || undefined,
+          Line: [{
+            DetailType: 'SalesItemLineDetail',
+            Amount: amount,
+            Description: venue,
+            SalesItemLineDetail: {
+              ItemRef: { value: String(item.Id) },
+              ClassRef: { value: String(cls.Id), name: String(cls.FullyQualifiedName) },
+            },
+          }],
+        });
+        created.push(`${doc} $${amount.toFixed(2)} → ${client}`);
+      }
+      return { ok: true, dryRun, created, fixedClass, verified: verified.length, skipped, mismatched };
+    }
+
+    // ── Phase 4: push wire allocations to QBO (Greg 2026-08-31). Everee
+    //    wires land as UNCLASSED bank-feed Purchases on 5010 Direct Labor;
+    //    this posts a reclass JE per wire — credit 5010 unclassed, debit
+    //    5010 per class from buildWireJournal's penny-exact splits —
+    //    mirroring Tabitha's own manual "EV Pay Alloc" July entries. A
+    //    wire is skipped when an allocation JE already exists (hers or
+    //    ours), matched by DocNumber or by an existing 5010-unclassed
+    //    credit within $1 of the wire. Unattributed remainder stays
+    //    honestly unclassed. Level 7; dryRun first. ──
+    if (action === 'classificationAudit') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const startDate = trim(request.data?.startDate) || '2026-05-15';
+      const endDate = trim(request.data?.endDate) || new Date().toISOString().slice(0, 10);
+      return { ok: true, ...(await buildClassificationAudit(tenantId, startDate, endDate)) };
+    }
+
+    // Screening cost allocation (Greg 2026-09-01): AccuSource charges →
+    // 5300 per class, matched per screen. Level 7; dryRun default true.
+    if (action === 'pushScreeningAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushScreeningAllocations } = await import('./screeningAllocations');
+      return await pushScreeningAllocations(tenantId, request.data?.dryRun !== false);
+    }
+
+    // True-up posted allocation JEs to CURRENT attribution (Greg
+    // 2026-09-01): flag fixes flow to QBO without re-pushing. Level 7.
+    if (action === 'trueUpAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { trueUpAllocationJes } = await import('./allocationTrueUp');
+      return await trueUpAllocationJes(tenantId, request.data?.dryRun !== false);
+    }
+
+    // Revenue-account rule (Greg 2026-09-01): monthly 4200→4100 reclass
+    // for events-family revenue misposted via item mappings. Level 7.
+    if (action === 'pushRevenueAccountReclass') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushRevenueAccountReclass } = await import('./revenueAccountReclass');
+      return await pushRevenueAccountReclass(tenantId, request.data?.dryRun !== false);
+    }
+
+    // Batch resolve (Greg 2026-09-01: "apply to all" — one confirmed
+    // guess applied to every flagged row sharing it, like the timesheet
+    // layout). Same writes as the single action, chunked.
+    if (action === 'resolveClassificationFlags') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const rows = Array.isArray(request.data?.rows) ? (request.data.rows as Array<Record<string, unknown>>) : [];
+      if (rows.length === 0 || rows.length > 500) {
+        throw new HttpsError('invalid-argument', 'rows required (1–500 per call).');
+      }
+      const cls = trim(request.data?.class);
+      if (!cls) throw new HttpsError('invalid-argument', 'class is required.');
+      let done = 0;
+      for (let i = 0; i < rows.length; i += 200) {
+        const batch = db.batch();
+        for (const r of rows.slice(i, i + 200)) {
+          const paymentId = trim(r.paymentId);
+          if (!paymentId) continue;
+          const worker = trim(r.worker);
+          batch.set(db.doc(`tenants/${tenantId}/payroll_class_overrides/payment_${paymentId}`), {
+            kind: 'payment', paymentId, class: cls, worker: worker || null,
+            source: 'classification_audit_page_bulk', createdBy: request.auth?.uid ?? null,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          batch.set(db.doc(`tenants/${tenantId}/payroll_payment_attributions/${paymentId}`), {
+            paymentId, worker: worker || null, entityId: null,
+            shares: [{ cls, amt: 1, method: 'payment_override' }],
+            resolvedWeight: 1, unresolvedWeight: 0, firstFundingDate: null,
+            source: 'classification_audit_page_bulk',
+            frozenAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          done += 1;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await batch.commit();
+      }
+      return { ok: true, resolved: done, class: cls };
+    }
+
+    // Resolve one flagged payment from the verification page: writes the
+    // payment-kind override (trumps everything) and refreezes the ledger
+    // record so the answer is permanent.
+    if (action === 'resolveClassificationFlag') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const paymentId = trim(request.data?.paymentId);
+      const cls = trim(request.data?.class);
+      const worker = trim(request.data?.worker);
+      if (!paymentId || !cls) throw new HttpsError('invalid-argument', 'paymentId and class are required.');
+      await db.doc(`tenants/${tenantId}/payroll_class_overrides/payment_${paymentId}`).set({
+        kind: 'payment', paymentId, class: cls, worker: worker || null,
+        source: 'classification_audit_page', createdBy: request.auth?.uid ?? null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      await db.doc(`tenants/${tenantId}/payroll_payment_attributions/${paymentId}`).set({
+        paymentId, worker: worker || null, entityId: null,
+        shares: [{ cls, amt: 1, method: 'payment_override' }],
+        resolvedWeight: 1, unresolvedWeight: 0, firstFundingDate: null,
+        source: 'classification_audit_page',
+        frozenAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return { ok: true, paymentId, class: cls };
+    }
+
+    if (action === 'pushWireAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const dryRun = request.data?.dryRun !== false;
+      const startDate = trim(request.data?.startDate);
+      const endDate = trim(request.data?.endDate);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+        throw new HttpsError('invalid-argument', 'startDate/endDate (YYYY-MM-DD) required.');
+      }
+
+      const journal = (await buildWireJournal(tenantId, startDate, endDate, trim(request.data?.hiringEntityId) || null)) as {
+        wires: Array<{ fundingId: string; fundingDate: string; entityName: string; amount: number; splits: Array<{ class: string; qboClass: string | null; qboClassExists: boolean; amount: number }> }>;
+      };
+
+      // QBO context: the 5010 account, class ids, existing allocation JEs.
+      // (AcctNum is not queryable in the v3 API — fetch and filter locally.)
+      const acctRes = (await qboQuery(tenantId, "SELECT * FROM Account WHERE AccountType = 'Cost of Goods Sold' MAXRESULTS 1000")) as Record<string, any>;
+      const acct5010 = ((acctRes.QueryResponse?.Account ?? acctRes.Account ?? []) as Array<Record<string, any>>).find(
+        (a) => String(a.AcctNum ?? '') === '5010' || /^5010\b/.test(String(a.Name ?? '')),
+      );
+      if (!acct5010) throw new HttpsError('failed-precondition', 'Account 5010 (Direct Labor) not found.');
+      const ACCT = String(acct5010.Id);
+      const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class MAXRESULTS 1000')) as Record<string, any>;
+      const classIdByFqn = new Map<string, string>(
+        ((clsRes.QueryResponse?.Class ?? clsRes.Class ?? []) as Array<Record<string, any>>).map((c) => [
+          String(c.FullyQualifiedName), String(c.Id),
+        ]),
+      );
+      // Idempotency (rewritten after the 2026-08-31 incident: DocNumber was
+      // only unique per day+entity, and the any-date $1 credit heuristic
+      // false-matched — together they silently skipped 26 wires / $525K).
+      //  1. Exact: a JE whose PrivateNote carries [wire:{fundingId}] owns
+      //     that wire forever.
+      //  2. Heuristic (pre-tag JEs, incl. Tabitha's month-end "EV Pay
+      //     Alloc" batches dated up to 30d after their wires): an
+      //     unclassed 5010 credit within $1 dated −5..+35 days of the
+      //     wire — and each credit vouches for at most ONE wire.
+      const existingDocs = new Set<string>();
+      const existingWireTags = new Set<string>();
+      const creditByTag = new Map<string, number>();
+      const existingCredits: Array<{ date: string; amt: number; used: boolean }> = [];
+      let jstart = 1;
+      for (;;) {
+        // eslint-disable-next-line no-await-in-loop
+        const jr = (await qboQuery(tenantId, `SELECT * FROM JournalEntry WHERE TxnDate >= '2026-01-01' STARTPOSITION ${jstart} MAXRESULTS 1000`)) as Record<string, any>;
+        const jrows: Array<Record<string, any>> = jr.QueryResponse?.JournalEntry ?? jr.JournalEntry ?? [];
+        for (const je of jrows) {
+          existingDocs.add(trim(je.DocNumber));
+          const jeTags = [...trim(je.PrivateNote).matchAll(/\[wire:([^\]]+)\]/g)].map((m) => trim(m[1]));
+          let jeCredit = 0;
+          for (const line of (je.Line ?? []) as Array<Record<string, any>>) {
+            const d = line.JournalEntryLineDetail;
+            if (d?.PostingType === 'Credit' && String(d.AccountRef?.value) === ACCT && !d.ClassRef) {
+              jeCredit += Number(line.Amount) || 0;
+              // A tag-accounted JE's credit must NOT vouch for OTHER wires
+              // (2026-09-01: two distinct $212.50 wires a week apart — the
+              // ±35d window matched the second against the first's JE).
+              if (jeTags.length === 0) {
+                existingCredits.push({ date: trim(je.TxnDate), amt: Number(line.Amount) || 0, used: false });
+              }
+            }
+          }
+          for (const t of jeTags) {
+            existingWireTags.add(t);
+            creditByTag.set(t, (creditByTag.get(t) ?? 0) + jeCredit);
+          }
+        }
+        if (jrows.length < 1000) break;
+        jstart += 1000;
+      }
+
+      const dayNum = (d: string): number => Math.floor(Date.parse(d) / 86400000);
+      const claimCredit = (w: { fundingDate: string; amount: number }): boolean => {
+        const wd = dayNum(w.fundingDate);
+        const c = existingCredits.find((x) => {
+          if (x.used || Math.abs(x.amt - w.amount) > 1) return false;
+          const off = dayNum(x.date) - wd;
+          return off >= -5 && off <= 35;
+        });
+        if (c) c.used = true;
+        return Boolean(c);
+      };
+      const docCounter = new Map<string, number>();
+      const results: Array<Record<string, unknown>> = [];
+      for (const w of journal.wires) {
+        const mmdd = w.fundingDate.slice(5).replace('-', '');
+        const ent = /events/i.test(w.entityName) ? 'EVT' : /select/i.test(w.entityName) ? 'SEL' : /workforce/i.test(w.entityName) ? 'WF' : 'C1';
+        const base = `EV Alloc ${mmdd} ${ent}`; // QBO caps DocNumber at 21 chars
+        let nth = (docCounter.get(base) ?? 0) + 1;
+        let docNumber = nth === 1 ? base : `${base}${nth}`;
+        while (existingDocs.has(docNumber)) {
+          nth += 1;
+          docNumber = `${base}${nth}`;
+        }
+        docCounter.set(base, nth);
+        // Tag key: fundingId alone collides for the no-funding-id aggregate
+        // group ('none' exists per entity AND per period — May's aggregate
+        // is different money from June's) — qualify 'none' with the wire's
+        // month and always suffix the entity code.
+        const fid = trim(w.fundingId);
+        const wireTag = `${fid === 'none' ? `none-${w.fundingDate.slice(0, 7)}` : fid}@${ent}`;
+        if (existingWireTags.has(wireTag)) {
+          // Report drift instead of hiding it: the wire total in Everee has
+          // moved since its JE was posted (late voids/corrections, or a
+          // grown no-funding-id aggregate). Tabitha trues up at bank rec.
+          const posted = creditByTag.get(wireTag) ?? 0;
+          const drift = Math.round((w.amount - posted) * 100) / 100;
+          results.push({
+            fundingDate: w.fundingDate, entity: w.entityName, amount: w.amount,
+            status: Math.abs(drift) > 1 ? 'allocated_amount_drift' : 'already_allocated',
+            ...(Math.abs(drift) > 1 ? { postedAmount: posted, drift } : {}),
+          });
+          continue;
+        }
+        if (claimCredit(w)) {
+          results.push({ fundingDate: w.fundingDate, entity: w.entityName, amount: w.amount, status: 'already_allocated' });
+          continue;
+        }
+        const lines: Array<Record<string, unknown>> = [];
+        let unresolved = 0;
+        for (const s of w.splits) {
+          const cid = s.qboClass ? classIdByFqn.get(s.qboClass) : undefined;
+          if (s.class === 'Unattributed' || !s.qboClassExists || !cid) { unresolved += s.amount; continue; }
+          lines.push({
+            DetailType: 'JournalEntryLineDetail',
+            Amount: Math.round(s.amount * 100) / 100,
+            Description: `Everee wire ${w.fundingDate} ${w.entityName} — ${s.class}`,
+            JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: ACCT }, ClassRef: { value: cid, name: s.qboClass } },
+          });
+        }
+        if (unresolved > 0.005) {
+          lines.push({
+            DetailType: 'JournalEntryLineDetail',
+            Amount: Math.round(unresolved * 100) / 100,
+            Description: `Everee wire ${w.fundingDate} — unattributed remainder`,
+            JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: ACCT } },
+          });
+        }
+        lines.push({
+          DetailType: 'JournalEntryLineDetail',
+          Amount: Math.round(w.amount * 100) / 100,
+          Description: `Everee wire ${w.fundingDate} ${w.entityName} — reallocation`,
+          JournalEntryLineDetail: { PostingType: 'Credit', AccountRef: { value: ACCT } },
+        });
+        if (dryRun) {
+          results.push({
+            fundingDate: w.fundingDate, entity: w.entityName, amount: w.amount, status: 'would_create', docNumber,
+            splits: w.splits.map((s) => ({ class: s.qboClass ?? s.class, amount: s.amount, resolves: s.qboClassExists })),
+          });
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await qboEntityCreate(tenantId, 'JournalEntry', {
+          DocNumber: docNumber,
+          TxnDate: w.fundingDate,
+          PrivateNote: `Auto allocation from /payroll-costs wire worksheet (Phase 4). Wire $${w.amount.toFixed(2)} ${w.entityName}. [wire:${wireTag}]`,
+          Line: lines,
+        });
+        existingDocs.add(docNumber);
+        existingWireTags.add(wireTag);
+        results.push({ fundingDate: w.fundingDate, entity: w.entityName, amount: w.amount, status: 'created', docNumber });
+      }
+      return { ok: true, dryRun, wires: results };
     }
 
     // ── QBO class mapping/creation branches (Greg 2026-08-19). Rides
@@ -155,43 +544,67 @@ export const savePayrollVenueMapping = onCall(
         await ref.delete();
         return { ok: true, removed: true, classId };
       }
-      const jobOrderId = trim(request.data?.jobOrderId);
+      // Level-aware mapping (Greg 2026-08-27): a class points to ONE node
+      // in the HRX hierarchy — 'overhead' (non-client, excluded from
+      // client margins), 'account' (parent/child/standalone — dollars
+      // attach at the account, never guessed down to JOs), or
+      // 'job_order' (one or MORE JOs — the MN Yacht + Country Club
+      // shape). Legacy docs without targetKind keep working: jobOrderName
+      // ⇒ job_order, else accountId ⇒ account.
+      const targetKind = trim(request.data?.targetKind); // '', 'overhead', 'account', 'job_order'
+      const jobOrderIds = Array.isArray(request.data?.jobOrderIds)
+        ? (request.data.jobOrderIds as unknown[]).map((x) => trim(x)).filter(Boolean)
+        : [trim(request.data?.jobOrderId)].filter(Boolean);
       const accountId = trim(request.data?.accountId);
-      if (!jobOrderId && !accountId) {
-        throw new HttpsError('invalid-argument', 'jobOrderId or accountId is required to map.');
+      if (targetKind !== 'overhead' && jobOrderIds.length === 0 && !accountId) {
+        throw new HttpsError('invalid-argument', 'jobOrderId(s), accountId, or targetKind=overhead is required to map.');
       }
-      let jobOrderName: string | null = null;
+      const jobOrderNames: string[] = [];
       let mappedAccountId: string | null = accountId || null;
       let accountName: string | null = null;
-      if (jobOrderId) {
-        for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
-          // eslint-disable-next-line no-await-in-loop
-          const s = await db.doc(`tenants/${tenantId}/${coll}/${jobOrderId}`).get();
-          if (s.exists) {
-            jobOrderName = trim(s.data()?.jobOrderName) || trim(s.data()?.title) || null;
-            if (!mappedAccountId) mappedAccountId = trim(s.data()?.recruiterAccountId) || null;
-            break;
+      if (targetKind !== 'overhead' && targetKind !== 'account') {
+        for (const joId of jobOrderIds.slice(0, 10)) {
+          for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+            // eslint-disable-next-line no-await-in-loop
+            const s = await db.doc(`tenants/${tenantId}/${coll}/${joId}`).get();
+            if (s.exists) {
+              const n = trim(s.data()?.jobOrderName) || trim(s.data()?.title);
+              if (n) jobOrderNames.push(n);
+              if (!mappedAccountId) mappedAccountId = trim(s.data()?.recruiterAccountId) || null;
+              break;
+            }
           }
         }
-        if (!jobOrderName) throw new HttpsError('not-found', `Job order ${jobOrderId} not found.`);
+        if (jobOrderIds.length > 0 && jobOrderNames.length === 0) {
+          throw new HttpsError('not-found', 'Job order(s) not found.');
+        }
       }
       if (mappedAccountId) {
         const acct = await db.doc(`tenants/${tenantId}/accounts/${mappedAccountId}`).get();
         accountName = acct.exists ? trim(acct.data()?.name) || null : null;
       }
+      const resolvedKind =
+        targetKind === 'overhead'
+          ? 'overhead'
+          : targetKind === 'account' || jobOrderNames.length === 0
+            ? 'account'
+            : 'job_order';
       await ref.set({
         classId,
         className,
         fqn: trim(request.data?.fqn) || className,
-        jobOrderId: jobOrderId || null,
-        jobOrderName,
-        accountId: mappedAccountId,
-        accountName,
+        targetKind: resolvedKind,
+        jobOrderId: resolvedKind === 'job_order' ? jobOrderIds[0] : null,
+        jobOrderName: resolvedKind === 'job_order' ? jobOrderNames[0] : null,
+        jobOrderIds: resolvedKind === 'job_order' ? jobOrderIds : [],
+        jobOrderNames: resolvedKind === 'job_order' ? jobOrderNames : [],
+        accountId: resolvedKind === 'overhead' ? null : mappedAccountId,
+        accountName: resolvedKind === 'overhead' ? null : accountName,
         source: trim(request.data?.source) || 'manual',
         mappedBy: request.auth?.uid ?? null,
         mappedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
-      return { ok: true, classId, jobOrderName, accountId: mappedAccountId, accountName };
+      return { ok: true, classId, targetKind: resolvedKind, jobOrderNames, accountId: mappedAccountId, accountName };
     }
 
     const venueLabel = trim(request.data?.venueLabel);
@@ -585,7 +998,7 @@ interface RegisterRow {
   depositStatus: string | null;
 }
 
-async function buildEvereeRegister(
+export async function buildEvereeRegister(
   tenantId: string,
   startDate: string,
   endDate: string,
@@ -674,8 +1087,10 @@ async function buildEvereeRegister(
           depositStatus: trim(p.depositStatus) || null,
         });
       }
+      // Walk every page — a fresh-less page mid-sync drops payments (see
+      // buildWireJournal pagination note, 2026-08-31).
       const totalPages = Number(res.totalPages ?? 1);
-      if (fresh === 0 || page >= totalPages - 1) break;
+      if (page >= totalPages - 1) break;
     }
   }
 
@@ -771,6 +1186,480 @@ async function buildEvereeRegister(
 }
 
 /* -------------------------------------------------------------------------
+ * Real employer burden per entity (FIN-2, Greg 2026-08-26): Everee's
+ * /integration/v1/expenses/by-date-range returns, per entity, actual
+ * wages + employer taxes + employer contributions for the earning-date
+ * range — the REAL burden rate that replaces the 12% slider in Gross
+ * Margin / Job Costing. 1099 entities correctly come back at 0% (no
+ * employer taxes on contractor pay). Buckets are per-dimension; we never
+ * stamped dimensions so today it's one bucket per entity — the totals
+ * are what matter here. Fail-soft per entity: an entity with no config
+ * or an API error is simply omitted (caller falls back to an estimate).
+ * ------------------------------------------------------------------------- */
+
+export interface EntityBurden {
+  wages: number;
+  employerTax: number;
+  contributions: number;
+  /** (employerTax + contributions) / wages, as a percent. */
+  ratePct: number;
+}
+
+export async function buildEvereeBurdenRates(
+  tenantId: string,
+  startDate: string,
+  endDate: string,
+): Promise<Record<string, EntityBurden>> {
+  const money = (v: unknown): number => {
+    const o = v as { amount?: unknown } | null | undefined;
+    const n = Number((o && typeof o === 'object' ? o.amount : v) ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const out: Record<string, EntityBurden> = {};
+  const entitiesSnap = await db.collection(`tenants/${tenantId}/entities`).get();
+  for (const entityDoc of entitiesSnap.docs) {
+    const entityId = entityDoc.id;
+    const entityName = trim(entityDoc.data().name) || entityId;
+    if (/sandbox/i.test(entityId) || /sandbox/i.test(entityName)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const config = await getEvereeConfigForEntity(tenantId, entityId);
+    if (!config) continue;
+    try {
+      let wages = 0;
+      let tax = 0;
+      let contrib = 0;
+      // ☠️ The endpoint rejects ranges longer than ~31 days — chunk into
+      // 30-day windows and sum (totals are additive across disjoint
+      // ranges, so chunking is exact). size also caps at 100.
+      let winStart = startDate;
+      for (let guard = 0; guard < 40 && winStart <= endDate; guard++) {
+        const ws = new Date(`${winStart}T00:00:00Z`);
+        ws.setUTCDate(ws.getUTCDate() + 29);
+        const winEndIso = ws.toISOString().slice(0, 10);
+        const winEnd = winEndIso < endDate ? winEndIso : endDate;
+        for (let page = 0; page < 10; page++) {
+          // eslint-disable-next-line no-await-in-loop
+          const res = (await evereeRequest(
+            config,
+            'GET',
+            `/integration/v1/expenses/by-date-range?min-earning-date=${winStart}&max-earning-date=${winEnd}&page=${page}&size=100`,
+          )) as Record<string, any>;
+          const items = (res.items ?? []) as Array<Record<string, any>>;
+          for (const it of items) {
+            wages += money(it.totalWageAmount);
+            tax += money(it.totalEmployerTaxAmount);
+            contrib += money(it.totalEmployerContributionAmount);
+          }
+          const totalPages = Number(res.totalPages ?? 1) || 1;
+          if (items.length === 0 || page + 1 >= totalPages) break;
+        }
+        const next = new Date(`${winEnd}T00:00:00Z`);
+        next.setUTCDate(next.getUTCDate() + 1);
+        winStart = next.toISOString().slice(0, 10);
+      }
+      out[entityId] = {
+        wages: round2(wages),
+        employerTax: round2(tax),
+        contributions: round2(contrib),
+        ratePct: wages > 0 ? round2(((tax + contrib) / wages) * 100) : 0,
+      };
+    } catch {
+      // omitted — caller treats missing entity as burden-unknown
+    }
+  }
+  return out;
+}
+
+/**
+ * Daily attribution-ledger freeze (Greg 2026-09-01: "it's critical that
+ * every payroll dollar is classed correctly"). Rides the reconcile cron
+ * behind a once-per-day function_runs claim. Freezes every payment that
+ * is (a) fully resolved (<0.5% unresolved), (b) mature — last funding
+ * ≥3 days old, Everee attaches corrections to fresh fundings — and
+ * (c) not already frozen. Frozen shares become the attribution of
+ * record: later Everee drift or rule changes can't reshuffle history.
+ */
+export async function maybeRunDailyLedgerFreeze(tenantId: string): Promise<void> {
+  const day = new Date().toISOString().slice(0, 10);
+  const claimRef = db.doc(`function_runs/payrollLedgerFreeze_${day}`);
+  const claimed = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(claimRef);
+    if (snap.exists) return false;
+    tx.set(claimRef, { startedAt: admin.firestore.FieldValue.serverTimestamp(), tenantId });
+    return true;
+  });
+  if (!claimed) return;
+  try {
+    const matureCutoff = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+    const start = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+    const recs: Array<{
+      paymentId: string; worker: string; entityId: string;
+      shares: Array<{ cls: string; amt: number; method: string }>;
+      resolvedWeight: number; unresolvedWeight: number; fundingDates: string[];
+    }> = [];
+    await buildWireJournal(tenantId, start, day, null, { onPayment: (r) => recs.push(r) });
+    const toFreeze = recs.filter((r) => {
+      const total = r.resolvedWeight + r.unresolvedWeight;
+      if (total <= 0 || r.unresolvedWeight / total >= 0.005) return false;
+      if (r.shares.some((sd) => sd.method === 'ledger')) return false; // already frozen
+      const last = r.fundingDates.reduce((a, b) => (a > b ? a : b), '');
+      return Boolean(last) && last <= matureCutoff;
+    });
+    for (let i = 0; i < toFreeze.length; i += 400) {
+      const batch = db.batch();
+      for (const r of toFreeze.slice(i, i + 400)) {
+        batch.set(db.doc(`tenants/${tenantId}/payroll_payment_attributions/${r.paymentId}`), {
+          paymentId: r.paymentId,
+          worker: r.worker,
+          entityId: r.entityId,
+          shares: r.shares,
+          resolvedWeight: r.resolvedWeight,
+          unresolvedWeight: r.unresolvedWeight,
+          firstFundingDate: r.fundingDates[0] ?? null,
+          source: `daily_freeze_${day}`,
+          frozenAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await batch.commit();
+    }
+    await claimRef.set(
+      { finishedAt: admin.firestore.FieldValue.serverTimestamp(), frozen: toFreeze.length, seen: recs.length },
+      { merge: true },
+    );
+    console.info('[payrollLedgerFreeze] complete', { frozen: toFreeze.length, seen: recs.length });
+  } catch (e) {
+    console.error('[payrollLedgerFreeze] failed', { error: e instanceof Error ? e.message : String(e) });
+    await claimRef.set(
+      { failedAt: admin.firestore.FieldValue.serverTimestamp(), error: String(e).slice(0, 300) },
+      { merge: true },
+    );
+  }
+}
+
+/**
+ * Classification verification audit (Greg 2026-09-01): every payroll
+ * dollar and invoice line in range is either CONFIRMED by structural
+ * evidence or FLAGGED for manual review — no silent middle. Powers
+ * /reports/classification-audit.
+ */
+export async function buildClassificationAudit(
+  tenantId: string,
+  startDate: string,
+  endDate: string,
+): Promise<Record<string, unknown>> {
+  const num = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const clRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName, Active FROM Class MAXRESULTS 1000')) as Record<string, any>;
+  const classes: Array<Record<string, any>> = clRes.QueryResponse?.Class ?? clRes.Class ?? [];
+  const classById = new Map<string, string>(classes.map((c) => [String(c.Id), String(c.FullyQualifiedName)]));
+
+  const invLines: Array<{ date: string; doc: string; cust: string; desc: string; amt: number; cls: string }> = [];
+  let start = 1;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = (await qboQuery(tenantId, `SELECT * FROM Invoice WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}' STARTPOSITION ${start} MAXRESULTS 1000`)) as Record<string, any>;
+    const rows: Array<Record<string, any>> = r.QueryResponse?.Invoice ?? r.Invoice ?? [];
+    for (const inv of rows) {
+      for (const l of (inv.Line ?? []) as Array<Record<string, any>>) {
+        const d = l.SalesItemLineDetail;
+        if (!d) continue;
+        invLines.push({
+          date: String(inv.TxnDate), doc: trim(inv.DocNumber), cust: trim(inv.CustomerRef?.name),
+          desc: trim(l.Description), amt: num(l.Amount), cls: classById.get(String(d.ClassRef?.value ?? '')) ?? '',
+        });
+      }
+    }
+    if (rows.length < 1000) break;
+    start += 1000;
+  }
+  const revByClass = new Map<string, number>();
+  for (const l of invLines) if (l.cls) revByClass.set(l.cls, (revByClass.get(l.cls) ?? 0) + l.amt);
+
+  type AuditRec = {
+    paymentId: string; worker: string; entityId: string;
+    shares: Array<{ cls: string; amt: number; method: string }>;
+    resolvedWeight: number; unresolvedWeight: number; fundingDates: string[];
+  };
+  const recs: AuditRec[] = [];
+  const journal = (await buildWireJournal(tenantId, startDate, endDate, null, {
+    skipLedger: true,
+    onPayment: (r) => recs.push(r),
+  })) as Record<string, any>;
+  const labelToClass = new Map<string, { fqn: string; exists: boolean }>();
+  const laborByClass = new Map<string, number>();
+  for (const w of (journal.wires ?? []) as Array<Record<string, any>>) {
+    for (const sp of (w.splits ?? []) as Array<Record<string, any>>) {
+      labelToClass.set(String(sp.class), { fqn: String(sp.qboClass ?? ''), exists: Boolean(sp.qboClassExists) });
+      const k = String(sp.qboClass ?? sp.class);
+      laborByClass.set(k, (laborByClass.get(k) ?? 0) + num(sp.amount));
+    }
+  }
+
+  // JO health: timesheets continuing past that class's billing window.
+  const joSnap = await db.collection(`tenants/${tenantId}/job_orders`).get().catch(() => null);
+  const tsSnap = await db
+    .collection(`tenants/${tenantId}/timesheet_entries`)
+    .where('workDate', '>=', startDate)
+    .get()
+    .catch(() => null);
+  const tsSpanByJo = new Map<string, { min: string; max: string; n: number }>();
+  if (tsSnap) {
+    tsSnap.forEach((d) => {
+      const e = d.data();
+      if (['rejected', 'void', 'deleted'].includes(trim(e.status))) return;
+      const jo = trim(e.jobOrderId);
+      const wd = trim(e.workDate);
+      if (!jo || !wd || wd > endDate) return;
+      const x = tsSpanByJo.get(jo) ?? { min: wd, max: wd, n: 0 };
+      if (wd < x.min) x.min = wd;
+      if (wd > x.max) x.max = wd;
+      x.n += 1;
+      tsSpanByJo.set(jo, x);
+    });
+  }
+  const billSpan = new Map<string, { min: string; max: string }>();
+  for (const l of invLines) {
+    if (!l.cls) continue;
+    const m = l.desc.match(/\((\d{1,2})\.(\d{1,2})\.26\s*-\s*(\d{1,2})\.(\d{1,2})\.26\)/);
+    const lo = m ? `2026-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : l.date;
+    const hi = m ? `2026-${m[3].padStart(2, '0')}-${m[4].padStart(2, '0')}` : l.date;
+    const x = billSpan.get(l.cls) ?? { min: lo, max: hi };
+    if (lo < x.min) x.min = lo;
+    if (hi > x.max) x.max = hi;
+    billSpan.set(l.cls, x);
+  }
+  const addDays = (d: string, n: number): string => new Date(Date.parse(d) + n * 86400000).toISOString().slice(0, 10);
+  const unhealthyJos: Array<{ jobOrderId: string; jobOrderName: string; timesheetsTo: string; billingEnds: string; cls: string }> = [];
+  if (joSnap) {
+    joSnap.forEach((d) => {
+      const jo = d.data();
+      const span = tsSpanByJo.get(d.id);
+      if (!span || span.n < 10) return;
+      const nm = trim(jo.jobOrderName) || trim(jo.title);
+      const lc = labelToClass.get(nm);
+      const cls = lc?.fqn || '';
+      const bs = cls ? billSpan.get(cls) : undefined;
+      if (bs && span.max > addDays(bs.max, 10)) {
+        unhealthyJos.push({ jobOrderId: d.id, jobOrderName: nm, timesheetsTo: span.max, billingEnds: bs.max, cls });
+      }
+    });
+  }
+
+  // grade payroll
+  const TIER: Record<string, string> = {
+    payment_override: 'CONFIRMED', jo_number_tag: 'CONFIRMED', note_dates_x_index: 'CONFIRMED',
+    sole_assignment_class: 'CORROBORATED',
+    note_venue_text: 'FLAG_WEAK', note_alias: 'FLAG_WEAK', worker_override: 'FLAG_WEAK', period_day_split: 'FLAG_WEAK',
+  };
+  const tierTotals = new Map<string, number>();
+  const flags: Array<Record<string, unknown>> = [];
+  for (const r of recs) {
+    const w = r.resolvedWeight + r.unresolvedWeight;
+    if (w <= 0) continue;
+    if (r.unresolvedWeight > 0.005) {
+      tierTotals.set('FLAG_UNKNOWN', (tierTotals.get('FLAG_UNKNOWN') ?? 0) + r.unresolvedWeight);
+      flags.push({
+        paymentId: r.paymentId, worker: r.worker, fundingDate: r.fundingDates[0] ?? '',
+        amount: round2(r.unresolvedWeight), label: '', qboClass: '', method: 'unattributed',
+        tier: 'FLAG_UNKNOWN', reason: 'no evidence — needs manual class',
+      });
+    }
+    for (const sh of r.shares) {
+      const dollars = sh.amt;
+      const lc = labelToClass.get(String(sh.cls));
+      let tier = TIER[sh.method] ?? 'FLAG_WEAK';
+      let reason = tier === 'FLAG_WEAK' ? `text-match only (${sh.method})` : '';
+      if (lc && !lc.exists) {
+        tier = 'FLAG_UNKNOWN';
+        reason = `label "${sh.cls}" resolves to no QBO class`;
+      }
+      tierTotals.set(tier, (tierTotals.get(tier) ?? 0) + dollars);
+      if (tier.startsWith('FLAG')) {
+        flags.push({
+          paymentId: r.paymentId, worker: r.worker, fundingDate: r.fundingDates[0] ?? '',
+          amount: round2(dollars), label: String(sh.cls), qboClass: lc?.fqn ?? '', method: sh.method,
+          tier, reason,
+        });
+      }
+    }
+  }
+  flags.sort((a, b) => Number(b.amount) - Number(a.amount));
+
+  // grade invoices
+  const famOK = (cust: string, cls: string): boolean => {
+    const c = cust.toLowerCase();
+    const k = cls.toLowerCase();
+    if (/^venue\s*smart/.test(c)) return k.startsWith('venue smart') || k === '';
+    if (/^indeed flex/.test(c)) return k.startsWith('indeed flex');
+    if (/^sodexo/.test(c)) return k === 'sodexo';
+    return true;
+  };
+  const invoiceFlags: Array<Record<string, unknown>> = [];
+  for (const l of invLines) {
+    let reason = '';
+    if (!l.cls && Math.abs(l.amt) > 0.01) reason = 'UNCLASSED line';
+    else if (l.cls === 'Venue Smart' && !/non factored/i.test(l.desc)) reason = 'parked on VS parent';
+    else if (l.cls && !famOK(l.cust, l.cls)) reason = `class family mismatch (customer "${l.cust}")`;
+    if (reason) invoiceFlags.push({ date: l.date, doc: l.doc, customer: l.cust, amount: round2(l.amt), cls: l.cls, reason });
+  }
+
+  // ratio sanity
+  const ratios: Array<Record<string, unknown>> = [];
+  const allCls = new Set([...revByClass.keys(), ...laborByClass.keys()]);
+  for (const c of [...allCls].sort()) {
+    const rev = revByClass.get(c) ?? 0;
+    const lab = laborByClass.get(c) ?? 0;
+    if (rev < 500 && lab < 500) continue;
+    const ratio = lab > 0 ? rev / lab : null;
+    let verdict = 'OK';
+    if (lab > 500 && rev === 0) verdict = 'LABOR-NO-REVENUE';
+    else if (rev > 500 && lab === 0) verdict = 'REVENUE-NO-LABOR';
+    else if (ratio !== null && ratio < 1.15) verdict = 'UNDER-BILLED?';
+    else if (ratio !== null && ratio > 2.2) verdict = 'LABOR-MISSING?';
+    ratios.push({ cls: c, revenue: round2(rev), labor: round2(lab), ratio: ratio === null ? null : round2(ratio), verdict });
+  }
+
+  return {
+    startDate, endDate,
+    tiers: Array.from(tierTotals.entries()).map(([tier, amount]) => ({ tier, amount: round2(amount) })).sort((a, b) => b.amount - a.amount),
+    payrollFlags: flags.slice(0, 2000),
+    invoiceFlags,
+    ratios,
+    unhealthyJos,
+    invoiceLineCount: invLines.length,
+    activeClasses: classes.filter((c) => c.Active !== false).map((c) => String(c.FullyQualifiedName)).sort(),
+  };
+}
+
+/**
+ * Weekly classification health check (Greg 2026-09-01: "wire these health
+ * checks into the weekly cron"). Rides the reconcile cron behind a
+ * once-per-ISO-week claim, staggered to a tick AFTER the day's ledger
+ * freeze (both walk the full Everee payment set — together they would
+ * blow the 540s budget). Persists the summary to
+ * classification_health_runs/{monday} and pings Slack when anything
+ * needs eyes. Detection layer for what attribution cannot see from
+ * inside: stale JOs, under-billing, weak-evidence drift.
+ */
+export async function maybeRunWeeklyClassificationHealth(
+  tenantId: string,
+  postText?: (text: string) => Promise<void>,
+): Promise<void> {
+  const now = Date.now();
+  const day = new Date(now).toISOString().slice(0, 10);
+  const dow = new Date(now).getUTCDay();
+  const monday = new Date(now - ((dow + 6) % 7) * 86400000).toISOString().slice(0, 10);
+  const freezeDone = await db.doc(`function_runs/payrollLedgerFreeze_${day}`).get();
+  if (!freezeDone.exists || !freezeDone.get('finishedAt')) return;
+  const claimRef = db.doc(`function_runs/classificationHealth_${monday}`);
+  const claimed = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(claimRef);
+    if (snap.exists) return false;
+    tx.set(claimRef, { startedAt: admin.firestore.FieldValue.serverTimestamp(), tenantId });
+    return true;
+  });
+  if (!claimed) return;
+  try {
+    const start = new Date(now - 45 * 86400000).toISOString().slice(0, 10);
+    const audit = (await buildClassificationAudit(tenantId, start, day)) as Record<string, any>;
+    const tiers = (audit.tiers ?? []) as Array<{ tier: string; amount: number }>;
+    const flaggedAmt = tiers.filter((t) => t.tier.startsWith('FLAG')).reduce((s, t) => s + t.amount, 0);
+    const payrollFlags = (audit.payrollFlags ?? []) as Array<Record<string, unknown>>;
+    const invoiceFlags = (audit.invoiceFlags ?? []) as Array<Record<string, unknown>>;
+    const unhealthyJos = (audit.unhealthyJos ?? []) as Array<Record<string, any>>;
+    const badRatios = ((audit.ratios ?? []) as Array<Record<string, any>>).filter((r) => r.verdict !== 'OK');
+    await db.doc(`tenants/${tenantId}/classification_health_runs/${monday}`).set({
+      weekOf: monday, startDate: start, endDate: day,
+      tiers, flaggedCount: payrollFlags.length, flaggedAmount: round2(flaggedAmt),
+      invoiceFlagCount: invoiceFlags.length,
+      unhealthyJos, badRatios: badRatios.slice(0, 40),
+      ranAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    if (postText && (payrollFlags.length > 0 || invoiceFlags.length > 0 || unhealthyJos.length > 0 || badRatios.length > 0)) {
+      const joLines = unhealthyJos
+        .map((j) => `• ${j.jobOrderName}: timesheets to ${j.timesheetsTo}, billing ends ${j.billingEnds}`)
+        .join('\n');
+      const ratioLines = badRatios
+        .slice(0, 8)
+        .map((r) => `• ${r.cls}: rev $${Math.round(r.revenue).toLocaleString()} / labor $${Math.round(r.labor).toLocaleString()} — ${r.verdict}`)
+        .join('\n');
+      await postText(
+        `📊 Weekly classification health (trailing 45 days)\n` +
+          `Flagged payroll: ${payrollFlags.length} lines / $${Math.round(flaggedAmt).toLocaleString()} · invoice flags: ${invoiceFlags.length}\n` +
+          (unhealthyJos.length ? `\n⚠️ Job orders clocking past billing (crew rolled or weeks unbilled):\n${joLines}\n` : '') +
+          (badRatios.length ? `\n⚠️ Class health (rev÷labor outside the staffing band):\n${ratioLines}\n` : '') +
+          `\nReview + fix inline: https://hrxone.com/reports/classification-audit`,
+      );
+    }
+    // Posted-JE true-up rides the weekly run: verification-page fixes
+    // reach QBO within the week without any push (Greg 2026-09-01).
+    try {
+      const { trueUpAllocationJes } = await import('./allocationTrueUp');
+      const tu = (await trueUpAllocationJes(tenantId, false)) as Record<string, any>;
+      if (Number(tu.patched) > 0 && postText) {
+        await postText(`🩹 Allocation true-up: re-split ${tu.patched} posted payroll JE(s) to current attribution.`);
+      }
+    } catch (e) {
+      console.error('[classificationHealth] true-up failed', { error: String(e) });
+    }
+    // Revenue-account rule rides the weekly run too — one idempotent
+    // monthly 4200→4100 reclass JE per matured month (Greg 2026-09-01).
+    try {
+      const { pushRevenueAccountReclass } = await import('./revenueAccountReclass');
+      const rr = (await pushRevenueAccountReclass(tenantId, false)) as Record<string, any>;
+      const made = ((rr.months ?? []) as Array<Record<string, any>>).filter((x) => x.status === 'created');
+      if (made.length && postText) {
+        await postText(`🔀 Revenue reclass: posted ${made.length} monthly 4200→4100 entr${made.length === 1 ? 'y' : 'ies'} (events-family revenue).`);
+      }
+    } catch (e) {
+      console.error('[classificationHealth] revenue reclass failed', { error: String(e) });
+    }
+    // Screening allocation rides the weekly run — idempotent per charge,
+    // mature charges only, ~$8/screen amounts (Greg 2026-09-01).
+    try {
+      const { pushScreeningAllocations } = await import('./screeningAllocations');
+      const scr = (await pushScreeningAllocations(tenantId, false)) as Record<string, any>;
+      const created = ((scr.charges ?? []) as Array<Record<string, any>>).filter((c) => c.status === 'created');
+      if (created.length && postText) {
+        await postText(`🧾 Screening allocation: posted ${created.length} AccuSource reclass entr${created.length === 1 ? 'y' : 'ies'} (5010 → 5300 per class).`);
+      }
+    } catch (e) {
+      console.error('[classificationHealth] screening allocation failed', { error: String(e) });
+    }
+    await claimRef.set(
+      { finishedAt: admin.firestore.FieldValue.serverTimestamp(), flagged: payrollFlags.length, unhealthyJos: unhealthyJos.length },
+      { merge: true },
+    );
+    console.info('[classificationHealth] complete', { flagged: payrollFlags.length, badRatios: badRatios.length });
+  } catch (e) {
+    console.error('[classificationHealth] failed', { error: e instanceof Error ? e.message : String(e) });
+    await claimRef.set(
+      { failedAt: admin.firestore.FieldValue.serverTimestamp(), error: String(e).slice(0, 300) },
+      { merge: true },
+    );
+  }
+}
+
+export const ACCOUNT_CLASS_RULES: Array<{ re: RegExp; leaf: string }> = [
+  { re: /^sodexo/i, leaf: 'Sodexo' },
+  { re: /^cort\b/i, leaf: 'Cort' },
+  { re: /^domino/i, leaf: "Domino's" },
+  { re: /^continental battery/i, leaf: 'Continental Battery Systems, Inc.' },
+  { re: /^black caviar/i, leaf: 'Black Caviar' },
+  { re: /^proof of the pudding/i, leaf: 'Proof of Pudding' },
+  { re: /^ors nasco/i, leaf: 'ORS Nasco' },
+  { re: /^purolator/i, leaf: 'Purolator International' },
+  { re: /^hyatt/i, leaf: 'Hyatt Hotels Corporation' },
+  { re: /^carrier/i, leaf: 'Carrier Enterprise' },
+  { re: /^mattress firm/i, leaf: 'Mattress Firm' },
+  { re: /^ontrac/i, leaf: 'OnTrac' },
+  { re: /^g6\b/i, leaf: 'G6' },
+  // One class for all Contigo weddings/galas — no per-event split
+  // (Greg 2026-09-01).
+  { re: /^contigo/i, leaf: 'Contigo Catering' },
+];
+
+/* -------------------------------------------------------------------------
  * Payroll Journal by QBO class (Greg 2026-08-19): the July wire-recon
  * engine (functions/.scratch/build-everee-wire-class-report.ts) as a
  * standing report — every Everee funding wire in range split across QBO
@@ -788,6 +1677,22 @@ export async function buildWireJournal(
   startDate: string,
   endDate: string,
   hiringEntityId: string | null,
+  opts?: {
+    /** Called once per in-range payment with its final resolution — the
+     *  2026 backfill uses this to persist the attribution-of-record
+     *  ledger (payroll_payment_attributions). */
+    onPayment?: (rec: {
+      paymentId: string;
+      worker: string;
+      entityId: string;
+      shares: Array<{ cls: string; amt: number; method: string }>;
+      resolvedWeight: number;
+      unresolvedWeight: number;
+      fundingDates: string[];
+    }) => void;
+    /** Recompute from raw signals even where ledger docs exist (refreeze). */
+    skipLedger?: boolean;
+  },
 ): Promise<Record<string, unknown>> {
   const money = (v: unknown): number => {
     const o = v as { amount?: unknown } | null | undefined;
@@ -796,6 +1701,39 @@ export async function buildWireJournal(
   };
 
   // ── JO name maps ──
+  // Two kinds of clients (Greg 2026-09-01, the Black Caviar P&L test):
+  // EVENT-kind (VenueSmart, Legends) — the JO name IS the class; and
+  // ACCOUNT-kind (Sodexo campuses, Flex clients, catering clients) — the
+  // class is the CLIENT, and JO names are roles or even the festival being
+  // catered ("Lollapalooza" under Black Caviar Catering must NOT land on
+  // Venue Smart:Lollapalooza). Label account-kind JOs by their account.
+  // (ACCOUNT_CLASS_RULES hoisted to module scope — shared with screeningAllocations.)
+  // Mapping-driven account classification (Greg 2026-09-01: "the company
+  // ID on the assignment should drive classification for most scenarios"):
+  // any class mapped account-kind in qbo_class_mappings classifies that
+  // account's labor — data-driven, no code change for new clients. An
+  // accountId mapped to MULTIPLE classes (VenueSmart's event classes all
+  // point at the VS account) is ambiguous and skipped: those stay
+  // event-level by JO name.
+  const acctClassCount = new Map<string, number>();
+  const acctClassByAccountId = new Map<string, string>();
+  const mapSnap = await db.collection(`tenants/${tenantId}/qbo_class_mappings`).get().catch(() => null);
+  if (mapSnap) {
+    mapSnap.forEach((d) => {
+      const m = d.data();
+      const aid = trim(m.accountId);
+      if (trim(m.targetKind) !== 'account' || !aid) return;
+      acctClassCount.set(aid, (acctClassCount.get(aid) ?? 0) + 1);
+      acctClassByAccountId.set(aid, trim(m.fqn) || trim(m.className));
+    });
+    for (const [aid, n] of acctClassCount) if (n > 1) acctClassByAccountId.delete(aid);
+  }
+  const classForAccount = (accountId: string, accountName: string): string | null => {
+    const mapped = accountId ? acctClassByAccountId.get(accountId) : undefined;
+    if (mapped) return mapped;
+    const rule = accountName ? ACCOUNT_CLASS_RULES.find((r) => r.re.test(accountName)) : undefined;
+    return rule ? rule.leaf : null;
+  };
   const joNameById = new Map<string, string>();
   const joNameByNumber = new Map<string, string>();
   for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
@@ -803,13 +1741,33 @@ export async function buildWireJournal(
     if (!snap) continue;
     snap.forEach((d) => {
       const j = d.data();
-      const name = trim(j.jobOrderName) || trim(j.title);
+      const name = classForAccount(trim(j.accountId), trim(j.accountName)) ?? (trim(j.jobOrderName) || trim(j.title));
       if (!name) return;
       if (!joNameById.has(d.id)) joNameById.set(d.id, name);
       const num = trim(j.jobOrderNumber);
       if (num && !joNameByNumber.has(num)) joNameByNumber.set(num, name);
     });
   }
+
+  // ── JO date-splits (Greg 2026-09-01, the Governors Ball→FIFA NY crew
+  //    roll): when a crew moves events but keeps clocking under the old
+  //    JO, a payroll_jo_date_splits doc {jobOrderId, fromDate, toDate?,
+  //    class} redirects that JO's worker-days in the date range — a
+  //    one-doc fix, no code change per incident. ──
+  const joDateSplits: Array<{ jobOrderId: string; fromDate: string; toDate: string; cls: string }> = [];
+  const splitSnap = await db.collection(`tenants/${tenantId}/payroll_jo_date_splits`).get().catch(() => null);
+  if (splitSnap) {
+    splitSnap.forEach((d) => {
+      const x = d.data();
+      if (trim(x.jobOrderId) && trim(x.fromDate) && trim(x.class)) {
+        joDateSplits.push({ jobOrderId: trim(x.jobOrderId), fromDate: trim(x.fromDate), toDate: trim(x.toDate) || '9999-12-31', cls: trim(x.class) });
+      }
+    });
+  }
+  const joLabelForDate = (joId: string, workDate: string): string | undefined => {
+    const split = joDateSplits.find((s) => s.jobOrderId === joId && workDate >= s.fromDate && workDate <= s.toDate);
+    return split ? split.cls : joNameById.get(joId);
+  };
 
   // ── Entry index: uid|workDate → JO name. Work precedes funding, so
   //    index a wide window behind the wire range. ──
@@ -823,13 +1781,18 @@ export async function buildWireJournal(
   const needAssignment: Array<{ key: string; assignmentId: string }> = [];
   entriesSnap.forEach((d) => {
     const e = d.data();
-    if (!['sent_to_everee', 'submitted', 'paid'].includes(trim(e.status))) return;
+    // Any non-rejected entry is evidence of WHERE the worker worked that
+    // day — amounts come from Everee, so drafts are safe for CLASS
+    // attribution (Black Caviar's crews: 368/436 entries never left draft
+    // because they were paid via bulk Everee notes, Greg 2026-09-01).
+    if (['rejected', 'void', 'deleted'].includes(trim(e.status))) return;
     const uid = trim(e.workerId) || trim(e.userId);
     const wd = trim(e.workDate);
     if (!uid || !wd) return;
     const key = `${uid}|${wd}`;
     const joId = trim(e.jobOrderId);
-    if (joId && joNameById.has(joId)) classByWorkerDate.set(key, joNameById.get(joId)!);
+    const dated = joId ? joLabelForDate(joId, wd) : undefined;
+    if (dated) classByWorkerDate.set(key, dated);
     else if (trim(e.assignmentId)) needAssignment.push({ key, assignmentId: trim(e.assignmentId) });
   });
   const asnIds = Array.from(new Set(needAssignment.map((n) => n.assignmentId)));
@@ -840,13 +1803,39 @@ export async function buildWireJournal(
     snaps.forEach((s) => {
       if (!s.exists) return;
       const joId = trim(s.data()?.jobOrderId);
-      if (joId && joNameById.has(joId)) joByAsn.set(s.id, joNameById.get(joId)!);
+      if (joId) joByAsn.set(s.id, joId);
     });
   }
   for (const n of needAssignment) {
-    if (!classByWorkerDate.has(n.key) && joByAsn.has(n.assignmentId)) {
-      classByWorkerDate.set(n.key, joByAsn.get(n.assignmentId)!);
-    }
+    const joId = joByAsn.get(n.assignmentId);
+    if (classByWorkerDate.has(n.key) || !joId) continue;
+    const dated = joLabelForDate(joId, n.key.split('|')[1] ?? '');
+    if (dated) classByWorkerDate.set(n.key, dated);
+  }
+
+  // ── Assignment index: fill worker-days timesheets don't cover.
+  //    Assignments are the point of truth (Greg 2026-09-01: "the company
+  //    ID on the assignment should drive classification for most
+  //    scenarios") — Contigo's crews have 1 timesheet but real
+  //    assignments; a worker assigned somewhere on a date worked there. ──
+  const allAsnSnap = await db.collection(`tenants/${tenantId}/assignments`).get().catch(() => null);
+  if (allAsnSnap) {
+    allAsnSnap.forEach((d) => {
+      const a = d.data();
+      const uid = trim(a.userId) || trim(a.workerId) || trim(a.candidateId);
+      const sd = trim(a.startDate);
+      const ed = trim(a.endDate) || sd;
+      if (!uid || !sd || ed < idxStart || sd > endDate) return;
+      const acctCls = classForAccount(trim(a.accountId), trim(a.companyName));
+      let t = Math.max(Date.parse(sd), Date.parse(idxStart));
+      const tEnd = Math.min(Date.parse(ed), Date.parse(endDate));
+      for (let i = 0; t <= tEnd && i < 185; t += 86400000, i++) {
+        const day = new Date(t).toISOString().slice(0, 10);
+        const key = `${uid}|${day}`;
+        const cls = acctCls ?? (trim(a.jobOrderId) ? joLabelForDate(trim(a.jobOrderId), day) : undefined) ?? null;
+        if (cls && !classByWorkerDate.has(key)) classByWorkerDate.set(key, cls);
+      }
+    });
   }
 
   // ── Venue-token resolver (unique ≥5-char tokens; STOP applies to note
@@ -899,9 +1888,75 @@ export async function buildWireJournal(
     return best ? best.cls : null;
   };
 
+  // Wire labels come from Everee earning notes and legacy account names;
+  // after the 2026-08-31 class restructure the generic matcher missed
+  // ~$536K of splits. These aliases encode that day's rulings (RS3 family
+  // = Proof of the Pudding; NASCAR/F1 own classes; FIFA fan-fest naming;
+  // role-only Flex labels roll to the channel) — checked FIRST in
+  // resolveClassFqn, then punctuation-insensitive exact, then containment.
+  // Also applied to raw earning notes when resolveVenueText misses
+  // ("LIV Golf VA - 35 Hours", "Dallas Fifa W/E 5.31", "7 Hours G6").
+  const WIRE_LABEL_ALIASES: Array<{ re: RegExp; leaf: string }> = [
+    { re: /governors?\s*ball/i, leaf: "Governor's Ball" },
+    { re: /fifa.*kansas\s*city|fifa\s*kc/i, leaf: 'FIFA KC' },
+    { re: /fifa.*dallas|dallas.*fifa/i, leaf: 'FIFA Dallas' },
+    { re: /fifa.*(ny|new\s*york)|adi\s*ny/i, leaf: 'FIFA NY' },
+    { re: /dell\s*diamond|kizer|slammers|legends\s*stadium|h-?e-?b\s*center/i, leaf: 'Proof of Pudding' },
+    // One golf event, many spellings ("Womens PGA Open", "LGPA", "US
+    // Women's Open") — LGPA PP was merged into 26 USGA Women's Open
+    // (Greg 2026-09-01: one event, split only by label naming).
+    { re: /pga|lpga|lgpa/i, leaf: "26 USGA Women's Open" },
+    { re: /us\s*wom[ea]n'?s?\s*open|usga/i, leaf: "26 USGA Women's Open" },
+    { re: /suenos|sueños/i, leaf: 'Suenos Music Festival' },
+    { re: /^legends\s*national\s*account$/i, leaf: 'Legends' },
+    { re: /nascar.*san\s*diego|san\s*diego.*nascar/i, leaf: 'Nascar SanDiego' },
+    { re: /nascar/i, leaf: 'Nascar' },
+    // Plain COTA (after NASCAR above) = the year-round smaller-events class.
+    { re: /\bcota\b/i, leaf: 'COTA' },
+    { re: /liv\s*golf\s*(va|virginia)/i, leaf: 'LIV Golf VA' },
+    { re: /liv\s*golf\s*indy/i, leaf: '2026 LIV Golf Indy' },
+    { re: /cort\b|hazeltine|wbi|woodridge/i, leaf: 'Cort' },
+    { re: /\bunc\b/i, leaf: 'Sodexo' },
+    { re: /minnesota\s*yacht|mn\s*yacht/i, leaf: 'MN Yacht Club' },
+    { re: /minnesota\s*country|mn\s*country/i, leaf: 'MN Country Club' },
+    { re: /g6\s*catering|\bg6\b/i, leaf: 'G6' },
+    { re: /crystal\s*falls|roy\s*kizer/i, leaf: 'Proof of Pudding' },
+    { re: /carrier\b/i, leaf: 'Carrier Enterprise' },
+    { re: /obama/i, leaf: 'Obama Presidential Viewing' },
+    // BTS = Black Caviar's Stanford gig (Greg 2026-09-01, reversing the
+    // earlier Oakland ruling once the "BTS Stanford" JO surfaced).
+    { re: /\bbts\b/i, leaf: 'Black Caviar' },
+    // "18.12 Hours - Kid Cudi" (May) — the class is named "Kid Concert".
+    { re: /kid\s*cudi/i, leaf: 'Kid Concert' },
+    // Final Four weekend at Lucas Oil = VS PO 2105 (Greg 2026-09-01).
+    { re: /final\s*four|march\s*madness/i, leaf: '2026 March Madness' },
+    // Sodexo campus dining roles carry the university name, never "Sodexo".
+    { re: /prairie\s*view|nc\s*a&t|carthage|stanford|\buniversity\b/i, leaf: 'Sodexo' },
+    { re: /sips\s*and\s*sounds/i, leaf: 'Black Caviar' },
+    // Role-only Flex labels — no client attribution available; roll to the
+    // channel parent rather than guessing a client.
+    { re: /^(warehouse (associate|worker|operator|ops).*|loader\s*\/\s*crew.*|production associate.*|forklift driver.*|\d{1,2}:\d{2}.*shift)$/i, leaf: 'Indeed Flex' },
+  ];
+
   // ── Greg's persisted overrides (payroll_class_overrides) ──
   const paymentOverrides = new Map<string, string>();
   const workerOverrides = new Map<string, string>();
+  // ── Attribution-of-record ledger (Greg 2026-09-01): frozen per-payment
+  //    class shares. Once a payment is fully resolved and frozen, later
+  //    Everee drift / rule changes can't silently reshuffle history. ──
+  const ledgerByPayment = new Map<string, { shares: Array<{ cls: string; amt: number; method: string }>; unresolvedWeight: number }>();
+  if (!opts?.skipLedger) {
+    const ledgerSnap = await db.collection(`tenants/${tenantId}/payroll_payment_attributions`).get().catch(() => null);
+    if (ledgerSnap) {
+      ledgerSnap.forEach((d) => {
+        const x = d.data();
+        ledgerByPayment.set(d.id, {
+          shares: Array.isArray(x.shares) ? (x.shares as Array<{ cls: string; amt: number; method: string }>) : [],
+          unresolvedWeight: Number(x.unresolvedWeight ?? 0) || 0,
+        });
+      });
+    }
+  }
   const ovSnap = await db.collection(`tenants/${tenantId}/payroll_class_overrides`).get().catch(() => null);
   if (ovSnap) {
     ovSnap.forEach((d) => {
@@ -927,6 +1982,9 @@ export async function buildWireJournal(
     unresolvedGross: number;
   }
   const groups = new Map<string, WireGroup>();
+  const unattributedDetail: Array<{ paymentId: string; worker: string; fundingDate: string; entityName: string; amount: number; notes: string }> = [];
+  const auditMethod = new Map<string, number>();
+  const auditMethodClass = new Map<string, Map<string, number>>();
   const entitiesSnap2 = await db.collection(`tenants/${tenantId}/entities`).get();
   for (const entityDoc of entitiesSnap2.docs) {
     const entityId = entityDoc.id;
@@ -960,20 +2018,48 @@ export async function buildWireJournal(
         const uid = trim(p.employee?.externalWorkerId);
 
         const shares = new Map<string, number>();
+        // Audit trail (Greg 2026-09-01): every dollar declares WHICH
+        // resolution path classed it, so the logic can be inspected.
+        const shareDetail: Array<{ cls: string; amt: number; method: string }> = [];
         let resolved = 0;
         let unresolved = 0;
-        const addShare = (cls: string, amt: number): void => {
+        const addShare = (cls: string, amt: number, method = 'unknown'): void => {
           if (amt <= 0) return;
           shares.set(cls, (shares.get(cls) ?? 0) + amt);
+          shareDetail.push({ cls, amt, method });
           resolved += amt;
         };
+        // The worker's own timesheet classes for this pay period — computed
+        // up front because assignment-derived data OUTRANKS note text when
+        // it's unambiguous (Greg 2026-09-01: Black Caviar caterers' notes
+        // say "Lollapalooza", but their assignment says who's paying).
+        let ps = trim(p.payPeriodStartDate);
+        let pe = trim(p.payPeriodEndDate);
+        if (!ps || !pe) {
+          const anchor = trim(p.payDate) || trim(p.forDate);
+          if (anchor) {
+            const t0 = Date.parse(anchor);
+            ps = new Date(t0 - 10 * 86400000).toISOString().slice(0, 10);
+            pe = new Date(t0 + 2 * 86400000).toISOString().slice(0, 10);
+          }
+        }
+        const periodClasses = new Map<string, number>();
+        if (uid && ps && pe) {
+          for (const [key, cls] of classByWorkerDate) {
+            const [kUid, kDate] = key.split('|');
+            if (kUid === uid && kDate >= ps && kDate <= pe) {
+              periodClasses.set(cls, (periodClasses.get(cls) ?? 0) + 1);
+            }
+          }
+        }
+        const soleClass = periodClasses.size === 1 ? Array.from(periodClasses.keys())[0] : null;
         for (const el of (p.earningList ?? []) as Array<Record<string, any>>) {
           const amt = money(el.currentPeriodAmount) || money(el.amounts?.amount);
           if (amt <= 0) continue;
           const note = trim(el.note);
           const joTag = note.match(/JO#(\d+)/);
           if (joTag && joNameByNumber.has(joTag[1])) {
-            addShare(joNameByNumber.get(joTag[1])!, amt);
+            addShare(joNameByNumber.get(joTag[1])!, amt, 'jo_number_tag');
             continue;
           }
           const dates = note.match(/\d{4}-\d{2}-\d{2}/g) ?? [];
@@ -982,49 +2068,74 @@ export async function buildWireJournal(
             .filter((c): c is string => Boolean(c));
           if (classes.length > 0) {
             const per = amt / classes.length;
-            classes.forEach((c) => addShare(c, per));
+            classes.forEach((c) => addShare(c, per, 'note_dates_x_index'));
+            continue;
+          }
+          // Worked exactly one client this period → that's the class,
+          // whatever the note calls the gig.
+          if (soleClass) {
+            addShare(soleClass, amt, 'sole_assignment_class');
             continue;
           }
           const venueCls = resolveVenueText(note);
-          if (venueCls) addShare(venueCls, amt);
-          else unresolved += amt;
+          if (venueCls) addShare(venueCls, amt, 'note_venue_text');
+          else {
+            // Last resort: the class-rename rulings apply to raw notes too.
+            const alias = WIRE_LABEL_ALIASES.find((a) => a.re.test(note));
+            if (alias) addShare(alias.leaf, amt, 'note_alias');
+            else unresolved += amt;
+          }
         }
-        // Pay-period fallback (AD_HOC often has no period → ±10d window).
+        // Worker-level overrides (Greg's 2026-08-14 CSV fill) answer what
+        // the pipeline can't otherwise resolve — they NO LONGER trump
+        // payment-specific signals: a worker who moved to a new event
+        // after the CSV was filled was getting the old event forever
+        // (audit 2026-09-01 — 323 worker docs steering $100Ks).
         if (unresolved > 0) {
-          let ps = trim(p.payPeriodStartDate);
-          let pe = trim(p.payPeriodEndDate);
-          if (!ps || !pe) {
-            const anchor = trim(p.payDate) || trim(p.forDate);
-            if (anchor) {
-              const t0 = Date.parse(anchor);
-              ps = new Date(t0 - 10 * 86400000).toISOString().slice(0, 10);
-              pe = new Date(t0 + 2 * 86400000).toISOString().slice(0, 10);
-            }
-          }
-          const periodClasses = new Map<string, number>();
-          if (uid && ps && pe) {
-            for (const [key, cls] of classByWorkerDate) {
-              const [kUid, kDate] = key.split('|');
-              if (kUid === uid && kDate >= ps && kDate <= pe) {
-                periodClasses.set(cls, (periodClasses.get(cls) ?? 0) + 1);
-              }
-            }
-          }
-          if (periodClasses.size > 0) {
-            const totalN = Array.from(periodClasses.values()).reduce((s, n) => s + n, 0);
-            for (const [cls, n] of periodClasses) addShare(cls, (unresolved * n) / totalN);
+          const wov = workerOverrides.get(trim(p.payeeDisplayFullName).toLowerCase().replace(/\s+/g, ' '));
+          if (wov) {
+            addShare(wov, unresolved, 'worker_override');
             unresolved = 0;
           }
         }
-        // Greg's explicit answer beats every heuristic.
-        const ov =
-          paymentOverrides.get(id) ??
-          workerOverrides.get(trim(p.payeeDisplayFullName).toLowerCase().replace(/\s+/g, ' '));
-        if (ov) {
+        // Pay-period fallback for what's left (multi-class periods):
+        // distribute across the period's classes by day-count.
+        if (unresolved > 0 && periodClasses.size > 0) {
+          const totalN = Array.from(periodClasses.values()).reduce((s, n) => s + n, 0);
+          for (const [cls, n] of periodClasses) addShare(cls, (unresolved * n) / totalN, 'period_day_split');
+          unresolved = 0;
+        }
+        // Ledger replay: a frozen payment reproduces its recorded shares
+        // exactly (only an explicit payment override can supersede it).
+        const led = ledgerByPayment.get(id);
+        if (led) {
           shares.clear();
-          shares.set(ov, 1);
+          shareDetail.length = 0;
+          resolved = 0;
+          unresolved = led.unresolvedWeight;
+          for (const sd of led.shares) addShare(sd.cls, sd.amt, 'ledger');
+        }
+        // Payment-level override: an explicit per-payment human answer
+        // still beats everything.
+        const pov = paymentOverrides.get(id);
+        if (pov) {
+          shares.clear();
+          shares.set(pov, 1);
+          shareDetail.length = 0;
+          shareDetail.push({ cls: pov, amt: 1, method: 'payment_override' });
           resolved = 1;
           unresolved = 0;
+        }
+        if (opts?.onPayment) {
+          opts.onPayment({
+            paymentId: id,
+            worker: trim(p.payeeDisplayFullName),
+            entityId,
+            shares: shareDetail.map((sd) => ({ ...sd })),
+            resolvedWeight: resolved,
+            unresolvedWeight: unresolved,
+            fundingDates: fundings.map((f) => trim(f.fundingDate)),
+          });
         }
 
         for (const f of fundings) {
@@ -1047,17 +2158,44 @@ export async function buildWireJournal(
           g.total = round2(g.total + fAmt);
           g.payments += 1;
           const denom = resolved + unresolved;
+          const unresolvedShare = denom <= 0 ? fAmt : (fAmt * unresolved) / denom;
           if (denom <= 0) g.unresolvedGross += fAmt;
           else {
             for (const [cls, sAmt] of shares) {
               g.classGross.set(cls, (g.classGross.get(cls) ?? 0) + (fAmt * sAmt) / denom);
             }
-            g.unresolvedGross += (fAmt * unresolved) / denom;
+            g.unresolvedGross += unresolvedShare;
+            for (const sd of shareDetail) {
+              const scaled = (fAmt * sd.amt) / denom;
+              auditMethod.set(sd.method, (auditMethod.get(sd.method) ?? 0) + scaled);
+              let mc = auditMethodClass.get(sd.method);
+              if (!mc) { mc = new Map(); auditMethodClass.set(sd.method, mc); }
+              mc.set(sd.cls, (mc.get(sd.cls) ?? 0) + scaled);
+            }
+          }
+          auditMethod.set('unattributed', (auditMethod.get('unattributed') ?? 0) + unresolvedShare);
+          // Surface WHO makes up "Unattributed" so it can be overridden
+          // (payroll_class_overrides kind:payment/worker) instead of
+          // staying a mystery number (Greg 2026-08-31).
+          if (unresolvedShare > 0.005) {
+            unattributedDetail.push({
+              paymentId: id,
+              worker: trim(p.payeeDisplayFullName),
+              fundingDate: trim(f.fundingDate),
+              entityName,
+              amount: round2(unresolvedShare),
+              notes: ((p.earningList ?? []) as Array<Record<string, any>>)
+                .map((el) => trim(el.note)).filter(Boolean).slice(0, 3).join(' | ').slice(0, 120),
+            });
           }
         }
       }
+      // Walk EVERY page: breaking on a fresh-less page drops payments when
+      // Everee is actively syncing (items shift across page boundaries
+      // mid-pagination) and made wire totals nondeterministic between runs
+      // (2026-08-31 incident — run-to-run drift of ±$300 per wire).
       const totalPages = Number(res.totalPages ?? 1);
-      if (fresh === 0 || page >= totalPages - 1) break;
+      if (page >= totalPages - 1) break;
     }
   }
 
@@ -1072,11 +2210,22 @@ export async function buildWireJournal(
   } catch {
     // QBO down/unconnected — journal still works, classes just unresolved.
   }
+  const squashLbl = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
   const resolveClassFqn = (name: string): { fqn: string; exists: boolean } => {
+    for (const a of WIRE_LABEL_ALIASES) {
+      if (a.re.test(name)) {
+        const hit = qboClasses.find((c) => squashLbl(c.leaf) === squashLbl(a.leaf));
+        if (hit) return { fqn: hit.fqn, exists: true };
+      }
+    }
     const n = name.toLowerCase();
-    const exact = qboClasses.filter((c) => c.leaf === n || c.fqn.toLowerCase() === n);
+    const nsq = squashLbl(name);
+    const exact = qboClasses.filter((c) => c.leaf === n || c.fqn.toLowerCase() === n || squashLbl(c.leaf) === nsq || squashLbl(c.fqn) === nsq);
     if (exact.length >= 1) return { fqn: exact[0].fqn, exists: true };
-    const partial = qboClasses.filter((c) => c.leaf.includes(n) || n.includes(c.leaf));
+    const partial = qboClasses.filter((c) => {
+      const k = squashLbl(c.leaf);
+      return k.length >= 4 && nsq.length >= 4 && (k.includes(nsq) || nsq.includes(k));
+    });
     if (partial.length === 1) return { fqn: partial[0].fqn, exists: true };
     return { fqn: name, exists: false };
   };
@@ -1139,6 +2288,7 @@ export async function buildWireJournal(
 
   const totalWired = round2(wires.reduce((s, w) => s + w.amount, 0));
   const totalUnattributed = round2(wires.reduce((s, w) => s + w.unattributed, 0));
+  unattributedDetail.sort((a, b) => b.amount - a.amount);
   return {
     totals: {
       wired: totalWired,
@@ -1148,6 +2298,19 @@ export async function buildWireJournal(
     },
     wires,
     byClass,
+    unattributedDetail: unattributedDetail.slice(0, 500),
+    attributionAudit: {
+      methods: Array.from(auditMethod.entries())
+        .map(([method, amount]) => ({ method, amount: round2(amount) }))
+        .sort((a, b) => b.amount - a.amount),
+      topClassesByMethod: Object.fromEntries(
+        Array.from(auditMethodClass.entries()).map(([m, mc]) => [
+          m,
+          Array.from(mc.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8)
+            .map(([cls, amount]) => ({ cls, amount: round2(amount) })),
+        ]),
+      ),
+    },
   };
 }
 
@@ -1308,8 +2471,13 @@ async function buildClassCatalog(
   // Suggestion candidates: JO names (scoped by account) + account names.
   const joList: Array<{ id: string; name: string; accountId: string | null; accountName: string | null }> = [];
   const acctNameById = new Map<string, string>();
+  const acctParentById = new Map<string, string>();
   const acctSnap = await db.collection(`tenants/${tenantId}/accounts`).get();
-  acctSnap.forEach((d) => acctNameById.set(d.id, trim(d.data().name)));
+  acctSnap.forEach((d) => {
+    acctNameById.set(d.id, trim(d.data().name));
+    const p = trim(d.data().parentAccountId);
+    if (p) acctParentById.set(d.id, p);
+  });
   for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
     // eslint-disable-next-line no-await-in-loop
     const snap = await db.collection(`tenants/${tenantId}/${coll}`).get().catch(() => null);
@@ -1324,17 +2492,45 @@ async function buildClassCatalog(
   }
   const norm = (s: string): string =>
     s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(20\d\d|llc|inc|national|account)\b/g, '').replace(/\s+/g, ' ').trim();
-  const suggest = (className: string): { jobOrderId: string; jobOrderName: string; accountId: string | null; accountName: string | null } | null => {
+  // Level-aware suggestions (2026-08-27): JO first, then account (the
+  // right home for bare account-named classes like "Black Caviar"), then
+  // an overhead hint for expense-only classes matching nothing.
+  const acctList = Array.from(acctNameById.entries()).map(([id, name]) => ({ id, name, n: norm(name) }));
+  const suggest = (
+    className: string,
+    billed: number,
+    expenses: number,
+  ): {
+    kind: 'job_order' | 'account' | 'overhead';
+    jobOrderId?: string;
+    jobOrderName?: string;
+    accountId: string | null;
+    accountName: string | null;
+  } | null => {
     const seg = norm(className.split(':').pop() ?? className);
-    if (seg.length < 4) return null;
-    let best: (typeof joList)[number] | null = null;
-    for (const jo of joList) {
-      const n = norm(jo.name);
-      if (!n) continue;
-      if (n === seg) return { jobOrderId: jo.id, jobOrderName: jo.name, accountId: jo.accountId, accountName: jo.accountName };
-      if (!best && seg.length >= 5 && n.length >= 5 && (n.includes(seg) || seg.includes(n))) best = jo;
+    if (!seg) return expenses > 0 && billed === 0 ? { kind: 'overhead', accountId: null, accountName: null } : null;
+    if (seg.length >= 4) {
+      let best: (typeof joList)[number] | null = null;
+      for (const jo of joList) {
+        const n = norm(jo.name);
+        if (!n) continue;
+        if (n === seg)
+          return { kind: 'job_order', jobOrderId: jo.id, jobOrderName: jo.name, accountId: jo.accountId, accountName: jo.accountName };
+        if (!best && seg.length >= 5 && n.length >= 5 && (n.includes(seg) || seg.includes(n))) best = jo;
+      }
+      // Account match beats a fuzzy JO hit when the class IS an account name
+      // (the Black Caviar trap): exact first, then unique containment.
+      const acctExact = acctList.filter((a) => a.n === seg);
+      if (acctExact.length === 1)
+        return { kind: 'account', accountId: acctExact[0].id, accountName: acctExact[0].name };
+      const acctContains = acctList.filter((a) => a.n.length >= 4 && a.n.includes(seg));
+      if (acctContains.length === 1 && !best)
+        return { kind: 'account', accountId: acctContains[0].id, accountName: acctContains[0].name };
+      if (best)
+        return { kind: 'job_order', jobOrderId: best.id, jobOrderName: best.name, accountId: best.accountId, accountName: best.accountName };
     }
-    return best ? { jobOrderId: best.id, jobOrderName: best.name, accountId: best.accountId, accountName: best.accountName } : null;
+    if (expenses > 0 && billed === 0) return { kind: 'overhead', accountId: null, accountName: null };
+    return null;
   };
 
   const classes = ((classRes.Class ?? []) as Array<Record<string, any>>).map((c) => {
@@ -1353,15 +2549,27 @@ async function buildClassCatalog(
       billedInRange: billedAgg?.billed ?? 0,
       expensesInRange: expAgg?.total ?? 0,
       mapping: mapping
-        ? {
-            jobOrderId: trim(mapping.jobOrderId) || null,
-            jobOrderName: trim(mapping.jobOrderName) || null,
-            accountId: trim(mapping.accountId) || null,
-            accountName: trim(mapping.accountName) || null,
-            source: trim(mapping.source) || 'manual',
-          }
+        ? (() => {
+            const kind = trim(mapping.targetKind) || (trim(mapping.jobOrderName) ? 'job_order' : 'account');
+            const acctId = trim(mapping.accountId) || null;
+            const parentId = acctId ? acctParentById.get(acctId) ?? null : null;
+            const joNames: string[] = Array.isArray(mapping.jobOrderNames)
+              ? (mapping.jobOrderNames as unknown[]).map((x) => trim(x)).filter(Boolean)
+              : [trim(mapping.jobOrderName)].filter(Boolean);
+            return {
+              targetKind: kind,
+              jobOrderId: trim(mapping.jobOrderId) || null,
+              jobOrderName: trim(mapping.jobOrderName) || null,
+              jobOrderNames: joNames,
+              accountId: acctId,
+              accountName: trim(mapping.accountName) || null,
+              parentAccountId: parentId,
+              parentAccountName: parentId ? acctNameById.get(parentId) ?? null : null,
+              source: trim(mapping.source) || 'manual',
+            };
+          })()
         : null,
-      suggestion: mapping ? null : suggest(fqn),
+      suggestion: mapping ? null : suggest(fqn, billedAgg?.billed ?? 0, expAgg?.total ?? 0),
     };
   });
   classes.sort((a, b) => (b.billedInRange + b.expensesInRange) - (a.billedInRange + a.expensesInRange) || a.fqn.localeCompare(b.fqn));
@@ -1378,10 +2586,313 @@ async function buildClassCatalog(
   };
 }
 
+/* -------------------------------------------------------------------------
+ * Job-order costing (Greg 2026-08-27): one JO's complete P&L over its
+ * WHOLE LIFE — no date window. Pick entity → account → job order; the
+ * report derives its own horizon from the JO's entries (invoices often
+ * land months after the work, which is exactly what date-windowed views
+ * distort). Pay/hours/WC from ALL of the JO's paid entries; billing +
+ * expenses from QBO classes matched to the JO (explicit qbo_class_mappings
+ * first, then exact, then fuzzy — same philosophy as Gross Margin);
+ * employer taxes at the entity's real Everee rate for the work span.
+ * ------------------------------------------------------------------------- */
+export async function buildJobOrderCosting(
+  tenantId: string,
+  jobOrderIds: string[],
+): Promise<Record<string, unknown>> {
+  // JO + account + entity context — MULTIPLE JOs aggregate into one P&L
+  // (Greg 2026-08-27: MN Yacht Club #315 + MN Country Club #209 share one
+  // QBO class and are really one engagement; same shape as the Maryland
+  // Loader/Crew → Warehouse Associate successor pairs).
+  const jos: Array<{ id: string; jo: Record<string, unknown> }> = [];
+  for (const joId of jobOrderIds.slice(0, 10)) {
+    for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
+      // eslint-disable-next-line no-await-in-loop
+      const s = await db.doc(`tenants/${tenantId}/${coll}/${joId}`).get();
+      if (s.exists) {
+        jos.push({ id: joId, jo: s.data() as Record<string, unknown> });
+        break;
+      }
+    }
+  }
+  if (jos.length === 0) throw new HttpsError('not-found', 'Job order not found.');
+  const joNames = jos.map(({ id, jo }) => trim(jo.jobOrderName) || trim(jo.jobTitle) || id);
+  const first = jos[0].jo;
+  const accountId = trim(first.recruiterAccountId) || trim(first.accountId) || null;
+  let accountName: string | null = trim(first.accountName) || null;
+  if (accountId) {
+    const acct = await db.doc(`tenants/${tenantId}/accounts/${accountId}`).get();
+    if (acct.exists) accountName = trim(acct.data()?.name) || accountName;
+  }
+  const entityId = trim(first.hiringEntityId);
+  const entSnap = entityId ? await db.doc(`tenants/${tenantId}/entities/${entityId}`).get() : null;
+  const isContractor =
+    trim(entSnap?.data()?.workerType).toLowerCase() === 'contractor' || /events|workforce/i.test(entityId);
+
+  // Every entry the JOs have ever had (single-field queries, auto-indexed).
+  const PAID = new Set(['sent_to_everee', 'submitted', 'paid']);
+  const PENDING = new Set(['draft', 'pending', 'approved']);
+  let pay = 0;
+  let pendingPay = 0;
+  let hours = 0;
+  let tips = 0;
+  let bonus = 0;
+  let reimbursements = 0;
+  let wcPremium = 0;
+  let minDate = '';
+  let maxDate = '';
+  const workers = new Set<string>();
+  const payByEntity: Record<string, number> = {};
+  let entryCount = 0;
+  for (const { id: joId } of jos) {
+    // eslint-disable-next-line no-await-in-loop
+    const entriesSnap = await db
+      .collection(`tenants/${tenantId}/timesheet_entries`)
+      .where('jobOrderId', '==', joId)
+      .get();
+    entriesSnap.forEach((d) => {
+      const e = d.data() as Record<string, unknown>;
+      const status = trim(e.status);
+      const isImport = trim(e.source) === 'csv_import';
+      const rate = num(e.payRate);
+      const reg = num(e.totalRegularHours);
+      const ot = num(e.totalOTHours);
+      const dt = num(e.totalDoubleTimeHours);
+      const premiums = isImport ? 0 : round2((num(e.mealBreakPenaltyHours) + num(e.restBreakPenaltyHours)) * rate);
+      const hourly = isContractor
+        ? round2((reg + ot + dt) * rate)
+        : isImport
+          ? round2(reg * rate + ot * rate * 1.5)
+          : round2(reg * rate + ot * rate * 1.5 + dt * rate * 2);
+      const total = round2(hourly + premiums + num(e.tips) + num(e.bonusAmount));
+      if (!(total > 0)) return;
+      const wd = trim(e.workDate);
+      if (PAID.has(status)) {
+        pay = round2(pay + total);
+        hours = round2(hours + reg + ot + dt);
+        tips = round2(tips + num(e.tips));
+        bonus = round2(bonus + num(e.bonusAmount));
+        reimbursements = round2(reimbursements + num(e.reimbursementAmount));
+        wcPremium = round2(wcPremium + (total * (num(e.workersCompRate) || 0)) / 100);
+        if (trim(e.workerId)) workers.add(trim(e.workerId));
+        const ent = trim(e.hiringEntityId) || 'unknown';
+        payByEntity[ent] = round2((payByEntity[ent] ?? 0) + total);
+        if (wd && (!minDate || wd < minDate)) minDate = wd;
+        if (wd && (!maxDate || wd > maxDate)) maxDate = wd;
+        entryCount += 1;
+      } else if (PENDING.has(status)) {
+        pendingPay = round2(pendingPay + total);
+      }
+    });
+  }
+
+  // Horizon: earliest work (or JO start) minus 45d → today. Invoices and
+  // card spend land late; the pad catches deposits billed before work.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const anchor = minDate || trim(first.startDate) || todayIso;
+  const start = new Date(`${anchor}T00:00:00Z`);
+  start.setUTCDate(start.getUTCDate() - 45);
+  const windowStart = start.toISOString().slice(0, 10);
+
+  const [agg, expAgg, burdenByEntity] = await Promise.all([
+    buildBillingAggregates(tenantId, windowStart, todayIso),
+    buildExpenseAggregates(tenantId, windowStart, todayIso),
+    minDate
+      ? buildEvereeBurdenRates(tenantId, minDate, maxDate || todayIso).catch(
+          () => ({}) as Record<string, EntityBurden>,
+        )
+      : Promise.resolve({} as Record<string, EntityBurden>),
+  ]);
+
+  // Class → this-engagement matching (mapped > exact > fuzzy;
+  // account-prefix compatible, space-insensitive — mirrors the Gross
+  // Margin matcher). A class matches when it matches ANY of the JOs.
+  const normName = (s: string): string =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\b(20\d\d|llc|inc|national|account)\b/g, '')
+      .replace(/\bmn\b/g, 'minnesota')
+      .replace(/\bkc\b/g, 'kansas city')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const squash = (s: string): string => normName(s).replace(/ /g, '');
+  const tokenSubset = (a: string, b: string): boolean => {
+    const ta = a.split(' ').filter(Boolean);
+    const tb = new Set(b.split(' ').filter(Boolean));
+    return ta.length > 0 && ta.every((t) => tb.has(t));
+  };
+  const acctSquash = squash(accountName ?? '');
+  const acctCompatible = (classKey: string): boolean => {
+    const i = classKey.lastIndexOf(':');
+    if (i <= 0) return true;
+    const prefix = squash(classKey.slice(0, i));
+    if (!prefix || !acctSquash) return true;
+    return acctSquash.includes(prefix) || prefix.includes(acctSquash);
+  };
+  const classMapSnap = await db.collection(`tenants/${tenantId}/qbo_class_mappings`).get().catch(() => null);
+  const namesSet = new Set(joNames);
+  const joIdSet = new Set(jos.map((j) => j.id));
+  const mappedToThisJo = new Set<string>();
+  // Level-aware mappings (2026-08-27): 'overhead' classes never touch a
+  // JO or its account chip; 'account' classes mapped to this account are
+  // account-level by declaration; classes mapped ELSEWHERE (other JO or
+  // other account) are excluded from name/fuzzy matching entirely.
+  const mappedOverhead = new Set<string>();
+  const mappedToThisAccount = new Set<string>();
+  const mappedElsewhere = new Set<string>();
+  if (classMapSnap) {
+    classMapSnap.forEach((d) => {
+      const m = d.data();
+      const keys = [trim(m.className), trim(m.fqn)].filter(Boolean).map((n) => n.toLowerCase());
+      const kind = trim(m.targetKind) || (trim(m.jobOrderName) ? 'job_order' : 'account');
+      const mNames: string[] = Array.isArray(m.jobOrderNames)
+        ? (m.jobOrderNames as unknown[]).map((x) => trim(x)).filter(Boolean)
+        : [trim(m.jobOrderName)].filter(Boolean);
+      const mIds: string[] = Array.isArray(m.jobOrderIds)
+        ? (m.jobOrderIds as unknown[]).map((x) => trim(x)).filter(Boolean)
+        : [trim(m.jobOrderId)].filter(Boolean);
+      let bucket: Set<string>;
+      if (kind === 'overhead') bucket = mappedOverhead;
+      else if (kind === 'job_order' && (mNames.some((n) => namesSet.has(n)) || mIds.some((i) => joIdSet.has(i))))
+        bucket = mappedToThisJo;
+      else if (kind === 'account' && accountId && trim(m.accountId) === accountId) bucket = mappedToThisAccount;
+      else bucket = mappedElsewhere;
+      for (const k of keys) bucket.add(k);
+    });
+  }
+  const nameKeys = joNames.map((n) => n.toLowerCase());
+  const fullKeys = accountName ? joNames.map((n) => `${accountName}:${n}`.toLowerCase()) : [];
+  const joNorms = joNames.map((n) => normName(n)).filter(Boolean);
+  // Bare account-named classes ("Black Caviar" under the Black Caviar
+  // account) describe the ACCOUNT, not an event — every token of the
+  // class lives inside the account's own name. Fuzzy-matching those
+  // glommed EVERY account invoice onto whichever JO contained the account
+  // words (Greg 2026-08-27, Outside Lands showing all 19 Black Caviar
+  // invoices). Such classes attribute only via explicit qbo_class_mappings
+  // or an exact "Account:JO" key — otherwise they're reported separately
+  // as account-level billing the JO cannot claim.
+  const accountTokens = new Set(normName(accountName ?? '').split(' ').filter(Boolean));
+  const isAccountLevelClass = (segNorm: string): boolean => {
+    const toks = segNorm.split(' ').filter(Boolean);
+    return toks.length > 0 && accountTokens.size > 0 && toks.every((t) => accountTokens.has(t));
+  };
+  const matchesJo = (key: string): boolean => {
+    if (mappedToThisJo.has(key)) return true;
+    if (mappedOverhead.has(key) || mappedToThisAccount.has(key) || mappedElsewhere.has(key)) return false;
+    const lastSegment = key.split(':').pop()?.trim() ?? key;
+    if (fullKeys.includes(key)) return true;
+    const seg = normName(lastSegment);
+    if (isAccountLevelClass(seg)) return false;
+    if ((nameKeys.includes(key) || nameKeys.includes(lastSegment)) && acctCompatible(key)) return true;
+    if (!seg || !acctCompatible(key)) return false;
+    return joNorms.some(
+      (joNorm) =>
+        (seg.length >= 5 && joNorm.length >= 5 && (joNorm.includes(seg) || seg.includes(joNorm))) ||
+        tokenSubset(seg, joNorm) ||
+        tokenSubset(joNorm, seg),
+    );
+  };
+  const isAccountLevelKey = (key: string): boolean => {
+    if (mappedToThisJo.has(key)) return false;
+    if (mappedToThisAccount.has(key)) return true;
+    if (mappedOverhead.has(key) || mappedElsewhere.has(key)) return false;
+    const lastSegment = key.split(':').pop()?.trim() ?? key;
+    return isAccountLevelClass(normName(lastSegment)) && acctCompatible(key);
+  };
+
+  let billed = 0;
+  const billedClasses: string[] = [];
+  const invoiceRefs: Array<Record<string, unknown>> = [];
+  let accountLevelBilled = 0;
+  const accountLevelClasses: string[] = [];
+  for (const [key, a] of agg.classAggs) {
+    if (matchesJo(key)) {
+      billed = round2(billed + a.billed);
+      billedClasses.push(a.className);
+      invoiceRefs.push(...a.invoiceRefs);
+    } else if (isAccountLevelKey(key)) {
+      accountLevelBilled = round2(accountLevelBilled + a.billed);
+      if (!accountLevelClasses.includes(a.className)) accountLevelClasses.push(a.className);
+    }
+  }
+  let expenses = 0;
+  const expenseClasses: string[] = [];
+  const expenseLines: Array<Record<string, unknown>> = [];
+  for (const [key, a] of expAgg.classAggs) {
+    if (!matchesJo(key)) continue;
+    expenses = round2(expenses + a.total);
+    expenseClasses.push(a.className);
+    expenseLines.push(...a.lines);
+  }
+
+  // Real employer taxes at each entity's Everee rate for the work span.
+  let taxBurden: number | null = 0;
+  for (const [ent, p] of Object.entries(payByEntity)) {
+    const b = burdenByEntity[ent];
+    if (!b) {
+      taxBurden = null;
+      break;
+    }
+    taxBurden = round2((taxBurden ?? 0) + (p * b.ratePct) / 100);
+  }
+  const burdenAvailable = taxBurden !== null;
+  const effTax = taxBurden ?? round2(pay * 0.12);
+  const gp = round2(billed - pay - wcPremium - effTax - expenses - reimbursements);
+
+  return {
+    jobOrderId: jos[0].id,
+    jobOrderIds: jos.map((j) => j.id),
+    jobOrderName: joNames.join(' + '),
+    jobOrderNumber: jos.map(({ jo }) => jo.jobOrderNumber).filter((n) => n != null).join(', ') || null,
+    status: jos.map(({ jo }) => trim(jo.status)).filter(Boolean).join(', ') || null,
+    accountId,
+    accountName,
+    hiringEntityId: entityId || null,
+    workSpan: minDate ? { start: minDate, end: maxDate } : null,
+    windowStart,
+    windowEnd: todayIso,
+    entryCount,
+    workers: workers.size,
+    hours,
+    pay,
+    pendingPay,
+    tips,
+    bonus,
+    reimbursements,
+    wcPremium,
+    taxBurden,
+    burdenAvailable,
+    burdenByEntity,
+    billed,
+    billedClasses,
+    accountLevelBilled,
+    accountLevelClasses,
+    invoiceRefs: invoiceRefs.slice(0, 300),
+    expenses,
+    expenseClasses,
+    expenseLines: expenseLines.slice(0, 300),
+    grossProfit: gp,
+    grossProfitPct: billed > 0 ? round2((gp / billed) * 100) : null,
+  };
+}
+
 export const getPayrollCostReport = onCall(
   { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
   async (request) => {
     const tenantId = trim(request.data?.tenantId);
+    // Job-order costing mode (Greg 2026-08-27): keyed by JO, not dates —
+    // branch before date validation.
+    if (request.data?.jobCosting === true) {
+      const jobOrderIds = Array.isArray(request.data?.jobOrderIds)
+        ? (request.data.jobOrderIds as unknown[]).map((x) => trim(x)).filter(Boolean)
+        : [trim(request.data?.jobOrderId)].filter(Boolean);
+      if (!tenantId || jobOrderIds.length === 0) {
+        throw new HttpsError('invalid-argument', 'tenantId and jobOrderId(s) are required.');
+      }
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      return buildJobOrderCosting(tenantId, jobOrderIds);
+    }
     const startDate = trim(request.data?.startDate);
     const endDate = trim(request.data?.endDate);
     const hiringEntityId = trim(request.data?.hiringEntityId);
@@ -1393,6 +2904,14 @@ export const getPayrollCostReport = onCall(
       throw new HttpsError('invalid-argument', `Date range must be 0-${MAX_RANGE_DAYS} days.`);
     }
     await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+
+    // Data Health / Reconciliation spine (Greg 2026-08-26): Everee-settled
+    // vs entry gross per month × entity + gross-weighted field coverage.
+    // Level 7 — same bar as the register it reconciles against.
+    if (request.data?.dataHealth === true) {
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      return buildDataHealthReport({ tenantId, startDate, endDate });
+    }
 
     // Entries in range. Single-field range on workDate is auto-indexed;
     // status + entity filters applied in memory.
@@ -1702,6 +3221,10 @@ export const getPayrollCostReport = onCall(
       /** Customer PO numbers seen on the merged JOs. */
       poNumbers: string[];
       worksites: string[];
+      /** Real WC premium: Σ entry total × entry wcRate / 100 (same basis as the WC report). */
+      wcPremium: number;
+      /** Pay split by hiring entity — drives the real Everee burden line. */
+      payByEntity: Record<string, number>;
     }
     const classMap = new Map<string, ClassGroup & { workerSet: Set<string> }>();
     for (const r of rows) {
@@ -1722,6 +3245,8 @@ export const getPayrollCostReport = onCall(
           hours: 0,
           total: 0,
           pct: 0,
+          wcPremium: 0,
+          payByEntity: {},
           workerSet: new Set<string>(),
         };
         classMap.set(key, g);
@@ -1734,6 +3259,9 @@ export const getPayrollCostReport = onCall(
       g.entries += 1;
       g.hours = round2(g.hours + r.hours);
       g.total = round2(g.total + r.total);
+      g.wcPremium = round2(g.wcPremium + (r.total * (num(r.workersCompRate) || 0)) / 100);
+      const ent = r.hiringEntityId || 'unknown';
+      g.payByEntity[ent] = round2((g.payByEntity[ent] ?? 0) + r.total);
       g.workerSet.add(r.workerId);
     }
     const byJobOrder: ClassGroup[] = Array.from(classMap.values())
@@ -1747,6 +3275,33 @@ export const getPayrollCostReport = onCall(
       (r) => r.accountId ?? 'unattributed',
       (r) => r.accountName ?? 'Unattributed',
     );
+    // Parent-account nesting (Greg 2026-08-26): each account row carries its
+    // parentAccountId/name so the client can roll children up under the
+    // national account (CORT → CORT Baltimore/Woodbridge/…). Parents with
+    // no payroll of their own aren't in accountDocs yet — fetch them.
+    const parentIds = new Set<string>();
+    for (const g of byAccount) {
+      const p = trim(accountDocs.get(g.key)?.parentAccountId);
+      if (p) parentIds.add(p);
+    }
+    const missingParents = Array.from(parentIds).filter((id) => !accountDocs.has(id));
+    for (let i = 0; i < missingParents.length; i += 100) {
+      // eslint-disable-next-line no-await-in-loop
+      const snaps = await db.getAll(
+        ...missingParents.slice(i, i + 100).map((id) => db.doc(`tenants/${tenantId}/accounts/${id}`)),
+      );
+      snaps.forEach((s) => {
+        if (s.exists) accountDocs.set(s.id, s.data() as Record<string, unknown>);
+      });
+    }
+    const byAccountOut = byAccount.map((g) => {
+      const pid = trim(accountDocs.get(g.key)?.parentAccountId) || null;
+      return {
+        ...g,
+        parentAccountId: pid,
+        parentAccountName: pid ? trim(accountDocs.get(pid)?.name) || null : null,
+      };
+    });
 
     // Per-batch split — the wire-parsing view for the bookkeeper.
     interface BatchSplit {
@@ -1804,10 +3359,27 @@ export const getPayrollCostReport = onCall(
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
       try {
         const wantExpenses = request.data?.includeExpenses === true;
-        const [agg, expAgg] = await Promise.all([
+        const [agg, expAgg, burdenByEntity] = await Promise.all([
           buildBillingAggregates(tenantId, startDate, endDate),
           wantExpenses ? buildExpenseAggregates(tenantId, startDate, endDate) : Promise.resolve(null),
+          // Real employer burden per entity (FIN-2). Fail-soft: {} means
+          // burden-unknown and the client falls back to its estimate.
+          buildEvereeBurdenRates(tenantId, startDate, endDate).catch(
+            () => ({}) as Record<string, EntityBurden>,
+          ),
         ]);
+        const burdenAvailable = Object.keys(burdenByEntity).length > 0;
+        /** Real burden dollars for a group's per-entity pay split — null when
+         *  ANY of the group's entities lacks an Everee-derived rate. */
+        const taxBurdenOf = (payByEntity: Record<string, number>): number | null => {
+          let sum = 0;
+          for (const [ent, pay] of Object.entries(payByEntity)) {
+            const b = burdenByEntity[ent];
+            if (!b) return null;
+            sum += (pay * b.ratePct) / 100;
+          }
+          return round2(sum);
+        };
 
         // Class ↔ job-order name matching, two passes. QBO class names
         // drift from JO names ("Venue Smart:Lollapalooza" vs JO
@@ -1861,18 +3433,39 @@ export const getPayrollCostReport = onCall(
         // heuristic — a mapped class's amounts land on its mapped job
         // order/account row, period. Keyed by class DISPLAY name (lower).
         const classMapSnap = await db.collection(`tenants/${tenantId}/qbo_class_mappings`).get().catch(() => null);
-        const mappedClassByName = new Map<string, { jobOrderName: string | null; accountId: string | null }>();
+        // Level-aware (2026-08-27): overhead-mapped classes are non-client
+        // dollars — excluded from every row and summed separately;
+        // job_order mappings may target MULTIPLE JOs (jobOrderNames[]).
+        const mappedClassByName = new Map<
+          string,
+          { kind: string; jobOrderNames: string[]; accountId: string | null }
+        >();
         if (classMapSnap) {
           classMapSnap.forEach((d) => {
             const m = d.data();
             const names = [trim(m.className), trim(m.fqn)].filter(Boolean);
+            const kind = trim(m.targetKind) || (trim(m.jobOrderName) ? 'job_order' : 'account');
+            const joNames: string[] = Array.isArray(m.jobOrderNames)
+              ? (m.jobOrderNames as unknown[]).map((x) => trim(x)).filter(Boolean)
+              : [trim(m.jobOrderName)].filter(Boolean);
             for (const n of names) {
               mappedClassByName.set(n.toLowerCase(), {
-                jobOrderName: trim(m.jobOrderName) || null,
+                kind,
+                jobOrderNames: joNames,
                 accountId: trim(m.accountId) || null,
               });
             }
           });
+        }
+        // Overhead classes: pull them out of the pool before any matching.
+        let overheadBilled = 0;
+        const overheadClasses: string[] = [];
+        for (const [key, a] of agg.classAggs) {
+          if (mappedClassByName.get(key)?.kind === 'overhead') {
+            usedClassKeys.add(key);
+            overheadBilled = round2(overheadBilled + a.billed);
+            if (!overheadClasses.includes(a.className)) overheadClasses.push(a.className);
+          }
         }
         const gmByJobOrder = byJobOrder.map((g) => {
           // ClassGroup key format: `${accountId}|jo-or-venue|name`.
@@ -1887,8 +3480,9 @@ export const getPayrollCostReport = onCall(
             const mapped = mappedClassByName.get(key);
             const mappedHere =
               mapped != null &&
-              ((mapped.jobOrderName != null && mapped.jobOrderName === g.label) ||
-                (mapped.jobOrderName == null && mapped.accountId != null && mapped.accountId === payAccountId));
+              mapped.kind !== 'overhead' &&
+              ((mapped.jobOrderNames.length > 0 && mapped.jobOrderNames.includes(g.label)) ||
+                (mapped.jobOrderNames.length === 0 && mapped.accountId != null && mapped.accountId === payAccountId));
             const exact =
               mappedHere ||
               (mapped == null &&
@@ -1914,6 +3508,8 @@ export const getPayrollCostReport = onCall(
             billedClasses,
             expenses: 0,
             expenseClasses: [] as string[],
+            wcPremium: g.wcPremium,
+            taxBurden: taxBurdenOf(g.payByEntity),
           };
         });
         // Pass 2: fuzzy — each unused class goes to the first (largest-pay,
@@ -1962,6 +3558,8 @@ export const getPayrollCostReport = onCall(
               billedClasses: [a.className],
               expenses: 0,
               expenseClasses: [],
+              wcPremium: 0,
+              taxBurden: 0,
             });
           }
         }
@@ -2024,6 +3622,8 @@ export const getPayrollCostReport = onCall(
                 billedClasses: [],
                 expenses: a.total,
                 expenseClasses: [a.className],
+                wcPremium: 0,
+                taxBurden: 0,
               });
             }
           }
@@ -2062,9 +3662,25 @@ export const getPayrollCostReport = onCall(
           invoiceCount: number;
           openBalance: number;
           pay: number;
+          wcPremium: number;
+          taxBurden: number | null;
+        }
+        // Per-account WC premium + entity pay split (same math as the JO groups).
+        const acctBurdenAgg = new Map<string, { wcPremium: number; payByEntity: Record<string, number> }>();
+        for (const r of rows) {
+          const key = r.accountId ?? 'unattributed';
+          let a = acctBurdenAgg.get(key);
+          if (!a) {
+            a = { wcPremium: 0, payByEntity: {} };
+            acctBurdenAgg.set(key, a);
+          }
+          a.wcPremium = round2(a.wcPremium + (r.total * (num(r.workersCompRate) || 0)) / 100);
+          const ent = r.hiringEntityId || 'unknown';
+          a.payByEntity[ent] = round2((a.payByEntity[ent] ?? 0) + r.total);
         }
         const rowsByAccount = new Map<string, AcctGmRow>();
         for (const g of byAccount) {
+          const ba = acctBurdenAgg.get(g.key);
           rowsByAccount.set(g.key, {
             accountId: g.key === 'unattributed' ? null : g.key,
             label: g.label,
@@ -2073,6 +3689,8 @@ export const getPayrollCostReport = onCall(
             invoiceCount: 0,
             openBalance: 0,
             pay: g.total,
+            wcPremium: ba?.wcPremium ?? 0,
+            taxBurden: ba ? taxBurdenOf(ba.payByEntity) : 0,
           });
         }
         const standaloneRows: AcctGmRow[] = [];
@@ -2111,6 +3729,8 @@ export const getPayrollCostReport = onCall(
               invoiceCount: c.invoiceCount,
               openBalance: c.openBalance,
               pay: 0,
+              wcPremium: 0,
+              taxBurden: 0,
             });
           }
         }
@@ -2196,6 +3816,18 @@ export const getPayrollCostReport = onCall(
           classDetail,
           byJobOrder: gmByJobOrder,
           byAccount: gmByAccount,
+          // Real employer burden (FIN-2): per-entity Everee actuals for the
+          // range. Rows carry wcPremium (entry-level) + taxBurden (entity
+          // rate × pay); the client shows real lines when available and
+          // falls back to its estimate slider when not.
+          burdenAvailable,
+          burdenByEntity,
+          overheadBilled: round2(overheadBilled),
+          overheadClasses,
+          totalWcPremium: round2(gmByJobOrder.reduce((s, r) => s + (r.wcPremium || 0), 0)),
+          totalTaxBurden: burdenAvailable
+            ? round2(gmByJobOrder.reduce((s, r) => s + (r.taxBurden ?? 0), 0))
+            : null,
         };
       } catch (err) {
         billingError = err instanceof Error ? err.message : String(err);
@@ -2448,7 +4080,7 @@ export const getPayrollCostReport = onCall(
       },
       truncated: picked.length > MAX_ROWS,
       byJobOrder,
-      byAccount,
+      byAccount: byAccountOut,
       byBatch,
       rows,
       venueMappings: Array.from(venueMappings.values()).map((m) => ({

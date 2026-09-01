@@ -53,7 +53,7 @@ const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
         label: t('dashboard.support'),
         metric: '',
         subtext: supportSubtextResolved,
-        to: '/c1/workers/support',
+        to: '/c1/workers/payroll-help',
         icon: <ChatIcon fontSize="small" />,
         metricHidden: supportCardOnly,
       }

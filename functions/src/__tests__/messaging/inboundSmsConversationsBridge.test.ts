@@ -20,9 +20,9 @@ const TEST_PHONE = '+15551234567';
 const TEST_TWILIO = '+15559876543';
 const TOPIC = { type: 'support', label: 'Support' };
 
-function skipWithoutEmulator(this: { skip(): void }) {
-  if (!USE_EMULATOR) this.skip();
-}
+// Jest has no mocha-style `this.skip()`; gate the integration tests at
+// define time instead. Without FIRESTORE_EMULATOR_HOST they show as skipped.
+const itWithEmulator = USE_EMULATOR ? it : it.skip;
 
 describe('inboundSmsConversationsBridge', () => {
   afterEach(async function () {
@@ -44,8 +44,7 @@ describe('inboundSmsConversationsBridge', () => {
   });
 
   describe('1) Single inbound SMS (findOrCreate + append + rollup)', () => {
-    it('creates conversation and message; rollup has lastMessageDirection and lastMessageChannel', async function () {
-      skipWithoutEmulator.call(this);
+    itWithEmulator('creates conversation and message; rollup has lastMessageDirection and lastMessageChannel', async function () {
       const { conversationId, ref } = await findOrCreateConversationForSms({
         tenantId: TEST_TENANT,
         workerUid: TEST_WORKER_UID,
@@ -100,8 +99,7 @@ describe('inboundSmsConversationsBridge', () => {
   });
 
   describe('2) Replay same MessageSid (idempotency)', () => {
-    it('second append with same messageId returns created: false and does not duplicate', async function () {
-      skipWithoutEmulator.call(this);
+    itWithEmulator('second append with same messageId returns created: false and does not duplicate', async function () {
       const { conversationId } = await findOrCreateConversationForSms({
         tenantId: TEST_TENANT,
         workerUid: TEST_WORKER_UID,
@@ -152,8 +150,7 @@ describe('inboundSmsConversationsBridge', () => {
   });
 
   describe('3) Second inbound from same worker + Twilio number (reuse conversation)', () => {
-    it('findOrCreate returns same conversation for same (workerPhone, twilioNumber)', async function () {
-      skipWithoutEmulator.call(this);
+    itWithEmulator('findOrCreate returns same conversation for same (workerPhone, twilioNumber)', async function () {
       const first = await findOrCreateConversationForSms({
         tenantId: TEST_TENANT,
         workerUid: TEST_WORKER_UID,

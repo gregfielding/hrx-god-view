@@ -10,7 +10,7 @@
  * `everee_workers/{entityId}__{uid}` (worker-readable). Stale `evereeWorkerIds` entries with no such hire are hidden.
  */
 
-import { t } from '../../../i18n';
+import { getLanguage, t } from '../../../i18n';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   collection,
@@ -37,10 +37,11 @@ import {
   filterEvereeWorkerMapByEligibleTenants,
 } from '../../../utils/workerPayrollEligibility';
 import {
-  payrollEntityDescription,
   resolvePayrollWorkerKind,
   type PayrollWorkerKind,
 } from '../../../utils/payrollEntityDisplay';
+import PaymentIssueBanner from '../../../components/worker/PaymentIssueBanner';
+import { nextPayday } from '../../../utils/nextPayday';
 
 interface EvereeEntityInfo {
   label: string;
@@ -103,6 +104,7 @@ function useEvereeEntityInfos(
 
   return { infos, loading };
 }
+
 
 const WorkerPayrollIndex: React.FC = () => {
   const { user, tenantId, tenantIds } = useAuth();
@@ -233,17 +235,66 @@ const WorkerPayrollIndex: React.FC = () => {
     Object.keys(map).every((k) => !String(map[k] ?? '').trim()) &&
     linkageLoading;
 
-  const idsForLabels =
-    landing.kind === 'picker' ? landing.evereeTenantIds : landing.kind === 'redirect' ? [landing.evereeTenantId] : [];
+  const idsForLabels = landing.kind === 'picker' ? landing.evereeTenantIds : [];
   const { infos, loading: labelsLoading } = useEvereeEntityInfos(scopeTenantId, idsForLabels);
   const { linkages: payLinkages } = useWorkerEmployerLinkages(scopeTenantId, uid);
   const { rows: payRows, loading: payLoading } = useWorkerPayHistory(scopeTenantId, payLinkages, 10);
 
+  /** Per-Everee-tenant onboarding completeness from the worker-readable
+   *  linkage docs — drives the tax-forms-vs-finish-setup card labels
+   *  (2026-08-28 Payroll-hub IA). Absent/unknown status → treated as NOT
+   *  complete, which shows the safer "Finish payroll setup" label. */
+  const [setupByTid, setSetupByTid] = useState<
+    Record<string, { done: boolean; ssnOk: boolean; bankOk: boolean }>
+  >({});
   useEffect(() => {
-    if (landing.kind === 'redirect') {
-      navigate(`/c1/workers/earnings/${encodeURIComponent(landing.evereeTenantId)}`, { replace: true });
-    }
-  }, [landing, navigate]);
+    if (!uid || !scopeTenantId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await getDocs(
+          query(
+            collection(db, 'tenants', scopeTenantId, 'everee_workers'),
+            where('firebaseUid', '==', uid),
+          ),
+        );
+        const next: Record<string, { done: boolean; ssnOk: boolean; bankOk: boolean }> = {};
+        snap.docs.forEach((d) => {
+          const data = d.data() as {
+            evereeTenantId?: string | number;
+            status?: string;
+            readinessMirror?: {
+              taxpayerIdentifierLast4?: string | null;
+              bankAccountCount?: number;
+              directDepositReady?: boolean;
+            };
+          };
+          const tid =
+            typeof data.evereeTenantId === 'number'
+              ? String(data.evereeTenantId)
+              : String(data.evereeTenantId ?? '').trim();
+          if (!tid) return;
+          const st = String(data.status ?? '').toLowerCase();
+          const m = data.readinessMirror ?? {};
+          next[tid] = {
+            done: st === 'onboarding_complete' || st === 'complete' || st === 'completed',
+            // Checklist signals from the readiness mirror (refreshed by the 2h
+            // reconcile cron, webhooks, and immediately after our own bank
+            // pushes). w4/w9 stamps are unreliable in prod, so the tax-forms
+            // step derives from overall completion instead.
+            ssnOk: Boolean(String(m.taxpayerIdentifierLast4 ?? '').trim()),
+            bankOk: (m.bankAccountCount ?? 0) > 0 || m.directDepositReady === true,
+          };
+        });
+        if (!cancelled) setSetupByTid(next);
+      } catch {
+        /* labels fall back to "Finish payroll setup" */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, scopeTenantId]);
 
   if (!uid) {
     return (
@@ -261,14 +312,6 @@ const WorkerPayrollIndex: React.FC = () => {
         ) : (
           <CircularProgress />
         )}
-      </Box>
-    );
-  }
-
-  if (landing.kind === 'redirect') {
-    return (
-      <Box sx={{ p: 4, display: 'flex', justifyContent: 'center' }}>
-        <CircularProgress />
       </Box>
     );
   }
@@ -297,37 +340,35 @@ const WorkerPayrollIndex: React.FC = () => {
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>
         {t('earnings.chooseEmployer')}
       </Typography>
-      {labelsLoading ? (
-        <CircularProgress size={28} />
-      ) : (
-        <Stack spacing={1.5}>
-          {landing.evereeTenantIds.map((tid) => {
-            const info = infos[tid];
-            const label = info?.label ?? `Payroll · ${tid}`;
-            const description = info ? payrollEntityDescription(info.kind) : null;
-            return (
-              <Card key={tid} variant="outlined">
-                <CardActionArea
-                  onClick={() => navigate(`/c1/workers/earnings/${encodeURIComponent(tid)}`)}
-                  sx={{ p: 2, alignItems: 'flex-start' }}
-                >
-                  <Typography variant="subtitle1">
-                    {label}
-                  </Typography>
-                  {description ? (
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      {description}
-                    </Typography>
-                  ) : null}
-                </CardActionArea>
-              </Card>
-            );
-          })}
-        </Stack>
+      <PaymentIssueBanner rows={payRows} />
+      {/* Payday strip (2026-08-28): the #1 payroll question, answered before
+          it's asked. With no pay history yet, set the expectation instead. */}
+      {!payLoading && (
+        <Card variant="outlined" sx={{ mb: 2, px: 2, py: 1.5, bgcolor: 'action.hover' }}>
+          {payRows.length > 0 ? (
+            <Typography variant="body2">
+              {(() => {
+                const { date, isToday } = nextPayday();
+                if (isToday) return t('earnings.paydayTodayLabel');
+                const lang = getLanguage() === 'es' ? 'es-US' : 'en-US';
+                const formatted = new Intl.DateTimeFormat(lang, {
+                  weekday: 'long',
+                  month: 'long',
+                  day: 'numeric',
+                }).format(date);
+                return `${t('earnings.nextPaydayLabel')}: ${formatted}`;
+              })()}
+            </Typography>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              {t('earnings.firstPaydayNote')}
+            </Typography>
+          )}
+        </Card>
       )}
-      {/* Native pay history (Earnings v1, 2026-08-24). */}
+      {/* Native pay history (Earnings v1, 2026-08-24; leads the hub since the 2026-08-28 IA). */}
       {(payLoading || payRows.length > 0) && (
-        <Box sx={{ mt: 3 }}>
+        <Box>
           <Typography variant="subtitle1" sx={{ mb: 1 }}>
             {t('earnings.recentPay')}
           </Typography>
@@ -354,10 +395,18 @@ const WorkerPayrollIndex: React.FC = () => {
                   >
                     <Box sx={{ minWidth: 0 }}>
                       <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                        {r.gross != null ? USD.format(r.gross) : '—'}
+                        {r.net != null ? USD.format(r.net) : r.gross != null ? USD.format(r.gross) : '—'}
                       </Typography>
                       <Typography variant="caption" color="text.secondary" noWrap display="block">
-                        {[r.payDate, r.employerLabel].filter(Boolean).join(' · ')}
+                        {[
+                          r.payDate,
+                          r.employerLabel,
+                          r.net != null && r.gross != null && r.net !== r.gross
+                            ? `${t('earnings.grossShort')} ${USD.format(r.gross)}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
                       </Typography>
                     </Box>
                     <Chip
@@ -391,6 +440,91 @@ const WorkerPayrollIndex: React.FC = () => {
         </Box>
       )}
 
+      <Box sx={{ mt: 3 }}>
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>
+          {t('earnings.settingsHeading')}
+        </Typography>
+        <Stack spacing={1.5}>
+          <Card variant="outlined">
+            <CardActionArea
+              onClick={() => navigate('/c1/workers/payroll-settings')}
+              sx={{ p: 2, alignItems: 'flex-start' }}
+            >
+              <Typography variant="subtitle1">{t('profile.sectionDirectDepositTitle')}</Typography>
+              <Typography variant="caption" color="text.secondary" display="block">
+                {t('profile.sectionDirectDepositDescription')}
+              </Typography>
+            </CardActionArea>
+          </Card>
+          {labelsLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+              <CircularProgress size={24} />
+            </Box>
+          ) : (
+            landing.evereeTenantIds.map((tid) => {
+              const info = infos[tid];
+              // Label follows the worker's state (2026-08-28 Payroll-hub IA):
+              // mid-onboarding the embedded step is the blocking setup (SSN +
+              // tax forms); once complete it's the tax-forms surface (W-4
+              // changes, year-end docs). Entity name stays as the caption.
+              const setup = setupByTid[tid];
+              const done = setup?.done === true;
+              const title = !done
+                ? t('earnings.finishSetupCard')
+                : info
+                  ? t(info.kind === 'contractor' ? 'earnings.contractorTaxForms' : 'earnings.w2TaxForms')
+                  : `Payroll · ${tid}`;
+              const caption = info?.label ?? null;
+              // Setup checklist (2026-08-28): SSN + bank are observable live
+              // from the readiness mirror; the final in-widget pass (tax
+              // forms + signatures) reads pending until overall completion.
+              const steps = !done
+                ? [
+                    { label: t('earnings.stepSsn'), ok: setup?.ssnOk === true },
+                    { label: t('earnings.stepBank'), ok: setup?.bankOk === true },
+                    { label: t('earnings.stepTaxForms'), ok: false },
+                  ]
+                : [];
+              const stepsLeft = steps.filter((st) => !st.ok).length;
+              return (
+                <Card key={tid} variant="outlined">
+                  <CardActionArea
+                    onClick={() => navigate(`/c1/workers/earnings/${encodeURIComponent(tid)}`)}
+                    sx={{ p: 2, alignItems: 'flex-start' }}
+                  >
+                    <Typography variant="subtitle1">
+                      {title}
+                    </Typography>
+                    {caption ? (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {caption}
+                      </Typography>
+                    ) : null}
+                    {!done ? (
+                      <Box sx={{ mt: 1 }}>
+                        {steps.map((step) => (
+                          <Typography
+                            key={step.label}
+                            variant="body2"
+                            sx={{ color: step.ok ? 'success.main' : 'text.secondary', lineHeight: 1.8 }}
+                          >
+                            {step.ok ? '✓' : '○'} {step.label}
+                          </Typography>
+                        ))}
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                          {`${steps.length - stepsLeft}/${steps.length} · ${
+                            stepsLeft >= 3 ? t('earnings.setupTimeLong') : t('earnings.setupTimeShort')
+                          }`}
+                        </Typography>
+                      </Box>
+                    ) : null}
+                  </CardActionArea>
+                </Card>
+              );
+            })
+          )}
+        </Stack>
+      </Box>
       {/* Payroll help desk entry (Slice 1, 2026-08-24). */}
       <Button
         variant="text"

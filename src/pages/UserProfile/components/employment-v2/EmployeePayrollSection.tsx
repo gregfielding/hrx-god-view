@@ -59,6 +59,7 @@ import {
 } from '../../../../services/everee/evereeCallables';
 import { assertEvereeWorkerIdMatch } from '../../../../utils/everee/assertEvereeWorkerIdMatch';
 import { formatFirebaseHttpsError } from '../../../../utils/firebaseHttpsErrors';
+import ReplaceBankAccountDialog from '../../../../components/everee/ReplaceBankAccountDialog';
 import {
   formatBankAllocation,
   formatDocumentTypeColor,
@@ -436,6 +437,11 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
   const [w9Loading, setW9Loading] = useState<boolean>(true);
   const [w4Result, setW4Result] = useState<EvereeAdminGetWorkerTaxFormResult | null>(null);
   const [w4Loading, setW4Loading] = useState<boolean>(true);
+
+  // Replace-bank-account dialog (2026-08-28) — shared component; see
+  // src/components/everee/ReplaceBankAccountDialog.tsx for the PII handling.
+  const [bankDialogOpen, setBankDialogOpen] = useState<boolean>(false);
+  const [bankSavedSnackOpen, setBankSavedSnackOpen] = useState<boolean>(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -834,6 +840,34 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
             <span />
           )}
         </Snackbar>
+        <Snackbar
+          open={bankSavedSnackOpen}
+          autoHideDuration={6000}
+          onClose={() => setBankSavedSnackOpen(false)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert
+            onClose={() => setBankSavedSnackOpen(false)}
+            severity="success"
+            variant="filled"
+            sx={{ width: '100%' }}
+          >
+            Bank account updated in Everee.
+          </Alert>
+        </Snackbar>
+        <ReplaceBankAccountDialog
+          open={bankDialogOpen}
+          onClose={() => setBankDialogOpen(false)}
+          tenantId={tenantId}
+          entityId={entityId}
+          evereeWorkerId={evereeWorkerId}
+          userId={userId}
+          hasExistingAccount={bankAccounts.length > 0}
+          onSaved={(resp) => {
+            setWorker(pickWorker(resp));
+            setBankSavedSnackOpen(true);
+          }}
+        />
         {workerLoading ? (
           <Stack spacing={1}>
             <Skeleton variant="text" width="40%" />
@@ -933,7 +967,12 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
 
             {/* Bank accounts */}
             <Box>
-              <SectionHeading>Bank accounts</SectionHeading>
+              <Stack direction="row" alignItems="center" justifyContent="space-between">
+                <SectionHeading>Bank accounts</SectionHeading>
+                <Button size="small" variant="outlined" onClick={() => setBankDialogOpen(true)}>
+                  {bankAccounts.length === 0 ? 'Add bank account' : 'Replace bank account'}
+                </Button>
+              </Stack>
               {bankAccounts.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">
                   No bank accounts on file with Everee.

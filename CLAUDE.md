@@ -25,6 +25,13 @@ keep its README index current — that directory is the team's shared brain.
   CORS-blocked.
 - **`shared/` ↔ `src/shared/`** are byte-identical mirrors — edit both.
 - **i18n**: edit `i18n/locales/*.json`; `public/` copies are generated.
+- **Web ↔ Flutter parity (Greg, 2026-08-30)**: any change to a WORKER-facing
+  web view (`src/pages/c1/workers/`, `src/components/worker/`,
+  PublicJobsBoard/JobPostingDetail worker paths, worker i18n strings) must
+  get a corresponding update in the Flutter app (`../c1_app`) in the same
+  work session — or, if it can't ship same-session, an entry in
+  docs/claude/flutter_worker_app_spec/05_c1_app_gap_punchlist.md so the gap
+  is tracked, never silent. See that punch list for app idioms.
 - **Never commit PII files** (worker CSVs carry SSN last-4). Scratch
   data/scripts live in gitignored `functions/.scratch/`; scratch scripts
   run from the `functions/` directory (ts-node fails from repo root).

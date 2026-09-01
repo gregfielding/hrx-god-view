@@ -436,13 +436,6 @@ const WorkerProfile: React.FC = () => {
                 />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/earnings')}>
-                <ListItemText
-                  primary={t('profile.sectionPayDocsTitle')}
-                  secondary={t('profile.sectionPayDocsDescription')}
-                />
-                <ChevronRightIcon color="action" />
-              </ListItemButton>
             </List>
           </CardContent>
         </Card>
@@ -471,7 +464,7 @@ const WorkerProfile: React.FC = () => {
                 />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/support')}>
+              <ListItemButton onClick={() => navigate('/c1/workers/payroll-help')}>
                 <ListItemText
                   primary={t('profile.sectionSupportTitle')}
                   secondary={t('profile.sectionSupportDescription')}

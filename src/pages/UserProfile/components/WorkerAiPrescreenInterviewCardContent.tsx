@@ -1,15 +1,19 @@
 /**
  * Latest Worker AI pre-screen snapshot on Interview tab — shared between collapsed (recruiter) and full layouts.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Box,
+  Button,
   CardContent,
   CardHeader,
   Chip,
   Stack,
   Typography,
 } from '@mui/material';
+import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { db } from '../../../firebase';
+import { useAuth } from '../../../contexts/AuthContext';
 import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import {
   explanationLineForHiringDecision,
@@ -234,7 +238,82 @@ export function WorkerAiPrescreenInterviewCardContent({
             Application ID: {interview.applicationId}
           </Typography>
         ) : null}
+
+        {interview.applicationId ? (
+          <ManualInterviewDecisionControls applicationId={interview.applicationId} />
+        ) : null}
       </CardContent>
     </>
+  );
+}
+
+/**
+ * INT-3 (2026-08-30): recruiter override of the interview outcome. "Mark
+ * passed" sets aiAutomation.decision='advance' (the field group auto-hire
+ * gates read); "Hold" sets 'hold'. The override is stamped with who/when and
+ * the prior decision so it is auditable and distinguishable from engine output.
+ */
+function ManualInterviewDecisionControls({ applicationId }: { applicationId: string }) {
+  const { user, activeTenant } = useAuth();
+  const tenantId = activeTenant?.id ?? '';
+  const [busy, setBusy] = useState<string | null>(null);
+  const [savedAs, setSavedAs] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const apply = async (decision: 'advance' | 'hold') => {
+    if (!tenantId || !user?.uid) return;
+    setBusy(decision);
+    setError(null);
+    try {
+      await updateDoc(doc(db, 'tenants', tenantId, 'applications', applicationId), {
+        'aiAutomation.decision': decision,
+        'aiAutomation.manualOverride': {
+          decision,
+          byUid: user.uid,
+          byName: user.displayName ?? user.email ?? user.uid,
+          at: serverTimestamp(),
+        },
+        updatedAt: serverTimestamp(),
+      });
+      setSavedAs(decision);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!tenantId) return null;
+  return (
+    <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1, flexWrap: 'wrap' }} useFlexGap>
+      <Button
+        size="small"
+        variant="outlined"
+        color="success"
+        disabled={busy != null || savedAs === 'advance'}
+        onClick={() => void apply('advance')}
+      >
+        {savedAs === 'advance' ? 'Marked passed' : busy === 'advance' ? 'Saving…' : 'Mark passed (advance)'}
+      </Button>
+      <Button
+        size="small"
+        variant="outlined"
+        color="warning"
+        disabled={busy != null || savedAs === 'hold'}
+        onClick={() => void apply('hold')}
+      >
+        {savedAs === 'hold' ? 'On hold' : busy === 'hold' ? 'Saving…' : 'Hold'}
+      </Button>
+      {savedAs ? (
+        <Typography variant="caption" color="text.secondary">
+          Recorded as a manual override — auto-hire gates read this decision.
+        </Typography>
+      ) : null}
+      {error ? (
+        <Typography variant="caption" color="error">
+          {error}
+        </Typography>
+      ) : null}
+    </Stack>
   );
 }

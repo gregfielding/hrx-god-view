@@ -82,7 +82,7 @@ import { useT } from '../../i18n';
 import { buildCanonicalWorkerProfileWritePatch, expandDottedKeys } from '../../utils/workerReadinessWriteModel';
 import { buildCanonicalHomeAddressFromWizardPersonal } from '../../utils/buildCanonicalHomeAddress';
 import { isApplyHomeAddressValid } from '../../utils/applyHomeAddressValid';
-import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroupAutoAdd';
+import { autoAddUserToApplyConfiguredGroups, resolveApplyWizardAutoGroupIds } from '../../utils/applyWizardGroupAutoAdd';
 import { isValidUsPhone10, normalizeUsPhoneDigits } from '../../utils/usPhoneValidation';
 import { normalizeLast4SsnDigits } from '../../utils/last4Ssn';
 import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
@@ -104,6 +104,13 @@ type WizardProps = {
   jobId?: string;
   uid: string | null;
   signupGroupId?: string | null;
+  /** Group display title (from validateUserGroupSignup) — stamped on the
+   *  group application so SMS copy reads "thanks for applying to X". */
+  signupGroupTitle?: string | null;
+  /** true = hire_everyone preset (membership auto-hires, no application);
+   *  false = score-gated (create an application so interview + orchestrator
+   *  thresholds decide); null/undefined = unknown → treated as auto-hire. */
+  signupGroupAutoHires?: boolean | null;
 };
 
 type DraftApplication = {
@@ -275,23 +282,16 @@ interface PostSubmitRedirectProps {
 }
 
 /**
- * Post-apply success screen with auto-redirect to payroll setup.
+ * Post-apply success screen with a short auto-redirect.
  *
- * Worker UX: a fresh applicant typically gets auto-hired by the userGroup
- * trigger (`onApplicationHiringSignalsChangedAutoOnboard` /
- * `onUserGroupMemberAddedAutoOnboard`) ~500ms-2s after submit, which then
- * spins up Everee provisioning. The 3-second delay here is sized to land
- * AFTER that pipeline completes for most workers, so when this redirects
- * to `/c1/workers/payroll` the index page resolves to the embed instead
- * of "no payroll account yet".
- *
- * For the rare slow path (Everee provisioning >3s, or no Everee at all),
- * `WorkerPayrollIndex` already renders a graceful fallback with a "Back
- * to dashboard" CTA — so this redirect is safe to fire unconditionally.
- *
- * The pre-deadline alternative (static "View applications / Browse jobs"
- * paper) is preserved as secondary text-link affordances at the bottom in
- * case the worker wants to bail mid-redirect.
+ * Destinations (2026-08-28 signup-flow review): job applies with a
+ * `returnTo` go back where they came from; group/auto-hire signups go to
+ * the Payroll hub (`/c1/workers/earnings`) where the setup checklist is
+ * waiting — auto-hire fires at step-0 exit, so the Everee linkage exists
+ * by submit and the hub renders their card (with a graceful empty state
+ * for the rare slow provision); general signups go to the dashboard.
+ * Secondary text links (applications / jobs board) let the worker bail
+ * mid-redirect.
  */
 const PostSubmitRedirect: React.FC<PostSubmitRedirectProps> = ({
   to,
@@ -374,11 +374,12 @@ const PostSubmitRedirect: React.FC<PostSubmitRedirectProps> = ({
 // the whole wizard into their chunk. Re-exported for existing importers.
 export { isApplyHomeAddressValid };
 
-const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid, signupGroupId = null }) => {
+const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid, signupGroupId,
+  signupGroupTitle,
+  signupGroupAutoHires = null }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const t = useT();
-  const allStepLabels = stepKeys.map((k) => t(k));
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const returnTo = useMemo(() => {
@@ -389,6 +390,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       return null;
     }
   }, [searchParams]);
+
+  /**
+   * Two-step signup (Greg 2026-08-29): a BRAND-NEW visitor arriving from a
+   * job posting only creates an account here (steps 0-1), then returns to
+   * the posting to actually apply — the posting's own authed apply flow
+   * (requirement acknowledgments, then the interview) takes over. This
+   * makes "join C1" and "apply to this job" visibly different acts.
+   * Authed arrivals (cert-completion jumps, quick-apply error fallbacks)
+   * keep the full wizard — the flag is frozen at mount so signing in at
+   * step 0 doesn't flip the mode mid-flow.
+   */
+  const wasUnauthedAtMountRef = useRef<boolean>(!auth.currentUser);
+  const accountOnly = Boolean(jobId && returnTo && wasUnauthedAtMountRef.current);
 
   // Phone prefill from the login page's "no account → sign up" handoff
   // (Slice 2): /c1/apply?phone=5551234567 seeds the personal form so the
@@ -491,6 +505,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     }
     return {};
   });
+  /** Group ids the early (step-0) auto-add already sent — submit skips them. */
+  const autoAddedGroupIdsRef = useRef<Set<string>>(new Set());
   const formDataRef = useRef(formData);
   useEffect(() => {
     formDataRef.current = formData;
@@ -510,12 +526,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const prefilledRef = useRef(false);
   const personalPrefilledRef = useRef(false);
   const [tenantAppId, setTenantAppId] = useState<string | null>(null);
-  const [stepRestored, setStepRestored] = useState(false);
   const [submitOpen, setSubmitOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [hasMissingRequiredCerts, setHasMissingRequiredCerts] = useState(false);
   const [submittedSuccess, setSubmittedSuccess] = useState(false);
   const [shiftSummaryData, setShiftSummaryData] = useState<{
@@ -541,7 +554,15 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const visibleStepIndices = useMemo(() => {
     // 13 (position interests) sits between experience and requirements —
     // generic signups only, filtered below for job applications.
-    const all = [0, 1, 2, 4, 5, 6, 7, 8, 9, 13, 12];
+    // Steps 2 (resume) and 5 (headshot) left the SIGNUP funnel 2026-08-29
+    // (signup-flow review): both were always-optional "Skip for now" screens
+    // adding two taps for zero hiring-gate value. They live on in the Work
+    // Profile checklist (profile → Experience / photo), where post-hire
+    // nudges belong. Their render cases below are intentionally kept.
+    // Account-only mode: just the signup spine — the job-specific steps
+    // (requirements, posting-required extras) live on the posting's apply
+    // flow now (2026-08-29 two-step signup).
+    const all = accountOnly ? [0, 1] : [0, 1, 4, 6, 7, 8, 9, 13, 12];
     let indices = [...all];
 
     // Position interests: job applicants already told us the position by
@@ -639,14 +660,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     if ((isAuthenticated || workAuthCollectionDisabled) && workAuthComplete) {
       indices = indices.filter((i) => i !== 4);
     }
-
-    const hasProfilePhoto = Boolean(
-      profilePicture.profilePicture || profile.workerProfile?.photoUrl || profile.avatar
-    );
-    if (hasProfilePhoto) indices = indices.filter((i) => i !== 5);
-
-    const hasResume = hasResumeData(resume) || hasResumeData(profile.resume);
-    if (hasResume) indices = indices.filter((i) => i !== 2);
 
     const requiredSkills = toStringList(
       posting?.skills ||
@@ -767,7 +780,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       indices = [12];
     }
     return indices;
-  }, [posting, hiringEntityName, userProfile, formData, uid, requirements, auth.currentUser?.uid, jobId]);
+  }, [posting, hiringEntityName, userProfile, formData, uid, requirements, auth.currentUser?.uid, jobId, accountOnly]);
 
   const actualStep = visibleStepIndices[Math.min(activeStep, visibleStepIndices.length - 1)] ?? 0;
 
@@ -924,7 +937,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     try {
       const saved = localStorage.getItem(stepStorageKey);
       if (saved && parseInt(saved, 10) > 0) {
-        setStepRestored(true);
       }
     } catch (error) {
       console.warn('Failed to check saved step:', error);
@@ -1869,136 +1881,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         alert(t('phoneSignup.fillNamePhone'));
         setSaving(false);
         return;
-        // eslint-disable-next-line no-unreachable
-        const email = String(formData?.personal?.email || '').trim();
-        if (!email) {
-          alert(t('apply.enterEmail'));
-          setSaving(false);
-          return;
-        }
-        if (!password || password.length < 6) {
-          alert(t('apply.createPassword'));
-          setSaving(false);
-          return;
-        }
-        if (password !== confirmPassword) {
-          alert(t('apply.passwordsDontMatch'));
-          setSaving(false);
-          return;
-        }
-        // Rehire-ineligibility gate — a separated worker flagged not eligible
-        // for rehire can't mint a fresh account with the same email/phone.
-        // Server-side exact match; generic message (never reveals the flag).
-        try {
-          const phoneForCheck = String(formData?.personal?.phone || '').trim();
-          const check: any = await httpsCallable(getFunctions(), 'checkRehireEligibility')({
-            email,
-            ...(phoneForCheck ? { phone: phoneForCheck } : {}),
-          });
-          if (check?.data?.eligible === false) {
-            alert(
-              'We are unable to create an account with this information. Please contact C1 Staffing for assistance.',
-            );
-            setSaving(false);
-            return;
-          }
-        } catch {
-          /* gate is best-effort — never block signups on a check outage */
-        }
-        try {
-          const cred = await createUserWithEmailAndPassword(auth, email, password);
-          // Account created successfully - immediately create user document with base fields
-          const newUid = cred.user.uid;
-          const typedFirstName = String(formData?.personal?.firstName || '').trim();
-          const typedLastName = String(formData?.personal?.lastName || '').trim();
-          const composedDisplayName = [typedFirstName, typedLastName].filter(Boolean).join(' ').trim();
-          const signupLast4 = normalizeLast4SsnDigits(formData?.personal?.last4SSN);
-          const userRef = doc(db, 'users', newUid);
-          const userSnap = await getDoc(userRef);
-
-          // Only create if document doesn't exist
-          if (!userSnap.exists()) {
-            const hasJobContext = Boolean(jobId && String(jobId).trim());
-            const resumePath = hasJobContext ? 'job' : signupGroupId ? 'c1_group' : 'c1_general';
-            const baseProfile = {
-              uid: newUid,
-              email: String(email).trim(),
-              displayName: composedDisplayName || '',
-              firstName: typedFirstName || '',
-              lastName: typedLastName || '',
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-              source: 'public_jobs_board',
-              signupSource: signupGroupId ? 'apply_group_landing' : 'apply_landing',
-              signupGroupId: signupGroupId || null,
-              /** For automated SMS resume link + server-side reminder schedule (see applyWizardReminder). */
-              applyResumeSnapshot: {
-                path: resumePath,
-                tenantId: tenantId || null,
-                tenantSlug: tenantSlug ? String(tenantSlug).trim() : null,
-                jobId: hasJobContext ? String(jobId).trim() : null,
-                signupGroupId: signupGroupId ? String(signupGroupId).trim() : null,
-              },
-              applyWizardReminderPending: true,
-              profileComplete: false,
-              onboarded: false,
-              role: 'Tenant',
-              orgType: 'Tenant',
-              preferredLanguage:
-                String((formData?.personal as any)?.preferredLanguage || '').toLowerCase() === 'es'
-                  ? 'es'
-                  : detectDefaultLanguage(),
-              isActive: true,
-              skills: [],
-              certifications: [],
-              languages: [],
-              education: [],
-              workHistory: [],
-              applications: [],
-              favorites: [],
-              crm_sales: false,
-              recruiter: false,
-              jobsBoard: false,
-              userGroupIds: [],
-              userAgreements: {
-                termsOfUse: {
-                  agreed: true,
-                  version: '2025-10-21',
-                  timestamp: new Date().toISOString(),
-                },
-                smsConsent: {
-                  agreed: true,
-                  version: '2025-10-21',
-                  timestamp: new Date().toISOString(),
-                },
-                privacyPolicy: {
-                  acknowledged: true,
-                  version: '2025-10-21',
-                  timestamp: new Date().toISOString(),
-                },
-              },
-              ...(signupLast4.length === 4 ? { last4SSN: signupLast4 } : {}),
-            };
-
-            try {
-              await setDoc(userRef, baseProfile);
-              console.log('✅ Initial user document created with base fields');
-            } catch (createErr) {
-              console.error('❌ Failed to create initial user document:', createErr);
-            }
-          }
-          // Continue with next step
-          // The uid will be available via auth.currentUser.uid in subsequent steps
-        } catch (e: any) {
-          const errorMessage = e?.message || 'unknown error';
-          if (errorMessage.includes('email-already-in-use')) {
-            alert(t('apply.emailAlreadyRegistered'));
-          } else {
-            alert(t('apply.couldNotCreateAccount', { message: errorMessage }));
-          }
-          setSaving(false);
-          return;
-        }
+        // (Legacy email/password account creation deleted 2026-08-29 —
+        // ~130 unreachable lines; PhoneSignupGate owns account creation.
+        // See docs/claude/project_signup_flow_review.md finding 8.)
       }
 
       const effectiveUid = auth.currentUser?.uid || uid;
@@ -2103,12 +1988,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           // Auto-add to user groups as soon as account exists + tenant is linked (do not wait for full wizard).
           if (tenantId && effectiveUid) {
             try {
-              await autoAddUserToApplyConfiguredGroups({
+              const added = await autoAddUserToApplyConfiguredGroups({
                 userId: effectiveUid,
                 tenantId,
                 posting,
                 signupGroupId,
+                alreadyAddedGroupIds: autoAddedGroupIdsRef.current,
               });
+              added.forEach((id) => autoAddedGroupIdsRef.current.add(id));
             } catch (groupEarlyErr) {
               console.warn('Apply wizard: early auto-add to user groups failed', groupEarlyErr);
             }
@@ -3225,6 +3112,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           // address — `addressValid` should make this unreachable.
           const applicationHomeAddress = buildCanonicalHomeAddressFromWizardPersonal(personal);
 
+          // Second auto-hire door, revived 2026-08-29 (signup-flow review
+          // finding 5): `onApplicationHiringSignalsChangedAutoOnboard` hard-
+          // requires `groupId` on the application, and nothing ever wrote it —
+          // prescreen-completion auto-hire could never fire for wizard
+          // applications. Stamp the primary configured hiring group (plus the
+          // full list for future multi-group logic). Best-effort: a resolution
+          // failure must never block the submit.
+          const applicationGroupIds = await resolveApplyWizardAutoGroupIds({
+            tenantId,
+            posting,
+            signupGroupId,
+          }).catch(() => [] as string[]);
+
           await setDoc(
             tRef,
             {
@@ -3232,6 +3132,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               tenantId,
               jobId,
               jobOrderId: posting?.jobOrderId || jobOrderIdOverride || null, // CRITICAL: Link to job order if posting is connected
+              groupId: applicationGroupIds[0] ?? null,
+              ...(applicationGroupIds.length ? { groupIds: applicationGroupIds } : {}),
               status: 'submitted',
               appliedAt: serverTimestamp(),
               submittedAt: serverTimestamp(),
@@ -3418,14 +3320,69 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
         if (tenantId && effectiveUid) {
           try {
-            await autoAddUserToApplyConfiguredGroups({
+            const added = await autoAddUserToApplyConfiguredGroups({
               userId: effectiveUid,
               tenantId,
               posting,
               signupGroupId,
+              alreadyAddedGroupIds: autoAddedGroupIdsRef.current,
             });
+            added.forEach((id) => autoAddedGroupIdsRef.current.add(id));
           } catch (groupSubmitErr) {
             console.error('Apply wizard: submit auto-add to user groups failed', groupSubmitErr);
+          }
+        }
+
+        // Score-gated group signup (finding 3, Greg 2026-08-29: "the system
+        // decides" — adjustable interview/AI thresholds, no worker-facing
+        // pending state): hire_everyone groups auto-hire on membership and
+        // need no application; every OTHER preset needs an application doc
+        // as the substrate the thresholds evaluate. Creating it with
+        // status 'submitted' + groupId cascades the whole loop for free:
+        // the first-touch trigger texts the interview link for THIS
+        // application, interview submit stamps scores + orchestrator
+        // decision on it, and the (revived) application-signals reactor
+        // auto-hires when the decision is "advance". Workers below
+        // threshold simply stay group members — no rejection surfaced.
+        if (!jobId && tenantId && effectiveUid && signupGroupId && signupGroupAutoHires === false) {
+          try {
+            const groupAppRef = doc(
+              db,
+              'tenants',
+              tenantId,
+              'applications',
+              `${effectiveUid}_group_${signupGroupId}`,
+            );
+            await setDoc(
+              groupAppRef,
+              {
+                userId: effectiveUid,
+                tenantId,
+                jobId: null,
+                jobOrderId: null,
+                groupId: signupGroupId,
+                groupIds: [signupGroupId],
+                applicationKind: 'group_signup',
+                // Group title doubles as the "job title" so SMS/list copy
+                // reads naturally ("thanks for applying to VenueSmart").
+                jobTitle: (signupGroupTitle ?? '').trim() || null,
+                status: 'submitted',
+                appliedAt: serverTimestamp(),
+                submittedAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+                applicant: {
+                  firstName: personal.firstName || null,
+                  lastName: personal.lastName || null,
+                  phone: personal.phone || null,
+                  email: personal.email || null,
+                },
+              },
+              { merge: true },
+            );
+          } catch (groupAppErr) {
+            // Best-effort: the worker is still a group member; a recruiter
+            // can hire manually. Never block the signup on this write.
+            console.error('Apply wizard: group application create failed', groupAppErr);
           }
         }
       } catch (e) {
@@ -3723,24 +3680,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     }
   };
 
-  const pctComplete = Math.round(((activeStep + 1) / visibleStepIndices.length) * 100);
 
-  const conversationalTitleKeys = [
-    'apply.titleTellUsAboutYou',
-    'apply.addLocation',
-    'apply.titleUploadResume',
-    'apply.stepEVerifyComfort',
-    'apply.titleWorkAuthorization',
-    'apply.titleAddProfilePicture',
-    'apply.titleQualificationsSkills',
-    'apply.titleEducation',
-    'apply.titleLicensesCertifications',
-    'apply.titleWorkExperience',
-    'apply.titleTellUsAboutYourself',
-    'apply.titleJobPreferences',
-    'apply.titleRequirements',
-  ];
-  const conversationalTitles = conversationalTitleKeys.map((k) => t(k));
 
   // Require Twilio re-verification if phone differs from profile
   const phoneNeedsVerification = (() => {
@@ -3823,14 +3763,30 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     // {postId}) → bounce straight back to the shift list so they can apply
     // to more shifts on the same JO. That flow is fine to auto-redirect.
     if (returnTo) {
+      // Job applications go straight into the AI interview (2026-08-29,
+      // signup-flow review): it's the same destination the post-apply SMS
+      // would send 15 minutes later — offering it while the phone is
+      // already in hand converts far better. The jobs board stays one tap
+      // away via the secondary links; workers who already interviewed hit
+      // the cumulative-prescreen zero-delta auto-complete and sail through.
+      const submittedUid = auth.currentUser?.uid;
+      // Repeat interviewees skip the interview page — their application
+      // auto-completes server-side from the answer bank (2026-08-29).
+      const interviewedBefore =
+        (userProfile as any)?.hasWorkerAiPrescreenInterview === true ||
+        (userProfile as any)?.interviewStatus === 'completed';
+      const prescreenTo =
+        jobId && submittedUid && !interviewedBefore
+          ? `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${submittedUid}_${jobId}`)}&entry=apply_wizard_inline`
+          : returnTo;
       return (
         <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
           <PostSubmitRedirect
-            to={returnTo}
+            to={prescreenTo}
             delayMs={1500}
             headlineKey="apply.applicationSubmittedMessage"
-            subheadKey="apply.settingUpPayroll"
-            helperKey="apply.settingUpPayrollHelper"
+            subheadKey={jobId && submittedUid ? 'apply.nextInterviewSubhead' : 'apply.settingUpPayroll'}
+            helperKey={jobId && submittedUid ? 'apply.nextInterviewHelper' : 'apply.settingUpPayrollHelper'}
             applicationsPath={applicationsPath}
             jobsBoardPath={jobsBoardPath}
             t={t}
@@ -3839,18 +3795,57 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       );
     }
 
-    // Group / auto-hire apply (no returnTo): the worker is signed in now, so
-    // land them in the real app chrome (bottom nav, dashboard action items —
-    // payroll setup, headshot, etc.) instead of a dead-end card under the
-    // signup header (Greg 2026-08-25).
+    // Group / auto-hire apply (no returnTo): land the just-hired worker on
+    // the PAYROLL HUB, where the setup checklist ("✓ SSN · ✓ direct deposit ·
+    // ○ tax forms") is waiting — this is their peak-motivation moment and the
+    // whole point of the signup (signup-flow review 2026-08-28; supersedes
+    // the 2026-08-25 dashboard landing). Auto-hire fires at step-0 exit, so
+    // by submit the Everee linkage exists and the hub renders their card.
+    // General signups (no group, no job) still go to the dashboard — they
+    // have no payroll to set up yet.
+    // Score-gated group signups aren't hired yet — their gate is the
+    // interview, so land them straight in it (same in-session pattern as
+    // job applies); auto-hire groups land on the Payroll hub as before.
+    const gatedGroupUid = auth.currentUser?.uid;
+    const gatedGroupInterviewedBefore =
+      (userProfile as any)?.hasWorkerAiPrescreenInterview === true ||
+      (userProfile as any)?.interviewStatus === 'completed';
+    const isGatedGroup = Boolean(signupGroupId && signupGroupAutoHires === false && gatedGroupUid);
+    // Repeat interviewees on a score-gated group go to the dashboard — the
+    // answer-bank auto-complete + signals reactor resolve their outcome in
+    // the background within moments.
+    const gatedGroupTo =
+      isGatedGroup && !gatedGroupInterviewedBefore
+        ? `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${gatedGroupUid}_group_${signupGroupId}`)}&entry=apply_group_inline`
+        : isGatedGroup
+          ? '/c1/workers/dashboard'
+          : null;
     return (
       <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
         <PostSubmitRedirect
-          to="/c1/workers/dashboard"
+          to={gatedGroupTo ?? (signupGroupId ? '/c1/workers/earnings' : '/c1/workers/dashboard')}
           delayMs={1500}
-          headlineKey="apply.hiredTitle"
-          subheadKey="apply.takingYouHome"
-          helperKey="apply.payrollLaterHint"
+          headlineKey={
+            isGatedGroup
+              ? 'apply.applicationSubmittedMessage'
+              : signupGroupId
+                ? 'apply.approvedTitle'
+                : 'apply.hiredTitle'
+          }
+          subheadKey={
+            isGatedGroup
+              ? 'apply.nextInterviewSubhead'
+              : signupGroupId
+                ? 'apply.takingYouToPayroll'
+                : 'apply.takingYouHome'
+          }
+          helperKey={
+            isGatedGroup
+              ? 'apply.nextInterviewHelper'
+              : signupGroupId
+                ? 'apply.payrollNowHint'
+                : 'apply.payrollLaterHint'
+          }
           applicationsPath={applicationsPath}
           jobsBoardPath={jobsBoardPath}
           t={t}
@@ -3999,7 +3994,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               </Button>
               <Button
                 variant="contained"
-                onClick={isLastVisibleStep ? handleSubmit : handleNext}
+                onClick={
+                  isLastVisibleStep && accountOnly
+                    ? async () => {
+                        // Save the final signup step, then hand off to the
+                        // posting — no application is created here in
+                        // two-step mode (the posting's Apply does that).
+                        await handleNext();
+                        if (returnTo) navigate(returnTo);
+                      }
+                    : isLastVisibleStep
+                      ? handleSubmit
+                      : handleNext
+                }
                 disabled={
                   (isLastVisibleStep &&
                     actualStep === 12 &&
@@ -4019,7 +4026,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 }
               >
                 {isLastVisibleStep
-                  ? t('apply.submitApplication')
+                  ? accountOnly
+                    ? t('apply.continueToJob')
+                    : t('apply.submitApplication')
                   : actualStep === 2 || actualStep === 5 || (actualStep === 8 && hasMissingRequiredCerts)
                   ? t('apply.skipForNow')
                   : t('apply.next')}
@@ -4042,48 +4051,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         needPhone={true}
       />
 
-      {/* Optional sticky bottom bar (kept for future, hidden) */}
-      <Box
-        sx={{
-          display: 'none',
-        }}
-      >
-        <Stack direction="row" justifyContent="space-between" alignItems="center">
-          <Button onClick={handleBack} disabled={activeStep === 0} aria-label={t('apply.back')}>
-            {t('apply.back')}
-          </Button>
-          <Button
-            variant="contained"
-            onClick={isLastVisibleStep ? handleSubmit : handleNext}
-            aria-label={
-              isLastVisibleStep
-                ? t('apply.submitApplication')
-                : actualStep === 2 || actualStep === 5
-                ? t('apply.continueWithoutResume')
-                : actualStep === 8 && hasMissingRequiredCerts
-                ? t('apply.skipForNow')
-                : t('apply.next')
-            }
-            disabled={
-              (isLastVisibleStep &&
-                actualStep === 12 &&
-                (missing.drug ||
-                  missing.background ||
-                  missing.everify ||
-                  missing.additional.length > 0)) ||
-              saving
-            }
-          >
-            {isLastVisibleStep
-              ? t('apply.submitApplication')
-              : actualStep === 2 || actualStep === 5
-              ? t('apply.continueWithoutResume')
-              : actualStep === 8 && hasMissingRequiredCerts
-              ? t('apply.skipForNow')
-              : t('apply.next')}
-          </Button>
-        </Stack>
-      </Box>
       <Snackbar
         open={submitOpen}
         autoHideDuration={4000}

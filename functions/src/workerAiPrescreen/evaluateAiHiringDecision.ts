@@ -31,7 +31,7 @@ export type AiHiringPolicyDecisionInput = {
   allowGigFallback?: boolean;
   topPercentToAdvance?: number;
   /**
-   * When `true`, the prescreen LLM's `recommendation === 'review'` is lifted to `proceed` so a
+   * When `true`, the rules scorer's `recommendation === 'review'` (a deterministic score/flag band — there is NO LLM in the prescreen) is lifted to `proceed` so a
    * candidate who otherwise passes every gate (score, flags, dynamic-answers, capacity, no-show)
    * can still advance.
    *
@@ -218,7 +218,7 @@ export function evaluateAiHiringDecision(params: EvaluateAiHiringDecisionParams)
   // Policy-level lift: when `advanceOnReviewRecommendation` is true (user groups always set this
   // from `hiringConfig.quality`; job orders may leave it unset), promote `review` → `proceed` so
   // the candidate is re-graded by the score / flag / dynamic / capacity / no-show gates rather than
-  // being held by the LLM's qualitative review verdict alone. `decline` is intentionally NOT lifted here.
+  // being held by the rules scorer's review band alone (recommendationFromScoreAndFlags — deterministic, not an LLM). `decline` is intentionally NOT lifted here.
   if (
     effectiveRecommendation === 'review' &&
     hiringPolicy.advanceOnReviewRecommendation === true

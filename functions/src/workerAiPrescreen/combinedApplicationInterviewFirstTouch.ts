@@ -64,7 +64,9 @@ export type CombinedFirstTouchResult =
   /** Policy/outreach — caller may send plain application_received + schedule reminder. */
   | 'not_applicable'
   /** Thanks dedupe already consumed — do not send plain SMS for this submission. */
-  | 'deduped_thanks';
+  | 'deduped_thanks'
+  /** Worker already used today's prescreen-SMS slot (shared cap, 2026-08-29). */
+  | 'daily_cap';
 
 const MESSAGE_TYPE_ID = 'application_received_interview_next_step' as const;
 
@@ -97,6 +99,12 @@ export async function shouldSendCombinedApplicationInterviewFirstTouch(args: {
   if (!(await tenantOutreachEnabled(tenantId))) return false;
 
   if (!userDocHasUsablePhone(userData)) return false;
+
+  // Interview already complete (e.g. zero-delta auto-complete from the answer bank) — never
+  // send an "answer a few questions" ask; caller falls back to plain application_received.
+  if (applicationData.workerAiPrescreenInterviewCompletedAt) {
+    return false;
+  }
 
   if (applicationData.workerAiPrescreenReminderSentAt) {
     return false;
@@ -244,6 +252,16 @@ export async function sendCombinedApplicationInterviewFirstTouch(args: {
     preferredLanguage === 'es'
       ? `${firstName}, recibimos tu postulación — siguiente paso`
       : `${firstName}, we received your application — next step`;
+
+  // Daily prescreen-SMS slot (shared across senders, 2026-08-29 F7). This
+  // sender fires on application submit — usually the worker's first touch
+  // of the day, so the claim mostly no-ops; it matters when several
+  // applications land the same day.
+  const { claimDailyPrescreenSmsSlotShared } = await import('./interviewCadence');
+  if (!(await claimDailyPrescreenSmsSlotShared(markLifecycleEventIfFirst, tenantId, userId))) {
+    logger.info('combinedApplicationInterviewFirstTouch.daily_cap_skip', { applicationId, userId });
+    return 'daily_cap';
+  }
 
   const claimedThanks = await markLifecycleEventIfFirst({
     tenantId,

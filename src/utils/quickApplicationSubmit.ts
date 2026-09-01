@@ -1,4 +1,5 @@
-import { doc, getDoc, setDoc, serverTimestamp, collection, query, where, getDocs, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { resolveApplyWizardAutoGroupIds } from './applyWizardGroupAutoAdd';
 import { db } from '../firebase';
 import { logJobApplicationActivity } from './activityLogger';
 import { updateUserSmartGroupOnApply } from '../services/smartGroupService';
@@ -107,6 +108,59 @@ export async function getMissingRequiredCertifications(
 /**
  * Submit application directly without wizard (for returning applicants)
  */
+/**
+ * Requirement acknowledgments this posting asks that the worker has NEVER
+ * answered (attestationState 'unknown') — the quick-apply gate's twin to
+ * `getMissingRequiredCertifications` (2026-08-29, signup-flow follow-up:
+ * the cert-only gate let quick applies skip posting-specific requirement
+ * questions entirely). Items answered before — willing OR unwilling — are
+ * not re-asked, matching the wizard's own skip logic. Returns item labels;
+ * non-empty → route the worker into the wizard's requirements step.
+ */
+/**
+ * Has this worker EVER completed an AI prescreen interview? (Denormalized
+ * users-doc flag + legacy fallback — same signal the server suppression
+ * uses.) Governs whether we route them into the interview after applying:
+ * repeat workers' applications auto-complete server-side from the answer
+ * bank (per-category freshness windows: 90/180/365d, job-specific never
+ * carried), so sending them to the interview page is noise. Deltas are
+ * chased by the existing SMS cadence instead (2026-08-29, Greg).
+ */
+export async function hasCompletedPrescreen(userId: string): Promise<boolean> {
+  try {
+    const snap = await getDoc(doc(db, 'users', userId));
+    if (!snap.exists()) return false;
+    const d = snap.data() as Record<string, unknown>;
+    return d.hasWorkerAiPrescreenInterview === true || d.interviewStatus === 'completed';
+  } catch {
+    return false;
+  }
+}
+
+export async function getUnansweredRequirementAcks(
+  userId: string,
+  jobPosting: any
+): Promise<string[]> {
+  try {
+    const userSnap = await getDoc(doc(db, 'users', userId));
+    const userProfile = userSnap.exists() ? userSnap.data() : null;
+    const { getEligibilitySummary } = await import('./jobRequirementStatus');
+    const summary = getEligibilitySummary(jobPosting, userProfile, null);
+    const labels: string[] = [];
+    for (const cat of summary.categories ?? []) {
+      for (const item of cat.items ?? []) {
+        if ((item as any).attestationState === 'unknown') {
+          labels.push(String((item as any).label ?? cat.categoryLabel ?? 'requirement'));
+        }
+      }
+    }
+    return labels;
+  } catch {
+    // Fail open to quick apply — a broken gate must never block applying.
+    return [];
+  }
+}
+
 export async function submitQuickApplication(
   userId: string,
   tenantId: string,
@@ -340,12 +394,25 @@ export async function submitQuickApplication(
         ? canonicalHome
         : null;
 
+    // Same resolution as the wizard (consolidated 2026-08-29 — this file
+    // previously carried its own copy of the posting→groups logic). Resolved
+    // BEFORE the doc write so the application carries `groupId` and the
+    // application-signals auto-hire door can fire (signup-flow review
+    // findings 5 + 7). Best-effort: never block the apply.
+    const applicationGroupIds = await resolveApplyWizardAutoGroupIds({
+      tenantId,
+      posting: jobPosting ?? null,
+      signupGroupId: null,
+    }).catch(() => [] as string[]);
+
     // Create application document
     await setDoc(tRef, {
       userId,
       tenantId,
       jobId,
       jobOrderId: jobPosting?.jobOrderId || null,
+      groupId: applicationGroupIds[0] ?? null,
+      ...(applicationGroupIds.length ? { groupIds: applicationGroupIds } : {}),
       // Denormalized hiringEntityId so triggers can branch without a JO read.
       hiringEntityId: jobPosting?.hiringEntityId ?? null,
       status: 'submitted',
@@ -398,37 +465,13 @@ export async function submitQuickApplication(
       ...(preferredShiftId ? { preferredShiftId } : {}),
     }, { merge: true });
 
-    // Auto-add to user groups if specified in job posting (matches wizard behavior)
+    // Auto-add to user groups (shared resolver above — one implementation
+    // with the wizard since 2026-08-29).
     try {
-      const groupIdsToAdd: string[] = [];
-      if (Array.isArray(jobPosting?.autoAddToUserGroups) && jobPosting.autoAddToUserGroups.length > 0) {
-        groupIdsToAdd.push(...jobPosting.autoAddToUserGroups);
-      } else if (typeof jobPosting?.autoAddToUserGroup === 'string' && jobPosting.autoAddToUserGroup.trim()) {
-        groupIdsToAdd.push(jobPosting.autoAddToUserGroup.trim());
-      }
-
-      // Fallback: resolve groups by jobOrderId if missing on the passed posting
-      if (groupIdsToAdd.length === 0 && jobPosting?.jobOrderId) {
-        const q = query(
-          collection(db, 'tenants', tenantId, 'job_postings'),
-          where('jobOrderId', '==', jobPosting.jobOrderId),
-          limit(1)
-        );
-        const qsnap = await getDocs(q);
-        if (!qsnap.empty) {
-          const p = qsnap.docs[0].data() as any;
-          if (Array.isArray(p?.autoAddToUserGroups) && p.autoAddToUserGroups.length > 0) {
-            groupIdsToAdd.push(...p.autoAddToUserGroups);
-          } else if (typeof p?.autoAddToUserGroup === 'string' && p.autoAddToUserGroup.trim()) {
-            groupIdsToAdd.push(p.autoAddToUserGroup.trim());
-          }
-        }
-      }
-
-      if (groupIdsToAdd.length > 0) {
+      if (applicationGroupIds.length > 0) {
         const functions = getFunctions();
         const addUsersToGroups = httpsCallable(functions as any, 'addUsersToGroups');
-        await addUsersToGroups({ userId, groupIds: groupIdsToAdd, tenantId });
+        await addUsersToGroups({ userId, groupIds: applicationGroupIds, tenantId });
       }
     } catch (e) {
       // Don't fail the application if group add fails, but log it loudly.

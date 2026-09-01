@@ -125,6 +125,11 @@ const COMPUTED_FIELDS = [
   'totalDoubleTimeHours',
   'mealBreakPenaltyHours',
   'restBreakPenaltyHours',
+  // Daily-reimbursement rule stamp (location policy, Greg 2026-08-27) —
+  // written alongside breakdowns so the grid shows the $/day pre-submit.
+  'reimbursementAmount',
+  'reimbursementLabel',
+  'reimbursementSource',
 ] as const;
 
 /**
@@ -527,6 +532,62 @@ async function recomputeScope(scope: WorkweekScope): Promise<number> {
   // to that entry's stored breakdown vs the engine's output —
   // siblings whose breakdown didn't change get NO write, which is
   // what bounds fan-out cost.
+  //
+  // Daily-reimbursement rule (Greg 2026-08-27, Prairie View $5/day
+  // parking): resolved assignment → job order → ACCOUNT (location
+  // policy; more-specific wins) and stamped on the entry whenever the
+  // computed week gives the day worked hours — so the grid's Reimb.
+  // column shows the money BEFORE submit. Only rule-sourced amounts
+  // (`reimbursementSource: 'location_rule'`) are ever cleared when
+  // hours go to zero; manual/import amounts are never touched, and
+  // sent/paid rows are never rewritten.
+  const ruleCache = new Map<string, { amount: number; label: string }>();
+  const resolveDailyReimbursement = async (
+    data: Record<string, unknown>,
+  ): Promise<{ amount: number; label: string }> => {
+    const key = `${data.assignmentId ?? ''}|${data.jobOrderId ?? ''}|${data.accountId ?? ''}`;
+    const hit = ruleCache.get(key);
+    if (hit) return hit;
+    let amount = 0;
+    let label = '';
+    try {
+      const asnId = String(data.assignmentId ?? '').trim();
+      let joId = String(data.jobOrderId ?? '').trim();
+      let acctId = String(data.accountId ?? '').trim();
+      if (asnId) {
+        const a = ((await db.doc(`tenants/${tenantId}/assignments/${asnId}`).get()).data() ??
+          {}) as Record<string, unknown>;
+        amount = Number(a.dailyReimbursement ?? 0) || 0;
+        label = String(a.reimbursementLabel ?? '').trim();
+        if (!joId) joId = String(a.jobOrderId ?? '').trim();
+        if (!acctId) acctId = String(a.accountId ?? '').trim();
+      }
+      if (!(amount > 0) && joId) {
+        const j = ((await db.doc(`tenants/${tenantId}/job_orders/${joId}`).get()).data() ??
+          {}) as Record<string, unknown>;
+        amount = Number(j.dailyReimbursement ?? 0) || 0;
+        label = String(j.reimbursementLabel ?? '').trim();
+        if (!acctId) acctId = String(j.recruiterAccountId ?? '').trim();
+      }
+      if (!(amount > 0) && acctId) {
+        const acct = ((await db.doc(`tenants/${tenantId}/accounts/${acctId}`).get()).data() ??
+          {}) as Record<string, unknown>;
+        amount = Number(acct.dailyReimbursement ?? 0) || 0;
+        label = String(acct.reimbursementLabel ?? '').trim();
+      }
+    } catch {
+      // Fail-soft — a missed pre-submit stamp is recovered by the
+      // submit-time fallback in submitTimesheetEntryWorker.
+    }
+    const out = {
+      amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
+      label: label || 'Reimbursement',
+    };
+    ruleCache.set(key, out);
+    return out;
+  };
+  const SETTLED = new Set(['sent_to_everee', 'paid', 'voided']);
+
   const batch = db.batch();
   let writeCount = 0;
   for (const doc of sortedDocs) {
@@ -534,17 +595,48 @@ async function recomputeScope(scope: WorkweekScope): Promise<number> {
     const computed = result.get(doc.id);
     if (!computed) continue; // shouldn't happen — engine guarantees coverage
     const current = readBreakdown(data);
-    if (breakdownsEqual(current, computed)) continue;
+    const breakdownChanged = !breakdownsEqual(current, computed);
+
+    let reimbPatch: Record<string, unknown> | null = null;
+    const managed = String(data.reimbursementSource ?? '') === 'location_rule';
+    const existingAmt = Number(data.reimbursementAmount ?? 0) || 0;
+    const editable =
+      !SETTLED.has(String(data.status ?? '')) && String(data.source ?? '') !== 'csv_import';
+    if (editable && (managed || existingAmt <= 0)) {
+      const workedHours =
+        computed.totalRegularHours +
+        computed.totalFlsaOTHours +
+        computed.totalNonFlsaOTHours +
+        computed.totalDoubleTimeHours;
+      const rule = await resolveDailyReimbursement(data);
+      const desired = workedHours > 0 && rule.amount > 0 ? rule.amount : 0;
+      if (desired > 0 && (desired !== existingAmt || !managed)) {
+        reimbPatch = {
+          reimbursementAmount: desired,
+          reimbursementLabel: rule.label,
+          reimbursementSource: 'location_rule',
+        };
+      } else if (desired === 0 && managed && existingAmt > 0) {
+        reimbPatch = { reimbursementAmount: 0 };
+      }
+    }
+
+    if (!breakdownChanged && !reimbPatch) continue;
     batch.set(
       doc.ref,
       {
-        totalRegularHours: computed.totalRegularHours,
-        totalOTHours: computed.totalOTHours,
-        totalFlsaOTHours: computed.totalFlsaOTHours,
-        totalNonFlsaOTHours: computed.totalNonFlsaOTHours,
-        totalDoubleTimeHours: computed.totalDoubleTimeHours,
-        mealBreakPenaltyHours: computed.mealBreakPenaltyHours,
-        restBreakPenaltyHours: computed.restBreakPenaltyHours,
+        ...(breakdownChanged
+          ? {
+              totalRegularHours: computed.totalRegularHours,
+              totalOTHours: computed.totalOTHours,
+              totalFlsaOTHours: computed.totalFlsaOTHours,
+              totalNonFlsaOTHours: computed.totalNonFlsaOTHours,
+              totalDoubleTimeHours: computed.totalDoubleTimeHours,
+              mealBreakPenaltyHours: computed.mealBreakPenaltyHours,
+              restBreakPenaltyHours: computed.restBreakPenaltyHours,
+            }
+          : {}),
+        ...(reimbPatch ?? {}),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true },

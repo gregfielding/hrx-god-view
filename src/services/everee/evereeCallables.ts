@@ -73,9 +73,24 @@ export interface EvereeCreateOnboardingSessionRequest {
    * on the linkage doc's embedSessionCache.
    */
   context?: string;
+  /**
+   * Shrunken-widget bank pre-push (2026-08-28): when present, the server
+   * PUTs this to Everee's bank-accounts/default endpoint BEFORE minting the
+   * session, so the ONBOARDING widget skips its "Add payment method" step.
+   * In transit only — never persisted or logged on either side.
+   */
+  bankAccount?: {
+    bankName: string;
+    accountName: string;
+    accountType: 'CHECKING' | 'SAVINGS';
+    routingNumber: string;
+    accountNumber: string;
+  };
 }
 
 export interface EvereeCreateOnboardingSessionResult {
+  /** Outcome of the optional bank pre-push; absent when none was sent. */
+  bankPush?: { ok: boolean; error?: string; last4?: string };
   /** Firestore `everee_embed_sessions` doc id — useful for client-side logging / correlation. */
   sessionId: string;
   /** Iframe / WebView src. One-time use; create fresh on each open. */
@@ -304,14 +319,31 @@ export interface EvereeAdminGetWorkerRequest {
    * Recruiters/admins may pass another worker's uid.
    */
   userId?: string;
+  /**
+   * Optional write-through (2026-08-28): replace the worker's default
+   * direct-deposit account before the fetch, so one round trip both
+   * updates and returns the fresh record. In transit only — never stored
+   * or logged on either side. Everee reroutes all not-yet-approved
+   * payments to the new account.
+   */
+  setDefaultBankAccount?: {
+    bankName: string;
+    accountName: string;
+    accountType: 'CHECKING' | 'SAVINGS';
+    routingNumber: string;
+    accountNumber: string;
+  };
 }
 
 export interface EvereeAdminGetWorkerResult {
   ok: true;
   evereeWorkerId: string;
   evereeTenantId: string;
-  /** Raw `GET /api/v2/workers/{id}` response — PII-bearing. Display, don't store. */
+  /** Raw `GET /api/v2/workers/{id}` response — PII-bearing (full TIN is
+   *  scrubbed server-side; last-4 survives). Display, don't store. */
   response: unknown;
+  /** Outcome of the optional bank write-through; absent when none was sent. */
+  bankUpdate?: { ok: boolean; error?: string };
 }
 
 /**

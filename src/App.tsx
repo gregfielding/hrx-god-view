@@ -122,13 +122,13 @@ const C1WorkerDocuments = lazy(() => import('./pages/c1/workers/documents'));
 const C1WorkerMyEmployment = lazy(() => import('./pages/c1/workers/myEmployment'));
 const C1WorkerMyEmploymentDetail = lazy(() => import('./pages/c1/workers/myEmploymentDetail'));
 const C1WorkerScreening = lazy(() => import('./pages/c1/workers/screening'));
-const C1WorkerSupport = lazy(() => import('./pages/c1/workers/support'));
 const C1WorkerNotifications = lazy(() => import('./pages/c1/workers/notifications'));
 const WorkerPayrollIndex = lazy(() => import('./pages/c1/workers/WorkerPayrollIndex'));
 const WorkerPayrollEvereeTenant = lazy(() => import('./pages/c1/workers/WorkerPayrollEvereeTenant'));
 const WorkerAiPrescreenPage = lazy(() => import('./pages/c1/workers/WorkerAiPrescreenPage'));
 const C1WorkerPayrollHelp = lazy(() => import('./pages/c1/workers/payrollHelp'));
 const C1WorkerPayHistory = lazy(() => import('./pages/c1/workers/payHistory'));
+const C1WorkerPayrollSettings = lazy(() => import('./pages/c1/workers/payrollSettings'));
 const PayrollTicketsPage = lazy(() => import('./pages/PayrollTicketsPage'));
 import OnboardingProfileForm from './components/OnboardingProfileForm';
 import OnboardingCompleteScreen from './components/OnboardingCompleteScreen';
@@ -200,10 +200,13 @@ const PayrollJournalPage = lazy(() => import('./pages/reports/PayrollJournalPage
 const WcAuditReportPage = lazy(() => import('./pages/reports/WcAuditReportPage'));
 const WcCoveragePage = lazy(() => import('./pages/reports/WcCoveragePage'));
 const WeeklyTrendsPage = lazy(() => import('./pages/reports/WeeklyTrendsPage'));
+const InterviewMetricsPage = lazy(() => import('./pages/reports/InterviewMetricsPage'));
+const DataHealthPage = lazy(() => import('./pages/reports/DataHealthPage'));
 const I9StatusReportPage = lazy(() => import('./pages/reports/I9StatusReportPage'));
 const AcaLookbackReportPage = lazy(() => import('./pages/reports/AcaLookbackReportPage'));
 const TaxSickLeaveReportPage = lazy(() => import('./pages/reports/TaxSickLeaveReportPage'));
 const QboClassesPage = lazy(() => import('./pages/reports/QboClassesPage'));
+const ClassificationAuditPage = lazy(() => import('./pages/reports/ClassificationAuditPage'));
 const CashFlowReportPage = lazy(() => import('./pages/reports/CashFlowReportPage'));
 const WcClassCodesReportPage = lazy(() =>
   import('./pages/reports/WcLibraryReportPages').then((m) => ({ default: m.WcClassCodesReportPage })),
@@ -238,7 +241,6 @@ const googleMapsApiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '';
 // C1 worker pages: use same names as default exports to avoid TS "Cannot find name" when referenced in routes
 const WorkerDashboard = C1WorkerDashboard;
 const WorkerProfile = C1WorkerProfile;
-const WorkerSupport = C1WorkerSupport;
 
 // Static libraries array to prevent performance warnings (shared across app)
 // Shared constant — see src/utils/googleMapsLoader.ts (all loaders must
@@ -592,8 +594,10 @@ function App() {
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
-      <Route path="/c1/apply" element={<Apply />} />
-      <Route path="/c1/apply/group/:groupId" element={<Apply />} />
+      {/* /c1/apply moved under ConditionalWorkerLayout 2026-08-29 (signup-flow
+          review finding 7) — same shell behavior as /apply/:slug/:jobId: no
+          chrome while signed out, real worker chrome once the OTP gate signs
+          them in. See the layout group below. */}
       {/* `/signup` alias → the generic apply/signup page at /c1/apply. */}
       <Route path="/signup" element={<SignupRedirect />} />
       <Route path="/signup/group/:groupId" element={<SignupRedirect />} />
@@ -607,6 +611,8 @@ function App() {
 
       {/* Single layout for /c1 and /apply so nav + top bar stay mounted on back/forward */}
       <Route element={<ConditionalWorkerLayout />}>
+        <Route path="/c1/apply" element={<Apply />} />
+        <Route path="/c1/apply/group/:groupId" element={<Apply />} />
         <Route path="/c1" element={<Outlet />}>
           <Route index element={<Navigate to="/c1/workers/dashboard" replace />} />
           <Route path="workers" element={<Outlet />}>
@@ -628,8 +634,12 @@ function App() {
             <Route path="find-work" element={<Navigate to="/c1/jobs-board" replace />} />
             <Route path="job-readiness" element={<Navigate to="/c1/workers/dashboard#home-readiness-summary" replace />} />
             <Route path="documents" element={<C1WorkerDocuments />} />
-            <Route path="support" element={<WorkerSupport />} />
+            {/* The standalone Q&A page is retired (2026-08-30): the grounded
+                assistant now lives inside the ONE help door on payroll-help,
+                which also files tickets. Old links land there. */}
+            <Route path="support" element={<Navigate to="/c1/workers/payroll-help" replace />} />
             <Route path="payroll-help" element={<C1WorkerPayrollHelp />} />
+            <Route path="payroll-settings" element={<WorkerRoute><C1WorkerPayrollSettings /></WorkerRoute>} />
             <Route path="pay-history" element={<WorkerRoute><C1WorkerPayHistory /></WorkerRoute>} />
             <Route path="pay-history/:evereeTenantId/:statementId" element={<WorkerRoute><C1WorkerPayHistory /></WorkerRoute>} />
             <Route path="payroll-help/:ticketId" element={<C1WorkerPayrollHelp />} />
@@ -974,6 +984,36 @@ function App() {
             <ProtectedRoute requiredSecurityLevel="6">
               <RecruiterAccessGuard>
                 <WeeklyTrendsPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/interview-metrics"
+          element={
+            <ProtectedRoute requiredSecurityLevel="6">
+              <RecruiterAccessGuard>
+                <InterviewMetricsPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/data-health"
+          element={
+            <ProtectedRoute requiredSecurityLevel="7">
+              <RecruiterAccessGuard>
+                <DataHealthPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/classification-audit"
+          element={
+            <ProtectedRoute requiredSecurityLevel="7">
+              <RecruiterAccessGuard>
+                <ClassificationAuditPage />
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }

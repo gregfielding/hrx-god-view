@@ -95,6 +95,29 @@ named "OnTrac" (c1_select_llc, accountType national, markup 38,
 - Carrier national + all 23 children also had `eVerifyRequired` false/
   unset — flipped true 2026-08-20 (Greg: "carrier requires e-verify").
 
+## Ramp outlook (Greg 2026-08-28) — the driver of the fall tech push
+
+Realistic path to **150+ workers full time through end of 2026** —
+"huge for our bottom line, but we need the tech to pull it off," plus
+1–2 more recruiters. The four prerequisite tech tracks Greg named:
+1. **Native apps** (worker experience graduates from mobile web —
+   nothing scoped yet; wrapper-vs-React-Native decision needed).
+2. **Everee no-widget onboarding** — design exists, shared with Mark
+   (see [worker onboarding everee](project_worker_onboarding_everee.md),
+   complete-record API + phone-auth keystone). Most shovel-ready.
+3. **Better overall worker UX** (schedule/hours/pay visibility,
+   support — payroll help desk work is part of this).
+4. **Massively streamlined recruiting** — REC-1+ was on hold pending
+   recruiter feedback; a 150-hire ramp makes it urgent. Note the
+   booking-time gates above (Section 2, E-Verify date, drug screen,
+   per-booking attestation) are per-worker recruiter touches that must
+   scale too.
+
+Scale math: 150 FT W-2 ≈ 6,000 hrs/week through Select payroll —
+batch-submit reliability matters (Everee calc-race footgun in
+[payroll cost attribution](project_payroll_cost_attribution.md)).
+Key unknown: start date / ramp curve — sequencing pins to it.
+
 ## DECISION (Greg 2026-08-20): I-9 Section 2 = just-in-time
 563 of 770 Select workers lack employer Section 2 (visible on
 /reports/i9-status). Do NOT run a broad backlog sweep — complete

@@ -2,6 +2,12 @@
 
 > "HRX→Everee payroll cost attribution — Payroll Costs report + Everee note/label tagging; entry-status vocab, attribution fallbacks, submit-day wire splits; P3/P4 next"
 
+> Leonard Frett calc-race CLOSED 2026-08-29: orphan Everee shifts
+> 4193388/4193397 deleted (verified gone), import entries marked
+> paid/off_cycle → off-cycle o3MG3Voj3zwTUk2pozqO ($289.08, pays Monday,
+> untouched). Two 0-hour draft entries same dates left as-is (harmless).
+> No double-pay possible from Wednesday's run.
+
 Greg's accounting problem (2026-07-27): money wired to Everee has no per-job-order attribution in QBO; bookkeeper (Tabitha) can't split a $10K wire across classes (classes = job order names). Built P1+P2 2026-07-28.
 
 **P1 — Payroll Costs report** (`getPayrollCostReport` onCall in functions/src/payroll/payrollCostReport.ts + src/pages/PayrollCostsPage.tsx at `/payroll-costs`, security level 6+, menu under Invoicing):
@@ -72,3 +78,53 @@ FICA-TAXED ($50→$46.17); FIXED 2026-08-20 — import extras + off-cycle
 per-diems now ship payCode REIMBURSEMENT (non-taxable). Historical
 PER_DIEM-coded earnings were shorted 7.65% (workers) + employer FICA
 match overpaid; remediation via Everee support or top-up payables.
+
+## Daily-reimbursement rule (2026-08-27, Prairie View A&M \$5/day parking)
+
+Assignment-level automatic per-day reimbursement: set `dailyReimbursement`
+(number) + `reimbursementLabel` on an ASSIGNMENT (and its JO so future
+assignments at that location inherit — inherit is manual today: stamp new
+assignments when created from those JOs, or re-run the stamp). At submit,
+`submitTimesheetEntryWorker` gives every entry with worked hours a
+REIMBURSEMENT payable at that amount (untaxed, excluded from OT + WC
+premium wages), and stamps `reimbursementAmount`/`reimbursementLabel` on
+the entry (the WC audit's reimbursements breakout reads
+`entry.reimbursementAmount`). Hours-gated: a day with no hours gets
+nothing. An amount already on the entry (import lane) wins over the rule.
+To add the rule for another location: set `dailyReimbursement` +
+`reimbursementLabel` on the ACCOUNT doc — the resolution chain is
+assignment → job order → account (more-specific wins, so one JO can
+override its account's rule), meaning new JOs and new assignments under
+that account inherit with zero stamping.
+Live: Sodexo PVAMU account autoLoc_8ea92d49ea1833ab292a7a091626ec77 —
+5 JOs (#219/220/221/222/404) + 12 assignments at \$5 "Parking".
+
+## ☠️ Everee pay-run calc can RACE a batch submit (2026-08-28, Leonard Frett)
+
+Everee auto-calculates a worker's open scheduled payment when worked
+shifts arrive — and the calc reads a SNAPSHOT. Leonard's 5 Indeed Flex
+shifts (Aug 17–21) were POSTed in one batch at 15:19:03Z; his payment's
+`calculationRequestedAt` was 15:19:01Z and `calculatedAt` 15:19:03.56Z,
+so the snapshot caught only the first 3 shifts. The last 2 landed
+seconds later and did NOT re-trigger calculation; Greg approved the
+$432.30 payment at 16:13 and Leonard was paid 24.02 of 40.05 hours.
+Nobody else in the 39-entry / 9-worker batch was affected (their calcs
+ran after their shifts landed).
+
+Diagnosis path (all read-only, from `functions/`):
+- `/api/v2/payments?page=N&size=500&include-workers-on-regular-pay-cycle=true`
+  — worker fields live in `employee`/`payeeDisplayFullName`; hours in
+  `regularHours`/`totalHours`; shift linkage in `earningList[].note`
+  ("Shift ending YYYY-MM-DD").
+- `listWorkedShifts` (`external-worker-id` filter works) —
+  `payableDetails.paid` / `.paymentId` / `.editable` tell you exactly
+  which shifts a payment consumed. There is NO GET-by-id route for
+  worked shifts (`/integration/v1/worked-shifts/{id}` 404s).
+
+Unpaid-but-submitted shifts stay `paid:false, editable:true` and should
+ride the worker's NEXT scheduled payment; make-whole-today = revert the
+entries in the grid (deletes the shifts) + off-cycle payment via UI
+(same path as the Zirick 2026-08-28 case). Watch item: after any batch
+submit, verify every shift in the batch reaches `paid:true` once the
+period's payment finalizes — a post-approval sweep would have caught
+this same-day.

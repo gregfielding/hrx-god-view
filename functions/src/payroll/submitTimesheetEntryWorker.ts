@@ -121,6 +121,61 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
       }
       const entry = entrySnap.data() as Record<string, unknown>;
       const evereeState = (entry.everee as Record<string, unknown>) ?? {};
+
+      // Daily-reimbursement rule (Greg 2026-08-27, Prairie View A&M $5/day
+      // parking): strictly automatic — when the ASSIGNMENT carries
+      // `dailyReimbursement` and the entry has worked hours, the day gets
+      // the reimbursement; a day with no hours gets nothing. An amount
+      // already on the entry (import lane, manual correction) wins.
+      let reimbursementAmount = Number(entry.reimbursementAmount ?? 0) || 0;
+      let reimbursementLabel = String(entry.reimbursementLabel ?? '').trim();
+      if (reimbursementAmount <= 0) {
+        const assignmentId = String(entry.assignmentId ?? '');
+        const workedHours =
+          Number(entry.actualHoursOverride ?? 0) > 0
+            ? Number(entry.actualHoursOverride ?? 0)
+            : Number(entry.totalRegularHours ?? 0) +
+              Number(entry.totalFlsaOTHours ?? 0) +
+              Number(entry.totalNonFlsaOTHours ?? 0) +
+              Number(entry.totalDoubleTimeHours ?? 0);
+        if (assignmentId && workedHours > 0) {
+          try {
+            const aSnap = await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).get();
+            const a = (aSnap.data() ?? {}) as Record<string, unknown>;
+            let daily = Number(a.dailyReimbursement ?? 0);
+            let label = String(a.reimbursementLabel ?? '').trim();
+            // Fallback chain: assignment → job order → ACCOUNT. The rule
+            // is a location policy governed by the (child) account (Greg
+            // 2026-08-27) — a new JO or fresh assignment under that
+            // account inherits with no stamping. More-specific levels
+            // win, so a single JO could later override the account rule.
+            let acctId = String(entry.accountId ?? a.accountId ?? '');
+            if (!(daily > 0)) {
+              const joId = String(entry.jobOrderId ?? a.jobOrderId ?? '');
+              if (joId) {
+                const jSnap = await db.doc(`tenants/${tenantId}/job_orders/${joId}`).get();
+                const j = (jSnap.data() ?? {}) as Record<string, unknown>;
+                daily = Number(j.dailyReimbursement ?? 0);
+                label = String(j.reimbursementLabel ?? '').trim();
+                if (!acctId) acctId = String(j.recruiterAccountId ?? '');
+              }
+            }
+            if (!(daily > 0) && acctId) {
+              const acctSnap = await db.doc(`tenants/${tenantId}/accounts/${acctId}`).get();
+              const acct = (acctSnap.data() ?? {}) as Record<string, unknown>;
+              daily = Number(acct.dailyReimbursement ?? 0);
+              label = String(acct.reimbursementLabel ?? '').trim();
+            }
+            if (Number.isFinite(daily) && daily > 0) {
+              reimbursementAmount = daily;
+              reimbursementLabel = label || 'Reimbursement';
+            }
+          } catch {
+            // Fail-soft: a missed reimbursement is correctable; never
+            // block the pay submission on this lookup.
+          }
+        }
+      }
       // Stored as a STRING (String(workedShiftId) at write time) — a
       // number-only read here made every retry POST a brand-new shift
       // instead of PUTting the existing one (2026-08-13).
@@ -142,6 +197,9 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
           restBreakPenaltyHours: Number(entry.restBreakPenaltyHours ?? 0),
           tips: Number(entry.tips ?? 0),
           bonusAmount: Number(entry.bonusAmount ?? 0),
+          ...(reimbursementAmount > 0
+            ? { reimbursementAmount, reimbursementLabel }
+            : {}),
         },
         workerKind: payload.workerKind,
         externalWorkerId: payload.externalWorkerId,
@@ -152,9 +210,19 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
         breaks: payload.breaks,
         // Event name first when the shift has one ("IVE WORLD TOUR Ushers" —
         // pay-stub visibility, Greg 2026-08-12), then the attribution tag,
-        // then any recruiter note — every worked-shift self-describes.
+        // then any recruiter note, then the MACHINE ANCHOR (JO#<n> + ISO
+        // work date, Greg 2026-09-01) — the wire journal's deterministic
+        // attribution paths key on those two tokens, so every worked-shift
+        // self-describes for job costing, not just for humans.
         note:
-          [payload.shiftTitle, payload.attributionTag, typeof entry.notes === 'string' ? entry.notes.trim() : '']
+          [
+            payload.shiftTitle,
+            payload.attributionTag,
+            typeof entry.notes === 'string' ? entry.notes.trim() : '',
+            [payload.jobOrderNumber ? `JO#${payload.jobOrderNumber}` : '', String(entry.workDate ?? '')]
+              .filter(Boolean)
+              .join(' '),
+          ]
             .filter(Boolean)
             .join(' | ') || undefined,
         labelPrefix:
@@ -236,6 +304,12 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
       };
       if (workedShiftId !== undefined) {
         updates['everee.workedShiftId'] = String(workedShiftId);
+      }
+      // Persist the auto-applied reimbursement so the entry (and the WC
+      // audit's reimbursements breakout) reflects what was actually paid.
+      if (reimbursementAmount > 0 && !(Number(entry.reimbursementAmount ?? 0) > 0)) {
+        updates.reimbursementAmount = reimbursementAmount;
+        updates.reimbursementLabel = reimbursementLabel;
       }
       await entryRef.update(updates);
 

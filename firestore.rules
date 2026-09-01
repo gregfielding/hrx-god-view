@@ -645,6 +645,16 @@ service cloud.firestore {
       }
 
       // Everee payroll (HRX Everee Master Plan) - admins full; workers read own linkage
+      // Payroll payment-issue queue (2026-08-28 sweep) — workers read own
+      // rows (drives the Home money-stuck banner); admins full.
+      match /payroll_payment_issues/{issueId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.uid == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
       match /everee_workers/{workerDocId} {
         allow read: if request.auth != null && (
           isHRX() ||

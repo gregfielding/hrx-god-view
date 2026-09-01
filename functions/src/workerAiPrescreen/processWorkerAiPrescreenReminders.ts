@@ -6,6 +6,20 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from '../twilio';
 import { markLifecycleEventIfFirst } from '../messaging/lifecycleDedupe';
+
+/**
+ * One prescreen/interview SMS per worker per day, across ALL application
+ * docs and prescreen kinds (2026-08 SMS audit: a worker with many
+ * application docs got 335 chase texts in 5 days — the 5-day hard stop
+ * bounds days, not sends per day, and these sends bypass the router's
+ * rate limiter entirely). Uses the lifecycle dedupe store keyed by UTC
+ * day; first claim wins, everything else that day is skipped/deferred.
+ */
+async function claimDailyPrescreenSmsSlot(tenantId: string, userId: string): Promise<boolean> {
+  // Shared implementation since 2026-08-29 — all three prescreen SMS
+  // senders claim the same daily slot (see interviewCadence.ts).
+  return claimDailyPrescreenSmsSlotShared(markLifecycleEventIfFirst, tenantId, userId);
+}
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -23,8 +37,10 @@ import {
   interviewCadencePastHardStop,
   newCadenceStartUserFields,
   shouldStampNewCadenceStart,
+  claimDailyPrescreenSmsSlotShared,
 } from './interviewCadence';
 import { userHasWorkerAiPrescreenWithFallback } from './hasWorkerAiPrescreenDenormalized';
+import { maybeAutoCompletePrescreenFromBank } from './autoCompletePrescreenFromBank';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -166,6 +182,26 @@ async function processPrescreenChaseSms(args: {
     return 'skipped';
   }
 
+  // Cumulative prescreen: the bank may have filled since the invite (e.g. an interview for a
+  // different application) — complete instead of chasing when zero-delta.
+  const autoCompleteResult = await maybeAutoCompletePrescreenFromBank({
+    db,
+    tenantId,
+    applicationId,
+    userId,
+    applicationData: data,
+    source: 'reminder_processor_chase',
+  });
+  if (autoCompleteResult === 'completed') {
+    await docSnap.ref.update({
+      workerAiPrescreenChase1Pending: false,
+      workerAiPrescreenChase2Pending: false,
+      [outcomeKey]: 'auto_completed_from_bank',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return 'skipped';
+  }
+
   const userSnap = await db.doc(`users/${userId}`).get();
   const ud = (userSnap.data() || {}) as Record<string, unknown>;
 
@@ -278,12 +314,27 @@ async function processPrescreenChaseSms(args: {
   const messageTypeId =
     chase === 1 ? 'worker_ai_prescreen_chase_1' : 'worker_ai_prescreen_chase_2';
 
+  if (!(await claimDailyPrescreenSmsSlot(tenantId, userId))) {
+    await docSnap.ref.update({
+      [pendingKey]: true,
+      [outcomeKey]: 'daily_sms_cap',
+      [dueKey]: admin.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return 'skipped';
+  }
+
   const smsResult = await sendWorkerMessageInternal(phone, body, {
     tenantId,
     userId,
     source: 'system',
     messageTypeId,
     systemContext: true,
+    inbox: {
+      title: preferredLanguage === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+      type: 'opportunity',
+      deepLink: prescreenUrl,
+    },
   });
 
   const sentAt = admin.firestore.Timestamp.now();
@@ -479,12 +530,27 @@ async function processProfileFirstPrescreenChaseUserSms(args: {
   const messageTypeId =
     chase === 1 ? 'worker_ai_prescreen_profile_first_chase_1' : 'worker_ai_prescreen_profile_first_chase_2';
 
+  if (!(await claimDailyPrescreenSmsSlot(tenantId, userId))) {
+    await docSnap.ref.update({
+      [pendingKey]: true,
+      [outcomeKey]: 'daily_sms_cap',
+      [dueKey]: admin.firestore.Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return 'skipped';
+  }
+
   const smsResult = await sendWorkerMessageInternal(phone, body, {
     tenantId,
     userId,
     source: 'system',
     messageTypeId,
     systemContext: true,
+    inbox: {
+      title: preferredLanguage === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+      type: 'opportunity',
+      deepLink: prescreenUrl,
+    },
   });
 
   const sentAt = admin.firestore.Timestamp.now();
@@ -613,6 +679,17 @@ export const processWorkerAiPrescreenReminders = onSchedule(
 
       const data = docSnap.data() as Record<string, unknown>;
 
+      if (data.workerAiPrescreenInterviewCompletedAt) {
+        await docSnap.ref.update({
+          workerAiPrescreenReminderPending: false,
+          workerAiPrescreenReminderLastOutcome: 'skipped',
+          workerAiPrescreenReminderLastError: 'interview_done',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        skipped += 1;
+        continue;
+      }
+
       if (data.workerAiPrescreenFirstTouchCombinedAt) {
         await docSnap.ref.update({
           workerAiPrescreenReminderPending: false,
@@ -675,6 +752,27 @@ export const processWorkerAiPrescreenReminders = onSchedule(
           workerAiPrescreenReminderPending: false,
           workerAiPrescreenReminderLastOutcome: 'skipped',
           workerAiPrescreenReminderLastError: 'policy_resolve_failed',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        skipped += 1;
+        continue;
+      }
+
+      // Cumulative prescreen: complete from the answer bank instead of nudging when zero-delta
+      // (covers rows queued before auto-complete shipped + banks filled after scheduling).
+      const autoCompleteResult = await maybeAutoCompletePrescreenFromBank({
+        db,
+        tenantId,
+        applicationId,
+        userId,
+        applicationData: data,
+        source: 'reminder_processor',
+      });
+      if (autoCompleteResult === 'completed') {
+        await docSnap.ref.update({
+          workerAiPrescreenReminderPending: false,
+          workerAiPrescreenReminderLastOutcome: 'skipped',
+          workerAiPrescreenReminderLastError: 'auto_completed_from_bank',
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         skipped += 1;
@@ -763,6 +861,9 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         }
       }
 
+      if (!(await claimDailyPrescreenSmsSlot(tenantId, userId))) {
+        continue;
+      }
       const smsResult = await sendWorkerMessageInternal(phone, body, {
         tenantId,
         userId,
@@ -770,6 +871,11 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         messageTypeId:
           outcome === 'eligible_invite' ? 'worker_ai_prescreen_invite' : 'worker_ai_prescreen_gap_interview_invite',
         systemContext: true,
+        inbox: {
+          title: preferredLanguage === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+          type: 'opportunity',
+          deepLink: outcome === 'eligible_invite' ? prescreenUrl : prescreenGapUrl,
+        },
       });
 
       const sentAt = admin.firestore.Timestamp.now();
@@ -988,12 +1094,20 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         body = `Hi ${firstName}, quick next step: answer a few questions so we can consider you for ${jobTitle} and match you with the right opportunities. Start here:\n${prescreenUrl}`;
       }
 
+      if (!(await claimDailyPrescreenSmsSlot(tenantId, userId))) {
+        continue;
+      }
       const smsResult = await sendWorkerMessageInternal(phone, body, {
         tenantId,
         userId,
         source: 'system',
         messageTypeId: 'worker_ai_prescreen_invite',
         systemContext: true,
+        inbox: {
+          title: preferredLanguage === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+          type: 'opportunity',
+          deepLink: prescreenUrl,
+        },
       });
 
       const sentAt = admin.firestore.Timestamp.now();

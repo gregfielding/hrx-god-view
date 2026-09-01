@@ -15,6 +15,8 @@ export interface WorkerEmployerLinkage {
   entityId: string;
   /** Everee tenant id, e.g. "3133" — what worker routes use. */
   evereeTenantId: string;
+  /** Everee worker UUID — what worker-record callables need. */
+  evereeWorkerId: string;
   label: string;
 }
 
@@ -26,6 +28,9 @@ export interface PayHistoryRow {
   gross: number | null;
   net: number | null;
   status: string | null;
+  /** Worker-fixable payment problem from the server mapper (2026-08-28):
+   *  'bank_invalid' | 'missing_tin' | 'deposit_returned' | null. */
+  issue: string | null;
   employerLabel: string;
   entityId: string;
   evereeTenantId: string;
@@ -79,7 +84,10 @@ export function useWorkerEmployerLinkages(
           } catch {
             /* label fallback stands */
           }
-          if (!out.some((l) => l.entityId === entityId)) out.push({ entityId, evereeTenantId: tid, label });
+          const evereeWorkerId = String(x.evereeWorkerId ?? x.externalWorkerId ?? '').trim();
+          if (!out.some((l) => l.entityId === entityId)) {
+            out.push({ entityId, evereeTenantId: tid, evereeWorkerId, label });
+          }
         }
       } catch {
         /* empty list — page shows its empty state */
@@ -132,6 +140,7 @@ export function useWorkerPayHistory(
                 gross: typeof it.gross === 'number' ? it.gross : null,
                 net: typeof it.net === 'number' ? it.net : null,
                 status: (it.status as string) ?? null,
+                issue: (it.issue as string) ?? null,
                 employerLabel: l.label,
                 entityId: l.entityId,
                 evereeTenantId: l.evereeTenantId,

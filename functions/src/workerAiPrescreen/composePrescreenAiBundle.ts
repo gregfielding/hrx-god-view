@@ -13,6 +13,7 @@ import {
   type WorkerAiPrescreenAnswers,
 } from './scoreWorkerAiPrescreen';
 import { evaluatePrescreenAnswerQuality } from './prescreenTextAnswerQuality';
+import { evaluatePrescreenAnswerQualityLlm } from './claudeNarrativeQuality';
 import { buildDynamicPrescreenSteps } from './buildDynamicPrescreenQuestions';
 import { computePrescreenAssignmentReadiness } from './prescreenAssignmentReadiness';
 import { evaluateAiHiringDecision, type DynamicAnswerValue, type HiringDecision } from './evaluateAiHiringDecision';
@@ -123,7 +124,13 @@ export async function composePrescreenAiBundle(args: {
   const { merged: answersEffective, meta: drugBackgroundMergeMeta } =
     mergeDynamicDrugBackgroundIntoCoreAnswers(answers, dynamicAnswers);
 
-  const answerQualityEval = evaluatePrescreenAnswerQuality(answersEffective);
+  // Bilingual LLM rubric first (interview review F4 — the regex layer is
+  // English-only and penalized Spanish answers inside an auto-hire gate);
+  // the deterministic regex evaluator remains the always-available
+  // fallback, so a Claude outage degrades to exactly the old behavior.
+  const llmQuality = await evaluatePrescreenAnswerQualityLlm(answersEffective);
+  const answerQualityEval = llmQuality ?? evaluatePrescreenAnswerQuality(answersEffective);
+  const answerQualitySource = llmQuality ? 'llm_rubric_v1' : 'rules_regex';
   const riskProfile = computeRiskProfile(answersEffective, drugBackgroundMergeMeta);
   /** Only attendance admissions carry the extra `risk_admission_detected` penalty — drug/bg use severity tiers. */
   const attendanceAdmission = String(answersEffective.attendance_issues ?? '')
@@ -275,8 +282,14 @@ export async function composePrescreenAiBundle(args: {
   });
 
   const aiBlockCore: Record<string, unknown> = {
-    overallScore: scored.overallScore,
+    // 2026-08-29 (interview review F6): `overallScore` is now the SAME
+    // post-override score that produced `letterGrade` + `recommendation` —
+    // it used to be the pre-override base, up to 15 points away from the
+    // grade sitting next to it. The base lives (and always lived) in
+    // `baseInterviewScore`; every QA/consumer reads that field first.
+    overallScore: operationalOverride.adjustedScore,
     baseInterviewScore: scored.overallScore,
+    answerQualitySource,
     overrideAdjustedScore: operationalOverride.adjustedScore,
     overrideScoreDelta: operationalOverride.scoreDelta,
     overrideBand: operationalOverride.finalBand,

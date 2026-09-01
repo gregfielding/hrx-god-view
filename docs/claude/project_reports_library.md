@@ -194,3 +194,138 @@ waiting (createQboClass/mapQboClass branches on savePayrollVenueMapping).
 - Next: FIN-2 wire Everee burden endpoint (/integration/v1/expenses/
   by-date-range) into the rollups per entity-week → replaces the 12%
   slider with actuals.
+
+## Data Health — the reconciliation spine (SHIPPED 2026-08-26, Greg's "most upstream place")
+
+- /reports/data-health ('data-health', Payroll category, level 7) —
+  buildDataHealthReport (functions/src/payroll/dataHealthReport.ts) via
+  getPayrollCostReport({dataHealth:true}). Per month × entity:
+  Everee-settled gross (reuses buildEvereeRegister — now exported — the
+  wire-recon truth built for the bookkeeper) vs HRX entry gross, off-cycle
+  itemized, UNEXPLAINED residual = money Everee settled with no entry
+  behind it; then gross-weighted %-of-dollars coverage for assignment /
+  JO / account / billRate / workState / wcCode / wcRate.
+- Month buckets: register by periodEnd, entries by workDate — boundary
+  bleed shows as paired ± residuals (July Events +$20k vs Select −$13.8k).
+- First run findings (Jun→Aug 26): **June unexplained $163.7k** (the
+  pre-tagging hole — real missing entries, mostly Events), July nets
+  ±$6.4k (clean), August MTD $115k (import lag, expect to shrink as CSVs
+  land). Coverage post-backfills is 93-100% nearly everywhere; residual
+  queues: June Events wcCode 66.8%, June Select assignment 19.5% (small $),
+  Aug Select wcCode 59.1%, "Maryland Warehouse" csv rows with no
+  assignment.
+- Doctrine: fix upstream queues here (materialize assignments — never
+  read-time patches), and every downstream report corrects itself.
+- **2026-08-26 drain: unassigned paid payroll = $0.** The whole
+  no-assignment queue (~$66k) was materialized in one day: Select $21.5k
+  (Maryland/Hanover 2-JO CORT pair, Woodbridge, PA Convention Center,
+  Chicago ORS Nasco, NorCal + Colorado Domino's, Gaylord) and Events
+  $44.9k (FIFA Dallas/NY/KC, MN Yacht Club, COTA, Electric Forest, Obama
+  Library). Conventions that worked: follow the jobOrderId ALREADY STAMPED
+  on each row (site→JO ambiguity resolves itself — every site's rows
+  pointed at exactly one JO); stamp ONLY missing fields on settled rows
+  (assignmentId/account — never money fields); assignment id =
+  `<openShiftId|jo_<joId>>__<uid>`, retro flags per
+  feedback_assignment_point_of_truth.md. **New defect class found:
+  DANGLING assignmentIds** — paid rows stamped with assignment ids that
+  were never created (7 rows/$1.2k); data-health counts them uncovered
+  because it resolves the DOC, not the field — fix by creating the doc AT
+  the referenced id (or repointing to the worker's real assignment and
+  widening its date window). Per-show COTA JOs (#462-464 Toto/Simple
+  Plan/Kesha) follow the VenueSmart family convention (Janitors and
+  Cleaners, 16/20, WC 9014@1.34); "COTA Home Office" rows ride the
+  umbrella JO 8nrUOK7bK2DWDgupx6gC via a timesheet_site_mappings doc
+  (connect_team__cota_home_office) so future Connecteam imports
+  auto-resolve. After any backfill touching weeks older than ~6 weeks,
+  rebuild finance_week_rollups manually (nightly only covers trailing 6).
+  Remaining data-quality queues are WC-code coverage (Aug Select, June
+  Events), not attribution.
+- **2026-08-26 WC backfill (matrix + placeholder rules, Greg-approved):**
+  1,224 paid entries + 518 assignments stamped. Rules that are now
+  precedent: matrix is authority (exact state+title match overrides a
+  differing entry code — NC janitors 9014→9040, MO 9014@2.64); '*'
+  state-default rows fill empty codes (IL events janitors $52.8k →
+  9014@3.25); TN + NY have NO policy (the only true no-policy states —
+  workers_comp policy records are generic/not entity-scoped) → 8040@2.35
+  placeholder ($117.6k awaiting Mass PN coverage). Data-health wcCode
+  counts matrix-RESOLVABLE entries as covered even when the entry field is
+  empty — the backfill materialized those virtual resolutions onto the
+  rows. Gotchas: some JO worksiteAddress.state values are FULL NAMES
+  ("Missouri") — normalize before matrix lookup; TX's 9014@1.34 default is
+  EVENTS-scoped (select TX has no default). Remaining wcCode gaps =
+  8040-placeholder class (TN/NY/DC-janitors, blocked on coverage) + a
+  ~$14k murky list (CT/CO/KY rates absent from matrix, DC/VA/CA title→code
+  calls) awaiting Greg.
+- **2026-08-26 close: WC data-state final.** Greg's call: "all the 8044
+  should be 8040" — any code WITHOUT a carrier rate on file is not really
+  classified → 79 more rows ($14.5k: CO/KY/CT/MN/MO 8044s, CT/DC
+  janitors, CA dishwashers, VA janitors, TX-select utility) moved to
+  8040@2.35 (source placeholder_backfill; 28 assignments too). 8044 WITH
+  a rate (MD 2.25, IL 3.45, DC 1.83) KEPT — carrier-schedule codes.
+  End-state Jun–Aug: assignment/workState 100% everywhere; wcCode
+  uncovered = PURELY the 8040 placeholder class (~$148k: TN+NY no-policy
+  $117.6k, rest awaiting carrier rates) — the 8040 Placeholders report is
+  now the single reclassification queue, and it drains only when the Mass
+  PN request lands coverage / broker supplies rates, not by data work.
+- **FIN-2 SHIPPED 2026-08-26 (commit 6d4a59f0): real burden in Gross
+  Margin + Job Costing.** The 12% slider is replaced by (a) WC premium per
+  row = Σ entry total × entry workersCompRate/100 (same basis as the WC
+  wage report — the WC backfill above is what made this line real), and
+  (b) employer taxes at each entity's ACTUAL Everee rate from
+  /integration/v1/expenses/by-date-range (taxes+contributions ÷ wages;
+  buildEvereeBurdenRates exported in payrollCostReport.ts). 1099 entities
+  are correctly 0% — the old slider burdened contractor pay too. Aug
+  1–26 verified live: Select 12.66%, Events 0%; WC premium $5,262.76 +
+  taxes $3,644.54 vs the slider's ~$40k — margin was understated ~$31k/mo.
+  Rows carry wcPremium/taxBurden; payload carries burdenAvailable/
+  burdenByEntity/totalWcPremium/totalTaxBurden; the manual % field
+  renders ONLY when Everee is unavailable (fail-soft fallback).
+  ☠️ expenses endpoint page size caps at 100 (size>100 = hard 400).
+  Next enhancement unchanged (P2.5): stamp dimensions on submissions to
+  get per-JO burden from Everee instead of entity-rate × pay.
+- **☠️ Phantom "Venue Smart, LLC" account (fixed 2026-08-26):** the whole
+  VenueSmart JO family (53 JOs — Lollapalooza, FIFA, Bonnaroo, every COTA
+  show) carried accountName "Venue Smart, LLC" + accountId/companyId
+  NHc6r1yOVUK6aOqt0EQH, which is a COMPANY id with NO accounts doc — the
+  only real account is **Venuesmart LLC National (m1JEJs8YPohuXTQVjVQp)**.
+  Reports resolving names via the accounts collection showed "—", and
+  new JOs/venue-mappings cloned from family members inherited the phantom
+  (that's how the COTA backfill picked it up). Repointed everywhere: 53
+  job_orders (recruiterAccountId/accountId/accountName), 23
+  payroll_venue_mappings, 23 assignments, 30 entries, 1
+  timesheet_site_mapping. Rule: when cloning a JO's shape, take the
+  account from jo.recruiterAccountId AND VERIFY the accounts doc exists —
+  never trust jo.accountId/companyId/accountName.
+- **2026-08-27 Job Costing v2 (JO-based):** `buildJobOrderCosting`
+  (getPayrollCostReport {jobCosting:true, jobOrderIds[]}) — whole-life
+  P&L per engagement, no date window (horizon = first worked day −45d →
+  today); entity→account→JO cascading pickers (accounts nested under
+  parents; parent selection pulls children's JOs; JO field = multi-select
+  autocomplete). MULTI-JO combine: successor/companion JOs sharing a
+  class aggregate (MN Yacht #315 + Country Club #209 = +$11.5k GP where
+  the split showed −$5.5k). ☠️ BARE ACCOUNT-CLASS GUARD: a QBO class
+  whose every token lives inside the account name ("Black Caviar") is
+  ACCOUNT-level — never fuzzy-matched to a JO (Outside Lands was
+  claiming all 19 Black Caviar invoices); reported as
+  accountLevelBilled/-Classes + warning chip. Attribution for such
+  accounts requires per-event QBO classes (Venue Smart pattern) or
+  qbo_class_mappings. Expensify note: JEs classed to venues are the
+  bookkeeper's "EV Pay Alloc" payroll reallocations — correctly EXCLUDED
+  (payroll already counted from entries); Expensify exporter sees only
+  ON-REPORT expenses, so unreported card spend is invisible until moved
+  to a report + tagged (write-back verified current: 0 unmatched/unknown).
+- **2026-08-27 level-aware class mapping (the classes doctrine):** a QBO
+  class maps to ONE node in the HRX hierarchy via
+  `qbo_class_mappings/{classId}.targetKind`: 'overhead' (non-client —
+  excluded from client margins; GM payload carries
+  overheadBilled/overheadClasses), 'account' (parent/child/standalone —
+  dollars attach at the account; Job Costing shows them as
+  account-level, NEVER guessed down to JOs), 'job_order' (jobOrderIds[]/
+  jobOrderNames[] — may target SEVERAL JOs). Legacy docs infer kind
+  (jobOrderName ⇒ job_order else account). Resolution order everywhere:
+  explicit mapping > exact Account:JO name > guarded fuzzy (bare
+  account-named classes never fuzzy) > account-level inference >
+  unattributed; classes mapped ELSEWHERE are excluded from name/fuzzy.
+  Console (/reports/qbo-classes): level badges + breadcrumbs, kind-aware
+  Map dialog (multi-JO), 'By account' tree lens, create-and-map one step
+  (per-event-class convention, e.g. "Black Caviar:Outside Lands").

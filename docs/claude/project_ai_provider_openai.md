@@ -6,7 +6,7 @@
 
 This codebase uses **OpenAI** for AI-driven work, not Anthropic. Default model is `gpt-5`. The pattern for new AI features is to mirror the existing modules, not introduce a second provider.
 
-**Why:** All current AI surfaces (resume parsing, company enrichment, feedback engine, Worker AI Prescreen, contact enrichment, app_ai chat) are wired through OpenAI. Adding Anthropic alongside would split the AI stack into two providers — not load-bearing for any current need. Confirmed with Greg 2026-05-15 in the Indeed Flex parser design.
+**Why:** All current AI surfaces (resume parsing, company enrichment, feedback engine, contact enrichment, app_ai chat — NOT the Worker AI Prescreen, which despite its name contains zero LLM calls (deterministic rules_v1; see project_interview_review_2026_08)) are wired through OpenAI. Adding Anthropic alongside would split the AI stack into two providers — not load-bearing for any current need. Confirmed with Greg 2026-05-15 in the Indeed Flex parser design.
 
 **How to apply:**
 - **Generic AI calls** — use the `app_ai_generateResponse` callable shape in [functions/src/appAi.ts](functions/src/appAi.ts): `onCall` + `withIdempotency('<name>.v1', logicalInput, ttl, async () => ...)` + `openai.chat.completions.create({ model: 'gpt-5', ... })`.
@@ -24,4 +24,4 @@ This codebase uses **OpenAI** for AI-driven work, not Anthropic. Default model i
 - `fetchCompanyNews.ts` — news enrichment
 - `feedbackEngine.ts` — feedback-loop AI
 - `enhanceContactWithAI.ts` — contact enrichment
-- `workerAiPrescreen/*` — the Worker AI Prescreen subsystem (heavy iteration; tread carefully)
+- ~~`workerAiPrescreen/*`~~ — CORRECTION 2026-08-29: this subsystem has NO LLM calls (pure rules); it was never wired to OpenAI. See [[project_interview_review_2026_08]].

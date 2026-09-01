@@ -1773,6 +1773,7 @@ const JobPostingDetail: React.FC = () => {
       const {
         hasExistingApplicationData,
         getMissingRequiredCertifications,
+        getUnansweredRequirementAcks,
         submitQuickApplication,
       } = await import('../utils/quickApplicationSubmit');
 
@@ -1781,6 +1782,17 @@ const JobPostingDetail: React.FC = () => {
       if (hasExistingData) {
         // Check if job requires certifications user doesn't have
         const missingCerts = await getMissingRequiredCertifications(user.uid, posting);
+
+        // Posting-specific requirement questions they've never answered
+        // route into the wizard's requirements step — the cert-only gate
+        // used to let quick applies skip these entirely (2026-08-29).
+        if (missingCerts.length === 0) {
+          const unansweredAcks = await getUnansweredRequirementAcks(user.uid, posting);
+          if (unansweredAcks.length > 0) {
+            navigate(`/apply/${posting.tenantId}/${postId}${buildApplyQueryParams({ step: 12 })}`);
+            return;
+          }
+        }
 
         if (missingCerts.length === 0) {
           // User has all required certs - submit directly
@@ -1802,8 +1814,17 @@ const JobPostingDetail: React.FC = () => {
           if (result.success) {
             const { emitWorkerCardSignal } = await import('../utils/workerCardSignals');
             emitWorkerCardSignal({ type: 'job_applied', entityId: postId! });
-            // Stay on this job URL and reload application status (yellow “submitted” UI, etc.)
             setApplicationStatusReloadKey((k) => k + 1);
+            // First-time interviewees go straight into the stand-out
+            // interview; repeat workers stay on the posting — their fresh
+            // application auto-completes server-side from the answer bank,
+            // so the interview page would be noise (2026-08-29, Greg).
+            const { hasCompletedPrescreen } = await import('../utils/quickApplicationSubmit');
+            if (!(await hasCompletedPrescreen(user.uid))) {
+              navigate(
+                `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${user.uid}_${postId}`)}&entry=post_apply_inline`,
+              );
+            }
             return;
           } else {
             // Error - show alert and navigate to wizard
@@ -1813,7 +1834,8 @@ const JobPostingDetail: React.FC = () => {
           }
         } else {
           // Missing certs - navigate to wizard starting at certifications step
-          navigate(`/apply/${posting.tenantId}/${postId}${buildApplyQueryParams({ step: 7 })}`);
+          // step 8 = licenses/certifications (7 was Education — off-by-one, fixed 2026-08-29)
+          navigate(`/apply/${posting.tenantId}/${postId}${buildApplyQueryParams({ step: 8 })}`);
           return;
         }
       } else {

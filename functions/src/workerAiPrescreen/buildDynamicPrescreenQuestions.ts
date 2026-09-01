@@ -89,7 +89,7 @@ export function buildDynamicPrescreenSteps(context: AiInterviewContext): Dynamic
       id: 'dyn_job_background_check',
       type: 'single_select',
       module: 'compliance_background',
-      prompt: 'This posting requires a background check. Are you able to pass and complete it?',
+      prompt: 'This posting requires a background check. Are you okay with completing one?',
       promptKey: 'workerAiPrescreen.dynamic.dyn_job_background_check',
       options: YNNS,
     });
@@ -102,7 +102,7 @@ export function buildDynamicPrescreenSteps(context: AiInterviewContext): Dynamic
       id: 'dyn_physical_job_fit',
       type: 'single_select',
       module: 'physical',
-      prompt: `For this role, the work includes physical tasks like ${list}. Are you comfortable with that for this posting?`,
+      prompt: `For this role, the work includes physical tasks like ${list}. Are you able to do these tasks, with or without a reasonable accommodation?`,
       promptKey: 'workerAiPrescreen.dynamic.dyn_physical_job_fit',
       promptParams: { list },
       options: YNNS,

@@ -70,29 +70,25 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
     id: 'motivation',
     type: 'text',
     prompt:
-      'What drew you to this kind of work — and what are you hoping for next? Include:\n' +
-      '- what kind of role or industry you want\n' +
-      '- one goal for the next few months',
+      'What kind of work are you looking for next? Share one goal you have for the next few months, too.',
   },
   {
     id: 'experience_details',
     type: 'text',
     prompt:
-      'In a few words, what kind of work have you done recently? Include:\n' +
-      '- where (employer or type of workplace)\n' +
-      '- about how long (approximate is fine)\n' +
-      '- your main responsibilities',
+      'Tell us about your recent work. Include:\n- where (employer or type of workplace)\n- about how long (approximate is fine)\n- your main responsibilities',
   },
   {
     id: 'pressure_situation',
     type: 'text',
     prompt:
-      'Tell us about a time work got stressful — what happened, what did you do, and how did it turn out?',
+      'Tell us about a time work got stressful or extra busy. What happened, and what did you do?',
   },
   {
     id: 'attendance_issues',
     type: 'single_select',
-    prompt: 'Have you had attendance or lateness issues at past jobs?',
+    prompt:
+      'In the past year, were there times you couldn\'t make it to work or arrived late?',
     options: [
       { value: 'No', label: 'No' },
       { value: 'Yes', label: 'Yes' },
@@ -102,12 +98,13 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
     id: 'attendance_explanation',
     type: 'text',
     prompt:
-      'If you answered Yes above, explain what happened and how you handle reliability now. If No, you may write “N/A”.',
+      'What happened, and what\'s different now? A sentence or two is plenty.',
   },
   {
     id: 'transportation_plan',
     type: 'single_select',
-    prompt: 'Do you have a reliable way to get to work?',
+    prompt:
+      'How will you usually get to work?',
     options: [
       { value: 'own_vehicle', label: 'I drive myself' },
       { value: 'ride_from_someone_else', label: 'Ride from someone else' },
@@ -120,7 +117,8 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
   {
     id: 'backup_transportation',
     type: 'single_select',
-    prompt: 'Do you have a backup plan if your usual ride or transit is unavailable?',
+    prompt:
+      'If your usual way to work falls through, do you have a backup plan?',
     options: [
       { value: 'Yes', label: 'Yes' },
       { value: 'No', label: 'No' },
@@ -129,7 +127,8 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
   {
     id: 'physical_comfort',
     type: 'single_select',
-    prompt: 'Are you comfortable with jobs that may involve standing, lifting, or repetitive tasks?',
+    prompt:
+      'Many of our roles involve standing, lifting, or repetitive tasks. Are you able to do this kind of work, with or without a reasonable accommodation?',
     options: [
       { value: 'Yes', label: 'Yes' },
       { value: 'No', label: 'No' },
@@ -138,7 +137,8 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
   {
     id: 'drug_screen',
     type: 'single_select',
-    prompt: 'If a role requires a drug screen, would anything show up that we should know about?',
+    prompt:
+      'Some jobs require a drug screen. If you took one this week, would anything come up that we should know about?',
     options: [
       { value: 'no', label: 'No' },
       { value: 'yes', label: 'Yes' },
@@ -149,13 +149,13 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
     id: 'drug_screen_detail',
     type: 'text',
     prompt:
-      'You indicated something may show on a drug screen. Briefly explain what we should know (dates/context help). ' +
-      'If you tapped Yes by mistake, go Back to change your answer.',
+      'Thanks for being upfront — context helps us place you well. Briefly, what should we know? Rough dates help.',
   },
   {
     id: 'background_check',
     type: 'single_select',
-    prompt: 'If a role requires a background check, is there anything that might appear?',
+    prompt:
+      'Some jobs require a background check. Is there anything that might appear that you\'d like to tell us about first?',
     options: [
       { value: 'no', label: 'No' },
       { value: 'yes', label: 'Yes' },
@@ -166,29 +166,25 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
     id: 'background_check_detail',
     type: 'text',
     prompt:
-      'You indicated something may appear on a background check. Briefly explain what we should know. ' +
-      'If you tapped Yes by mistake, go Back to change your answer.',
+      'Thanks for being upfront — context helps us find the right fit. Briefly, what should we know?',
   },
   {
     id: 'background_offense_class',
     type: 'text',
     prompt:
-      'Optional: if you shared a criminal record, was it generally a misdemeanor or a felony? ' +
-      '(You can skip this if you prefer.)',
+      'Optional: was it generally a misdemeanor or a felony? You can skip this if you prefer.',
   },
   {
     id: 'background_offense_when',
     type: 'text',
     prompt:
-      'Optional: roughly when did that happen (year or timeframe)? We focus on roughly the last 7–10 years for staffing.',
+      'Optional: roughly when did that happen? A year or timeframe is fine — for staffing, the last 7–10 years matter most.',
   },
   {
     id: 'supervisor_feedback',
     type: 'text',
     prompt:
-      'What would your last supervisor say about you? Include:\n' +
-      '- one strength they might mention\n' +
-      '- one area you were working on (if any)',
+      'What would your most recent supervisor say about you? Include:\n- one strength they\'d mention\n- one thing you were working on (if any)',
   },
   {
     id: 'additional_notes',

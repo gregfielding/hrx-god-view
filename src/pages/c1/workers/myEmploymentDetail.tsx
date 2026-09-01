@@ -672,7 +672,7 @@ const MyEmploymentDetailPage: React.FC = () => {
             <Button
               variant="text"
               size="small"
-              onClick={() => navigate('/c1/workers/support')}
+              onClick={() => navigate('/c1/workers/payroll-help?topic=payroll')}
               sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
             >
               {t('workerEmploymentDetail.bridgeHelpLink')}

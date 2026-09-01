@@ -70,6 +70,10 @@ const Privacy: React.FC = () => {
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s2L1')}</ListItem>
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s2L2')}</ListItem>
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s2L3')}</ListItem>
+          {/* Mobile app disclosures (2026-08-30): camera/photos, push token,
+              device identifier, crash diagnostics — must match the App Store
+              privacy label and ios/Runner/PrivacyInfo.xcprivacy. */}
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s2L4')}</ListItem>
         </List>
         <Typography paragraph>
           {t('legal.privacy.s2Sensitive')}

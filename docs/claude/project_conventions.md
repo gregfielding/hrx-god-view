@@ -39,3 +39,19 @@ Conventions called out explicitly by Greg as load-bearing — assume any PR I wr
 - Census after: 13,965×'2', 15×'7' (all staff), 23×'4' (customer-side
   contacts — NOT company staff, left as-is), 1×'3', 1×'0', 3× numeric-0
   gregapp@gmail.com test artifacts.
+
+## Heavy local jobs — don't crash the laptop (incident 2026-08-29)
+
+Running the FULL functions jest suite (96 suites, ts-jest recompiles the
+whole codebase per worker, defaults to one worker per core) CONCURRENTLY
+with a CRA build or `firebase deploy` exhausted macOS application memory
+and hard-crashed Greg's machine. Rules: run heavy jobs (full jest, CRA
+build, firebase deploy) ONE AT A TIME; cap jest with `--maxWorkers=2`;
+prefer targeted suites (`npx jest src/cadence`) over the full run. Also:
+a starved machine makes `firebase deploy` fail with "Cannot determine
+backend specification. Timeout after 10000" — retry serialized with
+`FUNCTIONS_DISCOVERY_TIMEOUT=120`, and never trust a deploy piped through
+`tail` (the pipe masks the exit code — capture to a file and check `$?`).
+Known debt: 8 of 96 jest suites (47 tests) fail — pre-existing, they were
+unrunnable before jest.config.js landed 2026-08-28; cadence/prescreen
+suites are green.

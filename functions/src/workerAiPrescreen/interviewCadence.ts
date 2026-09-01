@@ -119,6 +119,32 @@ export function newCadenceStartUserFields(
  * genuinely new cadence). Returning false for a still-fresh anchor is what
  * keeps mid-cadence re-arms from sliding the 5-day stop forward.
  */
+/**
+ * One prescreen SMS per worker per day, across ALL senders (2026-08-29 —
+ * previously only the reminders cron claimed this; the auto-invite and
+ * first-touch senders bypassed the cap the 335-texts incident inspired).
+ * Backed by `markLifecycleEventIfFirst`, so the claim is transactional and
+ * shared with the cron's existing key format.
+ */
+export async function claimDailyPrescreenSmsSlotShared(
+  markLifecycleEventIfFirst: (args: {
+    tenantId: string;
+    dedupeKey: string;
+    eventType: string;
+    context: Record<string, unknown>;
+  }) => Promise<boolean>,
+  tenantId: string,
+  userId: string,
+): Promise<boolean> {
+  const day = new Date().toISOString().slice(0, 10);
+  return markLifecycleEventIfFirst({
+    tenantId,
+    dedupeKey: `worker_ai_prescreen_daily_sms__${tenantId}__${userId}__${day}`,
+    eventType: 'worker_ai_prescreen_daily_sms_slot',
+    context: { userId, day },
+  });
+}
+
 export function shouldStampNewCadenceStart(
   userData: Record<string, unknown> | null | undefined,
   nowMs?: number,

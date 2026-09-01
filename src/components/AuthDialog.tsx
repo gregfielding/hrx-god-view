@@ -74,6 +74,8 @@ const AUTH_COPY: Record<'en' | 'es', Record<string, string>> = {
     phone: 'Phone Number',
     phonePlaceholder: '(555) 123-4567',
     phoneHelp: "We'll use this to send you job updates and verification codes.",
+    dob: 'Date of birth',
+    dobHelp: 'MM/DD/YYYY — you must be 18 or older to work with us.',
     smsConsent: 'By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One, including application updates, interview scheduling, onboarding reminders, shift notifications, payroll alerts, and account security messages. Message & data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment. See our Privacy Policy, Terms of Use, and SMS Consent.',
     termsAgree: 'I agree to the Terms of Use.',
     termsAgreePrefix: 'I agree to the ',
@@ -131,6 +133,8 @@ const AUTH_COPY: Record<'en' | 'es', Record<string, string>> = {
     phone: 'Número de teléfono',
     phonePlaceholder: '(555) 123-4567',
     phoneHelp: 'Lo usaremos para enviarte actualizaciones de trabajos y códigos de verificación.',
+    dob: 'Fecha de nacimiento',
+    dobHelp: 'MM/DD/AAAA — debes tener 18 años o más para trabajar con nosotros.',
     smsConsent: 'Al marcar esta casilla, acepto recibir mensajes de texto relacionados con el empleo de C1 Staffing / HRX One, incluyendo actualizaciones de solicitudes, citas para entrevistas, recordatorios de incorporación, avisos de turnos, alertas de nómina y mensajes de seguridad de la cuenta. Pueden aplicar tarifas de mensajes y datos. La frecuencia varía. Responde STOP para cancelar o HELP para ayuda. El consentimiento no es condición de empleo. Consulta nuestra Política de privacidad, Términos de uso y Consentimiento SMS.',
     termsAgree: 'Acepto los Términos de uso.',
     termsAgreePrefix: 'Acepto los ',
@@ -179,19 +183,21 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
   const [activeTab, setActiveTab] = useState(0);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
   const [recaptchaLoading, setRecaptchaLoading] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [acknowledgedPrivacy, setAcknowledgedPrivacy] = useState(false);
   const [phone, setPhone] = useState('');
+  // DOB closes the 18+ gap: this dialog previously created accounts with no
+  // date of birth, silently skipping the server-side age check that the apply
+  // wizard enforces (signup-flow review 2026-08-28).
+  const [dob, setDob] = useState('');
   const [smsConsent, setSmsConsent] = useState(false);
   const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>(detectDefaultLanguage());
 
@@ -247,15 +253,14 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
   const handleClose = () => {
     setEmail('');
     setPassword('');
-    setConfirmPassword('');
     setFirstName('');
     setLastName('');
     setPhone('');
+    setDob('');
     setPreferredLanguage(detectDefaultLanguage());
     setError(null);
     setSuccess(null);
     setShowPassword(false);
-    setShowConfirmPassword(false);
     setRecaptchaToken(null);
     setRecaptchaLoading(false);
     setAgreedToTerms(false);
@@ -305,223 +310,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
     }
   };
 
-  const handleSignUp = async () => {
-    setError(null);
-    setSuccess(null);
-
-    // Validation
-    if (!email || !password || !firstName || !lastName || !phone) {
-      setError(t.errorAllFields);
-      return;
-    }
-
-    // Validate phone number (should be 10 digits)
-    const phoneDigits = phone.replace(/\D/g, '');
-    if (phoneDigits.length !== 10) {
-      setError(t.errorPhone);
-      return;
-    }
-
-    if (!validateEmail(email)) {
-      setError(t.errorEmail);
-      return;
-    }
-
-    if (!validatePassword(password)) {
-      setError(t.errorPassword);
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError(t.errorPasswordMatch);
-      return;
-    }
-
-    setLoading(true);
-
-    // Set flag to prevent AuthContext from creating default user document
-    setCreatingUserProfile(true);
-
-    try {
-      // Execute reCAPTCHA verification
-      await executeRecaptchaVerification('SIGNUP');
-      // Create user account
-      const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
-      const user = userCredential.user;
-
-      // Update user profile with display name
-      await updateProfile(user, {
-        displayName: `${firstName} ${lastName}`.trim()
-      });
-
-      // Get the tenantId from the current route (C1 tenant)
-      const isC1Route = window.location.pathname.startsWith('/c1/');
-      const tenantId = isC1Route ? 'BCiP2bQ9CgVOCTfV6MhD' : null;
-      
-      if (!tenantId) {
-        throw new Error('Unable to determine tenant for user registration');
-      }
-
-      // Create user profile in Firestore
-      const userProfile = {
-        uid: user.uid,
-        email: user.email,
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        displayName: `${firstName} ${lastName}`.trim(),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        lastLogin: serverTimestamp(),
-        // Default values for new users from public jobs board
-        securityLevel: '2' as const, // Applicant level
-        role: 'Tenant' as const,
-        orgType: 'Tenant' as const,
-        activeTenantId: tenantId,
-        tenantIds: {
-          [tenantId]: {
-            role: 'Applicant',
-            securityLevel: '2'
-          }
-        },
-        isActive: true,
-        avatar: null,
-        phone: phone.replace(/\D/g, ''),
-        phoneE164: `+1${phone.replace(/\D/g, '')}`,
-        address: {
-          street: '',
-          city: '',
-          state: '',
-          zipCode: '',
-          coordinates: null
-        },
-        // Work status and eligibility
-        workStatus: 'Active',
-        workEligibility: false, // Gate that must be verified before job applications
-        dob: null, // Date of birth in YYYY-MM-DD format (nullable until provided)
-        phoneVerified: false, // Phone verification status
-        // Employment details
-        employmentType: null as string | null, // Use null; Firestore rejects undefined
-        departmentId: '',
-        divisionId: '',
-        locationId: '',
-        regionId: '',
-        managerId: '',
-        startDate: null,
-        workerId: '',
-        // Job/Profile fields
-        jobTitle: '',
-        linkedinUrl: '',
-        preferredName: '',
-        // Languages and skills
-        languages: [],
-        skills: [],
-        certifications: [],
-        // User associations
-        userGroupIds: [],
-        // Module access flags - explicitly set to false for applicants
-        crm_sales: false,
-        recruiter: false,
-        jobsBoard: false, // Module access flag for managers/admins only
-        // Job application related fields
-        applications: [],
-        favorites: [],
-        // Profile completion tracking
-        profileComplete: false,
-        onboarded: false,
-        // Public jobs board specific
-        source: 'public_jobs_board',
-        preferredLanguage,
-        // Consent tracking
-        userAgreements: {
-          termsOfUse: {
-            agreed: true,
-            version: "2025-10-21",
-            timestamp: new Date().toISOString()
-          },
-          smsConsent: {
-            agreed: smsConsent,
-            version: "2025-10-21",
-            timestamp: smsConsent ? new Date().toISOString() : null
-          },
-          privacyPolicy: {
-            acknowledged: true,
-            version: "2025-10-21",
-            timestamp: new Date().toISOString()
-          }
-        },
-        // Default privacy and notification settings
-        locationSettings: {
-          locationSharingEnabled: true,
-          locationGranularity: 'precise',
-          locationUpdateFrequency: 'realtime',
-        },
-          notificationSettings: {
-            pushNotifications: true,
-            emailNotifications: true,
-            smsNotifications: true,
-            companionMessages: true,
-            shiftReminders: true,
-            safetyAlerts: true,
-            performanceUpdates: true,
-            quietHours: {
-              enabled: false,
-              startTime: '22:00',
-              endTime: '08:00',
-            },
-          },
-        privacySettings: {
-          profileVisibility: 'managers',
-          showContactInfo: true,
-          showLocation: true,
-          showPerformanceMetrics: true,
-          allowDataAnalytics: true,
-          allowAIInsights: true,
-        },
-      };
-
-      await setDoc(doc(db, 'users', user.uid), userProfile);
-
-      setSuccess(t.successCreated);
-      
-      // Close dialog and refresh page state after a brief delay
-      setTimeout(() => {
-        try {
-          onAuthSuccess();
-        } catch (err) {
-          console.error('Error in onAuthSuccess callback:', err);
-        }
-        handleClose();
-      }, 2000);
-
-      // Clear flag after a longer delay to ensure AuthContext has processed
-      setTimeout(() => {
-        setCreatingUserProfile(false);
-      }, 5000);
-
-    } catch (error: any) {
-      console.error('Sign up error:', error);
-      
-      // Clear flag on error
-      setCreatingUserProfile(false);
-      
-      // Handle specific Firebase errors
-      switch (error.code) {
-        case 'auth/email-already-in-use':
-          setError(t.errorEmailExists);
-          break;
-        case 'auth/weak-password':
-          setError(t.errorPasswordWeak);
-          break;
-        case 'auth/invalid-email':
-          setError(t.errorEmailShort);
-          break;
-        default:
-          setError(t.errorCreateFailed);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+  // (Legacy email/password handleSignUp deleted 2026-08-29 — it had no
+  // call sites since Slice 4; PhoneSignupGate owns account creation.)
 
   const handleSignIn = async () => {
     setError(null);
@@ -832,35 +622,6 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
             />
             )}
 
-            {false && (
-              <TextField
-                fullWidth
-                label={t.confirmPassword}
-                type={showConfirmPassword ? 'text' : 'password'}
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                disabled={loading}
-                required
-                onKeyPress={handleKeyPress}
-                size={isMobile ? 'medium' : 'medium'}
-                InputProps={{
-                  startAdornment: <LockIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />,
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      <IconButton
-                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                        edge="end"
-                        disabled={loading}
-                        aria-label="toggle confirm password visibility"
-                        size={isMobile ? 'medium' : 'small'}
-                      >
-                        {showConfirmPassword ? <VisibilityOff /> : <Visibility />}
-                      </IconButton>
-                    </InputAdornment>
-                  )
-                }}
-              />
-            )}
 
             {activeTab === 0 && (
               <TextField
@@ -902,6 +663,21 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
               />
             )}
 
+            {activeTab === 0 && (
+              <TextField
+                fullWidth
+                label={t.dob}
+                value={dob}
+                onChange={(e) => setDob(e.target.value)}
+                disabled={loading}
+                required
+                size={isMobile ? 'medium' : 'medium'}
+                placeholder="MM/DD/YYYY"
+                helperText={t.dobHelp}
+                inputProps={{ inputMode: 'numeric', autoComplete: 'bday' }}
+              />
+            )}
+
             {/* Phone-first account creation (Slice 2, 2026-08-25): OTP gate
                 replaces email+password signup — see PhoneSignupGate. */}
             {activeTab === 0 && agreedToTerms && smsConsent && (
@@ -909,6 +685,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
                 firstName={firstName}
                 lastName={lastName}
                 phone={phone}
+                dob={dob}
+                dobRequired
                 signupSource="jobs_board_dialog"
                 onAuthed={() => {
                   try {

@@ -271,6 +271,11 @@ export const triggerUserGroupInterviewInvites = onCall(
         userId: uid,
         source: 'recruiter',
         sourceId: request.auth.uid,
+        inbox: {
+          title: lang === 'es' ? 'Invitación a entrevista — C1 Staffing' : 'Interview invitation — C1 Staffing',
+          type: 'opportunity',
+          deepLink: url,
+        },
         messageTypeId: 'user_group_backfill_interview_invite',
       });
 

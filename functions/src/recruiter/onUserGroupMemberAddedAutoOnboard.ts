@@ -59,9 +59,9 @@ function readMemberIds(data: Record<string, unknown> | undefined): string[] {
  * to any application by this user — under `hire_everyone` the evaluator can
  * also accept `null` for the catchall case.
  *
- * Capped at 1 doc; if the worker has many open applications we'll evaluate
- * the most-likely-correct one and leave the rest to the application-signal
- * trigger.
+ * Capped at 1 doc, and ONLY applications stamped with this group's id —
+ * never an arbitrary one (2026-08-29). Others are the application-signal
+ * trigger's job.
  */
 async function findApplicationForGroupAndUser(
   db: admin.firestore.Firestore,
@@ -88,24 +88,11 @@ async function findApplicationForGroupAndUser(
       error: e instanceof Error ? e.message : String(e),
     });
   }
-  try {
-    const byUser = await db
-      .collection(`tenants/${tenantId}/applications`)
-      .where('userId', '==', userId)
-      .limit(1)
-      .get();
-    if (!byUser.empty) {
-      const d = byUser.docs[0];
-      return { id: d.id, data: d.data() as Record<string, unknown> };
-    }
-  } catch (e) {
-    logger.warn('userGroupAutoOnboard.member_added_find_app_by_user_failed', {
-      tenantId,
-      groupId,
-      userId,
-      error: e instanceof Error ? e.message : String(e),
-    });
-  }
+  // The "any application by this user, limit 1" fallback was removed
+  // 2026-08-29 (signup-flow review finding 6): it could judge a member on an
+  // arbitrary unrelated application. Both application creators now stamp
+  // `groupId`, so the primary query above finds every group-linked
+  // application; members with none fall to the catchall (hire_everyone) path.
   return null;
 }
 

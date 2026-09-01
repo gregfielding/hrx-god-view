@@ -16,7 +16,9 @@ import {
   ping,
   normalizeDobToISO,
   updateEvereeWorkerPersonalInfo,
+  updateWorkerDefaultBankAccount,
   type EvereeEmbedExperienceType,
+  type WorkerBankAccountInput,
 } from './evereeService';
 import { mirrorWorkEligibilityFromAuthoritativeSource } from '../../utils/workEligibilityMirror';
 import { extractEvereeHomeAddressFromUserDoc } from './evereeUserAddress';
@@ -191,6 +193,7 @@ function coerceEmbedExperienceVersion(value: unknown): string | undefined {
 import { getEvereeConfigForEntity, requireEvereeEnabledEntity } from './evereeConfig';
 import { evereeRequest } from './evereeHttp';
 import { updateEvereeWorkerAddress } from './evereeService';
+import { reconcileWorkerInternal } from './evereeReconcileWorker';
 import { getFirestore } from 'firebase-admin/firestore';
 
 function requireAuth(request: { auth?: { uid: string; token?: Record<string, unknown> } | null }) {
@@ -593,6 +596,56 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
       : '';
   const experienceType = coerceEmbedExperienceType(d?.experienceType);
   const experienceVersion = coerceEmbedExperienceVersion(d?.experienceVersion);
+
+  // Shrunken-widget bank pre-push (2026-08-28, verified in sandbox 2320):
+  // an optional `bankAccount` rides this request, is PUT to Everee BEFORE
+  // the session is minted, and never touches Firestore or logs — with a
+  // bank account on file the ONBOARDING widget skips its "Add payment
+  // method" step. A failed push degrades gracefully: we mint the session
+  // anyway and the widget's own bank step remains as the fallback.
+  let bankPush: { ok: boolean; error?: string; last4?: string } | null = null;
+  const rawBank = d?.bankAccount as Record<string, unknown> | undefined;
+  if (rawBank && typeof rawBank === 'object') {
+    const bankAccount: WorkerBankAccountInput = {
+      bankName: typeof rawBank.bankName === 'string' ? rawBank.bankName : '',
+      accountName: typeof rawBank.accountName === 'string' ? rawBank.accountName : '',
+      accountType: rawBank.accountType === 'SAVINGS' ? 'SAVINGS' : 'CHECKING',
+      routingNumber:
+        typeof rawBank.routingNumber === 'string' ? rawBank.routingNumber.replace(/\D/g, '') : '',
+      accountNumber:
+        typeof rawBank.accountNumber === 'string' ? rawBank.accountNumber.replace(/\D/g, '') : '',
+    };
+    const result = await updateWorkerDefaultBankAccount({
+      tenantId,
+      entityId,
+      evereeWorkerId,
+      bankAccount,
+    });
+    bankPush = result.ok
+      ? { ok: true, last4: bankAccount.accountNumber.slice(-4) }
+      : { ok: false, error: result.error };
+    if (result.ok) {
+      // Fire-and-forget mirror refresh so the Payroll hub's setup checklist
+      // shows the direct-deposit checkmark immediately instead of waiting
+      // for the 2h reconcile cron (2026-08-28 checklist build).
+      void reconcileWorkerInternal({
+        tenantId,
+        entityId,
+        userId,
+        evereeWorkerId,
+        syncSource: 'embed',
+      }).catch(() => undefined);
+    }
+    logger.info('[evereeCreateOnboardingSession] bank pre-push', {
+      tenantId,
+      entityId,
+      userId,
+      ok: result.ok,
+      // Sanitized failure reason only — never bank fields.
+      ...(result.ok ? {} : { reason: bankPush.error }),
+    });
+  }
+
   const requestedKey = buildExperienceCacheKey(
     experienceType ?? null,
     experienceVersion ?? null,
@@ -610,6 +663,9 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
   const nowMs = Date.now();
   if (
     cached &&
+    // A session minted before a just-pushed bank account may still render
+    // the payment step — always mint fresh after a bank pre-push.
+    !bankPush &&
     cached.experienceCacheKey === requestedKey &&
     nowMs - cached.createdAtMs <= EMBED_SESSION_REUSE_WINDOW_MS &&
     cached.expiresAtMs - nowMs >= EMBED_SESSION_MIN_REMAINING_MS
@@ -700,6 +756,7 @@ export const evereeCreateOnboardingSession = onCall(async (request) => {
       embedUrl: session.url,
       expiresAt: new Date(expiresAtMs).toISOString(),
       reusedFromCache: false,
+      ...(bankPush ? { bankPush } : {}),
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -1327,6 +1384,28 @@ export const evereeAdminClearStaleStamps = onCall(async (request) => {
   }
 });
 
+/**
+ * ☠️ Recursively strip full-TIN fields from an Everee payload before it
+ * leaves the server (found 2026-08-28: `GET /api/v2/workers/{id}` returns
+ * the worker's FULL 9-digit `taxpayerIdentifier`, and this callable used to
+ * forward the record verbatim — full SSNs were reaching admin browsers in
+ * the network payload). `taxpayerIdentifierLast4` survives; every key named
+ * like a full TIN is dropped wherever it nests (w9-info gets the same
+ * treatment defensively). The UI only ever renders last-4.
+ */
+function scrubFullTinDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(scrubFullTinDeep);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (/^(taxpayerIdentifier|ssn|tin|socialSecurityNumber)$/i.test(k)) continue;
+      out[k] = scrubFullTinDeep(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 export const evereeAdminGetWorker = onCall(async (request) => {
   requireAuth(request);
   const d = request.data as Record<string, unknown> | null;
@@ -1346,6 +1425,51 @@ export const evereeAdminGetWorker = onCall(async (request) => {
     throw new HttpsError('permission-denied', 'Not allowed');
   }
   const config = await requireEvereeEnabledEntity(tenantId, entityId);
+
+  // Optional write-through (2026-08-28, admin bank visibility ask): replace
+  // the worker's default direct-deposit account BEFORE the fetch, so one
+  // round trip both updates and returns the fresh record. Details are in
+  // transit only — same handling as the bank-first onboarding push (never
+  // stored, never logged; `updateWorkerDefaultBankAccount` sanitizes Everee
+  // errors that could echo digits). Everee reroutes all not-yet-approved
+  // payments to the new account.
+  let bankUpdate: { ok: boolean; error?: string } | null = null;
+  const rawBank = d?.setDefaultBankAccount as Record<string, unknown> | undefined;
+  if (rawBank && typeof rawBank === 'object') {
+    const result = await updateWorkerDefaultBankAccount({
+      tenantId,
+      entityId,
+      evereeWorkerId,
+      bankAccount: {
+        bankName: typeof rawBank.bankName === 'string' ? rawBank.bankName : '',
+        accountName: typeof rawBank.accountName === 'string' ? rawBank.accountName : '',
+        accountType: rawBank.accountType === 'SAVINGS' ? 'SAVINGS' : 'CHECKING',
+        routingNumber:
+          typeof rawBank.routingNumber === 'string' ? rawBank.routingNumber.replace(/\D/g, '') : '',
+        accountNumber:
+          typeof rawBank.accountNumber === 'string' ? rawBank.accountNumber.replace(/\D/g, '') : '',
+      },
+    });
+    bankUpdate = result.ok ? { ok: true } : { ok: false, error: result.error };
+    if (result.ok) {
+      void reconcileWorkerInternal({
+        tenantId,
+        entityId,
+        userId: targetUserId,
+        evereeWorkerId,
+        syncSource: 'manual',
+      }).catch(() => undefined);
+    }
+    logger.info('[evereeAdminGetWorker] bank write-through', {
+      tenantId,
+      entityId,
+      evereeWorkerId,
+      byUid: request.auth?.uid ?? '',
+      ok: result.ok,
+      ...(result.ok ? {} : { reason: result.error }),
+    });
+  }
+
   try {
     const response = await evereeRequest<unknown>(
       config,
@@ -1370,7 +1494,13 @@ export const evereeAdminGetWorker = onCall(async (request) => {
         });
       }
     }
-    return { ok: true as const, evereeWorkerId, evereeTenantId: config.evereeTenantId, response };
+    return {
+      ok: true as const,
+      evereeWorkerId,
+      evereeTenantId: config.evereeTenantId,
+      response: scrubFullTinDeep(response),
+      ...(bankUpdate ? { bankUpdate } : {}),
+    };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     logger.error('[evereeAdminGetWorker] failed', {
@@ -1478,7 +1608,7 @@ export const evereeAdminGetWorkerW9 = onCall(async (request) => {
       'GET',
       `/api/v2/workers/${encodeURIComponent(evereeWorkerId)}/w9-info`,
     );
-    return { ok: true as const, applicable: true as const, response };
+    return { ok: true as const, applicable: true as const, response: scrubFullTinDeep(response) };
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     const status = parseEvereeErrorStatus(message);

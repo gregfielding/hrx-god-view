@@ -51,7 +51,7 @@ const baseNavConfig = [
   { key: 'nav.myAccount', path: '/c1/workers/profile', icon: <PersonIcon /> },
   // "My Applications" removed from the standing nav — it now lives under
   // My Schedule → Archive → Applications (avoids two paths to the same list).
-  { key: 'nav.payroll', path: '/c1/workers/payroll', icon: <PaymentsIcon /> },
+  { key: 'nav.payroll', path: '/c1/workers/earnings', icon: <PaymentsIcon /> },
   { key: 'nav.inbox', path: '/c1/workers/notifications', icon: <InboxIcon /> },
   /* Help & Support hidden: import HelpOutlineIcon, append nav.helpSupport -> /c1/workers/support */
 ];

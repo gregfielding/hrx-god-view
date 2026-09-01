@@ -8,7 +8,13 @@ import { writeWorkerInboxNotification } from './messaging/unifiedWorkerNotificat
 import { getPushProvider } from './messaging/pushProviderFactory';
 import { sendWorkerMessageInternal } from './twilio';
 import { shouldSendNotification } from './utils/notificationSettings';
-import { markLifecycleEventIfFirst } from './messaging/lifecycleDedupe';
+import { markLifecycleEventIfFirst, releaseLifecycleEvent } from './messaging/lifecycleDedupe';
+import { planReminderSchedule } from './cadence/reminderSchedulePlanner';
+import {
+  getSequenceCopyOverride,
+  getTenantSmsBrand,
+  renderCadenceTemplate,
+} from './cadence/sequenceCopyOverrides';
 import { buildWorkerAssignmentUrl } from './utils/workerUrls';
 import {
   TWILIO_ACCOUNT_SID,
@@ -19,6 +25,7 @@ import {
 import {
   resolveShiftReminderProfile,
   ALL_SHIFT_REMINDER_TYPES,
+  CONFIRMATION_ASK_REMINDER_TYPES,
   type ShiftReminderType,
   type ShiftReminderStep,
 } from './cadence/shiftReminderProfile';
@@ -52,83 +59,6 @@ const CLAIM_TTL_MS = 5 * 60 * 1000;
 // is the point. We also cap the deferral at T-15m so even a 6 AM shift
 // where T-2h would naturally fire at 4 AM doesn't get pushed to 8 AM
 // (which would be 2 hours after the worker was supposed to clock in).
-const REMINDER_EARLY_MORNING_FLOOR_LOCAL_HOUR = 8;
-const REMINDER_FLOOR_LATEST_OFFSET_MIN_BEFORE_START = 15; // T-15m cap
-
-/**
- * Return the minute-of-day (0..1439) for `ms` rendered in `timezone`.
- * Used by `applyEarlyMorningFloor` to decide whether a scheduled time
- * lands inside the worker's local pre-dawn window.
- */
-function getLocalMinutesSinceMidnight(ms: number, timezone: string): number {
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit',
-    }).formatToParts(new Date(ms));
-    const hStr = parts.find((p) => p.type === 'hour')?.value ?? '0';
-    const mStr = parts.find((p) => p.type === 'minute')?.value ?? '0';
-    let h = parseInt(hStr, 10);
-    const m = parseInt(mStr, 10);
-    if (h === 24) h = 0; // some locales render midnight as "24"
-    return h * 60 + m;
-  } catch (err) {
-    logger.warn('[worker_shift_reminders] tz_minute_extract_fallback', {
-      timezone,
-      err: (err as Error)?.message || String(err),
-    });
-    const d = new Date(ms);
-    return d.getHours() * 60 + d.getMinutes();
-  }
-}
-
-/**
- * If `scheduledForMs` falls before the early-morning floor in the
- * worker's local timezone AND the reminder's lead time is long enough
- * to safely defer (offsetHours >= 2), push it forward to the floor.
- *
- * Capped at `start - REMINDER_FLOOR_LATEST_OFFSET_MIN_BEFORE_START`
- * so we never push the reminder to fire after the shift has started
- * (or so close that the worker has no useful prep time).
- */
-function applyEarlyMorningFloor(
-  scheduledForMs: number,
-  shiftStartMs: number,
-  offsetHours: number,
-  timezone: string,
-): { scheduledForMs: number; deferred: boolean; deferredReason?: string } {
-  // Short-lead steps (T-15m, T-0h, post-start) always send when scheduled —
-  // they're the imminent-arrival pings whose value IS waking the worker.
-  if (offsetHours < 2) return { scheduledForMs, deferred: false };
-
-  const localMinutes = getLocalMinutesSinceMidnight(scheduledForMs, timezone);
-  const floorMinutes = REMINDER_EARLY_MORNING_FLOOR_LOCAL_HOUR * 60;
-  if (localMinutes >= floorMinutes) return { scheduledForMs, deferred: false };
-
-  const liftMs = (floorMinutes - localMinutes) * 60 * 1000;
-  let deferredMs = scheduledForMs + liftMs;
-  // Cap: never push the reminder past the shift's own T-15m gate.
-  const latestAllowedMs =
-    shiftStartMs - REMINDER_FLOOR_LATEST_OFFSET_MIN_BEFORE_START * 60 * 1000;
-  let cappedAtTMinus15 = false;
-  if (deferredMs > latestAllowedMs) {
-    deferredMs = latestAllowedMs;
-    cappedAtTMinus15 = true;
-  }
-  // If the cap brings the deferred time back before/at the original time,
-  // the floor would be a no-op or backwards move — keep the original.
-  if (deferredMs <= scheduledForMs) return { scheduledForMs, deferred: false };
-
-  return {
-    scheduledForMs: deferredMs,
-    deferred: true,
-    deferredReason: cappedAtTMinus15
-      ? 'early_morning_floor_capped_at_t_minus_15m'
-      : `early_morning_floor_${REMINDER_EARLY_MORNING_FLOOR_LOCAL_HOUR}am_local`,
-  };
-}
 // Deterministic retry delay for non-terminal retry path.
 const RETRY_BACKOFF_MS = 2 * 60 * 1000;
 const DISPATCH_BATCH_LIMIT = 200;
@@ -150,6 +80,9 @@ const HOURS_BY_TYPE: Record<ReminderType, number> = {
   assignment_reminder_24h: 24,
   assignment_reminder_23h_escalate: 23,
   assignment_reminder_22h_final: 22,
+  assignment_reconfirm_4h: 4,
+  assignment_confirm_now: 0, // dynamic — scheduled at materialization time
+  career_first_day: 15,
   assignment_reminder_2h: 2,
   assignment_reminder_2h_instructions: 2,
   assignment_reminder_15m_clockin: 0.25,
@@ -164,6 +97,9 @@ const DOC_ID_BY_TYPE: Record<ReminderType, string> = {
   assignment_reminder_24h: 'assignment_reminder_24h',
   assignment_reminder_23h_escalate: 'assignment_reminder_23h_escalate',
   assignment_reminder_22h_final: 'assignment_reminder_22h_final',
+  assignment_reconfirm_4h: 'assignment_reconfirm_4h',
+  assignment_confirm_now: 'assignment_confirm_now',
+  career_first_day: 'career_first_day',
   assignment_reminder_2h: 'assignment_reminder_2h',
   assignment_reminder_2h_instructions: 'assignment_reminder_2h_instructions',
   assignment_reminder_15m_clockin: 'assignment_reminder_15m_clockin',
@@ -264,6 +200,48 @@ async function getDebugOverrideMinutes(tenantId: string): Promise<number[] | nul
   }
 }
 
+/**
+ * Is automated no-show detection allowed to flip state / page recruiters?
+ *
+ * MUTED BY DEFAULT since 2026-08-31 (Greg).
+ *
+ * We have no real-time attendance signal, so we cannot detect a no-show in
+ * real time — the probe was inferring one from absence of evidence. The only
+ * writer of `checked_in` is the worker texting HERE, which almost nobody does
+ * (14 of 118 cadenced shifts over the preceding 14 days), and timesheets
+ * arrive as batch imports well after the fact. Result: 65 `no_show` against
+ * those 14 check-ins. Workers who showed up on time were flagged and paged a
+ * recruiter, which is why recruiters stopped trusting the alert and built a
+ * manual morning timesheet sweep instead. The bad `no_show` writes also
+ * poison the reliability data that tiered shift access is meant to run on.
+ *
+ * While muted the probe still runs and LOGS what it would have done
+ * (`noshow_check_muted`, with the state it would have flipped from), so the
+ * false-positive rate can be measured before re-enabling.
+ *
+ * Re-enabling requires a real attendance signal first — a worker-facing
+ * check-in in the app (the natural home is the shift card that already
+ * carries Confirm / Can't make it) or a live clock-in feed. A config flag
+ * alone is NOT sufficient; turning this on without that signal reproduces
+ * exactly the failure above:
+ *   tenants/{tenantId}/messagingConfig/noShowDetection  { enabled: true }
+ */
+async function isNoShowDetectionEnabled(tenantId: string): Promise<boolean> {
+  if (!tenantId) return false;
+  try {
+    const snap = await db.doc(`tenants/${tenantId}/messagingConfig/noShowDetection`).get();
+    if (!snap.exists) return false;
+    return (snap.data() as Record<string, unknown>)?.enabled === true;
+  } catch (err) {
+    // Fail closed: a config read failure must not resurrect the noisy alert.
+    logger.warn('[worker_shift_reminders] noShowDetection config read failed; staying muted', {
+      tenantId,
+      error: String(err),
+    });
+    return false;
+  }
+}
+
 function normalize(value: unknown): string {
   return String(value ?? '').trim();
 }
@@ -311,10 +289,40 @@ function toTimestamp(value: unknown): admin.firestore.Timestamp | null {
   return null;
 }
 
-function combineDateAndTimeToTimestamp(dateValue: unknown, timeValue: unknown): admin.firestore.Timestamp | null {
-  // TODO(timezone-hardening): replace this UTC merge helper with a dedicated
-  // timezone-aware wall-clock conversion utility that takes (date, time, timezone)
-  // to correctly handle DST transitions and local scheduling semantics.
+/** Milliseconds the given IANA zone is ahead of UTC at `date`. */
+function tzOffsetMs(timeZone: string, date: Date): number {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const p: Record<string, string> = {};
+  for (const part of dtf.formatToParts(date)) p[part.type] = part.value;
+  const asUtc = Date.UTC(
+    Number(p.year),
+    Number(p.month) - 1,
+    Number(p.day),
+    Number(p.hour),
+    Number(p.minute),
+    Number(p.second),
+  );
+  return asUtc - date.getTime();
+}
+
+function combineDateAndTimeToTimestamp(
+  dateValue: unknown,
+  timeValue: unknown,
+  timeZone: string,
+): admin.firestore.Timestamp | null {
+  // Timezone hardening (2026-08-29): startDate + startTime are the WALL CLOCK
+  // at the worksite. The old helper merged them as UTC, which scheduled every
+  // reminder hours early (7h for a California shift) — the SMS bodies looked
+  // right because display formatting made the same mistake in reverse.
   const dateTs = toTimestamp(dateValue);
   if (!dateTs) return null;
   if (typeof timeValue !== 'string') return dateTs;
@@ -323,23 +331,40 @@ function combineDateAndTimeToTimestamp(dateValue: unknown, timeValue: unknown): 
   const hh = Math.max(0, Math.min(23, Number(m[1])));
   const mm = Math.max(0, Math.min(59, Number(m[2])));
   const d = dateTs.toDate();
-  const merged = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hh, mm, 0, 0));
-  return admin.firestore.Timestamp.fromDate(merged);
+  const utcGuess = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hh, mm, 0, 0);
+  try {
+    // Two-pass offset resolution handles DST boundaries: the offset at the
+    // guessed instant may differ from the offset at the corrected instant.
+    let instant = utcGuess - tzOffsetMs(timeZone, new Date(utcGuess));
+    const secondOffset = tzOffsetMs(timeZone, new Date(instant));
+    instant = utcGuess - secondOffset;
+    return admin.firestore.Timestamp.fromMillis(instant);
+  } catch {
+    // Unknown zone id — fall back to the historical UTC merge rather than drop
+    // the reminder set entirely.
+    return admin.firestore.Timestamp.fromMillis(utcGuess);
+  }
 }
 
-function resolveAssignmentStart(assignment: Record<string, unknown>): admin.firestore.Timestamp | null {
+function resolveAssignmentStart(
+  assignment: Record<string, unknown>,
+  timeZone: string,
+): admin.firestore.Timestamp | null {
   return (
     toTimestamp(assignment.startDateTime) ||
-    combineDateAndTimeToTimestamp(assignment.startDate, assignment.startTime) ||
+    combineDateAndTimeToTimestamp(assignment.startDate, assignment.startTime, timeZone) ||
     toTimestamp(assignment.startDate) ||
     null
   );
 }
 
-function resolveAssignmentEnd(assignment: Record<string, unknown>): admin.firestore.Timestamp | null {
+function resolveAssignmentEnd(
+  assignment: Record<string, unknown>,
+  timeZone: string,
+): admin.firestore.Timestamp | null {
   return (
     toTimestamp(assignment.endDateTime) ||
-    combineDateAndTimeToTimestamp(assignment.endDate || assignment.startDate, assignment.endTime) ||
+    combineDateAndTimeToTimestamp(assignment.endDate || assignment.startDate, assignment.endTime, timeZone) ||
     toTimestamp(assignment.endDate) ||
     null
   );
@@ -358,17 +383,54 @@ function resolveLocationAddress(assignment: Record<string, unknown>): string {
   return '';
 }
 
+/** Worksite-state → IANA zone for scheduling when no explicit timezone is
+ *  stored. Pacific/Mountain/Central listed; everything else is Eastern.
+ *  Split-zone states get their majority zone — an hour of imprecision beats
+ *  the old UTC merge's seven. */
+const STATE_TO_TIMEZONE: Record<string, string> = {
+  CA: 'America/Los_Angeles',
+  WA: 'America/Los_Angeles',
+  OR: 'America/Los_Angeles',
+  NV: 'America/Los_Angeles',
+  AZ: 'America/Phoenix',
+  CO: 'America/Denver',
+  UT: 'America/Denver',
+  NM: 'America/Denver',
+  MT: 'America/Denver',
+  WY: 'America/Denver',
+  ID: 'America/Denver',
+  TX: 'America/Chicago',
+  OK: 'America/Chicago',
+  KS: 'America/Chicago',
+  NE: 'America/Chicago',
+  SD: 'America/Chicago',
+  ND: 'America/Chicago',
+  MN: 'America/Chicago',
+  IA: 'America/Chicago',
+  MO: 'America/Chicago',
+  AR: 'America/Chicago',
+  LA: 'America/Chicago',
+  MS: 'America/Chicago',
+  AL: 'America/Chicago',
+  WI: 'America/Chicago',
+  IL: 'America/Chicago',
+  TN: 'America/Chicago',
+};
+
 function resolveTimezone(assignment: Record<string, unknown>, tenantData: Record<string, unknown> | null): string {
-  return (
-    normalize(
-      assignment.timezone ||
-      assignment.timeZone ||
-      assignment.worksiteTimezone ||
-      assignment.locationTimezone ||
-      tenantData?.timezone ||
-      tenantData?.timeZone
-    ) || 'UTC'
+  const explicit = normalize(
+    assignment.timezone ||
+    assignment.timeZone ||
+    assignment.worksiteTimezone ||
+    assignment.locationTimezone ||
+    tenantData?.timezone ||
+    tenantData?.timeZone,
   );
+  if (explicit) return explicit;
+  const state = normalize(assignment.worksiteState).toUpperCase();
+  if (state) return STATE_TO_TIMEZONE[state] || 'America/New_York';
+  // No zone, no state: default to the home market rather than UTC.
+  return 'America/Los_Angeles';
 }
 
 function buildPayload(
@@ -419,6 +481,10 @@ function shouldResync(before: Record<string, unknown> | null, after: Record<stri
     'status',
     'userId',
     'candidateId',
+    // Changing the cadence profile must re-materialize the reminder set —
+    // without this, a per-assignment override never takes effect on an
+    // already-synced assignment.
+    'shiftReminderProfile',
     'startDateTime',
     'startDate',
     'startTime',
@@ -516,14 +582,14 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
 
   const tenantSnap = await db.doc(`tenants/${tenantId}`).get();
   const tenantData = tenantSnap.exists ? tenantSnap.data() as Record<string, unknown> : null;
-  const start = resolveAssignmentStart(assignment);
+  const resolvedTimezone = resolveTimezone(assignment, tenantData);
+  const start = resolveAssignmentStart(assignment, resolvedTimezone);
   if (!start) {
     logger.warn('[worker_shift_reminders] skip, missing assignment start', { tenantId, assignmentId });
     await cancelNonTerminalReminders(tenantId, assignmentId, 'missing_assignment_start');
     return;
   }
-  const end = resolveAssignmentEnd(assignment);
-  const resolvedTimezone = resolveTimezone(assignment, tenantData);
+  const end = resolveAssignmentEnd(assignment, resolvedTimezone);
 
   // Enrich with shift-level fields (clockInUrl, shiftDescription, emailIntro)
   // before building the payload so new cadence message types have what they
@@ -541,7 +607,7 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   // Resolve which profile applies (default two-step vs CORT extended cadence).
-  const profile = await resolveShiftReminderProfile({ tenantId, assignment });
+  const { profile, sequenceId } = await resolveShiftReminderProfile({ tenantId, assignment });
 
   const debugOverrideMinutes = await getDebugOverrideMinutes(tenantId);
   const scheduleMode = debugOverrideMinutes ? 'debug_short' : 'production_default';
@@ -558,10 +624,21 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
 
   const writes: Promise<unknown>[] = [];
 
+  const plan = planReminderSchedule({
+    steps: effectiveSteps,
+    startMs: start.toMillis(),
+    nowMs,
+    timezone: resolvedTimezone,
+    scheduleMode,
+    profileId: profile.id,
+  });
+
   // Cancel any non-terminal reminder doc whose type is NOT in the active
   // profile. Guards against duplicate sends when a tenant switches profile
   // from `default` to `cort_gig` (or vice versa) between reminder sync runs.
-  const activeTypes = new Set<string>(effectiveSteps.map((s) => DOC_ID_BY_TYPE[s.type as ReminderType]));
+  const activeTypes = new Set<string>(
+    Array.from(plan.keys()).map((t) => DOC_ID_BY_TYPE[t]),
+  );
   try {
     const existingRemindersSnap = await db
       .collection(`tenants/${tenantId}/assignments/${assignmentId}/${REMINDER_SUBCOLLECTION}`)
@@ -596,27 +673,25 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
     });
   }
 
-  for (const step of effectiveSteps) {
-    const reminderType = step.type as ReminderType;
-    const offsetHours = step.offsetHours;
-    const rawScheduledForMs = start.toMillis() - offsetHours * 60 * 60 * 1000;
-    // Debug-override runs deliberately use minute-scale offsets that should
-    // fire NOW for QA — never apply the 8 AM local floor in that mode.
-    const floorResult =
-      scheduleMode === 'production_default'
-        ? applyEarlyMorningFloor(rawScheduledForMs, start.toMillis(), offsetHours, resolvedTimezone)
-        : { scheduledForMs: rawScheduledForMs, deferred: false };
-    const scheduledForMs = floorResult.scheduledForMs;
+  for (const [reminderType, stepPlan] of plan) {
+    const scheduledForMs = stepPlan.scheduledForMs;
     const isPast = scheduledForMs <= nowMs;
-    const status: ReminderStatus = isPast ? 'cancelled' : 'pending';
+    const cancelReason = stepPlan.forceCancelReason ?? (isPast ? 'skipped_past_schedule' : null);
+    const status: ReminderStatus = cancelReason ? 'cancelled' : 'pending';
     const docRef = db.doc(
       `tenants/${tenantId}/assignments/${assignmentId}/${REMINDER_SUBCOLLECTION}/${DOC_ID_BY_TYPE[reminderType]}`,
     );
 
     const existingSnap = await docRef.get();
     const existingStatus = existingSnap.exists ? normalizeStatus(existingSnap.get('status')) : '';
-    if (isTerminalReminderStatus(existingStatus)) {
-      // Preserve terminal states so reminders never re-enter send flow after sent/failed/cancelled.
+    // Preserve sent/failed so a reminder never re-enters the send flow after
+    // delivery was attempted. `cancelled` is NOT preserved (fixed 2026-08-29):
+    // this module's own resync path is cancel-then-upsert, so preserving
+    // cancelled meant ANY material edit to a confirmed assignment (start time,
+    // worksite, …) permanently killed all its future reminders. A cancelled
+    // doc whose recomputed time is in the future is revived to pending below;
+    // one whose time is past stays cancelled via the isPast branch.
+    if (existingStatus === 'sent' || existingStatus === 'failed') {
       // Keep metadata current for visibility/debuggability.
       writes.push(
         docRef.set(
@@ -649,17 +724,21 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
       payload,
       resolvedTimezone,
       scheduleMode,
-      scheduledOffsetMinutes: Math.round(offsetHours * 60),
+      scheduledOffsetMinutes: Math.round(stepPlan.offsetHours * 60),
       reminderProfile: profile.id,
-      // Stamp early-morning-floor deferral (or delete the field when the
-      // raw time was used) so we can spot in Firestore which reminders
-      // had their natural T-N fire-time lifted forward into business hours.
-      floorDeferred: floorResult.deferred,
-      floorDeferredReason: floorResult.deferred
-        ? floorResult.deferredReason
+      // Which messagingSequences doc governed this materialization (null for
+      // fences/overrides/legacy switch) — dispatch uses it to load the
+      // sequence's per-step copy overrides.
+      sequenceId: sequenceId ?? admin.firestore.FieldValue.delete(),
+      // Stamp schedule-repair deferral (floor lift, ladder re-space, late
+      // fill) so we can spot in Firestore which reminders had their natural
+      // T-N fire-time moved.
+      floorDeferred: stepPlan.deferred,
+      floorDeferredReason: stepPlan.deferred
+        ? stepPlan.deferredReason
         : admin.firestore.FieldValue.delete(),
-      rawScheduledForMs: floorResult.deferred
-        ? rawScheduledForMs
+      rawScheduledForMs: stepPlan.deferred
+        ? stepPlan.rawScheduledForMs
         : admin.firestore.FieldValue.delete(),
       assignmentStatusSnapshot,
       createdAt: now,
@@ -669,10 +748,10 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
       maxAttempts: MAX_ATTEMPTS,
       version: REMINDER_VERSION,
       lock: admin.firestore.FieldValue.delete(),
-      lastError: isPast ? 'skipped_past_schedule' : admin.firestore.FieldValue.delete(),
+      lastError: cancelReason ?? admin.firestore.FieldValue.delete(),
       sentAt: admin.firestore.FieldValue.delete(),
-      cancelledAt: isPast ? now : admin.firestore.FieldValue.delete(),
-      cancelReason: isPast ? 'skipped_past_schedule' : admin.firestore.FieldValue.delete(),
+      cancelledAt: cancelReason ? now : admin.firestore.FieldValue.delete(),
+      cancelReason: cancelReason ?? admin.firestore.FieldValue.delete(),
       claimedAt: admin.firestore.FieldValue.delete(),
       claimedBy: admin.firestore.FieldValue.delete(),
       claimExpiresAt: admin.firestore.FieldValue.delete(),
@@ -691,21 +770,25 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
     ),
   );
 
-  // Seed confirmation state for cort_gig profile. We only seed when absent or
-  // still pending — never stomp on a prior `confirmed` / `cancelled` from the
-  // worker's own reply. This lets the inbound reply handler (see
-  // cadence/cadenceReplyHandler.ts) flip state and the dispatcher suppress
-  // escalations accordingly.
-  if (profile.id === 'cort_gig') {
+  // Seed confirmation state for the gig confirm tracks. We only seed when
+  // absent or still pending — never stomp on a prior `confirmed` /
+  // `cancelled` from the worker's own reply. This lets the inbound reply
+  // handler (see cadence/cadenceReplyHandler.ts) flip state and the
+  // dispatcher suppress escalations accordingly.
+  if (profile.id === 'cort_gig' || profile.id === 'gig_standard') {
     const cort = (assignment.cortConfirmation as Record<string, unknown> | undefined) || {};
     const currentState = normalizeStatus(cort.state);
-    if (currentState !== 'confirmed' && currentState !== 'cancelled') {
+    // checked_in / no_show added 2026-08-29: a resync (material edit) was
+    // stomping those states back to 'pending' — erasing a real check-in and
+    // clearing the no-show flag recruiters act on.
+    const PRESERVED_STATES = ['confirmed', 'cancelled', 'checked_in', 'no_show'];
+    if (!PRESERVED_STATES.includes(currentState)) {
       writes.push(
         db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
           {
             cortConfirmation: {
               state: 'pending',
-              profileId: 'cort_gig',
+              profileId: profile.id,
               updatedAt: now,
             },
           },
@@ -738,10 +821,15 @@ function buildReminderMessage(
   payload: ReminderPayload,
   assignmentId: string,
   reminderProfile?: string,
+  lang: 'en' | 'es' = 'en',
+  brand: string = 'C1 Staffing',
 ) {
   const startLabel = formatStartInTimezone(payload.startTime, payload.timezone);
   const assignmentUrl = buildWorkerAssignmentUrl(assignmentId);
-  const isCortProfile = reminderProfile === 'cort_gig';
+  // Both gig confirm tracks use the YES/CANCEL ask bodies; the variable name
+  // predates gig_standard.
+  const isCortProfile = reminderProfile === 'cort_gig' || reminderProfile === 'gig_standard';
+  const es = lang === 'es';
 
   // Cadence-specific types (T-2h_instructions, T-15m_clockin, T+0_checkin) get
   // their bodies from the cadenceMessages module, which knows how to use the
@@ -762,45 +850,146 @@ function buildReminderMessage(
       shiftId: payload.shiftId,
       jobOrderId: payload.jobOrderId,
     };
-    return buildCadenceMessage(reminderType, cadencePayload);
+    return buildCadenceMessage(reminderType, cadencePayload, lang, brand);
   }
 
-  // Escalation reminders — only scheduled under cort_gig profile. Progressive
-  // tone: 23h is a friendly nudge, 22h is "last call" before we reassign.
+  // Late-fill ask (gig tracks): the worker was assigned inside the 24h
+  // window, so this is their FIRST cadence message — it must both ask for
+  // the commitment and carry the address (the T-2h details step may
+  // already be past).
+  if (reminderType === 'assignment_confirm_now') {
+    const addr = payload.locationAddress
+      ? (es ? ` Dirección: ${payload.locationAddress}.` : ` Address: ${payload.locationAddress}.`)
+      : '';
+    return es
+      ? {
+          title: 'Confirma tu turno',
+          body: `Estás en el equipo: ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar.`,
+          sms: `${brand}: Estás en el equipo — ${payload.jobTitle} el ${startLabel} en ${payload.locationName}.${addr} Responde SI para confirmar o CANCELAR si no puedes ir.`,
+        }
+      : {
+          title: 'Confirm your shift',
+          body: `You're on the crew: ${payload.jobTitle} at ${startLabel}. Reply YES to confirm.`,
+          sms: `${brand}: You're on the crew — ${payload.jobTitle} at ${startLabel} at ${payload.locationName}.${addr} Reply YES to confirm or CANCEL if you can't make it.`,
+        };
+  }
+
+  // T-4h re-confirm (gig tracks): the Qwick-style second opt-in. Goes to
+  // confirmed AND still-pending workers — plans change overnight.
+  if (reminderType === 'assignment_reconfirm_4h') {
+    // No "today"/"hoy" in this copy: for 5–9 AM shifts this step re-anchors
+    // to the previous evening, and startLabel already carries the date.
+    return es
+      ? {
+          title: '¿Sigues disponible?',
+          body: `${payload.jobTitle} el ${startLabel}. Responde SI para confirmar.`,
+          sms: `${brand}: ¿Sigues disponible? ${payload.jobTitle} el ${startLabel} en ${payload.locationName}. Responde SI — o CANCELAR ahora para que podamos cubrir tu lugar.`,
+        }
+      : {
+          title: 'Still good for your shift?',
+          body: `${payload.jobTitle} at ${startLabel}. Reply YES to confirm.`,
+          sms: `${brand}: Still good for your shift? ${payload.jobTitle} at ${startLabel} at ${payload.locationName}. Reply YES — or CANCEL now so we can cover your spot.`,
+        };
+  }
+
+  // Career track: first-day welcome the evening before. Warm, informative,
+  // no reply demanded.
+  if (reminderType === 'career_first_day') {
+    const addr = payload.locationAddress ? (es ? ` Dirección: ${payload.locationAddress}.` : ` Address: ${payload.locationAddress}.`) : '';
+    return es
+      ? {
+          title: `¡Bienvenido a ${payload.companyName}!`,
+          body: `Tu primer día es el ${startLabel} en ${payload.locationName}.`,
+          sms: `${brand}: ¡Bienvenido! Tu primer día con ${payload.companyName} es el ${startLabel} en ${payload.locationName}.${addr} Detalles: ${assignmentUrl}`,
+        }
+      : {
+          title: `Welcome to ${payload.companyName}!`,
+          body: `Your first day is ${startLabel} at ${payload.locationName}.`,
+          sms: `${brand}: Welcome! Your first day with ${payload.companyName} is ${startLabel} at ${payload.locationName}.${addr} Details: ${assignmentUrl}`,
+        };
+  }
+
+  // Escalation reminders — only scheduled under gig confirm profiles.
+  // Progressive tone: 23h is a friendly nudge, 22h is "last call".
   if (reminderType === 'assignment_reminder_23h_escalate') {
-    return {
-      title: 'Please confirm your shift',
-      body: `Please confirm your ${payload.jobTitle} shift at ${startLabel}.`,
-      sms: `C1 Staffing: We still need a response for your ${payload.jobTitle} shift at ${startLabel}. Reply YES to confirm or CANCEL to decline.`,
-    };
+    return es
+      ? {
+          title: 'Confirma tu turno',
+          body: `Por favor confirma tu turno de ${payload.jobTitle} el ${startLabel}.`,
+          sms: `${brand}: Todavía necesitamos tu respuesta para tu turno de ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar o CANCELAR para declinar.`,
+        }
+      : {
+          title: 'Please confirm your shift',
+          body: `Please confirm your ${payload.jobTitle} shift at ${startLabel}.`,
+          sms: `${brand}: We still need a response for your ${payload.jobTitle} shift at ${startLabel}. Reply YES to confirm or CANCEL to decline.`,
+        };
   }
   if (reminderType === 'assignment_reminder_22h_final') {
-    return {
-      title: 'Last call — confirm your shift',
-      body: `Last call: please confirm ${payload.jobTitle} at ${startLabel}.`,
-      sms: `C1 Staffing: Last reminder for ${payload.jobTitle} at ${startLabel}. Reply YES to keep the shift or CANCEL — otherwise we may need to reassign it.`,
-    };
+    return es
+      ? {
+          title: 'Último aviso — confirma tu turno',
+          body: `Último aviso: confirma ${payload.jobTitle} el ${startLabel}.`,
+          sms: `${brand}: Último recordatorio para ${payload.jobTitle} el ${startLabel}. Responde SI para mantener tu turno o CANCELAR — si no respondes, puede que lo reasignemos.`,
+        }
+      : {
+          title: 'Last call — confirm your shift',
+          body: `Last call: please confirm ${payload.jobTitle} at ${startLabel}.`,
+          sms: `${brand}: Last reminder for ${payload.jobTitle} at ${startLabel}. Reply YES to keep the shift or CANCEL — otherwise we may need to reassign it.`,
+        };
   }
 
   if (reminderType === 'assignment_reminder_24h' || reminderType === 'shift_reminder_24h') {
     if (isCortProfile) {
-      return {
-        title: 'Confirm your shift tomorrow',
-        body: `${payload.jobTitle} tomorrow at ${startLabel}. Reply YES to confirm.`,
-        sms: `C1 Staffing: You're scheduled for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. Reply YES to confirm or CANCEL to decline.`,
-      };
+      return es
+        ? {
+            title: 'Confirma tu turno de mañana',
+            body: `${payload.jobTitle} mañana el ${startLabel}. Responde SI para confirmar.`,
+            sms: `${brand}: Estás programado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Responde SI para confirmar o CANCELAR para declinar.`,
+          }
+        : {
+            title: 'Confirm your shift tomorrow',
+            body: `${payload.jobTitle} tomorrow at ${startLabel}. Reply YES to confirm.`,
+            sms: `${brand}: You're scheduled for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. Reply YES to confirm or CANCEL to decline.`,
+          };
     }
-    return {
-      title: 'Shift Reminder',
-      body: `You’re confirmed for ${payload.jobTitle} tomorrow at ${startLabel}.`,
-      sms: `C1 Staffing reminder: You’re confirmed for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. View details: ${assignmentUrl}`,
-    };
+    return es
+      ? {
+          title: 'Recordatorio de turno',
+          body: `Estás confirmado para ${payload.jobTitle} mañana el ${startLabel}.`,
+          sms: `Recordatorio de ${brand}: Estás confirmado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Detalles: ${assignmentUrl}`,
+        }
+      : {
+          title: 'Shift Reminder',
+          body: `You’re confirmed for ${payload.jobTitle} tomorrow at ${startLabel}.`,
+          sms: `C1 Staffing reminder: You’re confirmed for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. View details: ${assignmentUrl}`,
+        };
   }
-  return {
-    title: 'Your shift starts soon',
-    body: `${payload.jobTitle} starts at ${startLabel} at ${payload.locationName}.`,
-    sms: `C1 Staffing reminder: Your shift for ${payload.jobTitle} starts at ${startLabel} at ${payload.locationName}. View details: ${assignmentUrl}`,
-  };
+  // Career morning-of: same 2h slot, placement voice — it's day one of a
+  // job, not a shift.
+  if (reminderProfile === 'career_placement') {
+    return es
+      ? {
+          title: 'Hoy es tu primer día',
+          body: `${payload.companyName} — ${startLabel} en ${payload.locationName}. ¡Éxito!`,
+          sms: `${brand}: ¡Hoy es el día! ${payload.companyName} a las ${startLabel}, ${payload.locationName}. ¡Que te vaya muy bien!`,
+        }
+      : {
+          title: 'Today’s the day',
+          body: `${payload.companyName} — ${startLabel} at ${payload.locationName}. Good luck!`,
+          sms: `${brand}: Today's the day! ${payload.companyName} at ${startLabel}, ${payload.locationName}. Have a great first day!`,
+        };
+  }
+  return es
+    ? {
+        title: 'Tu turno empieza pronto',
+        body: `${payload.jobTitle} empieza el ${startLabel} en ${payload.locationName}.`,
+        sms: `Recordatorio de ${brand}: Tu turno de ${payload.jobTitle} empieza el ${startLabel} en ${payload.locationName}. Detalles: ${assignmentUrl}`,
+      }
+    : {
+        title: 'Your shift starts soon',
+        body: `${payload.jobTitle} starts at ${startLabel} at ${payload.locationName}.`,
+        sms: `C1 Staffing reminder: Your shift for ${payload.jobTitle} starts at ${startLabel} at ${payload.locationName}. View details: ${assignmentUrl}`,
+      };
 }
 
 /**
@@ -819,16 +1008,22 @@ function toCanonicalReminderType(
   | 'assignment_checkin_0h'
   | 'assignment_noshow_check'
   | 'assignment_reminder_23h_escalate'
-  | 'assignment_reminder_22h_final' {
+  | 'assignment_reminder_22h_final'
+  | 'assignment_reconfirm_4h'
+  | 'assignment_confirm_now'
+  | 'career_first_day' {
   if (reminderType === 'assignment_reminder_24h' || reminderType === 'shift_reminder_24h') {
     return 'assignment_reminder_24h';
   }
+  if (reminderType === 'assignment_confirm_now') return 'assignment_confirm_now';
   if (reminderType === 'assignment_reminder_2h_instructions') return 'assignment_reminder_2h_instructions';
   if (reminderType === 'assignment_reminder_15m_clockin') return 'assignment_reminder_15m_clockin';
   if (reminderType === 'assignment_checkin_0h') return 'assignment_checkin_0h';
   if (reminderType === 'assignment_noshow_check') return 'assignment_noshow_check';
   if (reminderType === 'assignment_reminder_23h_escalate') return 'assignment_reminder_23h_escalate';
   if (reminderType === 'assignment_reminder_22h_final') return 'assignment_reminder_22h_final';
+  if (reminderType === 'assignment_reconfirm_4h') return 'assignment_reconfirm_4h';
+  if (reminderType === 'career_first_day') return 'career_first_day';
   return 'assignment_reminder_2h';
 }
 
@@ -869,7 +1064,40 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   const maxAttempts = Number(reminder.maxAttempts || MAX_ATTEMPTS);
   const canonicalReminderType = toCanonicalReminderType(reminder.reminderType);
   const reminderProfileId = normalize((reminder as unknown as Record<string, unknown>).reminderProfile);
-  const message = buildReminderMessage(reminder.reminderType, reminder.payload, reminder.assignmentId, reminderProfileId);
+  // Worker language drives the message body (bodies were English-only until
+  // 2026-08-29). Fail-open to English on any read error.
+  let workerLang: 'en' | 'es' = 'en';
+  try {
+    const langSnap = await db.doc(`users/${reminder.workerId}`).get();
+    if (String(langSnap.get('preferredLanguage') ?? '').toLowerCase() === 'es') workerLang = 'es';
+  } catch {
+    /* default en */
+  }
+  const smsBrand = await getTenantSmsBrand(reminder.tenantId);
+  const message = buildReminderMessage(reminder.reminderType, reminder.payload, reminder.assignmentId, reminderProfileId, workerLang, smsBrand);
+  // Per-sequence copy override (Phase B): a recruiter-edited SMS template on
+  // the governing messagingSequences doc replaces the built-in body. Blank or
+  // missing override → built-in copy, so editing can never silence a step.
+  const overrideSequenceId = normalize((reminder as unknown as Record<string, unknown>).sequenceId);
+  if (overrideSequenceId) {
+    const tpl = await getSequenceCopyOverride(
+      reminder.tenantId,
+      overrideSequenceId,
+      canonicalReminderType,
+      workerLang,
+    );
+    if (tpl) {
+      message.sms = renderCadenceTemplate(tpl, {
+        brand: smsBrand,
+        jobTitle: reminder.payload.jobTitle,
+        startLabel: formatStartInTimezone(reminder.payload.startTime, reminder.payload.timezone),
+        locationName: reminder.payload.locationName,
+        address: reminder.payload.locationAddress,
+        clockInUrl: reminder.payload.clockInUrl,
+        companyName: reminder.payload.companyName,
+      });
+    }
+  }
   const delivery: NonNullable<ReminderDoc['delivery']> = {};
   let inboxSuccess = false;
   let pushSuccess = false;
@@ -902,7 +1130,10 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
 
   const assignmentData = assignmentSnap.data() as Record<string, unknown>;
   const assignmentStatus = normalizeStatus(assignmentData.status);
-  const assignmentStart = resolveAssignmentStart(assignmentData);
+  const assignmentStart = resolveAssignmentStart(
+    assignmentData,
+    resolveTimezone(assignmentData, null),
+  );
 
   // Most reminders are pre-shift and must be suppressed once the shift has
   // started. The exceptions are:
@@ -963,19 +1194,28 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   //   - The T-24h reminder itself is the one that asks for the reply, so we
   //     never suppress it here.
   const cortState = normalizeStatus((assignmentData.cortConfirmation as Record<string, unknown> | undefined)?.state);
+  // confirm_now counts as an escalation for gating: it nudges for a
+  // YES/CANCEL, so a reply either way makes it moot.
   const isEscalation =
     reminder.reminderType === 'assignment_reminder_23h_escalate' ||
-    reminder.reminderType === 'assignment_reminder_22h_final';
+    reminder.reminderType === 'assignment_reminder_22h_final' ||
+    reminder.reminderType === 'assignment_confirm_now';
   const isPostConfirmOperational =
     reminder.reminderType === 'assignment_reminder_2h_instructions' ||
     reminder.reminderType === 'assignment_reminder_15m_clockin' ||
     reminder.reminderType === 'assignment_checkin_0h';
+  // The T-4h re-confirm deliberately GOES to already-confirmed workers —
+  // that second opt-in is its whole point. Suppressed only when the worker
+  // cancelled or is somehow already on site.
+  const isReconfirm = reminder.reminderType === 'assignment_reconfirm_4h';
 
   let cadenceSuppressReason = '';
   if (isEscalation && (cortState === 'confirmed' || cortState === 'cancelled')) {
     cadenceSuppressReason = `cadence_state_${cortState}_escalation_not_needed`;
   } else if (isPostConfirmOperational && cortState === 'cancelled') {
     cadenceSuppressReason = 'cadence_cancelled_by_worker';
+  } else if (isReconfirm && (cortState === 'cancelled' || cortState === 'checked_in')) {
+    cadenceSuppressReason = `cadence_state_${cortState}_reconfirm_not_needed`;
   }
   if (cadenceSuppressReason) {
     logger.info('[worker_shift_reminders] reminder suppressed', {
@@ -1020,6 +1260,34 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   //                     safety; recruiter would rather get a false ping than
   //                     miss a real no-show.
   if (reminder.reminderType === 'assignment_noshow_check') {
+    // Muted (see isNoShowDetectionEnabled): dismiss without flipping state or
+    // paging anyone, but log what we WOULD have done so the false-positive
+    // rate is measurable from logs while the alert is off.
+    if (!(await isNoShowDetectionEnabled(reminder.tenantId))) {
+      await docSnap.ref.update({
+        status: 'sent',
+        sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        assignmentStatusSnapshot: assignmentStatus || reminder.assignmentStatusSnapshot,
+        delivery: {
+          inbox: { attemptedAt: nowTs, success: true, error: 'noshow_check_muted' },
+        },
+        cancelReason: admin.firestore.FieldValue.delete(),
+        lastError: admin.firestore.FieldValue.delete(),
+        lock: admin.firestore.FieldValue.delete(),
+      });
+      logger.info('[worker_shift_reminders] noshow_check muted', {
+        assignmentId: reminder.assignmentId,
+        userId: reminder.workerId,
+        reminderType: canonicalReminderType,
+        cortState,
+        // What the un-muted probe would have done with this state.
+        wouldHaveFlaggedNoShow: cortState !== 'checked_in' && cortState !== 'no_show' && cortState !== 'cancelled',
+        reason: 'no_realtime_checkin_signal',
+      });
+      return;
+    }
+
     if (cortState === 'checked_in' || cortState === 'no_show') {
       // Already resolved (worker arrived, or recruiter was already alerted by
       // an earlier pass and the state stuck). Dismiss silently.
@@ -1155,8 +1423,9 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     });
 
     // Durable in-app record is always required.
+    const inboxDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__inbox`;
+    let inboxClaimed = false;
     try {
-      const inboxDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__inbox`;
       const inboxIsFirst = await markLifecycleEventIfFirst({
         tenantId: reminder.tenantId,
         dedupeKey: inboxDedupeKey,
@@ -1178,6 +1447,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
           dedupeKey: inboxDedupeKey,
         });
       } else {
+        inboxClaimed = true;
         await writeWorkerInboxNotification({
           uid: reminder.workerId,
           tenantId: reminder.tenantId,
@@ -1198,14 +1468,18 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       lastError = `inbox_failed:${msg}`;
       delivery.inbox = { attemptedAt: nowTs, success: false, error: msg };
     }
+    if (inboxClaimed && delivery.inbox?.success === false) {
+      await releaseLifecycleEvent({ tenantId: reminder.tenantId, dedupeKey: inboxDedupeKey });
+    }
 
     const pushAllowed = await shouldSendNotification(reminder.workerId, 'shiftUpdates', 'push');
     if (reminder.channels.push && pushAllowed) {
       const tokens = await getEnabledPushTokens(reminder.workerId);
       pushAvailable = tokens.length > 0;
+      const pushDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__push`;
+      let pushClaimed = false;
       if (pushAvailable) {
         try {
-          const pushDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__push`;
           const pushIsFirst = await markLifecycleEventIfFirst({
             tenantId: reminder.tenantId,
             dedupeKey: pushDedupeKey,
@@ -1231,6 +1505,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
               dedupeKey: pushDedupeKey,
             });
           } else {
+          pushClaimed = true;
           const push = getPushProvider();
           const result = await push.sendPush({
             tenantId: reminder.tenantId,
@@ -1259,6 +1534,9 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
           lastError = `push_failed:${msg}`;
           delivery.push = { attemptedAt: nowTs, success: false, error: msg };
         }
+        if (pushClaimed && delivery.push?.success === false) {
+          await releaseLifecycleEvent({ tenantId: reminder.tenantId, dedupeKey: pushDedupeKey });
+        }
       } else {
         delivery.push = { attemptedAt: nowTs, success: false, error: 'No enabled push token' };
       }
@@ -1277,9 +1555,10 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       const phoneE164 = toE164(userData?.phoneE164 || userData?.phone);
       smsAvailable = Boolean(smsAllowed && phoneE164);
 
+      const smsDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__sms`;
+      let smsClaimed = false;
       if (smsAvailable) {
         try {
-          const smsDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__sms`;
           const smsIsFirst = await markLifecycleEventIfFirst({
             tenantId: reminder.tenantId,
             dedupeKey: smsDedupeKey,
@@ -1305,6 +1584,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
               dedupeKey: smsDedupeKey,
             });
           } else {
+          smsClaimed = true;
           const result = await sendWorkerMessageInternal(phoneE164, message.sms, {
             source: 'automation',
             sourceId: reminder.assignmentId,
@@ -1327,6 +1607,9 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
           const msg = err?.message || String(err);
           lastError = `sms_failed:${msg}`;
           delivery.sms = { attemptedAt: nowTs, success: false, error: msg };
+        }
+        if (smsClaimed && delivery.sms?.success === false) {
+          await releaseLifecycleEvent({ tenantId: reminder.tenantId, dedupeKey: smsDedupeKey });
         }
       } else {
         delivery.sms = {
@@ -1366,6 +1649,31 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
         lastError: admin.firestore.FieldValue.delete(),
         lock: admin.firestore.FieldValue.delete(),
       });
+
+      // Record that THIS shift is the one we just asked about, so an inbound
+      // YES/CANCEL binds here rather than to whichever pending shift happens
+      // to start earliest. Best-effort: a failed stamp only degrades reply
+      // routing back to the old earliest-first behaviour.
+      if (CONFIRMATION_ASK_REMINDER_TYPES.includes(canonicalReminderType as ShiftReminderType)) {
+        try {
+          await db.doc(`tenants/${reminder.tenantId}/assignments/${reminder.assignmentId}`).set(
+            {
+              cortConfirmation: {
+                lastAskedAt: admin.firestore.FieldValue.serverTimestamp(),
+                lastAskedReminderType: canonicalReminderType,
+              },
+            },
+            { merge: true },
+          );
+        } catch (err) {
+          logger.warn('[worker_shift_reminders] lastAskedAt stamp failed', {
+            assignmentId: reminder.assignmentId,
+            reminderType: canonicalReminderType,
+            error: String(err),
+          });
+        }
+      }
+
       logger.info('[worker_shift_reminders] reminder send success', {
         assignmentId: reminder.assignmentId,
         userId: reminder.workerId,
@@ -1425,7 +1733,36 @@ export const onAssignmentConfirmedScheduleReminders = onDocumentWritten(
     const { tenantId, assignmentId } = event.params;
     const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null;
     const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null;
-    if (!after) return;
+    if (!after) {
+      // Assignment DELETED. Firestore never cascades subcollections, so the
+      // scheduled_notifications docs would sit forever matching the
+      // dispatcher's collection-group query (each one burning a claim
+      // transaction before being marked assignment_missing). Purge them.
+      if (before) {
+        try {
+          const orphans = await db
+            .collection(`tenants/${tenantId}/assignments/${assignmentId}/${REMINDER_SUBCOLLECTION}`)
+            .get();
+          if (!orphans.empty) {
+            const batch = db.batch();
+            orphans.docs.forEach((d) => batch.delete(d.ref));
+            await batch.commit();
+            logger.info('[worker_shift_reminders] purged reminders for deleted assignment', {
+              tenantId,
+              assignmentId,
+              count: orphans.size,
+            });
+          }
+        } catch (err: any) {
+          logger.warn('[worker_shift_reminders] orphan purge failed', {
+            tenantId,
+            assignmentId,
+            error: err?.message || String(err),
+          });
+        }
+      }
+      return;
+    }
 
     // Retroactive admin adds (see `addRetroactiveWorker` callable) record
     // shifts that already happened. Scheduling SMS reminders for a past
@@ -1479,6 +1816,11 @@ export const dispatchScheduledWorkerReminders = onSchedule(
   {
     schedule: 'every 5 minutes',
     timeZone: 'UTC',
+    // A full batch (limit 200, processed sequentially with several Firestore
+    // round trips + a Twilio call each) cannot finish inside the 60s default —
+    // a timeout mid-batch strands every claimed reminder in `processing`,
+    // which nothing revives. 540s comfortably covers the worst batch.
+    timeoutSeconds: 540,
     secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
   },
   async () => {

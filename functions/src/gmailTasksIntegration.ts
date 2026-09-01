@@ -3,6 +3,7 @@ import { defineString } from 'firebase-functions/params';
 import { getFirestore } from 'firebase-admin/firestore';
 import { google } from 'googleapis';
 import { logger } from './utils/logger';
+import { buildMimeMessage } from './sales/mimeHeaders';
 
 const db = getFirestore();
 
@@ -494,15 +495,12 @@ export const sendEmailTaskViaGmail = onCall(async (request) => {
       throw new Error('No recipient specified for email task');
     }
 
-    // Create email message
-    const message = [
-      `To: ${to}`,
-      `Subject: ${subject}`,
-      '',
-      body
-    ].join('\n');
-
-    const encodedMessage = Buffer.from(message).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
+    // Task subjects are free text (a task title, often pasted), so they carry
+    // em dashes and smart quotes. Raw non-ASCII in a Subject header reaches
+    // the inbox as mojibake — RFC 2047 encode it. This also supplies the
+    // MIME-Version / Content-Type the hand-rolled message was missing, and
+    // CRLF line endings per RFC 5322. See sales/mimeHeaders.ts.
+    const encodedMessage = buildMimeMessage({ to, subject, body });
 
     // Send email
     const response = await gmail.users.messages.send({

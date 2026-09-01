@@ -992,6 +992,15 @@ export async function sendWorkerMessageInternal(
     tenantId?: string;        // NEW: Tenant ID for proper logging
     messageTypeId?: string;   // NEW: Message type for unified framework
     userId?: string;          // NEW: User ID if known
+    /** Mirror this SMS to the worker's notification bell (users/{uid}/
+     *  notifications) on successful send — notifications-parity fix
+     *  2026-08-30. Body defaults to the SMS text (truncated). */
+    inbox?: {
+      title: string;
+      type?: string;
+      deepLink?: string;
+      body?: string;
+    };
   }
 ): Promise<{ success: boolean; messageId: string | null; status: string; error?: string; errorCode?: string }> {
   // Validate inputs
@@ -1379,6 +1388,26 @@ export async function sendWorkerMessageInternal(
     // Activity log: mirrored from messageLogs when status moves queued → sent (messageLogging.updateMessageLogStatus).
 
     logger.info(`SMS sent internally: ${messageResult.sid} to ${to}`);
+
+    // Bell mirror (opt-in): SMS invites that matter should also live in the
+    // worker's notification tab — fail-open, never blocks the send result.
+    if (context?.inbox && tenantId && recipientUserId) {
+      try {
+        const { writeWorkerInboxNotification } = await import('./messaging/unifiedWorkerNotifications');
+        const rawBody = context.inbox.body ?? messageContent;
+        await writeWorkerInboxNotification({
+          uid: recipientUserId,
+          tenantId,
+          title: context.inbox.title,
+          body: rawBody.length > 220 ? `${rawBody.slice(0, 217)}...` : rawBody,
+          type: (context.inbox.type ?? 'general') as import('./messaging/unifiedWorkerNotifications').NotificationType,
+          deepLink: context.inbox.deepLink || undefined,
+          source: 'automation',
+        });
+      } catch (inboxErr: any) {
+        logger.warn(`sendWorkerMessageInternal: inbox mirror failed: ${inboxErr?.message || inboxErr}`);
+      }
+    }
 
     if (tenantId && recipientUserId && context?.messageTypeId) {
       try {

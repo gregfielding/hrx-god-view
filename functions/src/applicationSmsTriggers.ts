@@ -14,6 +14,7 @@ import { sendApplicationStatusChangedNotification } from './messaging/unifiedWor
 import { markLifecycleEventIfFirst } from './messaging/lifecycleDedupe';
 import { maybeScheduleWorkerAiPrescreenReminder } from './workerAiPrescreen/scheduleWorkerAiPrescreenReminder';
 import { sendCombinedApplicationInterviewFirstTouch } from './workerAiPrescreen/combinedApplicationInterviewFirstTouch';
+import { maybeAutoCompletePrescreenFromBank } from './workerAiPrescreen/autoCompletePrescreenFromBank';
 import { shouldSkipStaleApplicationReceivedSms } from './messaging/applicationReceivedSmsGuards';
 import { normalizeApplicationStatus } from './utils/applicationStatusNormalize';
 import { DEFAULT_FIRESTORE_TRIGGER_MEMORY } from './utils/functionRuntimeDefaults';
@@ -218,6 +219,23 @@ export const onApplicationCreated = onDocumentCreated(
           return { success: true };
         }
 
+        // Cumulative prescreen: if the worker's answer bank covers every question this job would
+        // ask, complete the interview now — the invite/chase cadence below never starts.
+        const autoCompleteResult = await maybeAutoCompletePrescreenFromBank({
+          db,
+          tenantId,
+          applicationId,
+          userId: String(userId),
+          applicationData: applicationData as Record<string, unknown>,
+          userData: userData as Record<string, unknown>,
+          source: 'application_created',
+        });
+        if (autoCompleteResult === 'completed') {
+          // Local copy so the combined first-touch / reminder scheduling in this invocation see it.
+          (applicationData as Record<string, unknown>).workerAiPrescreenInterviewCompletedAt =
+            admin.firestore.Timestamp.now();
+        }
+
         // Require at least one phone number (attempt send even if not verified)
         const phoneE164 = (userData.phoneE164 || userData.phone || '').trim();
         if (!phoneE164) {
@@ -259,7 +277,7 @@ export const onApplicationCreated = onDocumentCreated(
           thanksDedupeKey: thanksKeyCreate,
           source: 'application_created',
         });
-        if (combinedResult === 'sent' || combinedResult === 'failed' || combinedResult === 'deduped_thanks') {
+        if (combinedResult === 'sent' || combinedResult === 'failed' || combinedResult === 'deduped_thanks' || combinedResult === 'daily_cap') {
           return { success: true };
         }
 
@@ -462,6 +480,29 @@ export const onApplicationStatusChanged = onDocumentUpdated(
           newStatus: String(newStatus ?? ''),
         });
         return { success: true };
+      }
+
+      // Cumulative prescreen: on transition into `submitted`, try zero-delta auto-complete before
+      // any interview outreach is scheduled or sent from this invocation.
+      if (
+        isSubmittedApplicationStatus(newStatus) &&
+        !isSubmittedApplicationStatus(oldStatus)
+      ) {
+        const autoUserId = String(after.userId || after.candidateId || '').trim();
+        if (autoUserId) {
+          const autoCompleteResult = await maybeAutoCompletePrescreenFromBank({
+            db,
+            tenantId,
+            applicationId,
+            userId: autoUserId,
+            applicationData: after as Record<string, unknown>,
+            source: 'application_status_changed',
+          });
+          if (autoCompleteResult === 'completed') {
+            (after as Record<string, unknown>).workerAiPrescreenInterviewCompletedAt =
+              admin.firestore.Timestamp.now();
+          }
+        }
       }
 
       await maybeScheduleWorkerAiPrescreenReminder({
@@ -967,7 +1008,7 @@ export const onApplicationStatusChanged = onDocumentUpdated(
               thanksDedupeKey: thanksDedupeKey,
               source: 'application_status_changed',
             });
-            if (combinedResult === 'sent' || combinedResult === 'failed' || combinedResult === 'deduped_thanks') {
+            if (combinedResult === 'sent' || combinedResult === 'failed' || combinedResult === 'deduped_thanks' || combinedResult === 'daily_cap') {
               return { success: true };
             }
 

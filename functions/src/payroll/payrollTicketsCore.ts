@@ -259,6 +259,7 @@ export async function runPayrollTicketDiagnosis(input: {
 
   const systemPrompt = [
     'You are the payroll help-desk triage assistant for C1 Staffing (staffing agency; payroll runs on Everee).',
+    'Verified pay-schedule policy (safe to state to workers): C1 Select pay week is Sunday–Saturday with payday the FOLLOWING Friday; C1 Events pay week is Monday–Sunday with payday Friday; all payments are by direct deposit.',
     'Given a worker\'s payroll question and their actual payroll/timesheet state, diagnose the most likely issue for the STAFF member who will handle the ticket, and draft a reply to the worker.',
     'Rules:',
     '- The summary is for staff: name the likely root cause and point at the evidence (e.g. "onboarding stopped before direct deposit; 2 timesheets still in draft").',
@@ -391,11 +392,20 @@ async function maybeAutoResolveFixIt(input: {
   }
 }
 
+export const SUPPORT_TICKET_TOPICS = ['payroll', 'shifts_jobs', 'app_issue', 'other'] as const;
+export type SupportTicketTopic = (typeof SUPPORT_TICKET_TOPICS)[number];
+
 export async function createPayrollTicket(input: {
   uid: string;
   tenantId: string;
   text: string;
   channel?: 'app' | 'sms' | 'email';
+  /** General support desk (2026-08-30): same queue, topic-tagged. Defaults
+   *  to 'payroll'; non-payroll topics skip the payroll AI diagnosis. */
+  topic?: SupportTicketTopic;
+  /** The assistant exchange that preceded this ticket, so staff open it
+   *  already knowing what the worker was told and why it didn't resolve. */
+  priorExchange?: { question: string; answer: string };
 }): Promise<{ ticketId: string; diagnosis: { category: string; severity: string } | null }> {
   const userSnap = await db.collection('users').doc(input.uid).get();
   const u = (userSnap.data() ?? {}) as Record<string, unknown>;
@@ -426,6 +436,7 @@ export async function createPayrollTicket(input: {
     status: 'open' satisfies PayrollTicketStatus,
     lane: 'fix_it' satisfies PayrollTicketLane,
     channel: input.channel ?? 'app',
+    topic: input.topic ?? 'payroll',
     subject: input.text.slice(0, 120),
     workerName,
     workerEmail: trim(u.email) || null,
@@ -444,11 +455,28 @@ export async function createPayrollTicket(input: {
     createdAt: now,
   });
 
-  const diagnosis = await runPayrollTicketDiagnosis({
-    tenantId: input.tenantId,
-    uid: input.uid,
-    ticketText: input.text,
-  });
+  // Carry the assistant exchange the worker just had, so the thread reads in
+  // order and staff never re-answer what was already tried.
+  const prior = input.priorExchange;
+  if (prior && prior.question.trim() && prior.answer.trim()) {
+    await ref.collection('messages').add({
+      at: now,
+      by: 'ai',
+      text: `Worker asked: ${prior.question.trim()}\n\nAssistant answered: ${prior.answer.trim()}\n\n(The worker said this did not resolve their issue.)`,
+      createdAt: now,
+      assistantTranscript: true,
+    });
+  }
+
+  // The diagnosis engine is payroll-specific (Everee linkages, timesheets)
+  // — non-payroll topics go straight to the queue for a human.
+  const diagnosis = (input.topic ?? 'payroll') === 'payroll'
+    ? await runPayrollTicketDiagnosis({
+        tenantId: input.tenantId,
+        uid: input.uid,
+        ticketText: input.text,
+      })
+    : null;
   if (diagnosis) {
     // Category/severity/confidence live on the ticket (queue chips; fine for
     // the worker to see about their own issue). The staff-facing summary and
@@ -1141,6 +1169,7 @@ export async function runMoneyInvestigation(input: {
 
   const systemPrompt = [
     'You are the payroll investigator for C1 Staffing (staffing agency; payroll runs on Everee).',
+    'Verified pay-schedule policy: C1 Select pay week is Sunday–Saturday with payday the FOLLOWING Friday; C1 Events pay week is Monday–Sunday with payday Friday; all payments are by direct deposit. A "missing" payment for a period whose payday has not arrived yet is usually just not due yet.',
     "A worker says their pay is wrong or missing. You are given (a) their complaint, (b) every timesheet entry HRX has recorded with its computed expected pay, and (c) the settled payments Everee actually issued.",
     'Statuses: entries with status sent_to_everee or paid have been submitted for payment; draft/pending/approved entries have NOT been paid yet.',
     'Decide exactly one recommendation:',
@@ -1263,12 +1292,31 @@ export async function authorizeCorrectionAction(input: {
   // Money moves: books-level bar (≥6), same as the admin off-cycle dialog.
   await ensureBooksAccess(input.actorUid, input.actorToken as never, tenantId);
 
+  // Derive the job order from the worker's timesheet for that date so the
+  // payment carries class attribution (Greg 2026-09-01) — corrections
+  // almost always fix an existing entry.
+  let derivedJobOrderId = '';
+  try {
+    const tsSnap = await db
+      .collection(`tenants/${tenantId}/timesheet_entries`)
+      .where('workerId', '==', uid)
+      .where('workDate', '==', input.workDate)
+      .limit(10)
+      .get();
+    const joIds = new Set(
+      tsSnap.docs.map((d) => String(d.data().jobOrderId ?? '').trim()).filter(Boolean),
+    );
+    if (joIds.size === 1) derivedJobOrderId = String(Array.from(joIds)[0]);
+  } catch {
+    derivedJobOrderId = '';
+  }
   const res = await createOffCyclePaymentInternal({
     tenantId,
     hiringEntityId: input.entityId,
     workerId: uid,
     reason: 'payroll_correction',
     workDate: input.workDate,
+    jobOrderId: derivedJobOrderId || undefined,
     notes: `Payroll help desk ticket ${input.ticketId}${trim(input.notes) ? ` — ${trim(input.notes)}` : ''}`,
     hours: input.hours,
     hourlyRate: input.hourlyRate,

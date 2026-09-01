@@ -24,12 +24,13 @@
  * To run:
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 \
  *     GCLOUD_PROJECT=demo-test \
- *     npx mocha -r ts-node/register -r src/__tests__/setup.ts \
- *     src/__tests__/readiness/csaActions.test.ts
+ *     npx jest src/__tests__/readiness/csaActions.test.ts --maxWorkers=1
  */
 
 import { expect } from 'chai';
 import * as admin from 'firebase-admin';
+
+import '../setup'; // initializes firebase-admin against the emulator project
 
 import { applyCsaReadinessAction } from '../../readiness/csaActions/applyCsaReadinessAction';
 import { ensureReadinessCsaAdmin } from '../../readiness/csaActions/ensureReadinessCsaAdmin';
@@ -44,9 +45,10 @@ const USE_EMULATOR = !!process.env.FIRESTORE_EMULATOR_HOST;
 const TENANT_ID = 'r3-tests-tenant';
 const ACTOR_UID = 'r3-tests-actor';
 
-function skipWithoutEmulator(this: { skip(): void }): void {
-  if (!USE_EMULATOR) this.skip();
-}
+// Jest has no mocha-style runtime `this.skip()`; gate the whole emulator-backed
+// suite at collection time instead. Everything below runs only when
+// FIRESTORE_EMULATOR_HOST is set (see header for the run command).
+const describeWithEmulator = USE_EMULATOR ? describe : describe.skip;
 
 function db(): admin.firestore.Firestore {
   return admin.firestore();
@@ -89,14 +91,13 @@ async function clearAll(): Promise<void> {
   for (const doc of userSnap.docs) await doc.ref.delete();
 }
 
-describe('R.3 applyCsaReadinessAction — confirm', () => {
+describeWithEmulator('R.3 applyCsaReadinessAction — confirm', () => {
   afterEach(async function () {
     if (!USE_EMULATOR) return;
     await clearAll();
   });
 
   it('flips an incomplete willingness item to complete_pass + csa_confirmed and appends history', async function () {
-    skipWithoutEmulator.call(this);
     const ref = await seedItem({
       collection: 'assignment',
       itemId: 'asgmt-A__physical_willingness',
@@ -132,7 +133,6 @@ describe('R.3 applyCsaReadinessAction — confirm', () => {
   });
 
   it('confirm without note records null reason in history', async function () {
-    skipWithoutEmulator.call(this);
     const ref = await seedItem({
       collection: 'assignment',
       itemId: 'asgmt-B__skill_match',
@@ -151,7 +151,6 @@ describe('R.3 applyCsaReadinessAction — confirm', () => {
   });
 
   it('is idempotent — second confirm with same note short-circuits', async function () {
-    skipWithoutEmulator.call(this);
     const ref = await seedItem({
       collection: 'assignment',
       itemId: 'asgmt-C__uniform_willingness',
@@ -178,7 +177,6 @@ describe('R.3 applyCsaReadinessAction — confirm', () => {
   });
 
   it('is NOT idempotent when the note changes — appends a fresh history entry', async function () {
-    skipWithoutEmulator.call(this);
     const ref = await seedItem({
       collection: 'assignment',
       itemId: 'asgmt-D__language_willingness',
@@ -215,14 +213,13 @@ describe('R.3 applyCsaReadinessAction — confirm', () => {
   });
 });
 
-describe('R.3 applyCsaReadinessAction — waive', () => {
+describeWithEmulator('R.3 applyCsaReadinessAction — waive', () => {
   afterEach(async function () {
     if (!USE_EMULATOR) return;
     await clearAll();
   });
 
   it('flips item to complete_pass + csa_waived with required note', async function () {
-    skipWithoutEmulator.call(this);
     const ref = await seedItem({
       collection: 'assignment',
       itemId: 'asgmt-E__ppe_willingness',
@@ -251,7 +248,6 @@ describe('R.3 applyCsaReadinessAction — waive', () => {
   });
 
   it('rejects waive without note — invalid-argument', async function () {
-    skipWithoutEmulator.call(this);
     await seedItem({
       collection: 'assignment',
       itemId: 'asgmt-F__ppe_willingness',
@@ -276,7 +272,6 @@ describe('R.3 applyCsaReadinessAction — waive', () => {
   });
 
   it('rejects waive with whitespace-only note — invalid-argument', async function () {
-    skipWithoutEmulator.call(this);
     await seedItem({
       collection: 'assignment',
       itemId: 'asgmt-G__ppe_willingness',
@@ -302,14 +297,13 @@ describe('R.3 applyCsaReadinessAction — waive', () => {
   });
 });
 
-describe('R.3 applyCsaReadinessAction — markFailed', () => {
+describeWithEmulator('R.3 applyCsaReadinessAction — markFailed', () => {
   afterEach(async function () {
     if (!USE_EMULATOR) return;
     await clearAll();
   });
 
   it('flips item to complete_fail + csa_confirmed with required note (no completedAt)', async function () {
-    skipWithoutEmulator.call(this);
     const ref = await seedItem({
       collection: 'employee',
       itemId: 'wkr1__entA__handbook_acknowledgement',
@@ -339,7 +333,6 @@ describe('R.3 applyCsaReadinessAction — markFailed', () => {
   });
 
   it('rejects markFailed without note', async function () {
-    skipWithoutEmulator.call(this);
     await seedItem({
       collection: 'employee',
       itemId: 'wkr2__entA__handbook_acknowledgement',
@@ -363,7 +356,7 @@ describe('R.3 applyCsaReadinessAction — markFailed', () => {
   });
 });
 
-describe('R.3 applyCsaReadinessAction — excluded types', () => {
+describeWithEmulator('R.3 applyCsaReadinessAction — excluded types', () => {
   afterEach(async function () {
     if (!USE_EMULATOR) return;
     await clearAll();
@@ -371,7 +364,6 @@ describe('R.3 applyCsaReadinessAction — excluded types', () => {
 
   for (const excluded of CSA_READINESS_ACTION_EXCLUDED_TYPES) {
     it(`refuses ${excluded} with failed-precondition + dedicated-callable hint`, async function () {
-      skipWithoutEmulator.call(this);
       const collection: 'assignment' | 'employee' =
         excluded === 'screening_package_match' ? 'assignment' : 'employee';
       const itemId = `excluded__${excluded}`;
@@ -401,14 +393,13 @@ describe('R.3 applyCsaReadinessAction — excluded types', () => {
   }
 });
 
-describe('R.3 applyCsaReadinessAction — input validation + missing item', () => {
+describeWithEmulator('R.3 applyCsaReadinessAction — input validation + missing item', () => {
   afterEach(async function () {
     if (!USE_EMULATOR) return;
     await clearAll();
   });
 
   it('rejects missing tenantId', async function () {
-    skipWithoutEmulator.call(this);
     let err: any = null;
     try {
       await applyCsaReadinessAction(
@@ -424,7 +415,6 @@ describe('R.3 applyCsaReadinessAction — input validation + missing item', () =
   });
 
   it('rejects unknown collection value', async function () {
-    skipWithoutEmulator.call(this);
     let err: any = null;
     try {
       await applyCsaReadinessAction(
@@ -440,7 +430,6 @@ describe('R.3 applyCsaReadinessAction — input validation + missing item', () =
   });
 
   it('rejects when item does not exist — not-found', async function () {
-    skipWithoutEmulator.call(this);
     let err: any = null;
     try {
       await applyCsaReadinessAction(
@@ -456,14 +445,13 @@ describe('R.3 applyCsaReadinessAction — input validation + missing item', () =
   });
 });
 
-describe('R.3 ensureReadinessCsaAdmin permission gate', () => {
+describeWithEmulator('R.3 ensureReadinessCsaAdmin permission gate', () => {
   afterEach(async function () {
     if (!USE_EMULATOR) return;
     await clearAll();
   });
 
   it('passes for security level >= 5 in tenant scope', async function () {
-    skipWithoutEmulator.call(this);
     const uid = 'r3-admin-l5';
     await db().collection('users').doc(uid).set({
       __r3test: true,
@@ -480,7 +468,6 @@ describe('R.3 ensureReadinessCsaAdmin permission gate', () => {
   });
 
   it('passes for admin role even without securityLevel', async function () {
-    skipWithoutEmulator.call(this);
     const uid = 'r3-admin-role';
     await db().collection('users').doc(uid).set({
       __r3test: true,
@@ -496,7 +483,6 @@ describe('R.3 ensureReadinessCsaAdmin permission gate', () => {
   });
 
   it('rejects security level 4 with permission-denied', async function () {
-    skipWithoutEmulator.call(this);
     const uid = 'r3-l4';
     await db().collection('users').doc(uid).set({
       __r3test: true,
@@ -514,7 +500,6 @@ describe('R.3 ensureReadinessCsaAdmin permission gate', () => {
   });
 
   it('rejects when user profile is missing', async function () {
-    skipWithoutEmulator.call(this);
     let err: any = null;
     try {
       await ensureReadinessCsaAdmin('nonexistent-user-uid', TENANT_ID);

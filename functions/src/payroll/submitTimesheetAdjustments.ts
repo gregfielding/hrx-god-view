@@ -211,7 +211,7 @@ export const submitTimesheetAdjustmentWorker = onTaskDispatched<SubmitAdjustment
         payables.push({
           externalId: `${buildAdjustmentExternalId({ tenantId, adjustmentId })}::${kind}`,
           externalWorkerId,
-          label: `${reason} (${kind})`,
+          label: `${reason} (${kind}) · ${workDate}`,
           type: adjType,
           payCode,
           timestamp,
@@ -230,7 +230,7 @@ export const submitTimesheetAdjustmentWorker = onTaskDispatched<SubmitAdjustment
         payables.push({
           externalId: `${buildAdjustmentExternalId({ tenantId, adjustmentId })}::${kind}`,
           externalWorkerId,
-          label: `${reason} (${kind})`,
+          label: `${reason} (${kind}) · ${workDate}`,
           type: adjType,
           payCode,
           timestamp,

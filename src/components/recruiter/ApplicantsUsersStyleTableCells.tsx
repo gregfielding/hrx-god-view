@@ -287,6 +287,7 @@ export const ApplicantsUsersStyleTableBodyCells: React.FC<ApplicantsUsersStyleTa
       </TableCell>
       <TableCell sx={{ verticalAlign: 'top', py: 1, px: 1 }}>
         <RecruiterUserAiScoreCell user={user} categoryScoresCurrent={categoryScoresByUserId[user.id] ?? null} />
+        <InterviewInviteStateLine user={user} />
       </TableCell>
       <TableCell sx={{ verticalAlign: 'top', py: 1, px: 1 }}>
         {(() => {
@@ -336,6 +337,41 @@ export const ApplicantsUsersStyleTableBodyCells: React.FC<ApplicantsUsersStyleTa
     </>
   );
 };
+
+/** INT-3 (2026-08-30): invite/chase state on the applicant row — answers
+ *  "invited N days ago, never completed" without opening the profile.
+ *  User-doc fields only; completed workers show nothing (score cell covers it). */
+export function InterviewInviteStateLine({ user }: { user: RecruiterUser }) {
+  const toMs = (v: unknown): number | null => {
+    if (!v) return null;
+    const t = v as { toMillis?: () => number; seconds?: number };
+    if (typeof t.toMillis === 'function') return t.toMillis();
+    if (typeof t.seconds === 'number') return t.seconds * 1000;
+    const parsed = Date.parse(String(v));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  if (user.hasWorkerAiPrescreenInterview || user.interviewStatus === 'completed') return null;
+  const invitedMs = toMs(user.lastInterviewInvitedAt);
+  let label: string;
+  if (invitedMs) {
+    const days = Math.floor((Date.now() - invitedMs) / 86_400_000);
+    const ago = days <= 0 ? 'today' : days === 1 ? '1d ago' : `${days}d ago`;
+    label = `Invited ${ago} — no interview yet`;
+  } else if (user.interviewStatus === 'skipped') {
+    label = 'Invite skipped';
+  } else {
+    label = 'Never invited';
+  }
+  return (
+    <Typography
+      variant="caption"
+      color="warning.main"
+      sx={{ display: 'block', fontSize: '0.62rem', lineHeight: 1.3, mt: 0.25 }}
+    >
+      {label}
+    </Typography>
+  );
+}
 
 export function WorkHistoryJobTitlesCell({ user }: { user: Record<string, unknown> }) {
   const titles = workHistoryTitlesForRecruiterTableRow(user);

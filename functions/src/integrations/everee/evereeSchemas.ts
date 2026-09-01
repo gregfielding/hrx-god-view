@@ -48,6 +48,12 @@ export interface EvereePayHistoryItem {
   /** Worst-case rollup of contained payable statuses
    *  (`PENDING` < `SUBMITTED` < `PAID` < `ERROR` / `RETURNED`). */
   status?: string | null;
+  /** Worker-fixable payment problem, when one is detectable (2026-08-28):
+   *  'bank_invalid' (Everee refused to process — bad direct-deposit info),
+   *  'missing_tin' (payroll setup never finished), or 'deposit_returned'
+   *  (the bank bounced the deposit — usually a wrong account/routing
+   *  number). Drives the worker-facing fix-your-deposit banner. */
+  issue?: 'bank_invalid' | 'missing_tin' | 'deposit_returned' | null;
 }
 
 /** Envelope shape the callable returns — matches the client's

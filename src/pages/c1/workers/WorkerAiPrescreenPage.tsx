@@ -36,7 +36,9 @@ import {
 } from '../../../constants/workerAiPrescreenQuestions';
 import {
   getWorkerAiPrescreenInterviewPlan,
+  saveWorkerAiPrescreenProgress,
   submitWorkerAiPrescreenInterview,
+  type WorkerAiPrescreenPlanBankCoverage,
 } from '../../../services/workerAiPrescreenCallable';
 import { db } from '../../../firebase';
 import { formatFirebaseHttpsError } from '../../../utils/firebaseHttpsErrors';
@@ -54,7 +56,6 @@ import PrescreenAddressGate from '../../../components/apply/PrescreenAddressGate
 import type { WorkerAiPrescreenUiSection } from '../../../utils/workerAiPrescreenUiFlow';
 import {
   buildPrescreenNavEntries,
-  ensureFastPathNarrativePadding,
   mergeClientFollowUpsIntoAnswers,
   navEntryStepId,
   PRESCREEN_FAST_PATH_V2,
@@ -239,6 +240,34 @@ function buildAnswersForSubmit(
         }
       : {}),
   };
+}
+
+/** Bank answers (server-validated fresh + carriable) → wizard state patch. */
+function answersPatchFromBankCore(
+  bankCore: Record<string, string | string[]>,
+): Partial<WorkerAiPrescreenAnswers> {
+  const patch: Record<string, unknown> = {};
+  for (const [id, v] of Object.entries(bankCore)) {
+    patch[id] = Array.isArray(v) ? v.map((x) => String(x)) : String(v);
+  }
+  return patch as Partial<WorkerAiPrescreenAnswers>;
+}
+
+/** Canonical question ids the worker actually saw (follow-ups fold into their merge target). */
+function askedStepIdsFromNavEntries(navEntries: PrescreenNavEntry[]): string[] {
+  const out = new Set<string>();
+  for (const e of navEntries) {
+    if (e.kind === 'core' || e.kind === 'dynamic') {
+      out.add(e.step.id);
+    } else if (e.followup === 'experience') {
+      out.add('experience_details');
+    } else if (e.followup === 'pressure') {
+      out.add('pressure_situation');
+    } else {
+      out.add('supervisor_feedback');
+    }
+  }
+  return Array.from(out);
 }
 
 function stepValid(step: WorkerAiPrescreenStep, a: WorkerAiPrescreenAnswers): boolean {
@@ -438,6 +467,8 @@ const WorkerAiPrescreenPage: React.FC = () => {
   const [dynamicAnswers, setDynamicAnswers] = useState<Record<string, string>>({});
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
+  /** Cumulative interview: steps the answer bank satisfies for this application (null = full interview). */
+  const [bankCoverage, setBankCoverage] = useState<WorkerAiPrescreenPlanBankCoverage | null>(null);
   const [workerAiPrescreenRequired, setWorkerAiPrescreenRequired] = useState(true);
   const [jobHeaderInfo, setJobHeaderInfo] = useState<JobHeaderInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -448,6 +479,11 @@ const WorkerAiPrescreenPage: React.FC = () => {
   /** Client-only follow-up merged into `experience_details` on submit (not a server key). */
   const [experienceFollowupOptional, setExperienceFollowupOptional] = useState('');
   const [pressureFollowupOptional, setPressureFollowupOptional] = useState('');
+  /** INT-2 resume: saved-session cursor applied once nav length is known. */
+  const [pendingResumeIndex, setPendingResumeIndex] = useState<number | null>(null);
+  /** INT-2b: generic opening steps trimmed by the plan (position type known). */
+  const [trimmedCoreStepIds, setTrimmedCoreStepIds] = useState<string[]>([]);
+  const [resumedFromSave, setResumedFromSave] = useState(false);
   const [supervisorFollowupOptional, setSupervisorFollowupOptional] = useState('');
   /** Sticky session: once a follow-up is in the path, keep it so step count does not churn while editing. */
   const [sessionFollowupLocks, setSessionFollowupLocks] = useState<PrescreenSessionFollowupLocks>({
@@ -504,10 +540,23 @@ const WorkerAiPrescreenPage: React.FC = () => {
     });
   }, [t, i18nWorkerPrescreenReady]);
 
+  const coveredCoreStepIdSet = useMemo(
+    // Bank-covered steps carry answers; trimmed steps are simply not asked
+    // (position type known — the generic opening block is irrelevant).
+    () => new Set([...(bankCoverage?.coveredCoreStepIds ?? []), ...trimmedCoreStepIds]),
+    [bankCoverage, trimmedCoreStepIds],
+  );
+  const coveredDynamicStepIdSet = useMemo(
+    () => new Set(bankCoverage?.coveredDynamicStepIds ?? []),
+    [bankCoverage],
+  );
+
   const visibleCoreSteps = useMemo(
     () =>
-      localizedCoreSteps.filter((step) =>
-        isCoreStepIncluded(step, answers, dynamicSteps, needsLegalNameConfirm),
+      localizedCoreSteps.filter(
+        (step) =>
+          !coveredCoreStepIdSet.has(step.id) &&
+          isCoreStepIncluded(step, answers, dynamicSteps, needsLegalNameConfirm),
       ),
     [
       localizedCoreSteps,
@@ -517,6 +566,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
       answers.opening_schedule_preferences,
       dynamicSteps,
       needsLegalNameConfirm,
+      coveredCoreStepIdSet,
     ],
   );
 
@@ -526,7 +576,9 @@ const WorkerAiPrescreenPage: React.FC = () => {
 
   const visibleDynamicSteps = useMemo(() => {
     if (dynamicSteps.length === 0) return [];
-    return applyPrescreenDynamicDedupe(dynamicSteps, answers, dynamicAnswers).visibleSteps;
+    return applyPrescreenDynamicDedupe(dynamicSteps, answers, dynamicAnswers).visibleSteps.filter(
+      (s) => !coveredDynamicStepIdSet.has(s.id),
+    );
   }, [
     dynamicSteps,
     answers,
@@ -535,6 +587,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
     answers.backup_transportation,
     answers.physical_comfort,
     dynamicAnswers,
+    coveredDynamicStepIdSet,
   ]);
 
   const navEntries = useMemo(
@@ -610,6 +663,62 @@ const WorkerAiPrescreenPage: React.FC = () => {
     });
     prevNavLenRef.current = n;
   }, [navEntries.length]);
+
+  // INT-2 resume: jump to the saved cursor once the nav exists (clamped —
+  // the nav can be shorter than at save time if answers changed visibility).
+  useEffect(() => {
+    if (pendingResumeIndex == null) return;
+    const n = navEntries.length;
+    if (n <= 0) return;
+    setStepIndex(Math.min(Math.max(0, pendingResumeIndex), n - 1));
+    setPendingResumeIndex(null);
+  }, [pendingResumeIndex, navEntries.length]);
+
+  // INT-2 auto-save: debounce in-progress answers to the server session doc
+  // so a closed tab resumes. Fire-and-forget; never blocks the interview.
+  const autoSaveArmedRef = useRef(false);
+  useEffect(() => {
+    if (!user?.uid || done || submitting || planLoading || navEntries.length === 0) return;
+    // Skip the very first render pass so restore itself doesn't trigger a save.
+    if (!autoSaveArmedRef.current) {
+      autoSaveArmedRef.current = true;
+      return;
+    }
+    const entry = navEntries[Math.min(stepIndex, navEntries.length - 1)];
+    const lastStepId =
+      entry.kind === 'core' || entry.kind === 'dynamic'
+        ? entry.step.id
+        : `followup_${entry.followup}`;
+    const timer = window.setTimeout(() => {
+      const draftAnswers: Record<string, string> = {};
+      const draftMultiAnswers: Record<string, string[]> = {};
+      for (const [id, v] of Object.entries(answers as Record<string, unknown>)) {
+        if (Array.isArray(v)) {
+          if (v.length > 0) draftMultiAnswers[id] = v.map((x) => String(x));
+        } else if (typeof v === 'string' && v.trim() !== '') {
+          draftAnswers[id] = v;
+        }
+      }
+      for (const [id, v] of Object.entries(dynamicAnswers)) {
+        if (typeof v === 'string' && v.trim() !== '') draftAnswers[id] = v;
+      }
+      if (experienceFollowupOptional.trim()) draftAnswers.__followup_experience = experienceFollowupOptional;
+      if (pressureFollowupOptional.trim()) draftAnswers.__followup_pressure = pressureFollowupOptional;
+      if (Object.keys(draftAnswers).length === 0 && Object.keys(draftMultiAnswers).length === 0) return;
+      void saveWorkerAiPrescreenProgress({
+        applicationId: applicationId || null,
+        lastStepId,
+        lastStepIndex: stepIndex,
+        totalSteps: navEntries.length,
+        draftAnswers,
+        draftMultiAnswers,
+      }).catch(() => {
+        /* fail-open — never surface save errors mid-interview */
+      });
+    }, 1500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers, dynamicAnswers, stepIndex, experienceFollowupOptional, pressureFollowupOptional, done, submitting, planLoading]);
 
   useEffect(() => {
     if (String(answers.attendance_issues ?? '').trim().toLowerCase() === 'yes') return;
@@ -817,6 +926,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
     if (!user?.uid) {
       setDynamicSteps([]);
       setDynamicAnswers({});
+      setBankCoverage(null);
       setPlanError(null);
       setPlanLoading(false);
       setWorkerAiPrescreenRequired(true);
@@ -826,6 +936,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
     if (!canFetchPlan) {
       setDynamicSteps([]);
       setDynamicAnswers({});
+      setBankCoverage(null);
       setPlanError(null);
       setPlanLoading(false);
       setWorkerAiPrescreenRequired(true);
@@ -839,20 +950,56 @@ const WorkerAiPrescreenPage: React.FC = () => {
         const plan = await getWorkerAiPrescreenInterviewPlan({
           applicationId: applicationId || null,
           tenantId,
+          entry: entryQuery,
         });
         if (cancelled) return;
         setWorkerAiPrescreenRequired(plan.workerAiPrescreenRequired !== false);
+        setTrimmedCoreStepIds(plan.trimmedCoreStepIds ?? []);
         const steps = plan.dynamicSteps;
         setDynamicSteps(Array.isArray(steps) ? steps : []);
+        const coverage = plan.bankCoverage ?? null;
+        setBankCoverage(coverage);
         const init: Record<string, string> = {};
         for (const s of steps || []) {
-          init[s.id] = '';
+          init[s.id] = coverage?.bankDynamicAnswers?.[s.id] ?? '';
         }
         setDynamicAnswers(init);
+        if (coverage && Object.keys(coverage.bankCoreAnswers || {}).length > 0) {
+          const patch = answersPatchFromBankCore(coverage.bankCoreAnswers);
+          setAnswers((prev) => ({ ...prev, ...patch }));
+        }
+        // INT-2 resume: drafts from an abandoned session win over bank seeds
+        // (they're newer and worker-typed).
+        const saved = plan.savedSession ?? null;
+        if (saved) {
+          const dynIds = new Set((steps || []).map((st) => st.id));
+          const corePatch: Record<string, unknown> = {};
+          const dynPatch: Record<string, string> = {};
+          for (const [id, v] of Object.entries(saved.draftAnswers || {})) {
+            if (id === '__followup_experience') setExperienceFollowupOptional(String(v));
+            else if (id === '__followup_pressure') setPressureFollowupOptional(String(v));
+            else if (dynIds.has(id)) dynPatch[id] = String(v);
+            else corePatch[id] = String(v);
+          }
+          for (const [id, v] of Object.entries(saved.draftMultiAnswers || {})) {
+            corePatch[id] = (Array.isArray(v) ? v : []).map((x) => String(x));
+          }
+          if (Object.keys(corePatch).length > 0) {
+            setAnswers((prev) => ({ ...prev, ...(corePatch as Partial<WorkerAiPrescreenAnswers>) }));
+          }
+          if (Object.keys(dynPatch).length > 0) {
+            setDynamicAnswers((prev) => ({ ...prev, ...dynPatch }));
+          }
+          if (Number.isFinite(saved.lastStepIndex) && saved.lastStepIndex > 0) {
+            setPendingResumeIndex(saved.lastStepIndex);
+          }
+          setResumedFromSave(true);
+        }
       } catch (e) {
         if (!cancelled) {
           setDynamicSteps([]);
           setDynamicAnswers({});
+          setBankCoverage(null);
           setWorkerAiPrescreenRequired(true);
           setPlanError(friendlyPrescreenCallableError(e, 'plan', t));
         }
@@ -999,7 +1146,8 @@ const WorkerAiPrescreenPage: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!user?.uid) return;
-    if (!canNext) return;
+    // Zero-delta: the bank covers every step (no nav entries) — submit carries bank answers.
+    if (!canNext && totalSteps > 0) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -1016,13 +1164,11 @@ const WorkerAiPrescreenPage: React.FC = () => {
         pressureFollowupOptional,
         supervisorFollowupOptional,
       );
-      const expandedNarrativeShown = navEntries.some(
-        (e) => e.kind === 'core' && (e.step.id === 'motivation' || e.step.id === 'pressure_situation'),
-      );
-      const padded = ensureFastPathNarrativePadding(merged, expandedNarrativeShown);
-      const mergedDynamic = applyPrescreenDynamicDedupe(dynamicSteps, padded, dynamicAnswers).mergedDynamicAnswers;
+      // Fabricated-narrative padding removed 2026-08-29 (interview review
+      // F2) — the transcript carries only what the worker actually wrote.
+      const mergedDynamic = applyPrescreenDynamicDedupe(dynamicSteps, merged, dynamicAnswers).mergedDynamicAnswers;
       const result = await submitWorkerAiPrescreenInterview({
-        answers: buildAnswersForSubmit(padded, dynamicSteps, mergedDynamic),
+        answers: buildAnswersForSubmit(merged, dynamicSteps, mergedDynamic),
         applicationId: applicationId || null,
         tenantId,
         entry: entryQuery?.trim() || null,
@@ -1040,6 +1186,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
           return Object.keys(payloadDyn).length > 0 ? payloadDyn : undefined;
         })(),
         sessionProfileEnhancements: buildPrescreenSessionProfileEnhancements(userDoc ?? undefined),
+        askedStepIds: bankCoverage ? askedStepIdsFromNavEntries(navEntries) : null,
       });
       const started = interviewStartedAtMs.current ?? Date.now();
       logPrescreenCompleted({ totalSteps, durationMs: Math.max(0, Date.now() - started) });
@@ -1237,9 +1384,72 @@ const WorkerAiPrescreenPage: React.FC = () => {
 
   const isLast = stepIndex === totalSteps - 1;
 
+  /** Zero delta: the answer bank covers every question — one-tap confirm instead of an interview. */
+  if (totalSteps === 0 && bankCoverage?.zeroDelta && !planLoading && (applicationId || tenantId)) {
+    return (
+      <Box sx={{ p: { xs: 1.5, sm: 2 }, maxWidth: 560, mx: 'auto' }}>
+        {renderFramingHeader()}
+        {error ? (
+          <Alert severity="error" sx={{ mb: 1.5, py: 0.75 }}>
+            {error}
+          </Alert>
+        ) : null}
+        <Paper elevation={0} variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
+          <Stack spacing={1.5} alignItems="center" textAlign="center">
+            <CheckCircleOutlineIcon sx={{ fontSize: 44, color: 'success.main' }} aria-hidden />
+            <Typography variant="h6" fontWeight={700} component="h2">
+              {t('workerAiPrescreen.bank.allSetTitle')}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420, lineHeight: 1.45 }}>
+              {t('workerAiPrescreen.bank.allSetBody')}
+            </Typography>
+            <Button
+              fullWidth
+              variant="contained"
+              disabled={submitting}
+              sx={{ mt: 0.5, py: 1.25, fontWeight: 600 }}
+              onClick={() => void handleSubmit()}
+            >
+              {submitting ? <CircularProgress size={22} color="inherit" /> : t('workerAiPrescreen.bank.allSetConfirmCta')}
+            </Button>
+          </Stack>
+        </Paper>
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ p: { xs: 1.5, sm: 2 }, pb: { xs: 3, sm: 4 }, maxWidth: 560, mx: 'auto' }}>
       {renderFramingHeader()}
+
+      {bankCoverage &&
+      totalSteps > 0 &&
+      bankCoverage.coveredCoreStepIds.length + bankCoverage.coveredDynamicStepIds.length > 0 ? (
+        <Alert
+          severity="success"
+          variant="outlined"
+          icon={<CheckCircleOutlineIcon fontSize="small" />}
+          sx={{
+            mb: 1.25,
+            py: 0.75,
+            borderColor: 'success.light',
+            bgcolor: (mui) => alpha(mui.palette.success.main, 0.06),
+            '& .MuiAlert-message': { width: '100%' },
+          }}
+        >
+          <Typography variant="body2" sx={{ lineHeight: 1.45 }}>
+            {t('workerAiPrescreen.bank.deltaBanner', { count: totalSteps })}
+          </Typography>
+        </Alert>
+      ) : null}
+
+      {resumedFromSave && !done ? (
+        <Alert severity="success" variant="outlined" sx={{ mb: 1.25, py: 0.75 }}>
+          <Typography variant="body2" sx={{ lineHeight: 1.45 }}>
+            {t('workerAiPrescreen.resumeBanner')}
+          </Typography>
+        </Alert>
+      ) : null}
 
       {entryContextBanner ? (
         <Alert

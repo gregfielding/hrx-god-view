@@ -18,6 +18,7 @@ import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import GppMaybeOutlinedIcon from '@mui/icons-material/GppMaybeOutlined';
 import TimelineOutlinedIcon from '@mui/icons-material/TimelineOutlined';
+import MonitorHeartOutlinedIcon from '@mui/icons-material/MonitorHeartOutlined';
 import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
 import EventAvailableOutlinedIcon from '@mui/icons-material/EventAvailableOutlined';
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
@@ -27,12 +28,14 @@ import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
 import PendingActionsOutlinedIcon from '@mui/icons-material/PendingActionsOutlined';
 import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
 import WaterfallChartOutlinedIcon from '@mui/icons-material/WaterfallChartOutlined';
+import QueryStatsOutlinedIcon from '@mui/icons-material/QueryStatsOutlined';
 
 export type ReportCategory =
   | 'Payroll'
   | "Workers' comp & insurance"
   | 'Finance & receivables'
   | 'Forecast & budgeting'
+  | 'Usage & metrics'
   | 'Compliance';
 
 /** Render order for category sections on the index page. */
@@ -41,6 +44,7 @@ export const REPORT_CATEGORY_ORDER: ReportCategory[] = [
   'Finance & receivables',
   'Forecast & budgeting',
   "Workers' comp & insurance",
+  'Usage & metrics',
   'Compliance',
 ];
 
@@ -61,6 +65,15 @@ export interface ReportDef {
 
 export const REPORTS: ReportDef[] = [
   {
+    slug: 'interview-metrics',
+    title: 'Interview Metrics',
+    description:
+      'AI prescreen funnel — invited, started, completed, passed — with drop-off by question, splits by job order, signup group, and language, and SMS-chase effectiveness.',
+    category: 'Usage & metrics',
+    minLevel: 6,
+    icon: <QueryStatsOutlinedIcon />,
+  },
+  {
     slug: 'payroll',
     title: 'Payroll Cost Report',
     description:
@@ -79,6 +92,15 @@ export const REPORTS: ReportDef[] = [
     icon: <HealthAndSafetyOutlinedIcon />,
   },
   {
+    slug: 'data-health',
+    title: 'Data Health',
+    description:
+      'The reconciliation spine: Everee-settled dollars vs HRX entries per month × entity (unexplained residual highlighted), plus gross-weighted coverage of every field the financial and WC reports depend on. Fix here first — every report downstream corrects itself.',
+    category: 'Payroll',
+    minLevel: 7,
+    icon: <MonitorHeartOutlinedIcon />,
+  },
+  {
     slug: 'payroll-register',
     title: 'Payroll Register',
     description:
@@ -86,6 +108,15 @@ export const REPORTS: ReportDef[] = [
     category: 'Payroll',
     minLevel: 6,
     icon: <ListAltOutlinedIcon />,
+  },
+  {
+    slug: 'classification-audit',
+    title: 'Classification Verification',
+    description:
+      'Every payroll dollar since May 15 graded by evidence — confirmed or flagged for manual review, with inline fix-and-freeze. Invoice class-family checks, per-class revenue/labor health, and job orders whose timesheets outrun their billing.',
+    category: 'Payroll',
+    minLevel: 7,
+    icon: <FactCheckOutlinedIcon />,
   },
   {
     slug: 'payroll-journal',
@@ -100,7 +131,7 @@ export const REPORTS: ReportDef[] = [
     slug: 'job-costing',
     title: 'Job Costing',
     description:
-      'One job order’s complete P&L — billing, payroll, burden estimate, and Expensify/QBO expenses classed to the order. Entity → client → job order drill-down.',
+      'One job order’s complete P&L over its whole life — pick entity → account → job order; no date window. Billing and Expensify/QBO expenses classed to the order, payroll, real WC premium and Everee employer taxes.',
     category: 'Finance & receivables',
     minLevel: 7,
     icon: <CalculateOutlinedIcon />,
