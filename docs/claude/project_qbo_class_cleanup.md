@@ -288,3 +288,33 @@ non-card unclassed expenses for Tabitha.
   location unknown — likely in the unclassed pool.
 
 Related: [[project_qbo_invoicing]], [[project_payroll_cost_attribution]].
+
+## Phase 4 execution (2026-08-31 evening)
+
+**June–Aug pushed, May held (Greg's call).** Greg ran Push to QBO on
+/reports/payroll-journal for 2026-06-01→2026-08-31: expect 77 JEs /
+~$1.10M, 16 wires skipped (Tabitha's July "EV Pay Alloc" JEs), $2,496
+unattributed remainder. Two deploy-blocking fixes shipped first, both in
+`payrollCostReport.ts` (pair-deploy all 8):
+
+- **`AcctNum` is NOT queryable in the QBO v3 API** — the 5010 lookup now
+  fetches COGS accounts and filters locally (58311e1f). The account is
+  "Direct Labor — Field Staff" (Id 73).
+- **Wire-label aliases now apply to raw earning notes** as a last resort
+  after `resolveVenueText` misses (65b7c11e). Notes like "LIV Golf VA -
+  35 Hours", "Dallas Fifa W/E 5.31", "7 Hours G6", "COTA Cleaning" were
+  falling to Unattributed because the token resolver only knows
+  JO/account/venue-mapping names. WIRE_LABEL_ALIASES hoisted above the
+  payment loop; new entries: bare `\bcota\b` (after NASCAR, = year-round
+  COTA class), LIV Golf VA/Indy, bare `\bg6\b`, reversed "Dallas Fifa".
+  `unattributedDetail` cap 200→500.
+
+**May punch list for Mark** (section G on the artifact): $64,446
+unattributed across 235 payments / 181 workers, top 25 workers = $26.4K.
+Mark names each worker's May event → `payroll_class_overrides` docs
+(`{kind:'worker', workerName:'Last, First', class:'<leaf or FQN>'}`) →
+reload May → push. Overrides beat every heuristic. The ~156-worker tail
+(~$240 avg) stays unattributed by agreement. Unknown label: "BTS - 23.5
+Hours" (Vargas, Karol). June–Aug JEs carry their own $2.4K remainder
+inside posted JEs — patching those means editing JEs, only worth it if
+Mark's answers cover them.
