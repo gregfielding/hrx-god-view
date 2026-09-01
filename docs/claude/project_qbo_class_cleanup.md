@@ -171,7 +171,9 @@ same shape as Venue Smart. All seven client classes re-parented under it
 `:Hyatt Hotels Corporation`) — class Ids unchanged so the day's
 reclassifications and HRX mappings survived; fqns refreshed.
 `Indeed Flex:Mattress Firm` created (named by Greg; in the portal's
-11-client list). The portal lists 11 clients total — remaining ones get
+11-client list). `Indeed Flex:OnTrac` created and mapped to the HRX OnTrac account (Greg —
+the ramping account bills through Flex too). The portal lists 11 clients
+total — remaining ones get
 subclasses as their invoices appear. The $7,700 channel residual sits at
 parent level, mirroring the VS convention.
 
