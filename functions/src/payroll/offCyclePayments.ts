@@ -206,6 +206,13 @@ export async function createOffCyclePaymentInternal(
     if (!tenantId || !hiringEntityId || !workerId) {
       throw new HttpsError('invalid-argument', 'tenantId, hiringEntityId, and workerId are required.');
     }
+    // Every payroll dollar must carry its job order for class attribution
+    // (Greg 2026-09-01). Ticket-driven corrections are exempt only because
+    // the caller derives the JO from the worker's timesheet for that date
+    // when one exists.
+    if (!jobOrderId && !trim(input.sourceTicketId)) {
+      throw new HttpsError('invalid-argument', 'jobOrderId is required — pick the job order this payment belongs to.');
+    }
     if (!(reason in OFF_CYCLE_REASON_LABELS)) {
       throw new HttpsError('invalid-argument', `Unknown reason '${reason}'.`);
     }

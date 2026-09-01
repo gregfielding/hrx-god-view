@@ -509,6 +509,12 @@ const PayrollCostsPage: React.FC<PayrollCostsPageProps> = ({ report }) => {
 
   const submitOffCycle = async (overrideDuplicateWarning = false) => {
     if (!tenantId || !ocWorker || !ocEntity) return;
+    // Every payment must carry its job order for class attribution
+    // (Greg 2026-09-01) — the backend rejects it too.
+    if (!ocJo) {
+      setOcError('Pick the job order this payment belongs to — every payroll dollar must be classed.');
+      return;
+    }
     setOcSaving(true);
     setOcError(null);
     try {

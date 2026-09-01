@@ -236,6 +236,12 @@ const WorkerPaymentsTab: React.FC<Props> = ({ uid, tenantId, workerDisplayName, 
 
   const submit = async (overrideDuplicateWarning = false) => {
     if (!tenantId) return;
+    // Every payment must carry its job order for class attribution
+    // (Greg 2026-09-01) — the backend rejects it too.
+    if (!jo) {
+      setError('Pick the job order this payment belongs to — every payroll dollar must be classed.');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {

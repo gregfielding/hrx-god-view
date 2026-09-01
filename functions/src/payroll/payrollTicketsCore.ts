@@ -1292,12 +1292,31 @@ export async function authorizeCorrectionAction(input: {
   // Money moves: books-level bar (≥6), same as the admin off-cycle dialog.
   await ensureBooksAccess(input.actorUid, input.actorToken as never, tenantId);
 
+  // Derive the job order from the worker's timesheet for that date so the
+  // payment carries class attribution (Greg 2026-09-01) — corrections
+  // almost always fix an existing entry.
+  let derivedJobOrderId = '';
+  try {
+    const tsSnap = await db
+      .collection(`tenants/${tenantId}/timesheet_entries`)
+      .where('workerId', '==', uid)
+      .where('workDate', '==', input.workDate)
+      .limit(10)
+      .get();
+    const joIds = new Set(
+      tsSnap.docs.map((d) => String(d.data().jobOrderId ?? '').trim()).filter(Boolean),
+    );
+    if (joIds.size === 1) derivedJobOrderId = String(Array.from(joIds)[0]);
+  } catch {
+    derivedJobOrderId = '';
+  }
   const res = await createOffCyclePaymentInternal({
     tenantId,
     hiringEntityId: input.entityId,
     workerId: uid,
     reason: 'payroll_correction',
     workDate: input.workDate,
+    jobOrderId: derivedJobOrderId || undefined,
     notes: `Payroll help desk ticket ${input.ticketId}${trim(input.notes) ? ` — ${trim(input.notes)}` : ''}`,
     hours: input.hours,
     hourlyRate: input.hourlyRate,
