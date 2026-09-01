@@ -1234,6 +1234,46 @@ export async function buildWireJournal(
     return best ? best.cls : null;
   };
 
+  // Wire labels come from Everee earning notes and legacy account names;
+  // after the 2026-08-31 class restructure the generic matcher missed
+  // ~$536K of splits. These aliases encode that day's rulings (RS3 family
+  // = Proof of the Pudding; NASCAR/F1 own classes; FIFA fan-fest naming;
+  // role-only Flex labels roll to the channel) — checked FIRST in
+  // resolveClassFqn, then punctuation-insensitive exact, then containment.
+  // Also applied to raw earning notes when resolveVenueText misses
+  // ("LIV Golf VA - 35 Hours", "Dallas Fifa W/E 5.31", "7 Hours G6").
+  const WIRE_LABEL_ALIASES: Array<{ re: RegExp; leaf: string }> = [
+    { re: /governors?\s*ball/i, leaf: "Governor's Ball" },
+    { re: /fifa.*kansas\s*city|fifa\s*kc/i, leaf: 'FIFA KC' },
+    { re: /fifa.*dallas|dallas.*fifa/i, leaf: 'FIFA Dallas' },
+    { re: /fifa.*(ny|new\s*york)|adi\s*ny/i, leaf: 'FIFA NY' },
+    { re: /dell\s*diamond|kizer|slammers|legends\s*stadium|h-?e-?b\s*center/i, leaf: 'Proof of Pudding' },
+    { re: /pga|lpga|lgpa/i, leaf: 'LGPA PP' },
+    { re: /us\s*wom[ea]n'?s?\s*open|usga/i, leaf: "26 USGA Women's Open" },
+    { re: /suenos|sueños/i, leaf: 'Suenos Music Festival' },
+    { re: /^legends\s*national\s*account$/i, leaf: 'Legends' },
+    { re: /nascar.*san\s*diego|san\s*diego.*nascar/i, leaf: 'Nascar SanDiego' },
+    { re: /nascar/i, leaf: 'Nascar' },
+    // Plain COTA (after NASCAR above) = the year-round smaller-events class.
+    { re: /\bcota\b/i, leaf: 'COTA' },
+    { re: /liv\s*golf\s*(va|virginia)/i, leaf: 'LIV Golf VA' },
+    { re: /liv\s*golf\s*indy/i, leaf: '2026 LIV Golf Indy' },
+    { re: /cort\b|hazeltine|wbi|woodridge/i, leaf: 'Cort' },
+    { re: /\bunc\b/i, leaf: 'Sodexo' },
+    { re: /minnesota\s*yacht|mn\s*yacht/i, leaf: 'MN Yacht Club' },
+    { re: /minnesota\s*country|mn\s*country/i, leaf: 'MN Country Club' },
+    { re: /g6\s*catering|\bg6\b/i, leaf: 'G6' },
+    { re: /crystal\s*falls|roy\s*kizer/i, leaf: 'Proof of Pudding' },
+    { re: /carrier\b/i, leaf: 'Carrier Enterprise' },
+    { re: /obama/i, leaf: 'Obama Presidential Viewing' },
+    // Sodexo campus dining roles carry the university name, never "Sodexo".
+    { re: /prairie\s*view|nc\s*a&t|carthage|stanford|\buniversity\b/i, leaf: 'Sodexo' },
+    { re: /sips\s*and\s*sounds/i, leaf: 'Black Caviar' },
+    // Role-only Flex labels — no client attribution available; roll to the
+    // channel parent rather than guessing a client.
+    { re: /^(warehouse (associate|worker|operator|ops).*|loader\s*\/\s*crew.*|production associate.*|forklift driver.*|\d{1,2}:\d{2}.*shift)$/i, leaf: 'Indeed Flex' },
+  ];
+
   // ── Greg's persisted overrides (payroll_class_overrides) ──
   const paymentOverrides = new Map<string, string>();
   const workerOverrides = new Map<string, string>();
@@ -1323,7 +1363,12 @@ export async function buildWireJournal(
           }
           const venueCls = resolveVenueText(note);
           if (venueCls) addShare(venueCls, amt);
-          else unresolved += amt;
+          else {
+            // Last resort: the class-rename rulings apply to raw notes too.
+            const alias = WIRE_LABEL_ALIASES.find((a) => a.re.test(note));
+            if (alias) addShare(alias.leaf, amt);
+            else unresolved += amt;
+          }
         }
         // Pay-period fallback (AD_HOC often has no period → ±10d window).
         if (unresolved > 0) {
@@ -1423,39 +1468,6 @@ export async function buildWireJournal(
   } catch {
     // QBO down/unconnected — journal still works, classes just unresolved.
   }
-  // Wire labels come from Everee earning notes and legacy account names;
-  // after the 2026-08-31 class restructure the generic matcher missed
-  // ~$536K of splits. These aliases encode that day's rulings (RS3 family
-  // = Proof of the Pudding; NASCAR/F1 own classes; FIFA fan-fest naming;
-  // role-only Flex labels roll to the channel) — checked FIRST, then
-  // punctuation-insensitive exact, then containment.
-  const WIRE_LABEL_ALIASES: Array<{ re: RegExp; leaf: string }> = [
-    { re: /governors?\s*ball/i, leaf: "Governor's Ball" },
-    { re: /fifa.*kansas\s*city|fifa\s*kc/i, leaf: 'FIFA KC' },
-    { re: /fifa.*dallas/i, leaf: 'FIFA Dallas' },
-    { re: /fifa.*(ny|new\s*york)|adi\s*ny/i, leaf: 'FIFA NY' },
-    { re: /dell\s*diamond|kizer|slammers|legends\s*stadium|h-?e-?b\s*center/i, leaf: 'Proof of Pudding' },
-    { re: /pga|lpga|lgpa/i, leaf: 'LGPA PP' },
-    { re: /us\s*wom[ea]n'?s?\s*open|usga/i, leaf: "26 USGA Women's Open" },
-    { re: /suenos|sueños/i, leaf: 'Suenos Music Festival' },
-    { re: /^legends\s*national\s*account$/i, leaf: 'Legends' },
-    { re: /nascar.*san\s*diego|san\s*diego.*nascar/i, leaf: 'Nascar SanDiego' },
-    { re: /nascar/i, leaf: 'Nascar' },
-    { re: /cort\b|hazeltine|wbi|woodridge/i, leaf: 'Cort' },
-    { re: /\bunc\b/i, leaf: 'Sodexo' },
-    { re: /minnesota\s*yacht|mn\s*yacht/i, leaf: 'MN Yacht Club' },
-    { re: /minnesota\s*country|mn\s*country/i, leaf: 'MN Country Club' },
-    { re: /g6\s*catering/i, leaf: 'G6' },
-    { re: /crystal\s*falls|roy\s*kizer/i, leaf: 'Proof of Pudding' },
-    { re: /carrier\b/i, leaf: 'Carrier Enterprise' },
-    { re: /obama/i, leaf: 'Obama Presidential Viewing' },
-    // Sodexo campus dining roles carry the university name, never "Sodexo".
-    { re: /prairie\s*view|nc\s*a&t|carthage|stanford|\buniversity\b/i, leaf: 'Sodexo' },
-    { re: /sips\s*and\s*sounds/i, leaf: 'Black Caviar' },
-    // Role-only Flex labels — no client attribution available; roll to the
-    // channel parent rather than guessing a client.
-    { re: /^(warehouse (associate|worker|operator|ops).*|loader\s*\/\s*crew.*|production associate.*|forklift driver.*|\d{1,2}:\d{2}.*shift)$/i, leaf: 'Indeed Flex' },
-  ];
   const squashLbl = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
   const resolveClassFqn = (name: string): { fqn: string; exists: boolean } => {
     for (const a of WIRE_LABEL_ALIASES) {
@@ -1544,7 +1556,7 @@ export async function buildWireJournal(
     },
     wires,
     byClass,
-    unattributedDetail: unattributedDetail.slice(0, 200),
+    unattributedDetail: unattributedDetail.slice(0, 500),
   };
 }
 
