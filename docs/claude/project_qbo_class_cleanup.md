@@ -440,3 +440,26 @@ $1,521.11 (80.06 hrs × $19; SBUS 32800/33725/34093 ÷ $26.22 bill rate).
 JE carries a [wire:...@MANUAL] tag so its unclassed credit can't
 false-vouch in the push heuristic. NOTE: two DIFFERENT workers named
 Demetrius Lewis exist (FL b.1990 / Chicago b.1980) — NOT duplicates.
+
+## Revenue-account rule + screening allocation (2026-09-01 afternoon)
+
+**4100/4200 rule (Greg)**: 4200 Recurring = ONLY Sodexo + Indeed Flex
+family; everything else = 4100 Events & Venue. Nearly every QBO item maps
+income to 4200, so ~$2.2M of events-family revenue misposted YTD. Fix =
+monthly idempotent JE (Rev Reclass MMYY, [revrc:YYYY-MM] tag): debit
+4200 / credit 4100 per class, months ended ≥3d only, unclassed lines
+skipped. Jan–Jul backfilled ($1.56M / 7 JEs); Aug+ auto-post via the
+weekly health run. Items untouched (shared by Sodexo/Flex mirrors) —
+item hygiene = later cleanup with Mark; invoice drill-downs still show
+the item's 4200 until then, but P&L is correct.
+
+**Screening allocation**: AccuSource charges (vendor 191, billed to 5010
+unclassed) → Scrn Alloc JEs: credit 5010, debit 5300 per class; each
+screen classed by order JO/client, else worker's first assignment
+(−7d grace), else National (~74% never assigned = pipeline overhead).
+[screen:{purchaseId}] tags, 35-day maturity, auto-runs weekly. Six 2026
+charges backfilled ($7,558).
+
+**Verification page** now has batch "Apply to all N" (toast after any
+save — applies the class to every flagged row sharing the guess,
+resolveClassificationFlags action).
