@@ -69,3 +69,25 @@ describe('matchExistingSubclass', () => {
     expect(matchExistingSubclass('KC', SUBS)).toBeNull();
   });
 });
+
+describe('routeEventFamily (COTA family rules, Greg 2026-08-31)', () => {
+  const { routeEventFamily } = require('../venuesmartPoClasses');
+
+  it('NASCAR @ COTA is its own class', () => {
+    expect(routeEventFamily('2026 NASCAR @ COTA')).toEqual({ leaf: 'Nascar' });
+  });
+  it('F1 at COTA is its own class', () => {
+    expect(routeEventFamily('2026 F1 US Grand Prix')).toEqual({ leaf: 'F1 COTA' });
+    expect(routeEventFamily('Formula 1 Weekend')).toEqual({ leaf: 'F1 COTA' });
+  });
+  it('NASCAR city variants keep their own classes', () => {
+    expect(routeEventFamily('NASCAR San Diego 2026')).toEqual({ leaf: 'Nascar SanDiego' });
+  });
+  it('NASCAR Phoenix is Corp — never auto-created under the LLC', () => {
+    expect(routeEventFamily('2026 NASCAR Phoenix')).toEqual({ skip: 'corp_event_needs_review' });
+  });
+  it('smaller COTA events fall through to containment (→ COTA)', () => {
+    expect(routeEventFamily('2026 Kesha Concert, COTA')).toBeNull();
+    expect(routeEventFamily('2026 August Monthly COTA Cleaning')).toBeNull();
+  });
+});

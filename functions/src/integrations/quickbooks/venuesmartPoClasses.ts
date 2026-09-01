@@ -75,6 +75,24 @@ export function parsePoNumber(body: string): string {
 }
 
 /**
+ * Event-family routing (Greg 2026-08-31, in-meeting ruling): at COTA,
+ * NASCAR and F1 are each their own class; everything else at COTA (smaller
+ * concerts, monthly cleaning) rolls into "COTA". NASCAR city variants keep
+ * their own classes, and NASCAR Phoenix belongs to VenueSmart CORP — a
+ * different entity whose events must never spawn classes under the LLC
+ * parent, so it is skipped for human review. Exported for tests.
+ */
+export function routeEventFamily(event: string): { leaf: string } | { skip: string } | null {
+  const e = event.toLowerCase();
+  const nascar = /nascar/.test(e);
+  if (nascar && /phoenix/.test(e)) return { skip: 'corp_event_needs_review' };
+  if (nascar && /san\s*diego/.test(e)) return { leaf: 'Nascar SanDiego' };
+  if (nascar) return { leaf: 'Nascar' };
+  if (/\bf1\b|formula\s*(one|1)|grand\s*prix/.test(e)) return { leaf: 'F1 COTA' };
+  return null;
+}
+
+/**
  * Match an event name against existing Venue Smart subclasses. Containment
  * in EITHER direction on normalized names counts as "already exists" —
  * creation must be conservative because a wrong create pollutes the books.
@@ -188,7 +206,29 @@ export async function sweepVenueSmartPoEmails(args: {
     }
 
     const poNumber = parsePoNumber(plainText(msg));
-    const existing = matchExistingSubclass(parsed.event, subclasses);
+
+    // Family routes take precedence over generic containment; a routed skip
+    // (Corp events) is ledgered for human review, never auto-created.
+    const route = routeEventFamily(parsed.event);
+    if (route && 'skip' in route) {
+      result.skipped += 1;
+      if (!dryRun) {
+        await ledgerRef.set({
+          messageId: id, subject, from, poNumber, event: parsed.event, venue: parsed.venue,
+          outcome: route.skip,
+          processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      logger.info('[venuesmart_po] routed to review', { poNumber, event: parsed.event, reason: route.skip });
+      continue;
+    }
+    const routedLeaf = route && 'leaf' in route ? route.leaf : '';
+    const existing = routedLeaf
+      ? subclasses.find((c) => norm(c.leaf) === norm(routedLeaf)) ?? null
+      : matchExistingSubclass(parsed.event, subclasses);
+    // A routed family with no class yet is created under the FAMILY name
+    // ("F1 COTA"), not the raw event name.
+    const createName = routedLeaf || parsed.event;
 
     let classId: string;
     let fqn: string;
@@ -200,27 +240,27 @@ export async function sweepVenueSmartPoEmails(args: {
       result.matchedExisting.push({ poNumber, event: parsed.event, fqn });
     } else if (dryRun) {
       classId = '';
-      fqn = `Venue Smart:${parsed.event}`;
+      fqn = `Venue Smart:${createName}`;
       outcome = 'would_create';
       result.created.push({ poNumber, event: parsed.event, fqn });
     } else {
       const created = (await qboEntityCreate(tenantId, 'Class', {
-        Name: parsed.event,
+        Name: createName,
         ParentRef: { value: String(parent.Id) },
       })) as Record<string, any>;
       const cls = created.Class ?? created;
       classId = String(cls.Id);
-      fqn = String(cls.FullyQualifiedName ?? `Venue Smart:${parsed.event}`);
+      fqn = String(cls.FullyQualifiedName ?? `Venue Smart:${createName}`);
       outcome = 'created';
       result.created.push({ poNumber, event: parsed.event, fqn });
       // Keep in-memory inventory current so one sweep can't double-create.
-      subclasses.push({ id: classId, leaf: parsed.event, fqn });
+      subclasses.push({ id: classId, leaf: createName, fqn });
       // Authoritative HRX mapping — account-kind, inheriting the parent's
       // account (a JO usually doesn't exist yet when the PO arrives).
       const parentMap = (await db.doc(`tenants/${tenantId}/qbo_class_mappings/${String(parent.Id)}`).get()).data() ?? {};
       await db.doc(`tenants/${tenantId}/qbo_class_mappings/${classId}`).set({
         classId,
-        className: parsed.event,
+        className: createName,
         fqn,
         targetKind: 'account',
         jobOrderId: null, jobOrderName: null, jobOrderIds: [], jobOrderNames: [],
