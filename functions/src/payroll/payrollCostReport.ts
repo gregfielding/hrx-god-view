@@ -1188,11 +1188,27 @@ export async function buildWireJournal(
   };
 
   // ── JO name maps ──
-  // Indeed Flex channel JOs have role-y names ("Warehouse Associate",
-  // "Loader/Crew") that resolve to the parent class; the END CLIENT is the
-  // JO's account (Greg 2026-08-31) — label those by account so labor lands
-  // on Indeed Flex:{client}. Anchored so only Flex-family accounts qualify.
-  const FLEX_CLIENT_ACCT = /^(cort|domino|ors\s*nasco|carrier|continental|purolator|hyatt|mattress|ontrac)/i;
+  // Two kinds of clients (Greg 2026-09-01, the Black Caviar P&L test):
+  // EVENT-kind (VenueSmart, Legends) — the JO name IS the class; and
+  // ACCOUNT-kind (Sodexo campuses, Flex clients, catering clients) — the
+  // class is the CLIENT, and JO names are roles or even the festival being
+  // catered ("Lollapalooza" under Black Caviar Catering must NOT land on
+  // Venue Smart:Lollapalooza). Label account-kind JOs by their account.
+  const ACCOUNT_CLASS_RULES: Array<{ re: RegExp; leaf: string }> = [
+    { re: /^sodexo/i, leaf: 'Sodexo' },
+    { re: /^cort\b/i, leaf: 'Cort' },
+    { re: /^domino/i, leaf: "Domino's" },
+    { re: /^continental battery/i, leaf: 'Continental Battery Systems, Inc.' },
+    { re: /^black caviar/i, leaf: 'Black Caviar' },
+    { re: /^proof of the pudding/i, leaf: 'Proof of Pudding' },
+    { re: /^ors nasco/i, leaf: 'ORS Nasco' },
+    { re: /^purolator/i, leaf: 'Purolator International' },
+    { re: /^hyatt/i, leaf: 'Hyatt Hotels Corporation' },
+    { re: /^carrier/i, leaf: 'Carrier Enterprise' },
+    { re: /^mattress firm/i, leaf: 'Mattress Firm' },
+    { re: /^ontrac/i, leaf: 'OnTrac' },
+    { re: /^g6\b/i, leaf: 'G6' },
+  ];
   const joNameById = new Map<string, string>();
   const joNameByNumber = new Map<string, string>();
   for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
@@ -1201,7 +1217,8 @@ export async function buildWireJournal(
     snap.forEach((d) => {
       const j = d.data();
       const acct = trim(j.accountName);
-      const name = FLEX_CLIENT_ACCT.test(acct) ? acct : trim(j.jobOrderName) || trim(j.title);
+      const rule = acct ? ACCOUNT_CLASS_RULES.find((r) => r.re.test(acct)) : undefined;
+      const name = rule ? rule.leaf : trim(j.jobOrderName) || trim(j.title);
       if (!name) return;
       if (!joNameById.has(d.id)) joNameById.set(d.id, name);
       const num = trim(j.jobOrderNumber);
@@ -1221,7 +1238,11 @@ export async function buildWireJournal(
   const needAssignment: Array<{ key: string; assignmentId: string }> = [];
   entriesSnap.forEach((d) => {
     const e = d.data();
-    if (!['sent_to_everee', 'submitted', 'paid'].includes(trim(e.status))) return;
+    // Any non-rejected entry is evidence of WHERE the worker worked that
+    // day — amounts come from Everee, so drafts are safe for CLASS
+    // attribution (Black Caviar's crews: 368/436 entries never left draft
+    // because they were paid via bulk Everee notes, Greg 2026-09-01).
+    if (['rejected', 'void', 'deleted'].includes(trim(e.status))) return;
     const uid = trim(e.workerId) || trim(e.userId);
     const wd = trim(e.workDate);
     if (!uid || !wd) return;
@@ -1408,6 +1429,30 @@ export async function buildWireJournal(
           shares.set(cls, (shares.get(cls) ?? 0) + amt);
           resolved += amt;
         };
+        // The worker's own timesheet classes for this pay period — computed
+        // up front because assignment-derived data OUTRANKS note text when
+        // it's unambiguous (Greg 2026-09-01: Black Caviar caterers' notes
+        // say "Lollapalooza", but their assignment says who's paying).
+        let ps = trim(p.payPeriodStartDate);
+        let pe = trim(p.payPeriodEndDate);
+        if (!ps || !pe) {
+          const anchor = trim(p.payDate) || trim(p.forDate);
+          if (anchor) {
+            const t0 = Date.parse(anchor);
+            ps = new Date(t0 - 10 * 86400000).toISOString().slice(0, 10);
+            pe = new Date(t0 + 2 * 86400000).toISOString().slice(0, 10);
+          }
+        }
+        const periodClasses = new Map<string, number>();
+        if (uid && ps && pe) {
+          for (const [key, cls] of classByWorkerDate) {
+            const [kUid, kDate] = key.split('|');
+            if (kUid === uid && kDate >= ps && kDate <= pe) {
+              periodClasses.set(cls, (periodClasses.get(cls) ?? 0) + 1);
+            }
+          }
+        }
+        const soleClass = periodClasses.size === 1 ? Array.from(periodClasses.keys())[0] : null;
         for (const el of (p.earningList ?? []) as Array<Record<string, any>>) {
           const amt = money(el.currentPeriodAmount) || money(el.amounts?.amount);
           if (amt <= 0) continue;
@@ -1426,6 +1471,12 @@ export async function buildWireJournal(
             classes.forEach((c) => addShare(c, per));
             continue;
           }
+          // Worked exactly one client this period → that's the class,
+          // whatever the note calls the gig.
+          if (soleClass) {
+            addShare(soleClass, amt);
+            continue;
+          }
           const venueCls = resolveVenueText(note);
           if (venueCls) addShare(venueCls, amt);
           else {
@@ -1435,32 +1486,12 @@ export async function buildWireJournal(
             else unresolved += amt;
           }
         }
-        // Pay-period fallback (AD_HOC often has no period → ±10d window).
-        if (unresolved > 0) {
-          let ps = trim(p.payPeriodStartDate);
-          let pe = trim(p.payPeriodEndDate);
-          if (!ps || !pe) {
-            const anchor = trim(p.payDate) || trim(p.forDate);
-            if (anchor) {
-              const t0 = Date.parse(anchor);
-              ps = new Date(t0 - 10 * 86400000).toISOString().slice(0, 10);
-              pe = new Date(t0 + 2 * 86400000).toISOString().slice(0, 10);
-            }
-          }
-          const periodClasses = new Map<string, number>();
-          if (uid && ps && pe) {
-            for (const [key, cls] of classByWorkerDate) {
-              const [kUid, kDate] = key.split('|');
-              if (kUid === uid && kDate >= ps && kDate <= pe) {
-                periodClasses.set(cls, (periodClasses.get(cls) ?? 0) + 1);
-              }
-            }
-          }
-          if (periodClasses.size > 0) {
-            const totalN = Array.from(periodClasses.values()).reduce((s, n) => s + n, 0);
-            for (const [cls, n] of periodClasses) addShare(cls, (unresolved * n) / totalN);
-            unresolved = 0;
-          }
+        // Pay-period fallback for what's left (multi-class periods):
+        // distribute across the period's classes by day-count.
+        if (unresolved > 0 && periodClasses.size > 0) {
+          const totalN = Array.from(periodClasses.values()).reduce((s, n) => s + n, 0);
+          for (const [cls, n] of periodClasses) addShare(cls, (unresolved * n) / totalN);
+          unresolved = 0;
         }
         // Greg's explicit answer beats every heuristic.
         const ov =
