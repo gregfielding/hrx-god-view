@@ -120,7 +120,7 @@ const PayrollJournalPage: React.FC = () => {
     setPushing(true);
     setError(null);
     try {
-      const fn = httpsCallable(functions, 'savePayrollVenueMapping', { timeout: 300000 });
+      const fn = httpsCallable(functions, 'savePayrollVenueMapping', { timeout: 540000 });
       const dry = await fn({
         tenantId, action: 'pushWireAllocations', startDate, endDate, dryRun: true,
         ...(entityId ? { hiringEntityId: entityId } : {}),

@@ -97,8 +97,11 @@ interface VenueMapping {
   accountName: string | null;
 }
 
+// 540s/1GiB: the pushWireAllocations action rebuilds the wire journal
+// (~2 min of Everee pagination) then creates ~80 QBO JEs — 60s killed it
+// mid-build ("internal" in the UI, incident 2026-08-31).
 export const savePayrollVenueMapping = onCall(
-  { region: 'us-central1', memory: '512MiB', timeoutSeconds: 60 },
+  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 540 },
   async (request) => {
     const tenantId = trim(request.data?.tenantId);
     const action = trim(request.data?.action);
