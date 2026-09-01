@@ -337,7 +337,12 @@ export async function createOffCyclePaymentInternal(
 
     const reasonLabel = OFF_CYCLE_REASON_LABELS[reason];
     const labelCore = `Off-cycle: ${reasonLabel}${hours > 0 ? ` — ${hours} hrs` : ''}`;
-    const label = (attributionTag ? `${attributionTag} · ${labelCore}` : labelCore).slice(0, 120);
+    // Machine anchor (Greg 2026-09-01): JO#<n> + ISO work date appended
+    // AFTER the human label's cap so the wire journal's deterministic
+    // attribution paths always see them.
+    const joNumber = trim(jo?.jobOrderNumber);
+    const machineAnchor = ` · ${joNumber ? `JO#${joNumber} ` : ''}${workDate}`;
+    const label = (attributionTag ? `${attributionTag} · ${labelCore}` : labelCore).slice(0, 120) + machineAnchor;
     const timestamp = Math.floor(new Date(`${workDate}T12:00:00Z`).getTime() / 1000);
 
     // Record first (status pending) so a mid-flight crash leaves an audit
@@ -422,7 +427,7 @@ export async function createOffCyclePaymentInternal(
         const r = await createPayable(config, {
           externalId: `offcycle_${docRef.id}_pd`,
           externalWorkerId: workerId,
-          label: (attributionTag ? `${attributionTag} · Off-cycle: Per diem` : 'Off-cycle: Per diem').slice(0, 120),
+          label: (attributionTag ? `${attributionTag} · Off-cycle: Per diem` : 'Off-cycle: Per diem').slice(0, 120) + machineAnchor,
           type: 'off_cycle_per_diem',
           // REIMBURSEMENT, not PER_DIEM (2026-08-20): Everee's PER_DIEM
           // code withholds FICA; these are non-taxable accountable-plan

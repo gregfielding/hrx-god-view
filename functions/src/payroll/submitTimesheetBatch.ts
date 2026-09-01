@@ -98,6 +98,11 @@ export interface SubmitEntryTaskPayload {
    *  Ushers"). Leads the worked-shift note / payable labels so the event
    *  name reaches the worker's pay stub (Greg 2026-08-12). */
   shiftTitle?: string;
+  /** Machine anchor for job-cost attribution (Greg 2026-09-01): the JO
+   *  number rides the note as `JO#<n>` — with the ISO work date it feeds
+   *  the wire journal's deterministic paths, so classing stops being
+   *  forensics on free text. */
+  jobOrderNumber?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -286,6 +291,7 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
       // with segments dropped when empty or redundant.
       const joName = String((jo?.jobOrderName as string) ?? '').trim();
       const joPo = String((jo?.poNumber as string | number) ?? '').trim();
+      const joNumber = String((jo?.jobOrderNumber as string | number) ?? '').trim();
       const tagAccountId = String(
         (entry.accountId as string) ??
           (assignment?.accountId as string) ??
@@ -635,6 +641,7 @@ export const submitTimesheetBatch = onCall<SubmitTimesheetBatchInput>(
         worksiteTz,
         ...(attributionTag ? { attributionTag } : {}),
         ...(shiftEventTitle ? { shiftTitle: shiftEventTitle } : {}),
+        ...(joNumber ? { jobOrderNumber: joNumber } : {}),
       });
     }
 

@@ -210,9 +210,19 @@ export const submitTimesheetEntryWorker = onTaskDispatched<SubmitEntryTaskPayloa
         breaks: payload.breaks,
         // Event name first when the shift has one ("IVE WORLD TOUR Ushers" —
         // pay-stub visibility, Greg 2026-08-12), then the attribution tag,
-        // then any recruiter note — every worked-shift self-describes.
+        // then any recruiter note, then the MACHINE ANCHOR (JO#<n> + ISO
+        // work date, Greg 2026-09-01) — the wire journal's deterministic
+        // attribution paths key on those two tokens, so every worked-shift
+        // self-describes for job costing, not just for humans.
         note:
-          [payload.shiftTitle, payload.attributionTag, typeof entry.notes === 'string' ? entry.notes.trim() : '']
+          [
+            payload.shiftTitle,
+            payload.attributionTag,
+            typeof entry.notes === 'string' ? entry.notes.trim() : '',
+            [payload.jobOrderNumber ? `JO#${payload.jobOrderNumber}` : '', String(entry.workDate ?? '')]
+              .filter(Boolean)
+              .join(' '),
+          ]
             .filter(Boolean)
             .join(' | ') || undefined,
         labelPrefix:

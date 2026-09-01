@@ -1180,6 +1180,22 @@ export async function buildWireJournal(
   startDate: string,
   endDate: string,
   hiringEntityId: string | null,
+  opts?: {
+    /** Called once per in-range payment with its final resolution — the
+     *  2026 backfill uses this to persist the attribution-of-record
+     *  ledger (payroll_payment_attributions). */
+    onPayment?: (rec: {
+      paymentId: string;
+      worker: string;
+      entityId: string;
+      shares: Array<{ cls: string; amt: number; method: string }>;
+      resolvedWeight: number;
+      unresolvedWeight: number;
+      fundingDates: string[];
+    }) => void;
+    /** Recompute from raw signals even where ledger docs exist (refreeze). */
+    skipLedger?: boolean;
+  },
 ): Promise<Record<string, unknown>> {
   const money = (v: unknown): number => {
     const o = v as { amount?: unknown } | null | undefined;
@@ -1420,6 +1436,22 @@ export async function buildWireJournal(
   // ── Greg's persisted overrides (payroll_class_overrides) ──
   const paymentOverrides = new Map<string, string>();
   const workerOverrides = new Map<string, string>();
+  // ── Attribution-of-record ledger (Greg 2026-09-01): frozen per-payment
+  //    class shares. Once a payment is fully resolved and frozen, later
+  //    Everee drift / rule changes can't silently reshuffle history. ──
+  const ledgerByPayment = new Map<string, { shares: Array<{ cls: string; amt: number; method: string }>; unresolvedWeight: number }>();
+  if (!opts?.skipLedger) {
+    const ledgerSnap = await db.collection(`tenants/${tenantId}/payroll_payment_attributions`).get().catch(() => null);
+    if (ledgerSnap) {
+      ledgerSnap.forEach((d) => {
+        const x = d.data();
+        ledgerByPayment.set(d.id, {
+          shares: Array.isArray(x.shares) ? (x.shares as Array<{ cls: string; amt: number; method: string }>) : [],
+          unresolvedWeight: Number(x.unresolvedWeight ?? 0) || 0,
+        });
+      });
+    }
+  }
   const ovSnap = await db.collection(`tenants/${tenantId}/payroll_class_overrides`).get().catch(() => null);
   if (ovSnap) {
     ovSnap.forEach((d) => {
@@ -1568,6 +1600,16 @@ export async function buildWireJournal(
           for (const [cls, n] of periodClasses) addShare(cls, (unresolved * n) / totalN, 'period_day_split');
           unresolved = 0;
         }
+        // Ledger replay: a frozen payment reproduces its recorded shares
+        // exactly (only an explicit payment override can supersede it).
+        const led = ledgerByPayment.get(id);
+        if (led) {
+          shares.clear();
+          shareDetail.length = 0;
+          resolved = 0;
+          unresolved = led.unresolvedWeight;
+          for (const sd of led.shares) addShare(sd.cls, sd.amt, 'ledger');
+        }
         // Payment-level override: an explicit per-payment human answer
         // still beats everything.
         const pov = paymentOverrides.get(id);
@@ -1578,6 +1620,17 @@ export async function buildWireJournal(
           shareDetail.push({ cls: pov, amt: 1, method: 'payment_override' });
           resolved = 1;
           unresolved = 0;
+        }
+        if (opts?.onPayment) {
+          opts.onPayment({
+            paymentId: id,
+            worker: trim(p.payeeDisplayFullName),
+            entityId,
+            shares: shareDetail.map((sd) => ({ ...sd })),
+            resolvedWeight: resolved,
+            unresolvedWeight: unresolved,
+            fundingDates: fundings.map((f) => trim(f.fundingDate)),
+          });
         }
 
         for (const f of fundings) {
