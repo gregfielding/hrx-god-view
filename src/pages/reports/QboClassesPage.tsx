@@ -174,6 +174,72 @@ const QboClassesPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
+  /**
+   * Indeed Flex invoice mirror (Greg 2026-08-31): the Flex portal's
+   * agency-invoices CSV is the billing source of truth. Parse it here,
+   * dry-run server-side, confirm, then execute. Idempotent by DocNumber.
+   */
+  const mirrorFlexCsv = async (file: File | null, input: HTMLInputElement): Promise<void> => {
+    if (!file || !tenantId) return;
+    setBusy('__flexMirror');
+    setError(null);
+    try {
+      const text = await file.text();
+      // Minimal quoted-CSV parser (amounts contain commas).
+      const parseLine = (line: string): string[] => {
+        const out: string[] = [];
+        let cur = '';
+        let q = false;
+        for (let i = 0; i < line.length; i += 1) {
+          const ch = line[i];
+          if (q) {
+            if (ch === '"' && line[i + 1] === '"') { cur += '"'; i += 1; }
+            else if (ch === '"') q = false;
+            else cur += ch;
+          } else if (ch === '"') q = true;
+          else if (ch === ',') { out.push(cur); cur = ''; }
+          else cur += ch;
+        }
+        out.push(cur);
+        return out;
+      };
+      const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim());
+      const header = parseLine(lines[0]).map((h) => h.trim().toLowerCase());
+      const col = (n: string): number => header.findIndex((h) => h.includes(n));
+      const iDate = col('finalized'); const iClient = col('client'); const iVenue = col('venue');
+      const iInv = col('invoice'); const iAmt = col('amount'); const iStatus = col('status');
+      if (iInv < 0 || iClient < 0 || iAmt < 0) throw new Error('Not an agency-invoices CSV (missing Invoice/Clients/Amount columns).');
+      const rows = lines.slice(1).map(parseLine).map((c) => ({
+        date: (c[iDate] ?? '').trim(),
+        client: (c[iClient] ?? '').trim(),
+        venue: (c[iVenue] ?? '').trim(),
+        invoice: (c[iInv] ?? '').trim(),
+        amount: (c[iAmt] ?? '').trim(),
+        status: (c[iStatus] ?? '').trim(),
+      })).filter((r) => r.invoice);
+
+      const fn = httpsCallable(functions, 'savePayrollVenueMapping', { timeout: 300000 });
+      const dry = await fn({ tenantId, action: 'mirrorFlexInvoices', rows, dryRun: true });
+      const d = dry.data as { created: string[]; fixedClass: string[]; verified: number; skipped: string[]; mismatched: string[] };
+      const summary =
+        `Flex mirror — dry run:\n\n` +
+        `Would create: ${d.created.length}\n${d.created.slice(0, 12).join('\n')}${d.created.length > 12 ? '\n…' : ''}\n\n` +
+        `Already in QBO (verified): ${d.verified}\nAmount mismatches: ${d.mismatched.length}${d.mismatched.length ? '\n' + d.mismatched.join('\n') : ''}\n` +
+        `Skipped (upcoming/pre-2026/bad): ${d.skipped.length}\n\nProceed?`;
+      if (!window.confirm(summary)) return;
+
+      const real = await fn({ tenantId, action: 'mirrorFlexInvoices', rows, dryRun: false });
+      const r2 = real.data as { created: string[]; fixedClass: string[]; verified: number; mismatched: string[] };
+      window.alert(`Flex mirror done.\nCreated: ${r2.created.length}\nClass-fixed: ${r2.fixedClass.length}\nVerified: ${r2.verified}\nMismatched (untouched): ${r2.mismatched.length}`);
+      void load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      input.value = '';
+      setBusy(null);
+    }
+  };
+
   const saveMapping = async (
     row: ClassRow,
     target: { targetKind: MapKind; jobOrderIds?: string[]; accountId?: string },
@@ -400,6 +466,17 @@ const QboClassesPage: React.FC = () => {
               InputLabelProps={{ shrink: true }}
               sx={{ width: 160 }}
             />
+            <Tooltip title="Upload the Indeed Flex agency-invoices CSV. Finalized invoices missing from QBO are created (customer Indeed Flex Inc, classed Indeed Flex:{client}); existing ones are amount-verified and class-fixed.">
+              <Button variant="outlined" component="label" disabled={busy === '__flexMirror'}>
+                {busy === '__flexMirror' ? 'Mirroring…' : 'Mirror Flex CSV'}
+                <input
+                  hidden
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(e) => void mirrorFlexCsv(e.target.files?.[0] ?? null, e.target)}
+                />
+              </Button>
+            </Tooltip>
             <Button variant="outlined" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
               Add class (creates in QBO)
             </Button>

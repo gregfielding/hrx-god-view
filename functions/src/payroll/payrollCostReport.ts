@@ -21,7 +21,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
-import { qboQuery, qboEntityCreate } from '../integrations/quickbooks/qboAuth';
+import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
 import { evereeRequest } from '../integrations/everee/evereeHttp';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { buildWcCoverageReport } from '../workersComp/coverageGaps';
@@ -124,6 +124,118 @@ export const savePayrollVenueMapping = onCall(
         { merge: true },
       );
       return { ok: true, workerId, date: date || null };
+    }
+
+    // ── Indeed Flex invoice mirror (Greg 2026-08-31): the Flex portal's
+    //    agency-invoices CSV is the source of truth for SBUS billing.
+    //    Mirror each FINALIZED row into QBO so payments have an invoice
+    //    to land on and A/R is accurate — the Fieldglass/Sodexo pattern.
+    //    Existing invoices are verified (amount) and class-fixed; missing
+    //    ones are created: customer "Indeed Flex Inc", item "Staffing",
+    //    venue as description, class = Indeed Flex:{client} (subclass
+    //    auto-created for new clients). Idempotent by DocNumber. Level 7.
+    if (action === 'mirrorFlexInvoices') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const dryRun = request.data?.dryRun === true;
+      const rows = Array.isArray(request.data?.rows) ? (request.data.rows as Array<Record<string, unknown>>) : [];
+      if (rows.length === 0 || rows.length > 400) {
+        throw new HttpsError('invalid-argument', 'rows required (1–400 per call).');
+      }
+
+      const custRes = (await qboQuery(tenantId, "SELECT Id, DisplayName FROM Customer WHERE DisplayName = 'Indeed Flex Inc'")) as Record<string, any>;
+      const customer = (custRes.QueryResponse?.Customer ?? custRes.Customer ?? [])[0];
+      if (!customer) throw new HttpsError('failed-precondition', 'QBO customer "Indeed Flex Inc" not found.');
+      const itemRes = (await qboQuery(tenantId, "SELECT Id, Name FROM Item WHERE Name = 'Staffing'")) as Record<string, any>;
+      const item = (itemRes.QueryResponse?.Item ?? itemRes.Item ?? [])[0];
+      if (!item) throw new HttpsError('failed-precondition', 'QBO item "Staffing" not found.');
+
+      const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class MAXRESULTS 1000')) as Record<string, any>;
+      const classes: Array<Record<string, any>> = clsRes.QueryResponse?.Class ?? clsRes.Class ?? [];
+      const flexParent = classes.find((c) => c.FullyQualifiedName === 'Indeed Flex');
+      if (!flexParent) throw new HttpsError('failed-precondition', 'Class "Indeed Flex" not found.');
+      const subByName = new Map<string, Record<string, any>>(
+        classes
+          .filter((c) => String(c.FullyQualifiedName).startsWith('Indeed Flex:'))
+          .map((c) => [String(c.Name).toLowerCase(), c]),
+      );
+      const classForClient = async (client: string): Promise<Record<string, any>> => {
+        // Known naming drift: portal "CORT" ↔ class "Cort".
+        const key = client.toLowerCase() === 'cort' ? 'cort' : client.toLowerCase();
+        const hit = subByName.get(key);
+        if (hit) return hit;
+        const created = (await qboEntityCreate(tenantId, 'Class', {
+          Name: client,
+          ParentRef: { value: String(flexParent.Id) },
+        })) as Record<string, any>;
+        const c = created.Class ?? created;
+        subByName.set(key, c);
+        await db.doc(`tenants/${tenantId}/qbo_class_mappings/${String(c.Id)}`).set({
+          classId: String(c.Id), className: client,
+          fqn: String(c.FullyQualifiedName ?? `Indeed Flex:${client}`),
+          targetKind: 'account', jobOrderId: null, jobOrderName: null, jobOrderIds: [], jobOrderNames: [],
+          accountId: null, accountName: null,
+          source: 'flex_invoice_mirror', mappedBy: request.auth?.uid ?? null,
+          mappedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return c;
+      };
+
+      const created: string[] = []; const fixedClass: string[] = []; const verified: string[] = [];
+      const skipped: string[] = []; const mismatched: string[] = [];
+      for (const raw of rows) {
+        const doc = trim(raw.invoice);
+        const client = trim(raw.client);
+        const venue = trim(raw.venue);
+        const status = trim(raw.status).toUpperCase();
+        const date = trim(raw.date);
+        const amount = Number(String(raw.amount ?? '').replace(/[$,]/g, ''));
+        if (!doc || !client || !Number.isFinite(amount)) { skipped.push(`${doc || '(no #)'}: bad row`); continue; }
+        if (status === 'UPCOMING') { skipped.push(`${doc}: UPCOMING — not finalized yet`); continue; }
+        if (date && date < '2026-01-01') { skipped.push(`${doc}: pre-2026`); continue; }
+
+        const q = (await qboQuery(tenantId, `SELECT * FROM Invoice WHERE DocNumber = '${doc.replace(/'/g, '')}'`)) as Record<string, any>;
+        const existing = (q.QueryResponse?.Invoice ?? q.Invoice ?? [])[0];
+        const cls = await classForClient(client);
+
+        if (existing) {
+          if (Math.abs(Number(existing.TotalAmt) - amount) > 0.01) {
+            mismatched.push(`${doc}: QBO $${existing.TotalAmt} vs portal $${amount.toFixed(2)}`);
+            continue;
+          }
+          let changed = 0;
+          for (const line of existing.Line ?? []) {
+            const d = line.SalesItemLineDetail;
+            if (d && (!d.ClassRef || String(d.ClassRef.value) === String(flexParent.Id))) {
+              d.ClassRef = { value: String(cls.Id), name: String(cls.FullyQualifiedName) };
+              changed++;
+            }
+          }
+          if (changed && !dryRun) {
+            await qboEntityUpdate(tenantId, 'Invoice', { ...existing, sparse: false });
+            fixedClass.push(doc);
+          } else verified.push(doc);
+          continue;
+        }
+
+        if (dryRun) { created.push(`${doc} (would create) $${amount.toFixed(2)} → ${client}`); continue; }
+        await qboEntityCreate(tenantId, 'Invoice', {
+          CustomerRef: { value: String(customer.Id) },
+          DocNumber: doc,
+          TxnDate: date || undefined,
+          Line: [{
+            DetailType: 'SalesItemLineDetail',
+            Amount: amount,
+            Description: venue,
+            SalesItemLineDetail: {
+              ItemRef: { value: String(item.Id) },
+              ClassRef: { value: String(cls.Id), name: String(cls.FullyQualifiedName) },
+            },
+          }],
+        });
+        created.push(`${doc} $${amount.toFixed(2)} → ${client}`);
+      }
+      return { ok: true, dryRun, created, fixedClass, verified: verified.length, skipped, mismatched };
     }
 
     // ── QBO class mapping/creation branches (Greg 2026-08-19). Rides
