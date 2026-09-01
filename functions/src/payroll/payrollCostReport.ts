@@ -1478,7 +1478,10 @@ export async function buildWireJournal(
     { re: /fifa.*dallas|dallas.*fifa/i, leaf: 'FIFA Dallas' },
     { re: /fifa.*(ny|new\s*york)|adi\s*ny/i, leaf: 'FIFA NY' },
     { re: /dell\s*diamond|kizer|slammers|legends\s*stadium|h-?e-?b\s*center/i, leaf: 'Proof of Pudding' },
-    { re: /pga|lpga|lgpa/i, leaf: 'LGPA PP' },
+    // One golf event, many spellings ("Womens PGA Open", "LGPA", "US
+    // Women's Open") — LGPA PP was merged into 26 USGA Women's Open
+    // (Greg 2026-09-01: one event, split only by label naming).
+    { re: /pga|lpga|lgpa/i, leaf: "26 USGA Women's Open" },
     { re: /us\s*wom[ea]n'?s?\s*open|usga/i, leaf: "26 USGA Women's Open" },
     { re: /suenos|sueños/i, leaf: 'Suenos Music Festival' },
     { re: /^legends\s*national\s*account$/i, leaf: 'Legends' },
