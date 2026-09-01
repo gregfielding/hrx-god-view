@@ -164,6 +164,17 @@ anywhere — they stay on the `Indeed Flex` class as the honest channel-level
 residual (class kept active for exactly this purpose). Curiosity for the
 Austin question: $7,894 of Flex lines were already classed `Austin`.
 
+**Tree correction (Greg, same evening): Indeed Flex is a PARENT class** —
+same shape as Venue Smart. All seven client classes re-parented under it
+(`Indeed Flex:Cort`, `:Domino's`, `:ORS Nasco`, `:Carrier Enterprise`,
+`:Continental Battery Systems, Inc.`, `:Purolator International`,
+`:Hyatt Hotels Corporation`) — class Ids unchanged so the day's
+reclassifications and HRX mappings survived; fqns refreshed.
+`Indeed Flex:Mattress Firm` created (named by Greg; in the portal's
+11-client list). The portal lists 11 clients total — remaining ones get
+subclasses as their invoices appear. The $7,700 channel residual sits at
+parent level, mirroring the VS convention.
+
 ## The 14 pre-May VS invoices — email forensics verdict (2026-08-31)
 
 Greg's Gmail was scanned end to end for the era: PO emails (ledgered),
