@@ -245,6 +245,35 @@ the $1.2M Not-Specified COGS drains into classes; Oakland/VS/Sodexo Direct
 Labor becomes real; gross margin by client is finally answerable end to end.
 Go-forward: run after each week's wires (or automate onto a cron later).
 
+## Wire-push preview verified + Expensify closed the loop (2026-08-31, final)
+
+**Preview (Greg's ask)**: buildWireJournal May–Aug = 105 wires / $1.52M,
+4.5% unattributed. `Legends:Oakland` receives **$143,288** — the missing
+Oakland payroll, answered. First preview exposed ~$536K of label→class
+misses after the restructure (apostrophes, "FIFA Fan Festival Kansas City"
+vs "FIFA KC", RS3-family names, role-only Flex labels); fixed with
+WIRE_LABEL_ALIASES + punctuation-insensitive matching in resolveClassFqn —
+now only 2 labels / $774 unresolved ("Sips and Sounds Dishwasher",
+"Housekeeper - Chantilly"). No QBO sync needed — classes live there already;
+only the resolver needed to learn the new names. Also finished the duplicate
+top-level Minnesota pair (3 of Tabitha's July JE lines corrected to
+`Venue Smart:MN Yacht Club`; pair deactivated).
+
+**Expensify**: the EXP-6 write-back (workers' tags → QBO Purchase classes,
+daily 06:30) was already live, but the workspace TAG LIST was hand-kept and
+stale. New `pushQboClassesAsExpensifyTags` replaces it with the live active
+class FQNs — runs before each daily write-back + on demand. First push: 105
+tags to the production workspace; write-back re-run: 302 expenses, 113
+already classed, 0 stale reversals (deactivated classes can't resolve, so
+old tags can never undo the merges), 1 legacy "Minnesota Yacht Club" tag
+outstanding.
+
+**The P&L-by-class accuracy stack, end state**: revenue classed (done
+today) · payroll COGS = Greg clicks Push to QBO on /reports/payroll-journal
+(May–Aug, dry-run first) · card expenses = tag picker now mirrors the books
+with a daily loop · residual = ~$69K honestly-unattributed wire remainder +
+non-card unclassed expenses for Tabitha.
+
 ## Open
 
 - 58 invoices / $303,490 still on the bare VS parent: 17 stay (non-factored),
