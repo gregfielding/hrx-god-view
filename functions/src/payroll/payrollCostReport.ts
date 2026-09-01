@@ -261,7 +261,7 @@ export const savePayrollVenueMapping = onCall(
       }
 
       const journal = (await buildWireJournal(tenantId, startDate, endDate, trim(request.data?.hiringEntityId) || null)) as {
-        wires: Array<{ fundingDate: string; entityName: string; amount: number; splits: Array<{ class: string; qboClass: string | null; qboClassExists: boolean; amount: number }> }>;
+        wires: Array<{ fundingId: string; fundingDate: string; entityName: string; amount: number; splits: Array<{ class: string; qboClass: string | null; qboClassExists: boolean; amount: number }> }>;
       };
 
       // QBO context: the 5010 account, class ids, existing allocation JEs.
@@ -278,8 +278,19 @@ export const savePayrollVenueMapping = onCall(
           String(c.FullyQualifiedName), String(c.Id),
         ]),
       );
+      // Idempotency (rewritten after the 2026-08-31 incident: DocNumber was
+      // only unique per day+entity, and the any-date $1 credit heuristic
+      // false-matched — together they silently skipped 26 wires / $525K).
+      //  1. Exact: a JE whose PrivateNote carries [wire:{fundingId}] owns
+      //     that wire forever.
+      //  2. Heuristic (pre-tag JEs, incl. Tabitha's month-end "EV Pay
+      //     Alloc" batches dated up to 30d after their wires): an
+      //     unclassed 5010 credit within $1 dated −5..+35 days of the
+      //     wire — and each credit vouches for at most ONE wire.
       const existingDocs = new Set<string>();
-      const existingCredits: Array<{ amt: number }> = [];
+      const existingWireTags = new Set<string>();
+      const creditByTag = new Map<string, number>();
+      const existingCredits: Array<{ date: string; amt: number; used: boolean }> = [];
       let jstart = 1;
       for (;;) {
         // eslint-disable-next-line no-await-in-loop
@@ -287,24 +298,64 @@ export const savePayrollVenueMapping = onCall(
         const jrows: Array<Record<string, any>> = jr.QueryResponse?.JournalEntry ?? jr.JournalEntry ?? [];
         for (const je of jrows) {
           existingDocs.add(trim(je.DocNumber));
+          let jeCredit = 0;
           for (const line of (je.Line ?? []) as Array<Record<string, any>>) {
             const d = line.JournalEntryLineDetail;
             if (d?.PostingType === 'Credit' && String(d.AccountRef?.value) === ACCT && !d.ClassRef) {
-              existingCredits.push({ amt: Number(line.Amount) || 0 });
+              jeCredit += Number(line.Amount) || 0;
+              existingCredits.push({ date: trim(je.TxnDate), amt: Number(line.Amount) || 0, used: false });
             }
+          }
+          for (const m of trim(je.PrivateNote).matchAll(/\[wire:([^\]]+)\]/g)) {
+            existingWireTags.add(trim(m[1]));
+            creditByTag.set(trim(m[1]), (creditByTag.get(trim(m[1])) ?? 0) + jeCredit);
           }
         }
         if (jrows.length < 1000) break;
         jstart += 1000;
       }
 
+      const dayNum = (d: string): number => Math.floor(Date.parse(d) / 86400000);
+      const claimCredit = (w: { fundingDate: string; amount: number }): boolean => {
+        const wd = dayNum(w.fundingDate);
+        const c = existingCredits.find((x) => {
+          if (x.used || Math.abs(x.amt - w.amount) > 1) return false;
+          const off = dayNum(x.date) - wd;
+          return off >= -5 && off <= 35;
+        });
+        if (c) c.used = true;
+        return Boolean(c);
+      };
+      const docCounter = new Map<string, number>();
       const results: Array<Record<string, unknown>> = [];
       for (const w of journal.wires) {
         const mmdd = w.fundingDate.slice(5).replace('-', '');
         const ent = /events/i.test(w.entityName) ? 'EVT' : /select/i.test(w.entityName) ? 'SEL' : /workforce/i.test(w.entityName) ? 'WF' : 'C1';
-        const docNumber = `EV Alloc ${mmdd} ${ent}`; // QBO caps DocNumber at 21 chars
-        const already = existingDocs.has(docNumber) || existingCredits.some((c) => Math.abs(c.amt - w.amount) <= 1);
-        if (already) {
+        const base = `EV Alloc ${mmdd} ${ent}`; // QBO caps DocNumber at 21 chars
+        let nth = (docCounter.get(base) ?? 0) + 1;
+        let docNumber = nth === 1 ? base : `${base}${nth}`;
+        while (existingDocs.has(docNumber)) {
+          nth += 1;
+          docNumber = `${base}${nth}`;
+        }
+        docCounter.set(base, nth);
+        // Tag key: fundingId alone collides for the no-funding-id aggregate
+        // group ('none' exists per entity) — suffix with the entity code.
+        const wireTag = `${trim(w.fundingId)}@${ent}`;
+        if (existingWireTags.has(wireTag)) {
+          // Report drift instead of hiding it: the wire total in Everee has
+          // moved since its JE was posted (late voids/corrections, or a
+          // grown no-funding-id aggregate). Tabitha trues up at bank rec.
+          const posted = creditByTag.get(wireTag) ?? 0;
+          const drift = Math.round((w.amount - posted) * 100) / 100;
+          results.push({
+            fundingDate: w.fundingDate, entity: w.entityName, amount: w.amount,
+            status: Math.abs(drift) > 1 ? 'allocated_amount_drift' : 'already_allocated',
+            ...(Math.abs(drift) > 1 ? { postedAmount: posted, drift } : {}),
+          });
+          continue;
+        }
+        if (claimCredit(w)) {
           results.push({ fundingDate: w.fundingDate, entity: w.entityName, amount: w.amount, status: 'already_allocated' });
           continue;
         }
@@ -345,10 +396,11 @@ export const savePayrollVenueMapping = onCall(
         await qboEntityCreate(tenantId, 'JournalEntry', {
           DocNumber: docNumber,
           TxnDate: w.fundingDate,
-          PrivateNote: `Auto allocation from /payroll-costs wire worksheet (Phase 4). Wire $${w.amount.toFixed(2)} ${w.entityName}.`,
+          PrivateNote: `Auto allocation from /payroll-costs wire worksheet (Phase 4). Wire $${w.amount.toFixed(2)} ${w.entityName}. [wire:${wireTag}]`,
           Line: lines,
         });
         existingDocs.add(docNumber);
+        existingWireTags.add(wireTag);
         results.push({ fundingDate: w.fundingDate, entity: w.entityName, amount: w.amount, status: 'created', docNumber });
       }
       return { ok: true, dryRun, wires: results };
@@ -927,8 +979,10 @@ export async function buildEvereeRegister(
           depositStatus: trim(p.depositStatus) || null,
         });
       }
+      // Walk every page — a fresh-less page mid-sync drops payments (see
+      // buildWireJournal pagination note, 2026-08-31).
       const totalPages = Number(res.totalPages ?? 1);
-      if (fresh === 0 || page >= totalPages - 1) break;
+      if (page >= totalPages - 1) break;
     }
   }
 
@@ -1134,6 +1188,11 @@ export async function buildWireJournal(
   };
 
   // ── JO name maps ──
+  // Indeed Flex channel JOs have role-y names ("Warehouse Associate",
+  // "Loader/Crew") that resolve to the parent class; the END CLIENT is the
+  // JO's account (Greg 2026-08-31) — label those by account so labor lands
+  // on Indeed Flex:{client}. Anchored so only Flex-family accounts qualify.
+  const FLEX_CLIENT_ACCT = /^(cort|domino|ors\s*nasco|carrier|continental|purolator|hyatt|mattress|ontrac)/i;
   const joNameById = new Map<string, string>();
   const joNameByNumber = new Map<string, string>();
   for (const coll of ['job_orders', 'jobOrders', 'recruiter_jobOrders']) {
@@ -1141,7 +1200,8 @@ export async function buildWireJournal(
     if (!snap) continue;
     snap.forEach((d) => {
       const j = d.data();
-      const name = trim(j.jobOrderName) || trim(j.title);
+      const acct = trim(j.accountName);
+      const name = FLEX_CLIENT_ACCT.test(acct) ? acct : trim(j.jobOrderName) || trim(j.title);
       if (!name) return;
       if (!joNameById.has(d.id)) joNameById.set(d.id, name);
       const num = trim(j.jobOrderNumber);
@@ -1457,8 +1517,12 @@ export async function buildWireJournal(
           }
         }
       }
+      // Walk EVERY page: breaking on a fresh-less page drops payments when
+      // Everee is actively syncing (items shift across page boundaries
+      // mid-pagination) and made wire totals nondeterministic between runs
+      // (2026-08-31 incident — run-to-run drift of ±$300 per wire).
       const totalPages = Number(res.totalPages ?? 1);
-      if (fresh === 0 || page >= totalPages - 1) break;
+      if (page >= totalPages - 1) break;
     }
   }
 
