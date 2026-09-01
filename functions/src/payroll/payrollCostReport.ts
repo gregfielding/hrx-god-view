@@ -250,6 +250,39 @@ export const savePayrollVenueMapping = onCall(
     //    ours), matched by DocNumber or by an existing 5010-unclassed
     //    credit within $1 of the wire. Unattributed remainder stays
     //    honestly unclassed. Level 7; dryRun first. ──
+    if (action === 'classificationAudit') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const startDate = trim(request.data?.startDate) || '2026-05-15';
+      const endDate = trim(request.data?.endDate) || new Date().toISOString().slice(0, 10);
+      return { ok: true, ...(await buildClassificationAudit(tenantId, startDate, endDate)) };
+    }
+
+    // Resolve one flagged payment from the verification page: writes the
+    // payment-kind override (trumps everything) and refreezes the ledger
+    // record so the answer is permanent.
+    if (action === 'resolveClassificationFlag') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const paymentId = trim(request.data?.paymentId);
+      const cls = trim(request.data?.class);
+      const worker = trim(request.data?.worker);
+      if (!paymentId || !cls) throw new HttpsError('invalid-argument', 'paymentId and class are required.');
+      await db.doc(`tenants/${tenantId}/payroll_class_overrides/payment_${paymentId}`).set({
+        kind: 'payment', paymentId, class: cls, worker: worker || null,
+        source: 'classification_audit_page', createdBy: request.auth?.uid ?? null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      await db.doc(`tenants/${tenantId}/payroll_payment_attributions/${paymentId}`).set({
+        paymentId, worker: worker || null, entityId: null,
+        shares: [{ cls, amt: 1, method: 'payment_override' }],
+        resolvedWeight: 1, unresolvedWeight: 0, firstFundingDate: null,
+        source: 'classification_audit_page',
+        frozenAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return { ok: true, paymentId, class: cls };
+    }
+
     if (action === 'pushWireAllocations') {
       if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
@@ -1236,6 +1269,200 @@ export async function maybeRunDailyLedgerFreeze(tenantId: string): Promise<void>
       { merge: true },
     );
   }
+}
+
+/**
+ * Classification verification audit (Greg 2026-09-01): every payroll
+ * dollar and invoice line in range is either CONFIRMED by structural
+ * evidence or FLAGGED for manual review — no silent middle. Powers
+ * /reports/classification-audit.
+ */
+export async function buildClassificationAudit(
+  tenantId: string,
+  startDate: string,
+  endDate: string,
+): Promise<Record<string, unknown>> {
+  const num = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const clRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName, Active FROM Class MAXRESULTS 1000')) as Record<string, any>;
+  const classes: Array<Record<string, any>> = clRes.QueryResponse?.Class ?? clRes.Class ?? [];
+  const classById = new Map<string, string>(classes.map((c) => [String(c.Id), String(c.FullyQualifiedName)]));
+
+  const invLines: Array<{ date: string; doc: string; cust: string; desc: string; amt: number; cls: string }> = [];
+  let start = 1;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = (await qboQuery(tenantId, `SELECT * FROM Invoice WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}' STARTPOSITION ${start} MAXRESULTS 1000`)) as Record<string, any>;
+    const rows: Array<Record<string, any>> = r.QueryResponse?.Invoice ?? r.Invoice ?? [];
+    for (const inv of rows) {
+      for (const l of (inv.Line ?? []) as Array<Record<string, any>>) {
+        const d = l.SalesItemLineDetail;
+        if (!d) continue;
+        invLines.push({
+          date: String(inv.TxnDate), doc: trim(inv.DocNumber), cust: trim(inv.CustomerRef?.name),
+          desc: trim(l.Description), amt: num(l.Amount), cls: classById.get(String(d.ClassRef?.value ?? '')) ?? '',
+        });
+      }
+    }
+    if (rows.length < 1000) break;
+    start += 1000;
+  }
+  const revByClass = new Map<string, number>();
+  for (const l of invLines) if (l.cls) revByClass.set(l.cls, (revByClass.get(l.cls) ?? 0) + l.amt);
+
+  type AuditRec = {
+    paymentId: string; worker: string; entityId: string;
+    shares: Array<{ cls: string; amt: number; method: string }>;
+    resolvedWeight: number; unresolvedWeight: number; fundingDates: string[];
+  };
+  const recs: AuditRec[] = [];
+  const journal = (await buildWireJournal(tenantId, startDate, endDate, null, {
+    skipLedger: true,
+    onPayment: (r) => recs.push(r),
+  })) as Record<string, any>;
+  const labelToClass = new Map<string, { fqn: string; exists: boolean }>();
+  const laborByClass = new Map<string, number>();
+  for (const w of (journal.wires ?? []) as Array<Record<string, any>>) {
+    for (const sp of (w.splits ?? []) as Array<Record<string, any>>) {
+      labelToClass.set(String(sp.class), { fqn: String(sp.qboClass ?? ''), exists: Boolean(sp.qboClassExists) });
+      const k = String(sp.qboClass ?? sp.class);
+      laborByClass.set(k, (laborByClass.get(k) ?? 0) + num(sp.amount));
+    }
+  }
+
+  // JO health: timesheets continuing past that class's billing window.
+  const joSnap = await db.collection(`tenants/${tenantId}/job_orders`).get().catch(() => null);
+  const tsSnap = await db
+    .collection(`tenants/${tenantId}/timesheet_entries`)
+    .where('workDate', '>=', startDate)
+    .get()
+    .catch(() => null);
+  const tsSpanByJo = new Map<string, { min: string; max: string; n: number }>();
+  if (tsSnap) {
+    tsSnap.forEach((d) => {
+      const e = d.data();
+      if (['rejected', 'void', 'deleted'].includes(trim(e.status))) return;
+      const jo = trim(e.jobOrderId);
+      const wd = trim(e.workDate);
+      if (!jo || !wd || wd > endDate) return;
+      const x = tsSpanByJo.get(jo) ?? { min: wd, max: wd, n: 0 };
+      if (wd < x.min) x.min = wd;
+      if (wd > x.max) x.max = wd;
+      x.n += 1;
+      tsSpanByJo.set(jo, x);
+    });
+  }
+  const billSpan = new Map<string, { min: string; max: string }>();
+  for (const l of invLines) {
+    if (!l.cls) continue;
+    const m = l.desc.match(/\((\d{1,2})\.(\d{1,2})\.26\s*-\s*(\d{1,2})\.(\d{1,2})\.26\)/);
+    const lo = m ? `2026-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : l.date;
+    const hi = m ? `2026-${m[3].padStart(2, '0')}-${m[4].padStart(2, '0')}` : l.date;
+    const x = billSpan.get(l.cls) ?? { min: lo, max: hi };
+    if (lo < x.min) x.min = lo;
+    if (hi > x.max) x.max = hi;
+    billSpan.set(l.cls, x);
+  }
+  const addDays = (d: string, n: number): string => new Date(Date.parse(d) + n * 86400000).toISOString().slice(0, 10);
+  const unhealthyJos: Array<{ jobOrderId: string; jobOrderName: string; timesheetsTo: string; billingEnds: string; cls: string }> = [];
+  if (joSnap) {
+    joSnap.forEach((d) => {
+      const jo = d.data();
+      const span = tsSpanByJo.get(d.id);
+      if (!span || span.n < 10) return;
+      const nm = trim(jo.jobOrderName) || trim(jo.title);
+      const lc = labelToClass.get(nm);
+      const cls = lc?.fqn || '';
+      const bs = cls ? billSpan.get(cls) : undefined;
+      if (bs && span.max > addDays(bs.max, 10)) {
+        unhealthyJos.push({ jobOrderId: d.id, jobOrderName: nm, timesheetsTo: span.max, billingEnds: bs.max, cls });
+      }
+    });
+  }
+
+  // grade payroll
+  const TIER: Record<string, string> = {
+    payment_override: 'CONFIRMED', jo_number_tag: 'CONFIRMED', note_dates_x_index: 'CONFIRMED',
+    sole_assignment_class: 'CORROBORATED',
+    note_venue_text: 'FLAG_WEAK', note_alias: 'FLAG_WEAK', worker_override: 'FLAG_WEAK', period_day_split: 'FLAG_WEAK',
+  };
+  const tierTotals = new Map<string, number>();
+  const flags: Array<Record<string, unknown>> = [];
+  for (const r of recs) {
+    const w = r.resolvedWeight + r.unresolvedWeight;
+    if (w <= 0) continue;
+    if (r.unresolvedWeight > 0.005) {
+      tierTotals.set('FLAG_UNKNOWN', (tierTotals.get('FLAG_UNKNOWN') ?? 0) + r.unresolvedWeight);
+      flags.push({
+        paymentId: r.paymentId, worker: r.worker, fundingDate: r.fundingDates[0] ?? '',
+        amount: round2(r.unresolvedWeight), label: '', qboClass: '', method: 'unattributed',
+        tier: 'FLAG_UNKNOWN', reason: 'no evidence — needs manual class',
+      });
+    }
+    for (const sh of r.shares) {
+      const dollars = sh.amt;
+      const lc = labelToClass.get(String(sh.cls));
+      let tier = TIER[sh.method] ?? 'FLAG_WEAK';
+      let reason = tier === 'FLAG_WEAK' ? `text-match only (${sh.method})` : '';
+      if (lc && !lc.exists) {
+        tier = 'FLAG_UNKNOWN';
+        reason = `label "${sh.cls}" resolves to no QBO class`;
+      }
+      tierTotals.set(tier, (tierTotals.get(tier) ?? 0) + dollars);
+      if (tier.startsWith('FLAG')) {
+        flags.push({
+          paymentId: r.paymentId, worker: r.worker, fundingDate: r.fundingDates[0] ?? '',
+          amount: round2(dollars), label: String(sh.cls), qboClass: lc?.fqn ?? '', method: sh.method,
+          tier, reason,
+        });
+      }
+    }
+  }
+  flags.sort((a, b) => Number(b.amount) - Number(a.amount));
+
+  // grade invoices
+  const famOK = (cust: string, cls: string): boolean => {
+    const c = cust.toLowerCase();
+    const k = cls.toLowerCase();
+    if (/^venue\s*smart/.test(c)) return k.startsWith('venue smart') || k === '';
+    if (/^indeed flex/.test(c)) return k.startsWith('indeed flex');
+    if (/^sodexo/.test(c)) return k === 'sodexo';
+    return true;
+  };
+  const invoiceFlags: Array<Record<string, unknown>> = [];
+  for (const l of invLines) {
+    let reason = '';
+    if (!l.cls && Math.abs(l.amt) > 0.01) reason = 'UNCLASSED line';
+    else if (l.cls === 'Venue Smart' && !/non factored/i.test(l.desc)) reason = 'parked on VS parent';
+    else if (l.cls && !famOK(l.cust, l.cls)) reason = `class family mismatch (customer "${l.cust}")`;
+    if (reason) invoiceFlags.push({ date: l.date, doc: l.doc, customer: l.cust, amount: round2(l.amt), cls: l.cls, reason });
+  }
+
+  // ratio sanity
+  const ratios: Array<Record<string, unknown>> = [];
+  const allCls = new Set([...revByClass.keys(), ...laborByClass.keys()]);
+  for (const c of [...allCls].sort()) {
+    const rev = revByClass.get(c) ?? 0;
+    const lab = laborByClass.get(c) ?? 0;
+    if (rev < 500 && lab < 500) continue;
+    const ratio = lab > 0 ? rev / lab : null;
+    let verdict = 'OK';
+    if (lab > 500 && rev === 0) verdict = 'LABOR-NO-REVENUE';
+    else if (rev > 500 && lab === 0) verdict = 'REVENUE-NO-LABOR';
+    else if (ratio !== null && ratio < 1.15) verdict = 'UNDER-BILLED?';
+    else if (ratio !== null && ratio > 2.2) verdict = 'LABOR-MISSING?';
+    ratios.push({ cls: c, revenue: round2(rev), labor: round2(lab), ratio: ratio === null ? null : round2(ratio), verdict });
+  }
+
+  return {
+    startDate, endDate,
+    tiers: Array.from(tierTotals.entries()).map(([tier, amount]) => ({ tier, amount: round2(amount) })).sort((a, b) => b.amount - a.amount),
+    payrollFlags: flags.slice(0, 2000),
+    invoiceFlags,
+    ratios,
+    unhealthyJos,
+    invoiceLineCount: invLines.length,
+    activeClasses: classes.filter((c) => c.Active !== false).map((c) => String(c.FullyQualifiedName)).sort(),
+  };
 }
 
 /* -------------------------------------------------------------------------

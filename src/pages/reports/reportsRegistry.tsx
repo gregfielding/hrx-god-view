@@ -110,6 +110,15 @@ export const REPORTS: ReportDef[] = [
     icon: <ListAltOutlinedIcon />,
   },
   {
+    slug: 'classification-audit',
+    title: 'Classification Verification',
+    description:
+      'Every payroll dollar since May 15 graded by evidence — confirmed or flagged for manual review, with inline fix-and-freeze. Invoice class-family checks, per-class revenue/labor health, and job orders whose timesheets outrun their billing.',
+    category: 'Payroll',
+    minLevel: 7,
+    icon: <FactCheckOutlinedIcon />,
+  },
+  {
     slug: 'payroll-journal',
     title: 'Payroll Journal',
     description:
