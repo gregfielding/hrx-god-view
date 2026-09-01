@@ -1259,6 +1259,7 @@ export async function buildWireJournal(
     unresolvedGross: number;
   }
   const groups = new Map<string, WireGroup>();
+  const unattributedDetail: Array<{ paymentId: string; worker: string; fundingDate: string; entityName: string; amount: number; notes: string }> = [];
   const entitiesSnap2 = await db.collection(`tenants/${tenantId}/entities`).get();
   for (const entityDoc of entitiesSnap2.docs) {
     const entityId = entityDoc.id;
@@ -1379,12 +1380,27 @@ export async function buildWireJournal(
           g.total = round2(g.total + fAmt);
           g.payments += 1;
           const denom = resolved + unresolved;
+          const unresolvedShare = denom <= 0 ? fAmt : (fAmt * unresolved) / denom;
           if (denom <= 0) g.unresolvedGross += fAmt;
           else {
             for (const [cls, sAmt] of shares) {
               g.classGross.set(cls, (g.classGross.get(cls) ?? 0) + (fAmt * sAmt) / denom);
             }
-            g.unresolvedGross += (fAmt * unresolved) / denom;
+            g.unresolvedGross += unresolvedShare;
+          }
+          // Surface WHO makes up "Unattributed" so it can be overridden
+          // (payroll_class_overrides kind:payment/worker) instead of
+          // staying a mystery number (Greg 2026-08-31).
+          if (unresolvedShare > 0.005) {
+            unattributedDetail.push({
+              paymentId: id,
+              worker: trim(p.payeeDisplayFullName),
+              fundingDate: trim(f.fundingDate),
+              entityName,
+              amount: round2(unresolvedShare),
+              notes: ((p.earningList ?? []) as Array<Record<string, any>>)
+                .map((el) => trim(el.note)).filter(Boolean).slice(0, 3).join(' | ').slice(0, 120),
+            });
           }
         }
       }
@@ -1432,6 +1448,7 @@ export async function buildWireJournal(
     { re: /obama/i, leaf: 'Obama Presidential Viewing' },
     // Sodexo campus dining roles carry the university name, never "Sodexo".
     { re: /prairie\s*view|nc\s*a&t|carthage|stanford|\buniversity\b/i, leaf: 'Sodexo' },
+    { re: /sips\s*and\s*sounds/i, leaf: 'Black Caviar' },
     // Role-only Flex labels — no client attribution available; roll to the
     // channel parent rather than guessing a client.
     { re: /^(warehouse (associate|worker|operator|ops).*|loader\s*\/\s*crew.*|production associate.*|forklift driver.*|\d{1,2}:\d{2}.*shift)$/i, leaf: 'Indeed Flex' },
@@ -1514,6 +1531,7 @@ export async function buildWireJournal(
 
   const totalWired = round2(wires.reduce((s, w) => s + w.amount, 0));
   const totalUnattributed = round2(wires.reduce((s, w) => s + w.unattributed, 0));
+  unattributedDetail.sort((a, b) => b.amount - a.amount);
   return {
     totals: {
       wired: totalWired,
@@ -1523,6 +1541,7 @@ export async function buildWireJournal(
     },
     wires,
     byClass,
+    unattributedDetail: unattributedDetail.slice(0, 200),
   };
 }
 
