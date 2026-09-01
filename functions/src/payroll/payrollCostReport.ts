@@ -298,17 +298,23 @@ export const savePayrollVenueMapping = onCall(
         const jrows: Array<Record<string, any>> = jr.QueryResponse?.JournalEntry ?? jr.JournalEntry ?? [];
         for (const je of jrows) {
           existingDocs.add(trim(je.DocNumber));
+          const jeTags = [...trim(je.PrivateNote).matchAll(/\[wire:([^\]]+)\]/g)].map((m) => trim(m[1]));
           let jeCredit = 0;
           for (const line of (je.Line ?? []) as Array<Record<string, any>>) {
             const d = line.JournalEntryLineDetail;
             if (d?.PostingType === 'Credit' && String(d.AccountRef?.value) === ACCT && !d.ClassRef) {
               jeCredit += Number(line.Amount) || 0;
-              existingCredits.push({ date: trim(je.TxnDate), amt: Number(line.Amount) || 0, used: false });
+              // A tag-accounted JE's credit must NOT vouch for OTHER wires
+              // (2026-09-01: two distinct $212.50 wires a week apart — the
+              // ±35d window matched the second against the first's JE).
+              if (jeTags.length === 0) {
+                existingCredits.push({ date: trim(je.TxnDate), amt: Number(line.Amount) || 0, used: false });
+              }
             }
           }
-          for (const m of trim(je.PrivateNote).matchAll(/\[wire:([^\]]+)\]/g)) {
-            existingWireTags.add(trim(m[1]));
-            creditByTag.set(trim(m[1]), (creditByTag.get(trim(m[1])) ?? 0) + jeCredit);
+          for (const t of jeTags) {
+            existingWireTags.add(t);
+            creditByTag.set(t, (creditByTag.get(t) ?? 0) + jeCredit);
           }
         }
         if (jrows.length < 1000) break;
@@ -340,8 +346,11 @@ export const savePayrollVenueMapping = onCall(
         }
         docCounter.set(base, nth);
         // Tag key: fundingId alone collides for the no-funding-id aggregate
-        // group ('none' exists per entity) — suffix with the entity code.
-        const wireTag = `${trim(w.fundingId)}@${ent}`;
+        // group ('none' exists per entity AND per period — May's aggregate
+        // is different money from June's) — qualify 'none' with the wire's
+        // month and always suffix the entity code.
+        const fid = trim(w.fundingId);
+        const wireTag = `${fid === 'none' ? `none-${w.fundingDate.slice(0, 7)}` : fid}@${ent}`;
         if (existingWireTags.has(wireTag)) {
           // Report drift instead of hiding it: the wire total in Everee has
           // moved since its JE was posted (late voids/corrections, or a
