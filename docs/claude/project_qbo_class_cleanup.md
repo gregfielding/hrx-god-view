@@ -129,6 +129,27 @@ Future option on file: AEG Oakland invoices carry per-event POs
 ("Summer Walker 6.28.26") if per-event subclasses under Oakland are ever
 wanted.
 
+## The 4200 JE fixed (2026-08-31, Greg approved after investigation)
+
+Greg's GL-reorg explanation checked out and the line-level investigation
+settled the rest: 4200 ("Staffing Revenue — Recurring") received $1.31M of
+invoice revenue Jan–Jun; when Tabitha wrote `Rev 063026` those invoices were
+largely UNCLASSED, so her classed credit legs WERE the classification. But
+today's invoice-level classing (PO reclass, RS3 merge, AEG merge)
+reintroduced the same classes on the invoices — making her JE a pure
+double-count (+$535K VS, +$48K PoP, +$33K Oakland).
+
+Fix executed: the three unclassed DEBIT legs classed to mirror their credits
+(Venue Smart / Proof of Pudding / Legends:Oakland — the AEG credit had been
+merged to Oakland hours earlier). Verified: every class nets to 0.00 within
+the JE; the ±$273,898.65 self-canceling pair left as-is.
+
+**P&L result: Not-Specified INCOME went from −$509,048 to +$77,220** — which
+is exactly the remaining known unclassed pool (14 pre-May no-PO VS invoices
+$69,595 + 13 held Indeed Flex $7,700). The income side of the books now
+reconciles precisely to the open-items list. Remaining Not-Specified is COGS
+$1.2M + Expenses $513K = the wire-split push (Phase 4).
+
 ## Open
 
 - 58 invoices / $303,490 still on the bare VS parent: 17 stay (non-factored),
