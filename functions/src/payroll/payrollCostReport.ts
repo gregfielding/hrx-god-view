@@ -1407,6 +1407,8 @@ export async function buildWireJournal(
     // BTS = Black Caviar's Stanford gig (Greg 2026-09-01, reversing the
     // earlier Oakland ruling once the "BTS Stanford" JO surfaced).
     { re: /\bbts\b/i, leaf: 'Black Caviar' },
+    // "18.12 Hours - Kid Cudi" (May) — the class is named "Kid Concert".
+    { re: /kid\s*cudi/i, leaf: 'Kid Concert' },
     // Sodexo campus dining roles carry the university name, never "Sodexo".
     { re: /prairie\s*view|nc\s*a&t|carthage|stanford|\buniversity\b/i, leaf: 'Sodexo' },
     { re: /sips\s*and\s*sounds/i, leaf: 'Black Caviar' },
