@@ -263,6 +263,50 @@ function tripleKey(dateIso: string, cents: number, merchant: string): string {
   return `${dateIso}|${cents}|${merchant.toLowerCase()}`;
 }
 
+/**
+ * Push the live QBO class tree into the Expensify workspace as its TAG
+ * list (Greg 2026-08-31, after the class restructure): workers can only
+ * classify correctly if the dropdown mirrors the books. Tags are the
+ * FullyQualifiedNames of ACTIVE classes, so the write-back's tag→class
+ * resolution is exact by construction. `action: 'replace'` keeps the list
+ * canonical — retired classes (RS3, Austin, AEG…) disappear from the
+ * picker while historical expenses keep their old tag strings.
+ */
+export async function pushQboClassesAsExpensifyTags(tenantId: string): Promise<{ pushed: number }> {
+  const creds = expensifyCreds();
+  if (!creds) throw new Error('Expensify credentials not configured');
+  const cfg = (await cfgRef(tenantId).get()).data() ?? {};
+  const policyID = trim(cfg.policyID);
+  if (!policyID) throw new Error('No Expensify policyID configured');
+
+  const classRes = await qboQuery(
+    tenantId,
+    'SELECT Id, Name, FullyQualifiedName FROM Class WHERE Active = true MAXRESULTS 1000',
+  );
+  const classes = (classRes.Class ?? []) as Array<Record<string, any>>;
+  const tags = classes
+    .map((c) => trim(c.FullyQualifiedName) || trim(c.Name))
+    .filter(Boolean)
+    .sort()
+    .map((name) => ({ name }));
+
+  const body = new URLSearchParams({
+    requestJobDescription: JSON.stringify({
+      type: 'update',
+      credentials: creds,
+      inputSettings: { type: 'policy', policyID },
+      tags: { action: 'replace', source: 'inline', data: tags },
+    }),
+  });
+  const res = await fetch(EXPENSIFY_API, { method: 'POST', body });
+  const text = await res.text();
+  if (!res.ok || /error/i.test(text.slice(0, 200))) {
+    throw new Error(`Expensify tag update failed (${res.status}): ${text.slice(0, 300)}`);
+  }
+  logger.info('[expensify] tag list replaced from QBO classes', { policyID, tags: tags.length });
+  return { pushed: tags.length };
+}
+
 export async function runExpensifyClassWriteback(
   tenantId: string,
   opts?: { dryRun?: boolean },
@@ -595,6 +639,13 @@ export const expensifyClassWritebackCron = onSchedule(
         const qbo = (await db.doc(`tenants/${tenantRef.id}/integrations/quickbooks`).get()).data();
         if (qbo?.connected !== true) continue;
         if (!(await cfgRef(tenantRef.id).get()).exists) continue;
+        // Keep the Expensify tag picker mirroring the live class tree
+        // (Greg 2026-08-31) — a failed tag push must not block write-back.
+        try {
+          await pushQboClassesAsExpensifyTags(tenantRef.id);
+        } catch (err) {
+          logger.error('[expensify] tag sync failed', { tenantId: tenantRef.id, error: String(err) });
+        }
         await runExpensifyClassWriteback(tenantRef.id);
       } catch (err) {
         logger.error('[expensify] class write-back tenant run failed', {
