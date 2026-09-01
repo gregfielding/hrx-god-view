@@ -399,3 +399,31 @@ accountId) → ACCOUNT_CLASS_RULES regex → JO name.
 creation (JO# tag or ISO dates in the Everee note is what feeds the gold
 path). The pay flow should enforce that — the report can only recover
 what was recorded.
+
+## Steady state reached — June 1 forward (2026-09-01)
+
+Greg's rulings: **May de-scoped** (~$62K stays unattributed, May never
+pushed); pre-Everee (Jan–Apr, TempWorks/Lone Oak) ignored; focus June 1
+forward. The last 6 unclassifiable June+ payments ($1,141.54) were
+classified by Greg in chat → payment-kind overrides
+(source `greg_chat_2026-09-01`): Gaymon→Cort, Sutton→Suenos,
+Fajardo→Pokemon GO, Hill→Cort, Murray→FIFA KC, Duran→MN Yacht Club.
+**June 1 forward is now 100% attributed.** Affected JEs patched.
+
+The durable system:
+1. **Anchors at source**: batch worked-shifts, off-cycle payables, and
+   adjustment payables all stamp `JO#<n>` and/or the ISO work date into
+   the Everee note. **Job order is REQUIRED on off-cycle payments**
+   (backend rejects; both forms block; ticket corrections derive the JO
+   from the worker's timesheet for that date).
+2. **Nightly ledger freeze**: `maybeRunDailyLedgerFreeze` rides
+   reconcileTimesheetBatchesCron (once-per-day function_runs claim,
+   cron now 1GiB); freezes fully-resolved payments ≥3 days mature into
+   `payroll_payment_attributions`. Frozen shares are the attribution of
+   record; only a payment-kind override supersedes.
+3. **QBO push**: wire-tag idempotent; drift surfaces as
+   `allocated_amount_drift` rows (0730/0806/0820 EVT still flagged for
+   Tabitha — Everee keeps adjusting those wire totals).
+
+Remaining human loop: monthly Push to QBO click + any new unattributed
+rows in the report (rare — payments made directly in Everee's UI).
