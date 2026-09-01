@@ -19,6 +19,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Alert,
   Autocomplete,
+  Snackbar,
   Box,
   Button,
   Card,
@@ -98,6 +99,11 @@ const ClassificationAuditPage: React.FC = () => {
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [resolved, setResolved] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
+  // "Apply to all" toast (Greg 2026-09-01): after one save, offer the same
+  // class to every other flagged row sharing the same current guess —
+  // the timesheet-layout pattern.
+  const [bulkOffer, setBulkOffer] = useState<{ cls: string; guess: string; rows: PayrollFlag[] } | null>(null);
+  const [bulkApplying, setBulkApplying] = useState(false);
 
   const run = async (): Promise<void> => {
     if (!tenantId) return;
@@ -126,10 +132,41 @@ const ClassificationAuditPage: React.FC = () => {
       const fn = httpsCallable(functions, 'savePayrollVenueMapping', { timeout: 60000 });
       await fn({ tenantId, action: 'resolveClassificationFlag', paymentId: flag.paymentId, class: cls, worker: flag.worker });
       setResolved((r) => ({ ...r, [key]: cls }));
+      if (data) {
+        const guessOf = (f: PayrollFlag): string => f.qboClass || f.label || '';
+        const guess = guessOf(flag);
+        const peers = data.payrollFlags.filter((f) => {
+          const k = `${f.paymentId}|${f.label}`;
+          return k !== key && !resolved[k] && guessOf(f) === guess && guess !== '';
+        });
+        setBulkOffer(peers.length > 0 ? { cls, guess, rows: peers } : null);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving((s) => ({ ...s, [key]: false }));
+    }
+  };
+
+  const applyBulk = async (): Promise<void> => {
+    if (!tenantId || !bulkOffer) return;
+    setBulkApplying(true);
+    try {
+      const fn = httpsCallable(functions, 'savePayrollVenueMapping', { timeout: 120000 });
+      await fn({
+        tenantId, action: 'resolveClassificationFlags', class: bulkOffer.cls,
+        rows: bulkOffer.rows.map((f) => ({ paymentId: f.paymentId, worker: f.worker })),
+      });
+      setResolved((r) => {
+        const next = { ...r };
+        for (const f of bulkOffer.rows) next[`${f.paymentId}|${f.label}`] = bulkOffer.cls;
+        return next;
+      });
+      setBulkOffer(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBulkApplying(false);
     }
   };
 
@@ -383,6 +420,19 @@ const ClassificationAuditPage: React.FC = () => {
           )}
         </>
       )}
+      <Snackbar
+        open={Boolean(bulkOffer)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        onClose={() => setBulkOffer(null)}
+        message={bulkOffer ? `Saved. ${bulkOffer.rows.length} more flagged rows share the guess "${bulkOffer.guess}".` : ''}
+        action={
+          bulkOffer ? (
+            <Button color="secondary" size="small" disabled={bulkApplying} onClick={() => void applyBulk()}>
+              {bulkApplying ? 'Applying…' : `Apply "${bulkOffer.cls}" to all ${bulkOffer.rows.length}`}
+            </Button>
+          ) : undefined
+        }
+      />
     </Box>
   );
 };

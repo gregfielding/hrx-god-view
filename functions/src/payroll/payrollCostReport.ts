@@ -258,6 +258,54 @@ export const savePayrollVenueMapping = onCall(
       return { ok: true, ...(await buildClassificationAudit(tenantId, startDate, endDate)) };
     }
 
+    // Screening cost allocation (Greg 2026-09-01): AccuSource charges →
+    // 5300 per class, matched per screen. Level 7; dryRun default true.
+    if (action === 'pushScreeningAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushScreeningAllocations } = await import('./screeningAllocations');
+      return await pushScreeningAllocations(tenantId, request.data?.dryRun !== false);
+    }
+
+    // Batch resolve (Greg 2026-09-01: "apply to all" — one confirmed
+    // guess applied to every flagged row sharing it, like the timesheet
+    // layout). Same writes as the single action, chunked.
+    if (action === 'resolveClassificationFlags') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const rows = Array.isArray(request.data?.rows) ? (request.data.rows as Array<Record<string, unknown>>) : [];
+      if (rows.length === 0 || rows.length > 500) {
+        throw new HttpsError('invalid-argument', 'rows required (1–500 per call).');
+      }
+      const cls = trim(request.data?.class);
+      if (!cls) throw new HttpsError('invalid-argument', 'class is required.');
+      let done = 0;
+      for (let i = 0; i < rows.length; i += 200) {
+        const batch = db.batch();
+        for (const r of rows.slice(i, i + 200)) {
+          const paymentId = trim(r.paymentId);
+          if (!paymentId) continue;
+          const worker = trim(r.worker);
+          batch.set(db.doc(`tenants/${tenantId}/payroll_class_overrides/payment_${paymentId}`), {
+            kind: 'payment', paymentId, class: cls, worker: worker || null,
+            source: 'classification_audit_page_bulk', createdBy: request.auth?.uid ?? null,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          batch.set(db.doc(`tenants/${tenantId}/payroll_payment_attributions/${paymentId}`), {
+            paymentId, worker: worker || null, entityId: null,
+            shares: [{ cls, amt: 1, method: 'payment_override' }],
+            resolvedWeight: 1, unresolvedWeight: 0, firstFundingDate: null,
+            source: 'classification_audit_page_bulk',
+            frozenAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          done += 1;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await batch.commit();
+      }
+      return { ok: true, resolved: done, class: cls };
+    }
+
     // Resolve one flagged payment from the verification page: writes the
     // payment-kind override (trumps everything) and refreezes the ledger
     // record so the answer is permanent.
@@ -1525,6 +1573,18 @@ export async function maybeRunWeeklyClassificationHealth(
           `\nReview + fix inline: https://hrxone.com/reports/classification-audit`,
       );
     }
+    // Screening allocation rides the weekly run — idempotent per charge,
+    // mature charges only, ~$8/screen amounts (Greg 2026-09-01).
+    try {
+      const { pushScreeningAllocations } = await import('./screeningAllocations');
+      const scr = (await pushScreeningAllocations(tenantId, false)) as Record<string, any>;
+      const created = ((scr.charges ?? []) as Array<Record<string, any>>).filter((c) => c.status === 'created');
+      if (created.length && postText) {
+        await postText(`🧾 Screening allocation: posted ${created.length} AccuSource reclass entr${created.length === 1 ? 'y' : 'ies'} (5010 → 5300 per class).`);
+      }
+    } catch (e) {
+      console.error('[classificationHealth] screening allocation failed', { error: String(e) });
+    }
     await claimRef.set(
       { finishedAt: admin.firestore.FieldValue.serverTimestamp(), flagged: payrollFlags.length, unhealthyJos: unhealthyJos.length },
       { merge: true },
@@ -1538,6 +1598,25 @@ export async function maybeRunWeeklyClassificationHealth(
     );
   }
 }
+
+export const ACCOUNT_CLASS_RULES: Array<{ re: RegExp; leaf: string }> = [
+  { re: /^sodexo/i, leaf: 'Sodexo' },
+  { re: /^cort\b/i, leaf: 'Cort' },
+  { re: /^domino/i, leaf: "Domino's" },
+  { re: /^continental battery/i, leaf: 'Continental Battery Systems, Inc.' },
+  { re: /^black caviar/i, leaf: 'Black Caviar' },
+  { re: /^proof of the pudding/i, leaf: 'Proof of Pudding' },
+  { re: /^ors nasco/i, leaf: 'ORS Nasco' },
+  { re: /^purolator/i, leaf: 'Purolator International' },
+  { re: /^hyatt/i, leaf: 'Hyatt Hotels Corporation' },
+  { re: /^carrier/i, leaf: 'Carrier Enterprise' },
+  { re: /^mattress firm/i, leaf: 'Mattress Firm' },
+  { re: /^ontrac/i, leaf: 'OnTrac' },
+  { re: /^g6\b/i, leaf: 'G6' },
+  // One class for all Contigo weddings/galas — no per-event split
+  // (Greg 2026-09-01).
+  { re: /^contigo/i, leaf: 'Contigo Catering' },
+];
 
 /* -------------------------------------------------------------------------
  * Payroll Journal by QBO class (Greg 2026-08-19): the July wire-recon
@@ -1587,24 +1666,7 @@ export async function buildWireJournal(
   // class is the CLIENT, and JO names are roles or even the festival being
   // catered ("Lollapalooza" under Black Caviar Catering must NOT land on
   // Venue Smart:Lollapalooza). Label account-kind JOs by their account.
-  const ACCOUNT_CLASS_RULES: Array<{ re: RegExp; leaf: string }> = [
-    { re: /^sodexo/i, leaf: 'Sodexo' },
-    { re: /^cort\b/i, leaf: 'Cort' },
-    { re: /^domino/i, leaf: "Domino's" },
-    { re: /^continental battery/i, leaf: 'Continental Battery Systems, Inc.' },
-    { re: /^black caviar/i, leaf: 'Black Caviar' },
-    { re: /^proof of the pudding/i, leaf: 'Proof of Pudding' },
-    { re: /^ors nasco/i, leaf: 'ORS Nasco' },
-    { re: /^purolator/i, leaf: 'Purolator International' },
-    { re: /^hyatt/i, leaf: 'Hyatt Hotels Corporation' },
-    { re: /^carrier/i, leaf: 'Carrier Enterprise' },
-    { re: /^mattress firm/i, leaf: 'Mattress Firm' },
-    { re: /^ontrac/i, leaf: 'OnTrac' },
-    { re: /^g6\b/i, leaf: 'G6' },
-    // One class for all Contigo weddings/galas — no per-event split
-    // (Greg 2026-09-01).
-    { re: /^contigo/i, leaf: 'Contigo Catering' },
-  ];
+  // (ACCOUNT_CLASS_RULES hoisted to module scope — shared with screeningAllocations.)
   // Mapping-driven account classification (Greg 2026-09-01: "the company
   // ID on the assignment should drive classification for most scenarios"):
   // any class mapped account-kind in qbo_class_mappings classifies that
