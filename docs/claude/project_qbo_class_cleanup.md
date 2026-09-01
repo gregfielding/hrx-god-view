@@ -427,3 +427,16 @@ The durable system:
 
 Remaining human loop: monthly Push to QBO click + any new unattributed
 rows in the report (rare — payments made directly in Everee's UI).
+
+## TempWorks-straddle pattern (2026-09-01, Continental Battery pilot)
+
+Clients whose season crossed the TempWorks→Everee cutover show QBO revenue
+with no 5010 labor — the wage cash left via TempWorks (Everee holds only
+$0 IMPORTED stubs; e.g. Demetrius Lewis (FL), Continental 4/27–5/16).
+Fix pattern: a "TW Alloc {client}" JE — debit 5010 classed to the client,
+credit 5010 unclassed, wages derived from the client invoices at the
+assignment's pay/bill ratio. Pilot: JE 8800 "TW Alloc Continental"
+$1,521.11 (80.06 hrs × $19; SBUS 32800/33725/34093 ÷ $26.22 bill rate).
+JE carries a [wire:...@MANUAL] tag so its unclassed credit can't
+false-vouch in the push heuristic. NOTE: two DIFFERENT workers named
+Demetrius Lewis exist (FL b.1990 / Chicago b.1980) — NOT duplicates.
