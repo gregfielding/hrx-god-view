@@ -46,10 +46,13 @@ const db = admin.firestore();
 const trim = (v: unknown): string => String(v ?? '').trim();
 const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
-const SUBJECT_PREFIX = /purchase\s+order\s+from\s+venuesmart\s+llc\s*-\s*/i;
+const SUBJECT_PREFIX = /^(?:fwd:\s*)?purchase order from venue\s?smart llc\s*[-–—]?\s*/i;
 // after:2026/01/01 — the class cleanup scoped to 2026 books (Greg); 2025
 // POs (e.g. #1179-#1188, all 2025 concerts) must not spawn classes.
-const GMAIL_QUERY = 'subject:"Purchase Order from VenueSmart LLC" after:2026/01/01';
+// Both spellings — Angie's system emits "VenueSmart LLC" AND "Venue Smart
+// LLC" (the 2026 March Madness PO used the two-word form and was missed
+// until Greg spotted it, 2026-09-01).
+const GMAIL_QUERY = '{subject:"Purchase Order from VenueSmart LLC" subject:"Purchase Order from Venue Smart LLC"} after:2026/01/01';
 
 /**
  * "Purchase Order from VenueSmart LLC - 2026 Jimmy Eat World - Moody"
@@ -60,7 +63,9 @@ const GMAIL_QUERY = 'subject:"Purchase Order from VenueSmart LLC" after:2026/01/
 export function parsePoSubject(subject: string): { event: string; venue: string } | null {
   const s = trim(subject);
   if (!SUBJECT_PREFIX.test(s)) return null;
-  const rest = s.replace(SUBJECT_PREFIX, '').trim();
+  // "Revised, 2026 RV SuperShow" = a revision of the same event/PO —
+  // never a separate class (2026-09-01).
+  const rest = s.replace(SUBJECT_PREFIX, '').replace(/^revised[,:]?\s*/i, '').replace(/\s*\(revised\)\s*$/i, '').trim();
   if (!rest) return null;
   const segments = rest.split(/\s+-\s+/).map(trim).filter(Boolean);
   if (segments.length === 0) return null;

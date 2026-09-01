@@ -1908,6 +1908,8 @@ export async function buildWireJournal(
     { re: /\bbts\b/i, leaf: 'Black Caviar' },
     // "18.12 Hours - Kid Cudi" (May) — the class is named "Kid Concert".
     { re: /kid\s*cudi/i, leaf: 'Kid Concert' },
+    // Final Four weekend at Lucas Oil = VS PO 2105 (Greg 2026-09-01).
+    { re: /final\s*four|march\s*madness/i, leaf: '2026 March Madness' },
     // Sodexo campus dining roles carry the university name, never "Sodexo".
     { re: /prairie\s*view|nc\s*a&t|carthage|stanford|\buniversity\b/i, leaf: 'Sodexo' },
     { re: /sips\s*and\s*sounds/i, leaf: 'Black Caviar' },
