@@ -221,6 +221,30 @@ skipped; idempotent by DocNumber. Weekly ritual: download agency-invoices CSV
 Flex emails carry NO billing notifications (checked) — CSV is the only feed.
 `Indeed Flex:OnTrac` + `:Mattress Firm` pre-created for the ramp.
 
+## Phase 4 SHIPPED — wire allocations push to QBO (2026-08-31, late)
+
+The census that unlocked it: Everee wires land as UNCLASSED bank-feed
+Purchases to "Everee Inc." on 5010 Direct Labor ($1.52M of 2026 postings —
+singles up to $157K). **Tabitha had already validated the fix pattern by
+hand**: her July "EV Pay Alloc 0701/0708/0716" JEs credit 5010 unclassed and
+debit classed lines — built from the /payroll-costs worksheets. That was the
+"month of manual validation" the original P4 plan required.
+
+Built: `pushWireAllocations` action on savePayrollVenueMapping + a **"Push
+to QBO"** button on `/reports/payroll-journal` (dry-run confirm → execute).
+Per wire: one reallocation JE (DocNumber `EV Alloc {MMDD} {ENT}`, ≤21 chars)
+crediting 5010 unclassed for the wire amount and debiting 5010 per class
+from buildWireJournal's penny-exact splits; unattributed remainder stays
+honestly unclassed. Idempotent: skips wires with an existing allocation JE —
+matched by DocNumber OR any existing 5010-unclassed JE credit within $1 of
+the wire (catches Tabitha's July entries).
+
+**Next step is Greg's click**: /reports/payroll-journal → pick range (May–
+Aug) → Push to QBO → review the dry-run list → confirm. Expected effect:
+the $1.2M Not-Specified COGS drains into classes; Oakland/VS/Sodexo Direct
+Labor becomes real; gross margin by client is finally answerable end to end.
+Go-forward: run after each week's wires (or automate onto a cron later).
+
 ## Open
 
 - 58 invoices / $303,490 still on the bare VS parent: 17 stay (non-factored),
