@@ -82,8 +82,8 @@ switch: `integrations/inboxChiefOfStaff.venuesmartPoSweep === false`.
 
 - 58 invoices / $303,490 still on the bare VS parent: 17 stay (non-factored),
   16 + 25 wait on **Greg's PO-column CSV export** for deterministic matching.
-- `Venue Smart:2026 VS Texas Home Office` auto-created from PO #1238 — not an
-  event; accounting to keep/remap (overhead?).
+- ~~VS Texas Home Office~~ resolved (Greg 2026-08-31): stays a normal
+  Venue Smart subclass like any event — already created/mapped that way.
 - Phase 3 (drain the $2.22M Not-Specified pool: −$509K unclassed income needs
   a transaction drill-down), Phase 4 (wire-split journal push), Phase 5
   (QBO "warn on unclassed transaction" setting + invoice auto-classing —
