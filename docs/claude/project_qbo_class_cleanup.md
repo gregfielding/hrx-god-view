@@ -197,6 +197,30 @@ Angie's remittances, and the weekly billing threads. Findings:
   Moody concert run (Don Toliver/Subtronics/Mau P/Junior H/Miguel).
   Do NOT guess amounts into the books.
 
+## Austin decoded + retired; Flex invoice mirror shipped (2026-08-31, late)
+
+**Austin was a GEOGRAPHY class** (the Austin, TX branch — early-year scheme),
+not a client; the mapping page's "Harmony Charter" suggestion was name-match
+noise. Zero mixed-class docs, but its revenue was client work classed under
+the location: reclassed **91 txns / $232,558** → Proof of Pudding $125,015
+(the RS3-family Austin venues: Dell Diamond, Kizer & Crystal, H-E-B Center),
+Contigo $91,389, Indeed Flex $7,894, G6 $4,317, Black Caviar $3,944 — zero
+revenue left. Class deactivated per Greg. Residue: ~$25.6K of Austin-branch
+EXPENSES (airfare/Uber/fuel/Craigslist/vendors) remain on the inactive class
+("Austin (deleted)" in reports) — optional later sweep to `National`
+(overhead) if wanted.
+
+**Flex invoice mirror** (the Fieldglass/Sodexo pattern, Greg's ask): new
+`mirrorFlexInvoices` action on savePayrollVenueMapping + a "Mirror Flex CSV"
+upload on /reports/qbo-classes (dry-run confirm → execute). Finalized portal
+rows missing in QBO are created (customer Indeed Flex Inc, item "Staffing",
+venue as description, class `Indeed Flex:{client}`, new-client subclasses
+auto-created); existing ones amount-verified + class-fixed; UPCOMING/pre-2026
+skipped; idempotent by DocNumber. Weekly ritual: download agency-invoices CSV
+→ drop on the button. Replaces Mark's manual keying (12-day lag observed).
+Flex emails carry NO billing notifications (checked) — CSV is the only feed.
+`Indeed Flex:OnTrac` + `:Mattress Firm` pre-created for the ramp.
+
 ## Open
 
 - 58 invoices / $303,490 still on the bare VS parent: 17 stay (non-factored),
