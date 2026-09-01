@@ -90,6 +90,30 @@ switch: `integrations/inboxChiefOfStaff.venuesmartPoSweep === false`.
 - A QBO P&L has Income / **COGS** / Expenses groups — auditing "Expenses"
   alone misses the payroll money (COGS was 60% unclassed).
 
+## PO-grid reclass (2026-08-31, evening — the pipeline closed)
+
+The QBO invoices GRID (Sales → Invoices, gear → PO column) displays the
+Advanced custom field the API and classic reports cannot see. Read via
+Greg's logged-in Chrome (claude-in-chrome, read-only + pagination), 594
+invoices/6 pages → complete Num→PO map. NOTE: the classic "Invoice List"
+report's Purchase Order column exports EMPTY — only the grid shows it.
+
+Executed off that map: **20 invoices / $80,206** reclassed to event
+subclasses (zero unresolved); renames `20226 LIV Golf INDY`→`2026 LIV Golf
+Indy` and `Obama Presedential`→`Presidential`; `26 USGA Women's Open`
+re-parented under Venue Smart; 5 new event classes created (Rolling Loud
+Orlando, IPW/VIP Beach Party, Motionless in White, Coral Reefer Band,
+LIV Golf VA). Invoice PO strings mix VenueSmart email PO numbers (#12xx —
+resolvable via venuesmart_po_classes) and another #21xx-#22xx series; the
+event NAME is the reliable key either way.
+
+**Terminal state of the VS parent pool**: 17 non-factored (stay) + 21
+parent-classed + 14 unclassed pre-May invoices (~$163K) whose PO fields
+are genuinely EMPTY — PO discipline began May 2026; only Rosa/Angie can
+assign those from memory. Bonus: **AEG Oakland invoices carry per-event
+POs too** ("Summer Walker 6.28.26") — same treatment available when the
+Legends/AEG tree is settled.
+
 ## Open
 
 - 58 invoices / $303,490 still on the bare VS parent: 17 stay (non-factored),
