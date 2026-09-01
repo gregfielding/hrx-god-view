@@ -267,6 +267,15 @@ export const savePayrollVenueMapping = onCall(
       return await pushScreeningAllocations(tenantId, request.data?.dryRun !== false);
     }
 
+    // True-up posted allocation JEs to CURRENT attribution (Greg
+    // 2026-09-01): flag fixes flow to QBO without re-pushing. Level 7.
+    if (action === 'trueUpAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { trueUpAllocationJes } = await import('./allocationTrueUp');
+      return await trueUpAllocationJes(tenantId, request.data?.dryRun !== false);
+    }
+
     // Revenue-account rule (Greg 2026-09-01): monthly 4200→4100 reclass
     // for events-family revenue misposted via item mappings. Level 7.
     if (action === 'pushRevenueAccountReclass') {
@@ -1581,6 +1590,17 @@ export async function maybeRunWeeklyClassificationHealth(
           (badRatios.length ? `\n⚠️ Class health (rev÷labor outside the staffing band):\n${ratioLines}\n` : '') +
           `\nReview + fix inline: https://hrxone.com/reports/classification-audit`,
       );
+    }
+    // Posted-JE true-up rides the weekly run: verification-page fixes
+    // reach QBO within the week without any push (Greg 2026-09-01).
+    try {
+      const { trueUpAllocationJes } = await import('./allocationTrueUp');
+      const tu = (await trueUpAllocationJes(tenantId, false)) as Record<string, any>;
+      if (Number(tu.patched) > 0 && postText) {
+        await postText(`🩹 Allocation true-up: re-split ${tu.patched} posted payroll JE(s) to current attribution.`);
+      }
+    } catch (e) {
+      console.error('[classificationHealth] true-up failed', { error: String(e) });
     }
     // Revenue-account rule rides the weekly run too — one idempotent
     // monthly 4200→4100 reclass JE per matured month (Greg 2026-09-01).
