@@ -1446,6 +1446,8 @@ export async function buildWireJournal(
   }
   const groups = new Map<string, WireGroup>();
   const unattributedDetail: Array<{ paymentId: string; worker: string; fundingDate: string; entityName: string; amount: number; notes: string }> = [];
+  const auditMethod = new Map<string, number>();
+  const auditMethodClass = new Map<string, Map<string, number>>();
   const entitiesSnap2 = await db.collection(`tenants/${tenantId}/entities`).get();
   for (const entityDoc of entitiesSnap2.docs) {
     const entityId = entityDoc.id;
@@ -1479,11 +1481,15 @@ export async function buildWireJournal(
         const uid = trim(p.employee?.externalWorkerId);
 
         const shares = new Map<string, number>();
+        // Audit trail (Greg 2026-09-01): every dollar declares WHICH
+        // resolution path classed it, so the logic can be inspected.
+        const shareDetail: Array<{ cls: string; amt: number; method: string }> = [];
         let resolved = 0;
         let unresolved = 0;
-        const addShare = (cls: string, amt: number): void => {
+        const addShare = (cls: string, amt: number, method = 'unknown'): void => {
           if (amt <= 0) return;
           shares.set(cls, (shares.get(cls) ?? 0) + amt);
+          shareDetail.push({ cls, amt, method });
           resolved += amt;
         };
         // The worker's own timesheet classes for this pay period — computed
@@ -1516,7 +1522,7 @@ export async function buildWireJournal(
           const note = trim(el.note);
           const joTag = note.match(/JO#(\d+)/);
           if (joTag && joNameByNumber.has(joTag[1])) {
-            addShare(joNameByNumber.get(joTag[1])!, amt);
+            addShare(joNameByNumber.get(joTag[1])!, amt, 'jo_number_tag');
             continue;
           }
           const dates = note.match(/\d{4}-\d{2}-\d{2}/g) ?? [];
@@ -1525,38 +1531,51 @@ export async function buildWireJournal(
             .filter((c): c is string => Boolean(c));
           if (classes.length > 0) {
             const per = amt / classes.length;
-            classes.forEach((c) => addShare(c, per));
+            classes.forEach((c) => addShare(c, per, 'note_dates_x_index'));
             continue;
           }
           // Worked exactly one client this period → that's the class,
           // whatever the note calls the gig.
           if (soleClass) {
-            addShare(soleClass, amt);
+            addShare(soleClass, amt, 'sole_assignment_class');
             continue;
           }
           const venueCls = resolveVenueText(note);
-          if (venueCls) addShare(venueCls, amt);
+          if (venueCls) addShare(venueCls, amt, 'note_venue_text');
           else {
             // Last resort: the class-rename rulings apply to raw notes too.
             const alias = WIRE_LABEL_ALIASES.find((a) => a.re.test(note));
-            if (alias) addShare(alias.leaf, amt);
+            if (alias) addShare(alias.leaf, amt, 'note_alias');
             else unresolved += amt;
+          }
+        }
+        // Worker-level overrides (Greg's 2026-08-14 CSV fill) answer what
+        // the pipeline can't otherwise resolve — they NO LONGER trump
+        // payment-specific signals: a worker who moved to a new event
+        // after the CSV was filled was getting the old event forever
+        // (audit 2026-09-01 — 323 worker docs steering $100Ks).
+        if (unresolved > 0) {
+          const wov = workerOverrides.get(trim(p.payeeDisplayFullName).toLowerCase().replace(/\s+/g, ' '));
+          if (wov) {
+            addShare(wov, unresolved, 'worker_override');
+            unresolved = 0;
           }
         }
         // Pay-period fallback for what's left (multi-class periods):
         // distribute across the period's classes by day-count.
         if (unresolved > 0 && periodClasses.size > 0) {
           const totalN = Array.from(periodClasses.values()).reduce((s, n) => s + n, 0);
-          for (const [cls, n] of periodClasses) addShare(cls, (unresolved * n) / totalN);
+          for (const [cls, n] of periodClasses) addShare(cls, (unresolved * n) / totalN, 'period_day_split');
           unresolved = 0;
         }
-        // Greg's explicit answer beats every heuristic.
-        const ov =
-          paymentOverrides.get(id) ??
-          workerOverrides.get(trim(p.payeeDisplayFullName).toLowerCase().replace(/\s+/g, ' '));
-        if (ov) {
+        // Payment-level override: an explicit per-payment human answer
+        // still beats everything.
+        const pov = paymentOverrides.get(id);
+        if (pov) {
           shares.clear();
-          shares.set(ov, 1);
+          shares.set(pov, 1);
+          shareDetail.length = 0;
+          shareDetail.push({ cls: pov, amt: 1, method: 'payment_override' });
           resolved = 1;
           unresolved = 0;
         }
@@ -1588,7 +1607,15 @@ export async function buildWireJournal(
               g.classGross.set(cls, (g.classGross.get(cls) ?? 0) + (fAmt * sAmt) / denom);
             }
             g.unresolvedGross += unresolvedShare;
+            for (const sd of shareDetail) {
+              const scaled = (fAmt * sd.amt) / denom;
+              auditMethod.set(sd.method, (auditMethod.get(sd.method) ?? 0) + scaled);
+              let mc = auditMethodClass.get(sd.method);
+              if (!mc) { mc = new Map(); auditMethodClass.set(sd.method, mc); }
+              mc.set(sd.cls, (mc.get(sd.cls) ?? 0) + scaled);
+            }
           }
+          auditMethod.set('unattributed', (auditMethod.get('unattributed') ?? 0) + unresolvedShare);
           // Surface WHO makes up "Unattributed" so it can be overridden
           // (payroll_class_overrides kind:payment/worker) instead of
           // staying a mystery number (Greg 2026-08-31).
@@ -1714,6 +1741,18 @@ export async function buildWireJournal(
     wires,
     byClass,
     unattributedDetail: unattributedDetail.slice(0, 500),
+    attributionAudit: {
+      methods: Array.from(auditMethod.entries())
+        .map(([method, amount]) => ({ method, amount: round2(amount) }))
+        .sort((a, b) => b.amount - a.amount),
+      topClassesByMethod: Object.fromEntries(
+        Array.from(auditMethodClass.entries()).map(([m, mc]) => [
+          m,
+          Array.from(mc.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8)
+            .map(([cls, amount]) => ({ cls, amount: round2(amount) })),
+        ]),
+      ),
+    },
   };
 }
 
