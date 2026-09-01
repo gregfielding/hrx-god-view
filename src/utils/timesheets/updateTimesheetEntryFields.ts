@@ -70,6 +70,9 @@ export interface TimesheetEntryEditablePatch {
   actualHoursOverride?: number | null;
   tips?: number;
   bonusAmount?: number;
+  /** Untaxed per diem / reimbursement. Editable on scheduled (non-import)
+   *  rows too, not just CSV-imported ones — see TimesheetGrid.tsx. */
+  reimbursementAmount?: number;
   notes?: string;
 }
 
@@ -127,6 +130,9 @@ function buildWirePatch(
   }
   if (patch.bonusAmount !== undefined) {
     out.bonusAmount = patch.bonusAmount;
+  }
+  if (patch.reimbursementAmount !== undefined) {
+    out.reimbursementAmount = patch.reimbursementAmount;
   }
   if (patch.notes !== undefined) {
     out.notes = patch.notes;

@@ -21,7 +21,7 @@ import { useDirectMessenger } from '../contexts/DirectMessengerContext';
 import { useSlackChannels } from '../hooks/useSlackChannels';
 import { SlackChannelView } from '../types/slackChannels';
 import { normalizeSecurityLevel } from '../utils/security';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useGoogleStatus } from '../contexts/GoogleStatusContext';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { DASHBOARD_WIDGET } from '../utils/dashboardWidgetTokens';
@@ -33,7 +33,6 @@ const Dashboard: React.FC = () => {
   const { user, activeTenant, securityLevel, currentClaimsSecurityLevel } = useAuth();
   const effectiveTenantId = activeTenant?.id || (user as any)?.activeTenantId || '';
   const canAccessSlack = normalizeSecurityLevel(currentClaimsSecurityLevel || securityLevel) >= 5;
-  const navigate = useNavigate();
   const { googleStatus, isOAuthInProgress, setIsOAuthInProgress, refreshStatus } = useGoogleStatus();
   const [calendarConnectError, setCalendarConnectError] = useState<string | null>(null);
   const isMobile = useMediaQuery('(max-width:767px)');
@@ -174,12 +173,12 @@ const Dashboard: React.FC = () => {
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 0.5, mb: '12px' }}>
               {(
               [
-                { label: 'My Job Orders', onClick: () => navigate('/jobs/my-orders'), kind: 'candidates' as const },
-                { label: 'My Tasks', onClick: () => navigate('/tasks'), kind: 'tasks' as const },
-                { label: 'My Calendar', onClick: () => navigate('/calendar'), kind: 'crm' as const },
-                { label: 'Users', onClick: () => navigate('/recruiter/users'), kind: 'candidates' as const },
-                { label: 'Contacts', onClick: () => navigate('/contacts'), kind: 'crm' as const },
-                { label: 'Companies', onClick: () => navigate('/companies'), kind: 'crm' as const },
+                { label: 'My Job Orders', to: '/jobs/my-orders', kind: 'candidates' as const },
+                { label: 'My Tasks', to: '/tasks', kind: 'tasks' as const },
+                { label: 'My Calendar', to: '/calendar', kind: 'crm' as const },
+                { label: 'Users', to: '/recruiter/users', kind: 'candidates' as const },
+                { label: 'Contacts', to: '/contacts', kind: 'crm' as const },
+                { label: 'Companies', to: '/companies', kind: 'crm' as const },
               ] as const
             ).map((b) => {
               const kindStyles =
@@ -192,7 +191,8 @@ const Dashboard: React.FC = () => {
               return (
                 <Button
                   key={b.label}
-                  onClick={b.onClick}
+                  component={Link}
+                  to={b.to}
                   variant="text"
                   sx={{
                     textTransform: 'none',

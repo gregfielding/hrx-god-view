@@ -26,7 +26,7 @@ import {
 import { alpha, useTheme } from '@mui/material/styles';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
 import {
@@ -454,7 +454,6 @@ const WorkerAiPrescreenPage: React.FC = () => {
   const theme = useTheme();
   const t = useT();
   const { user, activeTenant } = useAuth();
-  const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const applicationId = searchParams.get('applicationId');
@@ -1292,10 +1291,10 @@ const WorkerAiPrescreenPage: React.FC = () => {
       <Box sx={{ p: { xs: 1.5, sm: 2 }, maxWidth: 560, mx: 'auto' }}>
         <Typography variant="body1">{t('workerAiPrescreen.signInPrompt')}</Typography>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 2 }}>
-          <Button variant="contained" onClick={() => navigate('/login', { state: { from: location } })}>
+          <Button variant="contained" component={RouterLink} to="/login" state={{ from: location }}>
             {t('common.signIn')}
           </Button>
-          <Button variant="outlined" onClick={() => navigate('/c1/workers/dashboard')}>
+          <Button variant="outlined" component={RouterLink} to="/c1/workers/dashboard">
             {t('workerAiPrescreen.backToDashboard')}
           </Button>
         </Stack>
@@ -1335,13 +1334,14 @@ const WorkerAiPrescreenPage: React.FC = () => {
               fullWidth
               variant="contained"
               color="success"
+              component={RouterLink}
+              to={applicationId ? '/c1/workers/dashboard' : '/c1/jobs-board'}
               sx={{ mt: 0.5, py: 1.25, fontWeight: 600 }}
-              onClick={() => navigate(applicationId ? '/c1/workers/dashboard' : '/c1/jobs-board')}
             >
               {applicationId ? t('workerAiPrescreen.backToDashboard') : t('workerAiPrescreen.browseJobsBoard')}
             </Button>
             {!applicationId ? (
-              <Button fullWidth variant="outlined" sx={{ py: 1.1, fontWeight: 600 }} onClick={() => navigate('/c1/workers/dashboard')}>
+              <Button fullWidth variant="outlined" component={RouterLink} to="/c1/workers/dashboard" sx={{ py: 1.1, fontWeight: 600 }}>
                 {t('workerAiPrescreen.backToDashboard')}
               </Button>
             ) : null}

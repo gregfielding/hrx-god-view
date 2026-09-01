@@ -43,6 +43,7 @@ function makeEntry(overrides: Partial<ComposeEntry> = {}): ComposeEntry {
     restBreakPenaltyHours: 0,
     tips: 0,
     bonusAmount: 0,
+    reimbursementAmount: 0,
     ...overrides,
   };
 }
@@ -279,12 +280,25 @@ describe('composeW2AdditionalPayables', () => {
     expect(out[0].externalId).to.match(/::REST_PREMIUM$/);
   });
 
-  it('all four extras — emits 4 payables in tips/bonus/meal/rest order', () => {
+  it('reimbursement (untaxed per diem) — $50 per diem = REIMBURSEMENT payable', () => {
+    const out = composeW2AdditionalPayables(
+      makeInput({
+        entry: makeEntry({ reimbursementAmount: 50 }),
+      }),
+    );
+    expect(out).to.have.length(1);
+    expect(out[0].payCode).to.equal('REIMBURSEMENT');
+    expect(out[0].amount.amount).to.equal('50.00');
+    expect(out[0].externalId).to.match(/::REIMBURSEMENT$/);
+  });
+
+  it('all five extras — emits 5 payables in tips/bonus/reimbursement/meal/rest order', () => {
     const out = composeW2AdditionalPayables(
       makeInput({
         entry: makeEntry({
           tips: 10,
           bonusAmount: 20,
+          reimbursementAmount: 50,
           mealBreakPenaltyHours: 1,
           restBreakPenaltyHours: 0.5,
         }),
@@ -293,12 +307,14 @@ describe('composeW2AdditionalPayables', () => {
     expect(out.map((p) => p.payCode)).to.deep.equal([
       'TIPS',
       'BONUS',
+      'REIMBURSEMENT',
       'REGULAR_HOURLY',
       'REGULAR_HOURLY',
     ]);
     expect(out.map((p) => p.externalId.split('::').pop())).to.deep.equal([
       'TIPS',
       'BONUS',
+      'REIMBURSEMENT',
       'MEAL_PREMIUM',
       'REST_PREMIUM',
     ]);
@@ -310,6 +326,7 @@ describe('composeW2AdditionalPayables', () => {
         entry: makeEntry({
           tips: 0,
           bonusAmount: 0,
+          reimbursementAmount: 0,
           mealBreakPenaltyHours: 0,
           restBreakPenaltyHours: 0,
         }),
@@ -344,7 +361,7 @@ describe('composeContractorPayable', () => {
     );
   });
 
-  it('gross = (reg+OT+DT) × rate + bonus — tips excluded (they ride as a separate TIPS payable)', () => {
+  it('gross = reg×rate + OT×rate×1.5 + DT×rate×2.0 + bonus — tips excluded (they ride as a separate TIPS payable)', () => {
     const out = composeContractorPayable(
       makeInput({
         workerKind: 'contractor',
@@ -359,8 +376,23 @@ describe('composeContractorPayable', () => {
         }),
       }),
     );
-    // (8 + 2 + 1) × 30 = 330, + 25 bonus = 355 (tips NOT folded in)
-    expect(out.amount.amount).to.equal('355.00');
+    // (8 × 30) + (3 × 30 × 1.5) = 240 + 135 = 375, + 25 bonus = 400 (tips NOT folded in)
+    expect(out.amount.amount).to.equal('400.00');
+  });
+
+  it('double-time hours get the 2.0x multiplier', () => {
+    const out = composeContractorPayable(
+      makeInput({
+        workerKind: 'contractor',
+        entry: makeEntry({
+          payRate: 20,
+          totalRegularHours: 8,
+          totalDoubleTimeHours: 2,
+        }),
+      }),
+    );
+    // (8 × 20) + (2 × 20 × 2.0) = 160 + 80 = 240
+    expect(out.amount.amount).to.equal('240.00');
   });
 
   it('folds premium hours into the gross (defensive — §226.7 N/A for 1099)', () => {
@@ -432,6 +464,41 @@ describe('composeBatchEntryPayloads', () => {
     expect(out.payables[1].payCode).to.equal('TIPS');
     expect(out.payables[1].amount.amount).to.equal('40.00');
     expect(out.payables[1].label).to.equal('Tips');
+  });
+
+  it('1099 with reimbursement → contractor payable + separate REIMBURSEMENT payable (untaxed, not folded into gross)', () => {
+    const out = composeBatchEntryPayloads(
+      makeInput({
+        workerKind: 'contractor',
+        workersCompClassCode: undefined,
+        entry: makeEntry({ payRate: 20, totalRegularHours: 8, reimbursementAmount: 50 }),
+      }),
+    );
+    expect(out.kind).to.equal('contractor');
+    if (out.kind !== 'contractor') throw new Error('narrow');
+    expect(out.payables).to.have.length(2);
+    expect(out.payables[0].payCode).to.equal('CONTRACTOR');
+    expect(out.payables[0].amount.amount).to.equal('160.00'); // 8×20, per diem not folded in
+    expect(out.payables[1].payCode).to.equal('REIMBURSEMENT');
+    expect(out.payables[1].amount.amount).to.equal('50.00');
+    expect(out.payables[1].label).to.equal('Reimbursement'); // default label — no reimbursementLabel set
+  });
+
+  it('1099 with a custom reimbursement label uses it verbatim', () => {
+    const out = composeBatchEntryPayloads(
+      makeInput({
+        workerKind: 'contractor',
+        workersCompClassCode: undefined,
+        entry: makeEntry({
+          payRate: 20,
+          totalRegularHours: 8,
+          reimbursementAmount: 50,
+          reimbursementLabel: 'Per diem',
+        }),
+      }),
+    );
+    if (out.kind !== 'contractor') throw new Error('narrow');
+    expect(out.payables[1].label).to.equal('Per diem');
   });
 
   it('1099 ignores worked-shift fields entirely', () => {

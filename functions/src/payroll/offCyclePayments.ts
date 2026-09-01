@@ -345,7 +345,14 @@ export async function createOffCyclePaymentInternal(
       .trim();
 
     const reasonLabel = OFF_CYCLE_REASON_LABELS[reason];
-    const labelCore = `Off-cycle: ${reasonLabel}${hours > 0 ? ` — ${hours} hrs` : ''}`;
+    // Worker-visible on the Everee pay stub — include the work date and
+    // hours so the worker can tell which day/shift this line covers
+    // without cross-referencing HRX (Mark's request 2026-08-31, after
+    // several stuck-payment investigations where "what is this for?" was
+    // the first question). Per-diem gets its own payable+label below, but
+    // note it here too since a worker looking at just the wage line
+    // shouldn't wonder if per diem was forgotten.
+    const labelCore = `Off-cycle: ${reasonLabel} — ${workDate}${hours > 0 ? ` (${hours} hrs)` : ''}${perDiemAmount > 0 ? ' + per diem' : ''}`;
     // Machine anchor (Greg 2026-09-01): JO#<n> + ISO work date appended
     // AFTER the human label's cap so the wire journal's deterministic
     // attribution paths always see them.
@@ -430,13 +437,20 @@ export async function createOffCyclePaymentInternal(
                 }
               : {}),
         });
-        results.push({ externalId: r.externalId, paymentStatus: r.paymentStatus });
+        // ☠️ paymentStatus is documented as usually undefined (Everee
+        // reports status via webhook, not synchronously) — writing an
+        // undefined field to Firestore throws, which made a SUCCESSFUL
+        // Everee payable look like a failed one and prompted a retry →
+        // real double-pay (found 2026-08-31, Israel De Julian Iira 08-21
+        // missed-hours correction: $42 got created twice, both grouped
+        // into the same payment). Must be null, never undefined, here.
+        results.push({ externalId: r.externalId, paymentStatus: r.paymentStatus ?? null });
       }
       if (perDiemAmount > 0) {
         const r = await createPayable(config, {
           externalId: `offcycle_${docRef.id}_pd`,
           externalWorkerId: workerId,
-          label: (attributionTag ? `${attributionTag} · Off-cycle: Per diem` : 'Off-cycle: Per diem').slice(0, 120) + machineAnchor,
+          label: (attributionTag ? `${attributionTag} · Off-cycle: Per diem — ${workDate}` : `Off-cycle: Per diem — ${workDate}`).slice(0, 120) + machineAnchor,
           type: 'off_cycle_per_diem',
           // REIMBURSEMENT, not PER_DIEM (2026-08-20): Everee's PER_DIEM
           // code withholds FICA; these are non-taxable accountable-plan
@@ -446,7 +460,7 @@ export async function createOffCyclePaymentInternal(
           amount: { amount: perDiemAmount.toFixed(2), currency: 'USD' },
           payableModel: 'PRE_CALCULATED',
         });
-        results.push({ externalId: r.externalId, paymentStatus: r.paymentStatus });
+        results.push({ externalId: r.externalId, paymentStatus: r.paymentStatus ?? null });
       }
       // Creating payables alone leaves them as raw line items in Everee — they
       // only surface as a payable PAYMENT (and actually pay out) after a payout

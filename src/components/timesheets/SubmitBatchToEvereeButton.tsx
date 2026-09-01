@@ -134,8 +134,12 @@ function summarizeApproved(rows: TimesheetGridRow[]): ApprovedSummary {
     const rest = Number(row.entry.restBreakPenaltyHours ?? 0);
     const tips = Number(row.entry.tips ?? 0);
     const bonus = Number(row.entry.bonusAmount ?? 0);
+    // Untaxed per diem / reimbursement — rides as its own REIMBURSEMENT
+    // payable (composeTimesheetBatchPayloads.ts), same as tips/bonus, so
+    // it must be counted here too or this preview under-counts.
+    const reimb = Number(row.entry.reimbursementAmount ?? 0);
     totalGrossPay +=
-      reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + meal * payRate + rest * payRate + tips + bonus;
+      reg * payRate + ot * payRate * 1.5 + dt * payRate * 2 + meal * payRate + rest * payRate + tips + bonus + reimb;
   }
   return { entryIds, workerIds, totalRegularHours, totalOTHours, totalGrossPay };
 }

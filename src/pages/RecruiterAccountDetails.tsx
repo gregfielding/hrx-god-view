@@ -5,6 +5,7 @@
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
+import StretchedRowLink from '../components/StretchedRowLink';
 import {
   Box,
   Typography,
@@ -711,6 +712,7 @@ function AccountSidebar({
               <Box
                 key={c.id}
                 sx={{
+                  position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 1,
@@ -719,10 +721,8 @@ function AccountSidebar({
                   bgcolor: 'grey.50',
                   cursor: 'pointer',
                 }}
-                onClick={() => navigate(`/companies/${c.id}`)}
-                role="button"
-                tabIndex={0}
               >
+                <StretchedRowLink to={`/companies/${c.id}`} />
                 <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>{c.label.charAt(0)}</Avatar>
                 <Typography variant="body2" fontWeight="medium">
                   {c.label}
@@ -757,11 +757,9 @@ function AccountSidebar({
           <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {parentAccount && (
               <Box
-                sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                onClick={() => navigate(`/accounts/${parentAccount.id}`)}
-                role="button"
-                tabIndex={0}
+                sx={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
               >
+                <StretchedRowLink to={`/accounts/${parentAccount.id}`} />
                 <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>{parentAccount.label.charAt(0)}</Avatar>
                 <Box>
                   <Typography variant="body2" fontWeight="medium">{parentAccount.label}</Typography>
@@ -772,11 +770,9 @@ function AccountSidebar({
             {childAccounts.map((a) => (
               <Box
                 key={a.id}
-                sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                onClick={() => navigate(`/accounts/${a.id}`)}
-                role="button"
-                tabIndex={0}
+                sx={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
               >
+                <StretchedRowLink to={`/accounts/${a.id}`} />
                 <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>{a.label.charAt(0)}</Avatar>
                 <Box>
                   <Typography variant="body2" fontWeight="medium">{a.label}</Typography>
@@ -787,11 +783,9 @@ function AccountSidebar({
             {mspAccounts.map((a) => (
               <Box
                 key={a.id}
-                sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                onClick={() => navigate(`/accounts/${a.id}`)}
-                role="button"
-                tabIndex={0}
+                sx={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
               >
+                <StretchedRowLink to={`/accounts/${a.id}`} />
                 <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>{a.label.charAt(0)}</Avatar>
                 <Box>
                   <Typography variant="body2" fontWeight="medium">{a.label}</Typography>
@@ -837,6 +831,7 @@ function AccountSidebar({
                     <Box
                       key={`${loc.companyId}-${loc.locationId}`}
                       sx={{
+                        position: 'relative',
                         display: 'flex',
                         alignItems: 'center',
                         gap: 1,
@@ -845,10 +840,8 @@ function AccountSidebar({
                         bgcolor: 'grey.50',
                         cursor: 'pointer',
                       }}
-                      onClick={() => navigate(`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.companyId}`)}
-                      role="button"
-                      tabIndex={0}
                     >
+                      <StretchedRowLink to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.companyId}`} />
                       <LocationOnIcon fontSize="small" />
                       <Typography variant="body2">{loc.label}</Typography>
                       {company && (
@@ -860,7 +853,7 @@ function AccountSidebar({
                         component={Link}
                         to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.companyId}`}
                         size="small"
-                        sx={{ ml: 'auto', minWidth: 'auto', fontSize: '0.7rem' }}
+                        sx={{ ml: 'auto', minWidth: 'auto', fontSize: '0.7rem', position: 'relative', zIndex: 1 }}
                         onClick={(e) => e.stopPropagation()}
                       >
                         View
@@ -901,6 +894,7 @@ function AccountSidebar({
               <Box
                 key={c.id}
                 sx={{
+                  position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 1,
@@ -909,10 +903,8 @@ function AccountSidebar({
                   bgcolor: 'grey.50',
                   cursor: 'pointer',
                 }}
-                onClick={() => navigate(`/contacts/${c.id}`)}
-                role="button"
-                tabIndex={0}
               >
+                <StretchedRowLink to={`/contacts/${c.id}`} />
                 <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>{c.label.charAt(0)}</Avatar>
                 <Typography variant="body2">{c.label}</Typography>
                 <Button
@@ -952,6 +944,7 @@ function AccountSidebar({
               <Box
                 key={j.id}
                 sx={{
+                  position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 1,
@@ -960,10 +953,8 @@ function AccountSidebar({
                   bgcolor: 'grey.50',
                   cursor: 'pointer',
                 }}
-                onClick={() => navigate(`/jobs/job-orders/${j.id}`)}
-                role="button"
-                tabIndex={0}
               >
+                <StretchedRowLink to={`/jobs/job-orders/${j.id}`} />
                 <WorkIcon fontSize="small" />
                 <Typography variant="body2">{j.label}</Typography>
                 <Button
@@ -1009,6 +1000,7 @@ function AccountSidebar({
               <Box
                 key={d.id}
                 sx={{
+                  position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 1,
@@ -1017,10 +1009,8 @@ function AccountSidebar({
                   bgcolor: 'grey.50',
                   cursor: 'pointer',
                 }}
-                onClick={() => navigate(`/crm/deals/${d.id}`)}
-                role="button"
-                tabIndex={0}
               >
+                <StretchedRowLink to={`/crm/deals/${d.id}`} />
                 <AttachMoneyIcon fontSize="small" />
                 <Typography variant="body2">{d.label}</Typography>
                 <Button
@@ -1062,6 +1052,7 @@ function AccountSidebar({
               <Box
                 key={p.id}
                 sx={{
+                  position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 1,
@@ -1070,10 +1061,8 @@ function AccountSidebar({
                   bgcolor: 'grey.50',
                   cursor: 'pointer',
                 }}
-                onClick={() => navigate(`/users/${p.id}`)}
-                role="button"
-                tabIndex={0}
               >
+                <StretchedRowLink to={`/users/${p.id}`} />
                 <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>{p.label.charAt(0)}</Avatar>
                 <Typography variant="body2">{p.label}</Typography>
                 <Button
@@ -1113,6 +1102,7 @@ function AccountSidebar({
               <Box
                 key={p.id}
                 sx={{
+                  position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 1,
@@ -1121,10 +1111,8 @@ function AccountSidebar({
                   bgcolor: 'grey.50',
                   cursor: 'pointer',
                 }}
-                onClick={() => navigate(`/users/${p.id}`)}
-                role="button"
-                tabIndex={0}
               >
+                <StretchedRowLink to={`/users/${p.id}`} />
                 <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>{p.label.charAt(0)}</Avatar>
                 <Typography variant="body2">{p.label}</Typography>
                 <Button
@@ -6378,7 +6366,7 @@ const RecruiterAccountDetails: React.FC = () => {
                         tooltip={
                           parentAccount.label ? `View account: ${parentAccount.label}` : 'View parent account'
                         }
-                        onClick={() => navigate(`/accounts/${parentAccount.id}`)}
+                        to={`/accounts/${parentAccount.id}`}
                       >
                         <AccountBalanceIcon />
                       </RecordHeaderActionIcon>
@@ -6387,7 +6375,7 @@ const RecruiterAccountDetails: React.FC = () => {
                       <RecordHeaderActionIcon
                         key={`hdr-company-${c.id}`}
                         tooltip={c.label ? `View company: ${c.label}` : 'View company'}
-                        onClick={() => navigate(`/companies/${c.id}`)}
+                        to={`/companies/${c.id}`}
                       >
                         <BusinessIcon />
                       </RecordHeaderActionIcon>
@@ -8112,13 +8100,13 @@ const RecruiterAccountDetails: React.FC = () => {
                           <TableRow
                             key={child.id}
                             hover
-                            onClick={() => child.id && navigate(`/accounts/${child.id}`)}
-                            sx={{ cursor: child.id ? 'pointer' : 'default', backgroundColor: index % 2 === 0 ? 'background.paper' : '#FAFAFA', '&:hover': { backgroundColor: 'action.hover' } }}
+                            sx={{ position: 'relative', cursor: child.id ? 'pointer' : 'default', backgroundColor: index % 2 === 0 ? 'background.paper' : '#FAFAFA', '&:hover': { backgroundColor: 'action.hover' } }}
                           >
-                            <TableCell align="center" sx={{ width: 60, minWidth: 60, maxWidth: 60, py: 1.5, px: 1, borderBottom: '1px solid', borderColor: 'divider' }} onClick={(e) => e.stopPropagation()}>
+                            <TableCell align="center" sx={{ position: 'relative', zIndex: 1, width: 60, minWidth: 60, maxWidth: 60, py: 1.5, px: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
                               <FavoriteButton itemId={child.id} favoriteType="accounts" isFavorite={isFavorite} toggleFavorite={toggleFavorite} size="small" sx={{ p: 0.25, color: isFavorite(child.id) ? '#0B63C5' : '#6B7280', '&:hover': { color: '#0B63C5', backgroundColor: 'rgba(11, 99, 197, 0.08)' } }} />
                             </TableCell>
                             <TableCell sx={{ py: 1.5, pl: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
+                              {child.id && <StretchedRowLink to={`/accounts/${child.id}`} />}
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                 <AccountTreeIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
                                 <Typography variant="body2" sx={{ fontWeight: 500 }}>{child.name || '—'}</Typography>
@@ -8258,8 +8246,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                         <TableRow
                           key={`${location.companyId}-${location.id}`}
                           hover
-                          onClick={() => navigate(`/accounts/${account.id}/locations/${location.id}?companyId=${location.companyId}`)}
-                          sx={{ cursor: 'pointer' }}
+                          sx={{ position: 'relative', cursor: 'pointer' }}
                         >
                         {/* All cells use the JO-tab table treatment:
                             `variant="body2"` (0.875rem) primaries + `variant="caption"` secondaries,
@@ -8267,6 +8254,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                             title cell — and the Type/Division chips are styled as compact uppercase
                             pills, mirroring the JO Type chip rather than full-color MUI primary chips. */}
                         <TableCell>
+                          <StretchedRowLink to={`/accounts/${account.id}/locations/${location.id}?companyId=${location.companyId}`} />
                           <Typography variant="body2" color="text.secondary">
                             {location.companyName}
                           </Typography>
@@ -8413,10 +8401,10 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                         <TableRow
                           key={`${location.companyId}-${location.id}`}
                           hover
-                          onClick={() => navigate(`/accounts/${account.id}/locations/${location.id}?companyId=${location.companyId}`)}
-                          sx={{ cursor: 'pointer' }}
+                          sx={{ position: 'relative', cursor: 'pointer' }}
                         >
                           <TableCell>
+                            <StretchedRowLink to={`/accounts/${account.id}/locations/${location.id}?companyId=${location.companyId}`} />
                             <Typography variant="body2" color="text.secondary">
                               {location.companyName}
                             </Typography>
@@ -8565,10 +8553,10 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                       return (
                         <TableRow
                           key={contact.id}
-                          onClick={() => navigate(`/contacts/${contact.id}`)}
-                          sx={{ cursor: 'pointer', '&:hover': { backgroundColor: '#F9FAFB' } }}
+                          sx={{ position: 'relative', cursor: 'pointer', '&:hover': { backgroundColor: '#F9FAFB' } }}
                         >
                           <TableCell>
+                            <StretchedRowLink to={`/contacts/${contact.id}`} />
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                               <Avatar sx={{ width: 28, height: 28, bgcolor: 'grey.200', color: 'text.primary', fontSize: '0.75rem' }}>
                                 {fullName.split(/\s+/).map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
@@ -8582,7 +8570,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                           <TableCell><Typography variant="body2">{locationName}</Typography></TableCell>
                           <TableCell>
                             {linkedinUrl ? (
-                              <IconButton size="small" onClick={(e) => { e.stopPropagation(); window.open(linkedinUrl, '_blank'); }} sx={{ color: '#0077B5' }} title="LinkedIn">
+                              <IconButton size="small" onClick={(e) => { e.stopPropagation(); window.open(linkedinUrl, '_blank'); }} sx={{ color: '#0077B5', position: 'relative', zIndex: 1 }} title="LinkedIn">
                                 <LinkedInIcon fontSize="small" />
                               </IconButton>
                             ) : (
@@ -8907,8 +8895,8 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                       <TableRow
                         key={child.id}
                         hover
-                        onClick={() => child.id && navigate(`/accounts/${child.id}`)}
                         sx={{
+                          position: 'relative',
                           cursor: child.id ? 'pointer' : 'default',
                           backgroundColor: index % 2 === 0 ? 'background.paper' : '#FAFAFA',
                           '&:hover': { backgroundColor: 'action.hover' },
@@ -8917,6 +8905,8 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                         <TableCell
                           align="center"
                           sx={{
+                            position: 'relative',
+                            zIndex: 1,
                             width: 60,
                             minWidth: 60,
                             maxWidth: 60,
@@ -8925,7 +8915,6 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                             borderBottom: '1px solid',
                             borderColor: 'divider',
                           }}
-                          onClick={(e) => e.stopPropagation()}
                         >
                           <FavoriteButton
                             itemId={child.id}
@@ -8948,6 +8937,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                             borderColor: 'divider',
                           }}
                         >
+                          {child.id && <StretchedRowLink to={`/accounts/${child.id}`} />}
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             <AccountTreeIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
                             <Typography variant="body2" sx={{ fontWeight: 500 }}>
@@ -9755,15 +9745,15 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                               <TableRow
                                 key={jobOrder.id}
                                 hover
-                                onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
                                 sx={{
+                                  position: 'relative',
                                   cursor: 'pointer',
                                   backgroundColor:
                                     zebraIndex % 2 === 0 ? 'background.paper' : 'action.hover',
                                   '&:hover': { backgroundColor: 'action.selected' },
                                 }}
                               >
-                                <TableCell onClick={(e) => e.stopPropagation()}>
+                                <TableCell sx={{ position: 'relative', zIndex: 1 }}>
                                   <FavoriteButton
                                     itemId={jobOrder.id}
                                     favoriteType="jobOrders"
@@ -9777,6 +9767,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                   />
                                 </TableCell>
                                 <TableCell>
+                                  <StretchedRowLink to={`/jobs/job-orders/${jobOrder.id}`} />
                                   <Typography variant="body2" fontWeight={600}>
                                     {formatJobOrderNumber((jobOrder as any).jobOrderNumber ?? 0)}
                                   </Typography>
@@ -9993,12 +9984,8 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                               const headerRow = (
                                 <TableRow
                                   key={group.key}
-                                  onClick={
-                                    group.href
-                                      ? () => navigate(group.href as string)
-                                      : undefined
-                                  }
                                   sx={{
+                                    position: 'relative',
                                     cursor: group.href ? 'pointer' : 'default',
                                     backgroundColor: group.isParentGroup ? '#EEF2F7' : '#F3F4F6',
                                     '&:hover': group.href
@@ -10016,6 +10003,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                       color: 'text.primary',
                                     }}
                                   >
+                                    {group.href && <StretchedRowLink to={group.href} />}
                                     <Box
                                       sx={{
                                         display: 'flex',
@@ -10138,14 +10126,14 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                             <TableRow
                               key={post.id}
                               hover
-                              onClick={() => navigate(`/jobs/jobs-board/edit/${post.id}`)}
                               sx={{
+                                position: 'relative',
                                 cursor: 'pointer',
                                 backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
                                 '&:hover': { backgroundColor: 'action.selected' },
                               }}
                             >
-                              <TableCell onClick={(e) => e.stopPropagation()}>
+                              <TableCell sx={{ position: 'relative', zIndex: 1 }}>
                                 <FavoriteButton
                                   itemId={post.id}
                                   favoriteType="jobPosts"
@@ -10156,6 +10144,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                 />
                               </TableCell>
                               <TableCell>
+                                <StretchedRowLink to={`/jobs/jobs-board/edit/${post.id}`} />
                                 <Typography variant="body2" fontWeight={600}>
                                   {post.jobPostId ?? post.id}
                                 </Typography>
@@ -10254,10 +10243,12 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                             <TableRow
                               key={row.kind === 'jobOrderApplicants' ? `applicants-${row.id}` : `${row.kind}-${row.id}`}
                               hover
-                              sx={{ cursor: 'pointer' }}
-                              onClick={() => navigate(row.href)}
+                              sx={{ position: 'relative', cursor: 'pointer' }}
                             >
-                              <TableCell>{row.label}</TableCell>
+                              <TableCell>
+                                <StretchedRowLink to={row.href} />
+                                {row.label}
+                              </TableCell>
                               <TableCell>
                                 {row.kind === 'userGroup'
                                   ? 'User Group'

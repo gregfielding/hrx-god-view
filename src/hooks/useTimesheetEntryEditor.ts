@@ -83,6 +83,7 @@ export interface TimesheetEntryEditor {
     actualHoursOverride: (value: number | null) => Promise<void>;
     tips: (value: number) => Promise<void>;
     bonusAmount: (value: number) => Promise<void>;
+    reimbursementAmount: (value: number) => Promise<void>;
     notes: (value: string) => Promise<void>;
   };
   /** True when the entry's status forbids client-side edits.
@@ -237,6 +238,13 @@ export function useTimesheetEntryEditor(
           typeof entry.bonusAmount === 'number' ? entry.bonusAmount : 0,
           { compute: false },
         ),
+      reimbursementAmount: (value) =>
+        saveField(
+          'reimbursementAmount',
+          value,
+          typeof entry.reimbursementAmount === 'number' ? entry.reimbursementAmount : 0,
+          { compute: false },
+        ),
       notes: (value) =>
         saveField('notes', value, typeof entry.notes === 'string' ? entry.notes : '', {
           compute: false,
@@ -249,6 +257,7 @@ export function useTimesheetEntryEditor(
       entry.bonusAmount,
       entry.breaks,
       entry.notes,
+      entry.reimbursementAmount,
       entry.tips,
       saveField,
     ],

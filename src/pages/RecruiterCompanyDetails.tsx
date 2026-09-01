@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import StretchedRowLink from '../components/StretchedRowLink';
 import UniversalBackButton from '../components/common/UniversalBackButton';
 import {
   Box,
@@ -961,7 +962,7 @@ const RecruiterCompanyDetails: React.FC = () => {
         <Alert severity="error">
           {error || 'Company not found'}
         </Alert>
-        <Button onClick={() => navigate('/companies')} sx={{ mt: 2 }}>
+        <Button component={Link} to="/companies" sx={{ mt: 2 }}>
           Back to Companies
         </Button>
       </Box>
@@ -1173,8 +1174,9 @@ const RecruiterCompanyDetails: React.FC = () => {
                   {linkedAccount && (
                     <IconButton
                       size="small"
+                      component={Link}
+                      to={`/accounts/${linkedAccount.id}`}
                       sx={{ p: 0.75, color: 'rgb(74, 144, 226)' }}
-                      onClick={() => navigate(`/accounts/${linkedAccount.id}`)}
                       title={linkedAccount.name ? `Open account: ${linkedAccount.name}` : 'Open account'}
                     >
                       <AccountBalanceIcon fontSize="small" />
@@ -2280,25 +2282,18 @@ const CompanyDashboardTab: React.FC<{
                       return (
                         <Box
                           key={deal.id}
-                          sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: 1, 
-                            p: 1, 
-                            borderRadius: 1, 
-                            bgcolor: 'grey.50', 
-                            cursor: 'pointer' 
-                          }}
-                          onClick={() => navigate(`/recruiter/deals/${deal.id}`)}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => { 
-                            if (e.key === 'Enter' || e.key === ' ') { 
-                              e.preventDefault(); 
-                              navigate(`/recruiter/deals/${deal.id}`); 
-                            } 
+                          sx={{
+                            position: 'relative',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            p: 1,
+                            borderRadius: 1,
+                            bgcolor: 'grey.50',
+                            cursor: 'pointer'
                           }}
                         >
+                          <StretchedRowLink to={`/recruiter/deals/${deal.id}`} />
                           <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: getStageHexColor(deal.stage) }}>
                             <DealIcon sx={{ fontSize: 16 }} />
                           </Avatar>
@@ -2441,28 +2436,21 @@ const CompanyDashboardTab: React.FC<{
                       return (
                         <Box 
                           key={jobOrder.id} 
-                          sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: 1, 
-                            p: 1, 
-                            borderRadius: 1, 
+                          sx={{
+                            position: 'relative',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            p: 1,
+                            borderRadius: 1,
                             bgcolor: 'grey.50',
                             cursor: 'pointer',
                             '&:hover': {
                               bgcolor: 'grey.100'
                             }
                           }}
-                          onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => { 
-                            if (e.key === 'Enter' || e.key === ' ') { 
-                              e.preventDefault(); 
-                              navigate(`/jobs/job-orders/${jobOrder.id}`); 
-                            } 
-                          }}
                         >
+                          <StretchedRowLink to={`/jobs/job-orders/${jobOrder.id}`} />
                           <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
                             <WorkIcon sx={{ fontSize: 16 }} />
                           </Avatar>
@@ -2496,12 +2484,9 @@ const CompanyDashboardTab: React.FC<{
                   {contacts.slice(0, 5).map((contact) => (
                     <Box
                       key={contact.id}
-                      sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                      onClick={() => navigate(`/contacts/${contact.id}`)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/contacts/${contact.id}`); } }}
+                      sx={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
                     >
+                      <StretchedRowLink to={`/contacts/${contact.id}`} />
                       <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                         {contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
                       </Avatar>
@@ -3246,10 +3231,10 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
               </TableHead>
               <TableBody>
                 {filteredLocations.map((location, index) => (
-                    <TableRow 
+                    <TableRow
                       key={location.id}
-                      onClick={() => navigate(`/companies/${company.id}/locations/${location.id}`)}
                       sx={{
+                        position: 'relative',
                         height: '48px',
                         cursor: 'pointer',
                         '&:hover': {
@@ -3258,6 +3243,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
                       }}
                     >
                     <TableCell sx={{ py: 1, px: 2 }}>
+                      <StretchedRowLink to={`/companies/${company.id}/locations/${location.id}`} />
                       <Typography sx={{ variant: "body2", fontWeight: 600, color: "#111827", fontSize: '0.9375rem' }}>
                         {location.name || location.nickname || 'Unnamed Location'}
                       </Typography>
@@ -3715,10 +3701,10 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                 const fullName = contact.fullName || contact.name || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Unnamed Contact';
                 const avatarColor = getAvatarColor(fullName);
                 return (
-                  <TableRow 
+                  <TableRow
                     key={contact.id}
-                    onClick={() => navigate(`/contacts/${contact.id}`)}
                     sx={{
+                      position: 'relative',
                       height: '48px',
                       cursor: 'pointer',
                       '&:hover': {
@@ -3727,6 +3713,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                     }}
                   >
                     <TableCell sx={{ py: 1, px: 2 }}>
+                        <StretchedRowLink to={`/contacts/${contact.id}`} />
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                           <Avatar
                             src={contact.avatar}
@@ -3786,7 +3773,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                                 }}
                                 color="primary"
                                 title="Open LinkedIn Profile"
-                                sx={{ fontSize: 16, color: '#0077B5' }}
+                                sx={{ fontSize: 16, color: '#0077B5', position: 'relative', zIndex: 1 }}
                               >
                                 <LinkedInIcon />
                               </IconButton>
@@ -4305,10 +4292,10 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                 </TableHead>
                 <TableBody>
                   {deals.slice(0, 10).map((deal: any, index: number) => (
-                    <TableRow 
+                    <TableRow
                       key={deal.id}
-                      onClick={() => navigate(`/recruiter/deals/${deal.id}`)}
                       sx={{
+                        position: 'relative',
                         height: '48px',
                         cursor: 'pointer',
                         '&:hover': {
@@ -4317,8 +4304,9 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                       }}
                     >
                       <TableCell sx={{ py: 1, px: 2 }}>
+                        <StretchedRowLink to={`/recruiter/deals/${deal.id}`} />
                         <Typography
-                          sx={{ 
+                          sx={{
                             fontWeight: 600,
                             color: "#111827",
                             fontSize: '0.9375rem'
@@ -4838,10 +4826,10 @@ const JobOrdersTab: React.FC<{ jobOrders: any[]; routePrefix: 'crm' | 'recruiter
               {filteredAndSortedJobOrders.map((jobOrder: any, index: number) => {
                 const age = getJobOrderAge(jobOrder.createdAt);
                 return (
-                  <TableRow 
+                  <TableRow
                     key={jobOrder.id}
-                    onClick={() => navigate(`/${routePrefix}/job-orders/${jobOrder.id}`)}
                     sx={{
+                      position: 'relative',
                       height: '48px',
                       cursor: 'pointer',
                       '&:hover': {
@@ -4850,6 +4838,7 @@ const JobOrdersTab: React.FC<{ jobOrders: any[]; routePrefix: 'crm' | 'recruiter
                     }}
                   >
                     <TableCell sx={{ py: 1, px: 2 }}>
+                      <StretchedRowLink to={`/${routePrefix}/job-orders/${jobOrder.id}`} />
                       <Typography sx={{ variant: "body2", fontWeight: 600, color: "#111827", fontSize: '0.9375rem' }}>
                         {formatJobOrderNumber(jobOrder.jobOrderNumber || jobOrder.jobOrderSeq || '')}
                       </Typography>

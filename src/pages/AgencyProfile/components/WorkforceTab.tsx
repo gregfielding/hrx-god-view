@@ -31,6 +31,7 @@ import { db } from '../../../firebase';
 import { useTenantJobTitleOptions } from '../../../hooks/useTenantJobTitles';
 import { geocodeAddress } from '../../../utils/geocodeAddress';
 import BroadcastDialog from '../../../components/BroadcastDialog';
+import { tenantMembershipMergePayload } from '../../../shared/tenantMembership';
 
 
 interface WorkforceTabProps {
@@ -194,10 +195,22 @@ const WorkforceTab: React.FC<WorkforceTabProps> = ({ tenantId }) => {
       await addDoc(collection(db, 'users'), {
         ...form,
         role: 'Worker',
+        securityLevel: '4',
         tenantId,
         homeLat: geo.lat,
         homeLng: geo.lng,
         createdAt: serverTimestamp(),
+        // Without this map entry the worker is invisible to "All Users"
+        // search and the worker directory, which both query
+        // tenantIds.{tenantId}.securityLevel (found 2026-08-27). addDoc has
+        // no dot-path parsing, so this must be the nested (merge) form.
+        ...tenantMembershipMergePayload(tenantId, {
+          securityLevel: '4',
+          role: 'Worker',
+          locationIds: form.locationIds,
+          department: form.departmentId || null,
+          addedAt: serverTimestamp(),
+        }),
       });
       setForm({
         firstName: '',

@@ -79,12 +79,13 @@ export interface ComposeEntry {
   tips: number;
   bonusAmount: number;
   /** Untaxed expense reimbursement for the day (e.g. Prairie View A&M
-   *  $5/day parking — Greg 2026-08-27). Resolved by the orchestrator
+   *  $5/day parking — Greg 2026-08-27; also covers VenueSmart travel
+   *  crews' $50/day food per diem). Resolved by the orchestrator
    *  from the assignment's `dailyReimbursement` rule when the entry has
    *  worked hours; excluded from OT and WC premium wages by nature of
    *  the REIMBURSEMENT earning type. */
   reimbursementAmount?: number;
-  /** Label for the reimbursement payable ("Parking"). */
+  /** Label for the reimbursement payable ("Parking", "Per diem"). */
   reimbursementLabel?: string;
 }
 
@@ -186,6 +187,16 @@ export function composeBatchEntryPayloads(input: ComposeBatchInput): ComposedBat
         }),
       );
     }
+    if ((input.entry.reimbursementAmount ?? 0) > 0) {
+      payables.push(
+        makePayableForEntry(input, {
+          kind: 'REIMBURSEMENT',
+          earningType: 'REIMBURSEMENT',
+          amount: input.entry.reimbursementAmount as number,
+          label: (input.entry.reimbursementLabel ?? '').trim() || 'Reimbursement',
+        }),
+      );
+    }
     return { kind: 'contractor', payables };
   }
   return {
@@ -270,8 +281,12 @@ export function composeW2WorkedShift(input: ComposeBatchInput): CreateWorkedShif
  * Compose the non-hourly payables that ride alongside a W-2 entry's
  * worked-shift submission:
  *
- *   - Tips        — TIPS earning type
- *   - Bonus       — BONUS earning type
+ *   - Tips          — TIPS earning type
+ *   - Bonus         — BONUS earning type
+ *   - Reimbursement — REIMBURSEMENT earning type (untaxed per diem —
+ *                     e.g. VenueSmart travel crews' $50/day food per
+ *                     diem; same non-taxable code the CSV-import path
+ *                     uses, see submitImportTimesheetBatch.ts)
  *   - Meal premium  — REGULAR_HOURLY (custom-named pay code, see
  *                     `provisionCustomPayCodes.ts`; Piers's tax-
  *                     treatment guidance)
@@ -349,7 +364,9 @@ export function composeW2AdditionalPayables(input: ComposeBatchInput): CreatePay
  * gross. Everee handles 1099 tax mechanics on its side; we just submit
  * the dollar amount we owe.
  *
- *   gross = (regularHours + flsaOT + nonFlsaOT + DT) × payRate
+ *   gross = regularHours × payRate
+ *           + (flsaOT + nonFlsaOT) × payRate × 1.5
+ *           + DT × payRate × 2.0
  *           + bonus
  *           + (mealPremiumHours + restPremiumHours) × payRate
  *
@@ -361,19 +378,29 @@ export function composeW2AdditionalPayables(input: ComposeBatchInput): CreatePay
  * Pudding / C1 Events LLC tips were invisible, folded into "Contractor
  * pay" with no TIPS line).
  *
- * Premiums are folded in to the gross for 1099 because CA §226.7
- * doesn't apply to contractors (§226.7 is a wages-and-hours law for
- * employees). If an entry classifies a contractor with premium hours,
- * that's almost certainly a data issue upstream; the orchestrator's
+ * OT/DT hours get the same 1.5x/2.0x multiplier the W-2 path applies
+ * (`composeW2WorkedShift`'s OVERTIME/DOUBLE_TIME segments) — the
+ * weekly rules engine flags these hours as OT/DT regardless of 1099
+ * vs W-2 classification, and paying them at straight time silently
+ * shorted every contractor who crossed the weekly/daily threshold
+ * (found via Aitiana Garza, C1 Events LLC, 2026-08-26 — required a
+ * manual off-cycle correction; see docs/claude/feedback_contractor_ot_flat_rate_bug.md).
+ *
+ * Premiums (meal/rest) stay flat-rate and folded in to the gross for
+ * 1099 because CA §226.7 doesn't apply to contractors (§226.7 is a
+ * wages-and-hours law for employees) — that part was already correct.
+ * If an entry classifies a contractor with premium hours, that's
+ * almost certainly a data issue upstream; the orchestrator's
  * pre-flight should catch it, but the composer is defensive and
  * includes the dollars rather than dropping them.
  */
 export function composeContractorPayable(input: ComposeBatchInput): CreatePayableInput {
   const e = input.entry;
-  const otHours = (e.totalFlsaOTHours ?? 0) + (e.totalNonFlsaOTHours ?? 0);
-  const totalHours =
-    nonNegative(e.totalRegularHours) + nonNegative(otHours) + nonNegative(e.totalDoubleTimeHours);
-  const hourlyPay = totalHours * e.payRate;
+  const regularHours = nonNegative(e.totalRegularHours);
+  const otHours = nonNegative((e.totalFlsaOTHours ?? 0) + (e.totalNonFlsaOTHours ?? 0));
+  const dtHours = nonNegative(e.totalDoubleTimeHours);
+  const totalHours = regularHours + otHours + dtHours;
+  const hourlyPay = regularHours * e.payRate + otHours * e.payRate * 1.5 + dtHours * e.payRate * 2.0;
   const premiumPay =
     (nonNegative(e.mealBreakPenaltyHours) + nonNegative(e.restBreakPenaltyHours)) * e.payRate;
   const gross = hourlyPay + nonNegative(e.bonusAmount) + premiumPay;

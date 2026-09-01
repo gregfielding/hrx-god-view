@@ -27,6 +27,7 @@ import { logger } from './utils/logger';
 import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './messaging/twilioSecrets';
 import { sendWorkerMessageInternal } from './twilio';
 import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
+import { tenantMembershipUpdatePayload } from './shared/tenantMembership';
 import { parseResumeHttp } from './resumeParser';
 import { getUserParsedResumes } from './getUserParsedResumes';
 import { logMobileAppError, monitorMobileAppErrors, getMobileErrorStats } from './mobileErrorMonitoring';
@@ -5930,12 +5931,12 @@ export const markInviteTokenUsed = onCall(async (request) => {
 export const assignOrgToUser = onCall(async (request) => {
   const { userId, orgId, type, role, parentTenantId } = request.data;
   const start = Date.now();
-  
+
   try {
     if (!userId || !orgId || !type || !role) {
       throw new Error('userId, orgId, type, and role are required');
     }
-    
+
     // Determine security level based on role and type
     let securityLevel = 'Worker';
     if (role === 'Applicant') {
@@ -5945,25 +5946,39 @@ export const assignOrgToUser = onCall(async (request) => {
     } else if (type === 'Agency') {
       securityLevel = 'Agency_Worker';
     }
-    
+
+    const effectiveTenantId = type === 'Customer' && parentTenantId ? parentTenantId : orgId;
+
     // Update user profile with tenant assignment
     const userUpdate: any = {
       role,
       securityLevel,
       onboarded: true,
-      onboardedAt: admin.firestore.FieldValue.serverTimestamp()
+      onboardedAt: admin.firestore.FieldValue.serverTimestamp(),
+      tenantId: effectiveTenantId,
     };
-    
-    if (type === 'Customer' && parentTenantId) {
-      // Customer belongs to a parent tenant (agency)
-      userUpdate.tenantIds = [parentTenantId];
-      userUpdate.tenantId = parentTenantId;
+
+    // ☠️ tenantIds must stay a MAP keyed by tenant id — this function used
+    // to overwrite the whole field with a single-element ARRAY (`[orgId]`),
+    // which silently clobbered any other tenant membership on the doc AND
+    // made the user invisible to "All Users"/worker-directory queries that
+    // read tenantIds.{tenantId}.securityLevel (found 2026-08-27). If a prior
+    // buggy write already left tenantIds as a non-map, replace it with a
+    // fresh map instead of dot-path merging into it (Firestore can't merge
+    // a map key into a non-map field).
+    const existingSnap = await db.collection('users').doc(userId).get();
+    const existingTenantIds = existingSnap.exists ? (existingSnap.data() as any)?.tenantIds : undefined;
+    const membershipEntry = tenantMembershipUpdatePayload(effectiveTenantId, {
+      securityLevel,
+      role,
+      addedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    if (existingTenantIds !== undefined && (typeof existingTenantIds !== 'object' || Array.isArray(existingTenantIds))) {
+      userUpdate.tenantIds = { [effectiveTenantId]: membershipEntry[`tenantIds.${effectiveTenantId}`] };
     } else {
-      // Direct tenant assignment
-      userUpdate.tenantIds = [orgId];
-      userUpdate.tenantId = orgId;
+      Object.assign(userUpdate, membershipEntry);
     }
-    
+
     await db.collection('users').doc(userId).update(userUpdate);
     
     // Add user to tenant's workforce
@@ -10969,13 +10984,23 @@ export const addUsersToGroups = onCall({
     const tenantMetaForLevel = (userDataForLevel.tenantIds as Record<string, Record<string, unknown>> | undefined)?.[tenantId];
     const needsLevelStamp =
       tenantMetaForLevel?.securityLevel === undefined || tenantMetaForLevel?.securityLevel === null;
+    // ☠️ set({merge:true}) does NOT parse dotted string keys as nested
+    // paths — that only works with .update() — so this must build a real
+    // nested object, not `{'tenantIds.{t}.x': ...}` (which the prior fix
+    // used and which silently wrote a garbage literal-dotted field name
+    // instead of nesting; verified empirically 2026-08-27, found the same
+    // day as the Charlie Howell bug this comment block was meant to fix).
     await userRef.set(
       {
         userGroupIds: admin.firestore.FieldValue.arrayUnion(...groupIds),
-        [`tenantIds.${tenantId}.userGroupIds`]: admin.firestore.FieldValue.arrayUnion(...groupIds),
-        ...(needsLevelStamp
-          ? { [`tenantIds.${tenantId}.securityLevel`]: String(userDataForLevel.securityLevel ?? '2') }
-          : {}),
+        tenantIds: {
+          [tenantId]: {
+            userGroupIds: admin.firestore.FieldValue.arrayUnion(...groupIds),
+            ...(needsLevelStamp
+              ? { securityLevel: String(userDataForLevel.securityLevel ?? '2') }
+              : {}),
+          },
+        },
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }

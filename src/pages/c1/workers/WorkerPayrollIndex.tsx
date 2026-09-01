@@ -21,7 +21,8 @@ import {
   query,
   where,
 } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import StretchedRowLink from '../../../components/StretchedRowLink';
 import { Box, Button, Card, CardActionArea, CircularProgress, Stack, Typography } from '@mui/material';
 import { db } from '../../../firebase';
 import { Chip, Divider } from '@mui/material';
@@ -108,7 +109,6 @@ function useEvereeEntityInfos(
 
 const WorkerPayrollIndex: React.FC = () => {
   const { user, tenantId, tenantIds } = useAuth();
-  const navigate = useNavigate();
   const uid = user?.uid;
   const scopeTenantId = tenantId || tenantIds[0];
   const [map, setMap] = useState<Record<string, string> | null>(null);
@@ -325,7 +325,7 @@ const WorkerPayrollIndex: React.FC = () => {
         <Typography variant="body2" color="text.secondary" paragraph>
           No payroll account yet — contact your recruiter if you were expecting access.
         </Typography>
-        <Button variant="outlined" onClick={() => navigate('/c1/workers/dashboard')}>
+        <Button variant="outlined" component={Link} to="/c1/workers/dashboard">
           Back to dashboard
         </Button>
       </Box>
@@ -385,14 +385,12 @@ const WorkerPayrollIndex: React.FC = () => {
                     direction="row"
                     alignItems="center"
                     justifyContent="space-between"
-                    sx={{ px: 2, py: 1.5, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
+                    sx={{ position: 'relative', px: 2, py: 1.5, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
                     spacing={1}
-                    onClick={() =>
-                      navigate(
-                        `/c1/workers/pay-history/${encodeURIComponent(r.evereeTenantId)}/${encodeURIComponent(r.statementId)}`,
-                      )
-                    }
                   >
+                    <StretchedRowLink
+                      to={`/c1/workers/pay-history/${encodeURIComponent(r.evereeTenantId)}/${encodeURIComponent(r.statementId)}`}
+                    />
                     <Box sx={{ minWidth: 0 }}>
                       <Typography variant="body1" sx={{ fontWeight: 600 }}>
                         {r.net != null ? USD.format(r.net) : r.gross != null ? USD.format(r.gross) : '—'}
@@ -433,7 +431,7 @@ const WorkerPayrollIndex: React.FC = () => {
             )}
           </Card>
           {payRows.length > 0 && (
-            <Button variant="text" onClick={() => navigate('/c1/workers/pay-history')} sx={{ mt: 1, px: 0 }}>
+            <Button variant="text" component={Link} to="/c1/workers/pay-history" sx={{ mt: 1, px: 0 }}>
               {t('earnings.viewAll')} →
             </Button>
           )}
@@ -447,7 +445,8 @@ const WorkerPayrollIndex: React.FC = () => {
         <Stack spacing={1.5}>
           <Card variant="outlined">
             <CardActionArea
-              onClick={() => navigate('/c1/workers/payroll-settings')}
+              component={Link}
+              to="/c1/workers/payroll-settings"
               sx={{ p: 2, alignItems: 'flex-start' }}
             >
               <Typography variant="subtitle1">{t('profile.sectionDirectDepositTitle')}</Typography>
@@ -489,7 +488,8 @@ const WorkerPayrollIndex: React.FC = () => {
               return (
                 <Card key={tid} variant="outlined">
                   <CardActionArea
-                    onClick={() => navigate(`/c1/workers/earnings/${encodeURIComponent(tid)}`)}
+                    component={Link}
+                    to={`/c1/workers/earnings/${encodeURIComponent(tid)}`}
                     sx={{ p: 2, alignItems: 'flex-start' }}
                   >
                     <Typography variant="subtitle1">
@@ -528,7 +528,8 @@ const WorkerPayrollIndex: React.FC = () => {
       {/* Payroll help desk entry (Slice 1, 2026-08-24). */}
       <Button
         variant="text"
-        onClick={() => navigate('/c1/workers/payroll-help')}
+        component={Link}
+        to="/c1/workers/payroll-help"
         sx={{ mt: 3, px: 0 }}
       >
         {t('payrollHelp.entryTitle')} →

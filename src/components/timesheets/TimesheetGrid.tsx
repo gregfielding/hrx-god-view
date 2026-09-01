@@ -1458,13 +1458,17 @@ const EntryRow: React.FC<EntryRowProps> = ({
         />
       </TableCell>
 
-      {/* Reimbursement (untaxed per diem) — editable on IMPORT rows only for
-          now (the VenueSmart travel crews are import rows); scheduled rows
-          display any stamped value read-only. */}
-      <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-        {typeof entry.reimbursementAmount === 'number' && entry.reimbursementAmount > 0
-          ? formatMoney(entry.reimbursementAmount)
-          : '—'}
+      {/* Reimbursement (untaxed per diem) — editable on scheduled rows too
+          (not just CSV-imported ones), same allowlist/pattern as Tips and
+          Bonus above. */}
+      <TableCell align="right">
+        <NumberCell
+          value={typeof entry.reimbursementAmount === 'number' ? entry.reimbursementAmount : 0}
+          onSave={fieldHandlers.reimbursementAmount}
+          validate={(raw) => validateBonusAmount(raw)}
+          disabled={readOnly}
+          ariaLabel="Reimbursement (untaxed per diem)"
+        />
       </TableCell>
 
       <TableCell>
@@ -1531,7 +1535,10 @@ const EntryRow: React.FC<EntryRowProps> = ({
         align="right"
         sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}
       >
-        {formatMoney(computeEntryGrossPay(entry))}
+        {formatMoney(
+          computeEntryGrossPay(entry) +
+            (typeof entry.reimbursementAmount === 'number' ? entry.reimbursementAmount : 0),
+        )}
       </TableCell>
 
       <TableCell>
@@ -1578,7 +1585,10 @@ const EntryRow: React.FC<EntryRowProps> = ({
           <DialogContentText>
             This deletes the Everee submission for{' '}
             <strong>{row.assignment.workerDisplayName ?? 'this worker'}</strong> on{' '}
-            <strong>{row.workDate}</strong> ({formatMoney(computeEntryGrossPay(entry))}) and resets the
+            <strong>{row.workDate}</strong> ({formatMoney(
+              computeEntryGrossPay(entry) +
+                (typeof entry.reimbursementAmount === 'number' ? entry.reimbursementAmount : 0),
+            )}) and resets the
             row to draft so you can fix and resubmit it.
           </DialogContentText>
           <DialogContentText sx={{ mt: 1.5, fontWeight: 600 }}>

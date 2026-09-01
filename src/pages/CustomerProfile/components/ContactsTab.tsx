@@ -27,6 +27,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { db } from '../../../firebase';
 import { useTenantJobTitleOptions } from '../../../hooks/useTenantJobTitles';
+import { tenantMembershipMergePayload } from '../../../shared/tenantMembership';
 
 interface ContactsTabProps {
   tenantId?: string;
@@ -129,6 +130,16 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ tenantId }) => {
         tenantId,
         locationIds: form.locationIds,
         createdAt: serverTimestamp(),
+        // Without this map entry the contact is invisible to "All Users"
+        // search and the worker directory, which both query
+        // tenantIds.{tenantId}.securityLevel (found 2026-08-27). addDoc has
+        // no dot-path parsing, so this must be the nested (merge) form.
+        ...tenantMembershipMergePayload(tenantId, {
+          securityLevel: form.securityLevel,
+          role: 'Customer',
+          locationIds: form.locationIds,
+          addedAt: serverTimestamp(),
+        }),
       });
       setForm({
         firstName: '',

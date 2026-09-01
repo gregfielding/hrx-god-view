@@ -21,7 +21,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WorkIcon from '@mui/icons-material/Work';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import { collection, doc, getAggregateFromServer, onSnapshot, query, sum, count, where } from 'firebase/firestore';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, Link } from 'react-router-dom';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -44,7 +44,6 @@ const WorkerProfile: React.FC = () => {
   const { user, avatarUrl, logout, tenantId: authTenantId, activeTenant } = useAuth();
   const tenantId = authTenantId || activeTenant?.id || null;
   const t = useT();
-  const navigate = useNavigate();
 
 
 
@@ -197,7 +196,7 @@ const WorkerProfile: React.FC = () => {
           <Typography variant="body2" color="text.secondary">
             {t('profile.signInToComplete')}
           </Typography>
-          <Button variant="contained" onClick={() => navigate('/login', { state: { from: location } })}>
+          <Button variant="contained" component={Link} to="/login" state={{ from: location }}>
             {t('common.signIn')}
           </Button>
         </Stack>
@@ -241,7 +240,7 @@ const WorkerProfile: React.FC = () => {
             </Stack>
             <Divider sx={{ mt: 2 }} />
             <List disablePadding sx={{ mx: -2, mb: -2 }}>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/personal-details')}>
+              <ListItemButton component={Link} to="/c1/workers/profile/personal-details">
                 <ListItemText primary={t('profile.sectionPersonalDetailsTitle')} />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
@@ -257,7 +256,7 @@ const WorkerProfile: React.FC = () => {
               {/* W.3 — hide the work-authorization sidebar row when */}
               {/* collection is disabled (default). Flag flip-off restores. */}
               {!WORK_AUTH_HUB_DISABLED && (
-                <ListItemButton onClick={() => navigate('/c1/workers/profile/work-authorization')}>
+                <ListItemButton component={Link} to="/c1/workers/profile/work-authorization">
                   <ListItemText primary={t('profile.sectionWorkAuthorizationTitle')} />
                   <Stack direction="row" spacing={0.5} alignItems="center">
                     {hasWorkAuth ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
@@ -266,35 +265,35 @@ const WorkerProfile: React.FC = () => {
                 </ListItemButton>
               )}
 
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/skills')}>
+              <ListItemButton component={Link} to="/c1/workers/profile/skills">
                 <ListItemText primary={t('profile.sectionSkillsTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {skillsComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/certifications')}>
+              <ListItemButton component={Link} to="/c1/workers/profile/certifications">
                 <ListItemText primary={t('profile.sectionCertificationsTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {certificationsComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/languages')}>
+              <ListItemButton component={Link} to="/c1/workers/profile/languages">
                 <ListItemText primary={t('profile.sectionLanguagesTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {languagesComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/preferences')}>
+              <ListItemButton component={Link} to="/c1/workers/profile/preferences">
                 <ListItemText primary={t('profile.sectionPreferencesTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {availabilityPreferencesPresent ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/experience')}>
+              <ListItemButton component={Link} to="/c1/workers/profile/experience">
                 <ListItemText
                   primary={t('profile.sectionExperienceTitle')}
                   secondary={t('profile.sectionExperienceHubSecondary')}
@@ -358,9 +357,8 @@ const WorkerProfile: React.FC = () => {
                   return (
                     <ListItemButton
                       key={rec.id}
-                      onClick={() =>
-                        navigate(`/c1/workers/my-employment/${encodeURIComponent(rec.id)}`)
-                      }
+                      component={Link}
+                      to={`/c1/workers/my-employment/${encodeURIComponent(rec.id)}`}
                       sx={{ alignItems: 'center', py: 1.25, gap: 1 }}
                     >
                       <ListItemIcon sx={{ minWidth: 40 }}>
@@ -408,7 +406,7 @@ const WorkerProfile: React.FC = () => {
               </Typography>
               <Divider />
               <List disablePadding>
-                <ListItemButton onClick={() => navigate(C1_WORKER_SCREENING_PATH)}>
+                <ListItemButton component={Link} to={C1_WORKER_SCREENING_PATH}>
                   <ListItemIcon sx={{ minWidth: 40 }}>
                     <VerifiedUserIcon sx={{ color: 'text.secondary', fontSize: 22 }} />
                   </ListItemIcon>
@@ -429,10 +427,17 @@ const WorkerProfile: React.FC = () => {
             <Typography variant="subtitle1" sx={{ px: 2, py: 1.5 }}>{t('workerAccount.sectionDocuments')}</Typography>
             <Divider />
             <List disablePadding>
-              <ListItemButton onClick={() => navigate('/c1/workers/documents')}>
+              <ListItemButton component={Link} to="/c1/workers/documents">
                 <ListItemText
                   primary={t('profile.sectionMyDocumentsTitle')}
                   secondary={t('profile.sectionMyDocumentsDescription')}
+                />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+              <ListItemButton component={Link} to="/c1/workers/earnings">
+                <ListItemText
+                  primary={t('profile.sectionPayDocsTitle')}
+                  secondary={t('profile.sectionPayDocsDescription')}
                 />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
@@ -445,7 +450,7 @@ const WorkerProfile: React.FC = () => {
             <Typography variant="subtitle1" sx={{ px: 2, py: 1.5 }}>{t('workerAccount.sectionAccountSettings')}</Typography>
             <Divider />
             <List disablePadding>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/reset-password')}>
+              <ListItemButton component={Link} to="/c1/workers/profile/reset-password">
                 <ListItemText
                   primary={t('profile.sectionResetPasswordTitle')}
                   secondary={t('profile.sectionResetPasswordDescription')}
@@ -457,21 +462,21 @@ const WorkerProfile: React.FC = () => {
                 <ListItemText primary="Update phone number" secondary="Update your contact phone number." />
                 <ChevronRightIcon color="action" />
               </ListItemButton> */}
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/app-language')}>
+              <ListItemButton component={Link} to="/c1/workers/profile/app-language">
                 <ListItemText
                   primary={t('profile.sectionAppLanguageTitle')}
                   secondary={t('profile.sectionAppLanguageDescription')}
                 />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/payroll-help')}>
+              <ListItemButton component={Link} to="/c1/workers/payroll-help">
                 <ListItemText
                   primary={t('profile.sectionSupportTitle')}
                   secondary={t('profile.sectionSupportDescription')}
                 />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/about')}>
+              <ListItemButton component={Link} to="/c1/workers/profile/about">
                 <ListItemText
                   primary={t('profile.sectionAboutTitle')}
                   secondary={t('profile.sectionAboutDescription')}

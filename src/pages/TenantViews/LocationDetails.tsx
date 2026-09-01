@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import StretchedRowLink from '../../components/StretchedRowLink';
 import UniversalBackButton from '../../components/common/UniversalBackButton';
 import {
   Box,
@@ -1198,7 +1199,8 @@ const LocationDetails: React.FC = () => {
                     <Tooltip title={linkedAccount.name ? `View account: ${linkedAccount.name}` : 'View account'}>
                       <IconButton
                         size="small"
-                        onClick={() => navigate(`/accounts/${linkedAccount.id}`)}
+                        component={Link}
+                        to={`/accounts/${linkedAccount.id}`}
                         sx={{
                           p: 1,
                           color: 'primary.main',
@@ -1314,14 +1316,16 @@ const LocationDetails: React.FC = () => {
                       <BusinessIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
                       <Typography
                         variant="body2"
+                        component={Link}
+                        to={`/companies/${companyId}`}
                         sx={{
                           fontSize: '14px',
                           fontWeight: 600,
                           color: 'rgb(74, 144, 226)',
                           cursor: 'pointer',
+                          textDecoration: 'none',
                           '&:hover': { textDecoration: 'underline' },
                         }}
-                        onClick={() => navigate(`/companies/${companyId}`)}
                       >
                         {company?.companyName || company?.name || 'Company'}
                       </Typography>
@@ -1744,6 +1748,7 @@ const LocationDetails: React.FC = () => {
                             <Box
                               key={deal.id}
                               sx={{
+                                position: 'relative',
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: 1,
@@ -1753,16 +1758,8 @@ const LocationDetails: React.FC = () => {
                                 cursor: 'pointer',
                                 '&:hover': { bgcolor: 'grey.100' },
                               }}
-                              onClick={() => navigate(`/crm/deals/${deal.id}`)}
-                              role="button"
-                              tabIndex={0}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  navigate(`/crm/deals/${deal.id}`);
-                                }
-                              }}
                             >
+                              <StretchedRowLink to={`/crm/deals/${deal.id}`} />
                               <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
                                 <BusinessIcon sx={{ fontSize: 16 }} />
                               </Avatar>
@@ -1937,6 +1934,7 @@ const LocationDetails: React.FC = () => {
                               <Box
                                 key={jobOrder.id}
                                 sx={{
+                                  position: 'relative',
                                   display: 'flex',
                                   alignItems: 'center',
                                   gap: 1,
@@ -1948,16 +1946,8 @@ const LocationDetails: React.FC = () => {
                                     bgcolor: 'grey.100',
                                   },
                                 }}
-                                onClick={() => navigate(`/crm/job-orders/${jobOrder.id}`)}
-                                role="button"
-                              tabIndex={0}
-                              onKeyDown={(e) => { 
-                                if (e.key === 'Enter' || e.key === ' ') { 
-                                  e.preventDefault(); 
-                                  navigate(`/crm/job-orders/${jobOrder.id}`); 
-                                } 
-                              }}
                             >
+                              <StretchedRowLink to={`/crm/job-orders/${jobOrder.id}`} />
                               <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
                                 <WorkIcon sx={{ fontSize: 16 }} />
                               </Avatar>
@@ -2201,18 +2191,14 @@ const LocationDetails: React.FC = () => {
                     {sorted.map((c: any) => (
                       <TableRow
                         key={c.id}
-                        onClick={() => {
-                          const currentParams = new URLSearchParams(window.location.search);
-                          currentParams.set('tab', '1'); // Contacts tab
-                          navigate(`/contacts/${c.id}?returnTo=${encodeURIComponent(window.location.pathname + '?' + currentParams.toString())}`);
-                        }}
                         sx={{
+                          position: 'relative',
                           height: '48px',
                           cursor: 'pointer',
                           '&:hover': { backgroundColor: '#F9FAFB' },
                         }}
                       >
-                        <TableCell sx={{ py: 1, px: 1, width: 48 }} onClick={(e) => e.stopPropagation()}>
+                        <TableCell sx={{ position: 'relative', zIndex: 1, py: 1, px: 1, width: 48 }}>
                           <FavoriteButton
                             itemId={c.id}
                             favoriteType="contacts"
@@ -2223,6 +2209,13 @@ const LocationDetails: React.FC = () => {
                           />
                         </TableCell>
                         <TableCell sx={{ py: 1, px: 2 }}>
+                          <StretchedRowLink
+                            to={(() => {
+                              const currentParams = new URLSearchParams(window.location.search);
+                              currentParams.set('tab', '1');
+                              return `/contacts/${c.id}?returnTo=${encodeURIComponent(window.location.pathname + '?' + currentParams.toString())}`;
+                            })()}
+                          />
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                             <Avatar
                               src={c.avatar}

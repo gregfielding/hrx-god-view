@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import StretchedRowLink from '../../components/StretchedRowLink';
 import {
   Box,
   Typography,
@@ -2085,6 +2086,7 @@ const DealDetails: React.FC = () => {
                 <Box
                   key={comp.id}
                   sx={{
+                    position: 'relative',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 1,
@@ -2093,16 +2095,8 @@ const DealDetails: React.FC = () => {
                     bgcolor: 'grey.50',
                     cursor: 'pointer',
                   }}
-                  onClick={() => navigate(`/companies/${comp.id}`)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      navigate(`/companies/${comp.id}`);
-                    }
-                  }}
                 >
+                  <StretchedRowLink to={`/companies/${comp.id}`} />
                   <Avatar
                     sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}
                   >
@@ -2222,6 +2216,7 @@ const DealDetails: React.FC = () => {
             return (
               <Box
                 sx={{
+                  position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 1,
@@ -2230,16 +2225,8 @@ const DealDetails: React.FC = () => {
                   bgcolor: 'grey.50',
                   cursor: 'pointer',
                 }}
-                onClick={() => dm?.id && navigate(`/contacts/${dm.id}`)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (dm?.id && (e.key === 'Enter' || e.key === ' ')) {
-                    e.preventDefault();
-                    navigate(`/contacts/${dm.id}`);
-                  }
-                }}
               >
+                {dm?.id && <StretchedRowLink to={`/contacts/${dm.id}`} />}
                 <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                   {(name || 'C').charAt(0).toUpperCase()}
                 </Avatar>
@@ -2284,6 +2271,7 @@ const DealDetails: React.FC = () => {
                 <Box
                   key={contact.id}
                   sx={{
+                    position: 'relative',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 1,
@@ -2292,16 +2280,8 @@ const DealDetails: React.FC = () => {
                     bgcolor: 'grey.50',
                     cursor: 'pointer',
                   }}
-                  onClick={() => navigate(`/contacts/${contact.id}`)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      navigate(`/contacts/${contact.id}`);
-                    }
-                  }}
                 >
+                  <StretchedRowLink to={`/contacts/${contact.id}`} />
                   <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                     {contact.fullName?.charAt(0) || contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
                   </Avatar>
@@ -2386,6 +2366,7 @@ const DealDetails: React.FC = () => {
                   ) : (
                     <Box
                       sx={{
+                        position: 'relative',
                         display: 'flex',
                         alignItems: 'center',
                         gap: 1,
@@ -2394,24 +2375,11 @@ const DealDetails: React.FC = () => {
                         bgcolor: 'grey.50',
                         cursor: 'pointer',
                       }}
-                      onClick={() => {
-                        const cid = typeof locationEntry === 'object' && locationEntry?.companyId ? locationEntry.companyId : company?.id;
-                        if (cid && locationId) {
-                          navigate(`/companies/${cid}/locations/${locationId}`);
-                        }
-                      }}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          const cid = typeof locationEntry === 'object' && locationEntry?.companyId ? locationEntry.companyId : company?.id;
-                          if (cid && locationId) {
-                            navigate(`/companies/${cid}/locations/${locationId}`);
-                          }
-                        }
-                      }}
                     >
+                      {(() => {
+                        const cid = typeof locationEntry === 'object' && locationEntry?.companyId ? locationEntry.companyId : company?.id;
+                        return cid && locationId ? <StretchedRowLink to={`/companies/${cid}/locations/${locationId}`} /> : null;
+                      })()}
                       <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
                         <BusinessIcon sx={{ fontSize: 16 }} />
                       </Avatar>
@@ -2600,14 +2568,16 @@ const DealDetails: React.FC = () => {
                       <BusinessIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
                       <Typography
                         variant="body2"
+                        component={Link}
+                        to={`/companies/${company.id}`}
                         sx={{
                           fontSize: '14px',
                           fontWeight: 600,
                           color: 'rgb(74, 144, 226)',
                           cursor: 'pointer',
+                          textDecoration: 'none',
                           '&:hover': { textDecoration: 'underline' },
                         }}
-                        onClick={() => navigate(`/companies/${company.id}`)}
                       >
                         {company.companyName || company.name}
                       </Typography>
@@ -2629,14 +2599,16 @@ const DealDetails: React.FC = () => {
                         </Typography>
                         <Typography
                           variant="body2"
+                          component={Link}
+                          to={`/companies/${company.id}/locations/${locationId}`}
                           sx={{
                             fontSize: '14px',
                             fontWeight: 600,
                             color: 'rgb(74, 144, 226)',
                             cursor: 'pointer',
+                            textDecoration: 'none',
                             '&:hover': { textDecoration: 'underline' },
                           }}
-                          onClick={() => navigate(`/companies/${company.id}/locations/${locationId}`)}
                         >
                           {displayName}
                         </Typography>
@@ -2651,14 +2623,15 @@ const DealDetails: React.FC = () => {
                         <Typography
                           key={c.id || idx}
                           variant="body2"
+                          {...(c.id ? { component: Link, to: `/contacts/${c.id}` } : {})}
                           sx={{
                             fontSize: '14px',
                             fontWeight: 600,
                             color: 'rgb(74, 144, 226)',
                             cursor: 'pointer',
+                            textDecoration: 'none',
                             '&:hover': { textDecoration: 'underline' },
                           }}
-                          onClick={() => c.id && navigate(`/contacts/${c.id}`)}
                         >
                           {c.fullName || c.name || 'Contact'}
                         </Typography>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import StretchedRowLink from '../components/StretchedRowLink';
 import UniversalBackButton from '../components/common/UniversalBackButton';
 import {
   Box,
@@ -1075,7 +1076,7 @@ const RecruiterLocationDetails: React.FC = () => {
         <BreadcrumbNav
           items={[
             { label: 'Recruiter', href: '/recruiter' },
-            { label: 'Companies', onClick: () => navigate('/companies') },
+            { label: 'Companies', href: '/companies' },
             { label: company?.companyName || company?.name || 'Company', href: `/companies/${companyId}` },
             { label: location.name },
           ]}
@@ -1467,25 +1468,18 @@ const RecruiterLocationDetails: React.FC = () => {
                         .map((deal: any) => (
                           <Box
                             key={deal.id}
-                            sx={{ 
-                              display: 'flex', 
-                              alignItems: 'center', 
-                              gap: 1, 
-                              p: 1, 
-                              borderRadius: 1, 
-                              bgcolor: 'grey.50', 
-                              cursor: 'pointer' 
-                            }}
-                            onClick={() => navigate(`/companies/${companyId}?tab=3`)}
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => { 
-                              if (e.key === 'Enter' || e.key === ' ') { 
-                                e.preventDefault(); 
-                                navigate(`/companies/${companyId}?tab=3`); 
-                              } 
+                            sx={{
+                              position: 'relative',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 1,
+                              p: 1,
+                              borderRadius: 1,
+                              bgcolor: 'grey.50',
+                              cursor: 'pointer'
                             }}
                           >
+                            <StretchedRowLink to={`/companies/${companyId}?tab=3`} />
                             <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
                               <BusinessIcon sx={{ fontSize: 16 }} />
                             </Avatar>
@@ -1518,12 +1512,9 @@ const RecruiterLocationDetails: React.FC = () => {
                       {locationContacts.slice(0, 5).map((c: any) => (
                         <Box
                           key={c.id}
-                          sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                          onClick={() => navigate(`/contacts/${c.id}`)}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/contacts/${c.id}`); } }}
+                          sx={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
                         >
+                          <StretchedRowLink to={`/contacts/${c.id}`} />
                           <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                             {c.firstName?.charAt(0) || c.name?.charAt(0) || 'C'}
                           </Avatar>
@@ -1676,30 +1667,23 @@ const RecruiterLocationDetails: React.FC = () => {
                           const jobOrderNumber = jobOrder.jobOrderNumber || jobOrder.jobOrderSeq?.toString().padStart(4, '0') || 'N/A';
                           
                           return (
-                            <Box 
-                              key={jobOrder.id} 
-                              sx={{ 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                gap: 1, 
-                                p: 1, 
-                                borderRadius: 1, 
+                            <Box
+                              key={jobOrder.id}
+                              sx={{
+                                position: 'relative',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 1,
+                                p: 1,
+                                borderRadius: 1,
                                 bgcolor: 'grey.50',
                                 cursor: 'pointer',
                                 '&:hover': {
                                   bgcolor: 'grey.100'
                                 }
                               }}
-                              onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
-                              role="button"
-                              tabIndex={0}
-                              onKeyDown={(e) => { 
-                                if (e.key === 'Enter' || e.key === ' ') { 
-                                  e.preventDefault(); 
-                                  navigate(`/jobs/job-orders/${jobOrder.id}`); 
-                                } 
-                              }}
                             >
+                              <StretchedRowLink to={`/jobs/job-orders/${jobOrder.id}`} />
                               <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
                                 <WorkIcon sx={{ fontSize: 16 }} />
                               </Avatar>

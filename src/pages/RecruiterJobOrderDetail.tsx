@@ -80,7 +80,8 @@ import {
   AccountBalance as AccountBalanceIcon,
   Groups as GroupsIcon,
 } from '@mui/icons-material';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link as RouterLink } from 'react-router-dom';
+import StretchedRowLink from '../components/StretchedRowLink';
 import UniversalBackButton from '../components/common/UniversalBackButton';
 import { format, formatDistanceToNow } from 'date-fns';
 import {
@@ -4984,7 +4985,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   {linkedRecruiterAccountId ? (
                     <RecordHeaderActionIcon
                       tooltip="Open linked account"
-                      onClick={() => navigate(`/accounts/${linkedRecruiterAccountId}`)}
+                      to={`/accounts/${linkedRecruiterAccountId}`}
                       aria-label="Open linked account"
                     >
                       <AccountBalanceIcon />
@@ -5155,10 +5156,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
                           />
                           {accountHref ? (
                             <MUILink
-                              component="button"
-                              type="button"
+                              component={RouterLink}
+                              to={accountHref}
                               underline="hover"
-                              onClick={() => navigate(accountHref)}
                               sx={{ ...jobOrderLinkSx, minWidth: 0 }}
                             >
                               {accountName}
@@ -5180,12 +5180,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
                           <LocationIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
                           {displayCompanyId && displayLocationId ? (
                             <MUILink
-                              component="button"
-                              type="button"
+                              component={RouterLink}
+                              to={`/companies/${displayCompanyId}/locations/${displayLocationId}`}
                               underline="hover"
-                              onClick={() =>
-                                navigate(`/companies/${displayCompanyId}/locations/${displayLocationId}`)
-                              }
                               sx={{ ...jobOrderLinkSx, minWidth: 0 }}
                             >
                               {displayLocationName}
@@ -5237,10 +5234,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
                           <PersonIcon sx={{ fontSize: 15, color: 'rgb(74, 144, 226)', flexShrink: 0 }} />
                           {jobOrderSchedulerUid ? (
                             <MUILink
-                              component="button"
-                              type="button"
+                              component={RouterLink}
+                              to={`/users/${jobOrderSchedulerUid}`}
                               underline="hover"
-                              onClick={() => navigate(`/users/${jobOrderSchedulerUid}`)}
                               sx={{ ...jobOrderLinkSx, minWidth: 0 }}
                             >
                               {schedulerName || '…'}
@@ -5580,17 +5576,22 @@ const RecruiterJobOrderDetail: React.FC = () => {
               )}
 
               {/* CRM company (client account) summary */}
+              {(() => {
+                const accountOrCompanyAid =
+                  (jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null;
+                const accountOrCompanyHref = accountOrCompanyAid
+                  ? `/accounts/${accountOrCompanyAid}`
+                  : company
+                    ? `/companies/${company.id}`
+                    : undefined;
+                return (
               <SectionCard title="Account" action={
                 <Button
                   variant="outlined"
                   size="small"
-                  onClick={() => {
-                    const aid =
-                      (jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null;
-                    if (aid) navigate(`/accounts/${aid}`);
-                    else if (company) navigate(`/companies/${company.id}`);
-                  }}
-                  sx={{ 
+                  component={accountOrCompanyHref ? RouterLink : undefined}
+                  to={accountOrCompanyHref}
+                  sx={{
                     minWidth: 'auto',
                     px: 1,
                     py: 0.5,
@@ -5604,26 +5605,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 {company ? (
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     <Box
-                      sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                      onClick={() => {
-                        const aid =
-                          (jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null;
-                        if (aid) navigate(`/accounts/${aid}`);
-                        else navigate(`/companies/${company.id}`);
-                      }}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => { 
-                        if (e.key === 'Enter' || e.key === ' ') { 
-                          e.preventDefault(); 
-                          const aid =
-                            (jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null;
-                          if (aid) navigate(`/accounts/${aid}`);
-                          else navigate(`/companies/${company.id}`);
-                        } 
-                      }}
+                      sx={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
                     >
-                      <Avatar 
+                      {accountOrCompanyHref && <StretchedRowLink to={accountOrCompanyHref} />}
+                      <Avatar
                         src={company.logo || company.logoUrl || company.logo_url || company.avatar}
                         sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}
                       >
@@ -5647,6 +5632,8 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   </Box>
                 )}
               </SectionCard>
+                );
+              })()}
 
               {/* Assigned Recruiters Widget */}
               <SectionCard title="Assigned Recruiters" action={
@@ -5670,12 +5657,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     {recruiterUsers.map((recruiter) => (
                       <Box
                         key={recruiter.id}
-                        sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                        onClick={() => navigate(`/users/${recruiter.id}`)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/users/${recruiter.id}`); } }}
+                        sx={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
                       >
+                        <StretchedRowLink to={`/users/${recruiter.id}`} />
                         <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                           {recruiter.displayName?.charAt(0) || 'R'}
                         </Avatar>
@@ -5768,12 +5752,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     {associatedContacts.map((contact) => (
                       <Box
                         key={contact.id}
-                        sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                        onClick={() => navigate(`/contacts/${contact.id}`)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/contacts/${contact.id}`); } }}
+                        sx={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
                       >
+                        <StretchedRowLink to={`/contacts/${contact.id}`} />
                         <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                           {contact.fullName?.charAt(0) || contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
                         </Avatar>
@@ -5831,28 +5812,15 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   const displayAddress = location?.address || (typeof jobOrder?.worksiteAddress === 'string' ? jobOrder.worksiteAddress : '');
                   
                   if (displayLocationName) {
+                    const companyId = company?.id || jobOrder?.companyId;
+                    const locationHref =
+                      companyId && displayLocationId ? `/companies/${companyId}/locations/${displayLocationId}` : undefined;
                     return (
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                         <Box
-                          sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                          onClick={() => {
-                            const companyId = company?.id || jobOrder?.companyId;
-                            if (companyId && displayLocationId) {
-                              navigate(`/companies/${companyId}/locations/${displayLocationId}`);
-                            }
-                          }}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => { 
-                            if (e.key === 'Enter' || e.key === ' ') { 
-                              e.preventDefault(); 
-                              const companyId = company?.id || jobOrder?.companyId;
-                              if (companyId && displayLocationId) {
-                                navigate(`/companies/${companyId}/locations/${displayLocationId}`);
-                              }
-                            } 
-                          }}
+                          sx={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
                         >
+                          {locationHref && <StretchedRowLink to={locationHref} />}
                           <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
                             <BusinessIcon sx={{ fontSize: 16 }} />
                           </Avatar>

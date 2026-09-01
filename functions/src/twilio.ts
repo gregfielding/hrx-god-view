@@ -21,6 +21,7 @@ import {
 } from './messaging/twilioSecrets';
 import { maybeEmitPhoneVerifiedCategoryScore } from './categoryScoreEvolution/activityCategoryScoreEmit';
 import { shortenUrlsInBody } from './messaging/linkShortener';
+import { tenantMembershipMergePayload } from './shared/tenantMembership';
 
 // Twilio Verify is only used here (kept local)
 const verifyServiceSid = defineSecret('TWILIO_VERIFY_SERVICE_SID');
@@ -624,6 +625,15 @@ async function resolvePhoneSignup(
       // bounced fresh phone signups to the admin /dashboard and crashed
       // (found 2026-08-25). '2' = applicant, same as the legacy signup path.
       securityLevel: '2',
+      // ☠️ Must ALSO be stamped as a tenantIds map entry, not just top-level
+      // securityLevel — "All Users" admin search and the worker directory
+      // both query tenantIds.{tenantId}.securityLevel; a top-level-only
+      // stamp leaves the user invisible to both (found 2026-08-27, Charlie
+      // Howell self-signup). See docs/claude/feedback_tenantids_map_creation_paths.md.
+      // Uses the MERGE (nested-object) form, not the dot-path form — this
+      // call is set({merge:true}), which does NOT parse dotted string keys
+      // as nested paths (only .update() does).
+      ...tenantMembershipMergePayload(TENANT_C1, { securityLevel: '2', role: 'Applicant', addedAt: now }),
       orgType: 'Tenant',
       preferredLanguage,
       isActive: true,

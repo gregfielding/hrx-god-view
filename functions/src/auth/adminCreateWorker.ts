@@ -245,10 +245,18 @@ function buildUserDocPatch(args: {
     securityLevel: input.securityLevel,
     orgType: input.role === 'HRX' ? 'HRX' : 'Tenant',
     tenantId: input.tenantId,
-    [`tenantIds.${input.tenantId}`]: {
-      role: input.role,
-      securityLevel: input.securityLevel,
-      addedAt: admin.firestore.FieldValue.serverTimestamp(),
+    // ☠️ NESTED object, not a dotted string key — this patch is written via
+    // .set(patch, {merge:true}) (line ~515), which does NOT parse dotted
+    // string keys as nested paths (only .update() does; verified empirically
+    // 2026-08-27). A dotted key here would silently write a garbage
+    // top-level field literally named "tenantIds.{tenantId}" instead of
+    // nesting into the real tenantIds map — exactly the Charlie Howell bug.
+    tenantIds: {
+      [input.tenantId]: {
+        role: input.role,
+        securityLevel: input.securityLevel,
+        addedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
     },
     inviteStatus: 'completed',
     isActive: true,
@@ -288,9 +296,9 @@ function buildUserDocPatch(args: {
   if (mergeMode === 'fill_missing_only' && existingDoc) {
     // Drop any field the existing doc already has a non-empty value for.
     // We keep `updatedAt` / `manualCreation*` always so the audit trail
-    // records this call. Tenant-map dot-path is special: only write if
-    // the exact tenant block is missing.
-    const tenantMapPath = `tenantIds.${input.tenantId}`;
+    // records this call. tenantIds is special: only write the new tenant
+    // block if the exact tenant entry is missing (nested-object form, not a
+    // dotted key — see comment above on fullPatch.tenantIds).
     const existingTenantBlock =
       ((existingDoc.tenantIds as Record<string, unknown> | undefined) ?? {})[input.tenantId];
     const filtered: Record<string, unknown> = {
@@ -301,7 +309,7 @@ function buildUserDocPatch(args: {
     };
     for (const [k, v] of Object.entries(fullPatch)) {
       if (k.startsWith('manualCreation') || k === 'updatedAt') continue;
-      if (k === tenantMapPath) {
+      if (k === 'tenantIds') {
         if (!existingTenantBlock) filtered[k] = v;
         continue;
       }

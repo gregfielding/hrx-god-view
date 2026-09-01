@@ -27,7 +27,7 @@ import {
   Edit as EditIcon,
   AccountBalance as AccountBalanceIcon,
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db, storage } from '../firebase';
@@ -157,7 +157,6 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
   CompanyNameDisplay,
   linkedAccount,
 }) => {
-  const navigate = useNavigate();
   const logoInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [logoHover, setLogoHover] = useState(false);
@@ -682,9 +681,9 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
                     <React.Fragment key={`${rel.relation}-${rel.id}`}>
                       {CompanyNameDisplay ? (
                         <Box
-                          component="button"
-                          onClick={() => navigate(`/${routePrefix}/companies/${rel.id}`)}
-                          sx={{ 
+                          component={Link}
+                          to={`/${routePrefix}/companies/${rel.id}`}
+                          sx={{
                             background: 'none',
                             border: 'none',
                             padding: 0,
@@ -702,12 +701,14 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
                         <Typography
                           variant="body2"
                           color="primary"
-                          sx={{ 
+                          component={Link}
+                          to={`/${routePrefix}/companies/${rel.id}`}
+                          sx={{
                             fontWeight: 500,
                             cursor: 'pointer',
+                            textDecoration: 'none',
                             '&:hover': { textDecoration: 'underline' }
                           }}
-                          onClick={() => navigate(`/${routePrefix}/companies/${rel.id}`)}
                         >
                           {rel.name}
                         </Typography>
@@ -727,6 +728,8 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
                 <Tooltip title={linkedAccount.name ? `Open account: ${linkedAccount.name}` : 'Open account'}>
                   <IconButton
                     size="small"
+                    component={Link}
+                    to={`/accounts/${linkedAccount.id}`}
                     sx={{
                       p: 1,
                       color: 'primary.main',
@@ -740,7 +743,6 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
                       },
                       transition: 'all 0.2s ease',
                     }}
-                    onClick={() => navigate(`/accounts/${linkedAccount.id}`)}
                   >
                     <AccountBalanceIcon sx={{ fontSize: 20 }} />
                   </IconButton>
@@ -1292,9 +1294,9 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                       {CompanyNameDisplay ? (
                         <Box
-                          component="button"
-                          onClick={() => navigate(`/${routePrefix}/companies/${rel.id}`)}
-                          sx={{ 
+                          component={Link}
+                          to={`/${routePrefix}/companies/${rel.id}`}
+                          sx={{
                             background: 'none',
                             border: 'none',
                             padding: 0,
@@ -1312,12 +1314,13 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
                         <Typography
                           variant="body2"
                           color="primary"
-                          sx={{ 
-                            cursor: 'pointer', 
-                            textDecoration: 'underline', 
-                            '&:hover': { color: 'primary.dark' } 
+                          component={Link}
+                          to={`/${routePrefix}/companies/${rel.id}`}
+                          sx={{
+                            cursor: 'pointer',
+                            textDecoration: 'underline',
+                            '&:hover': { color: 'primary.dark' }
                           }}
-                          onClick={() => navigate(`/${routePrefix}/companies/${rel.id}`)}
                         >
                           {rel.name}
                         </Typography>

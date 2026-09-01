@@ -58,10 +58,14 @@ describe('buildWirePatch — wire shape contract', () => {
     expect(out.notes).toBe('');
   });
 
-  test('keeps zero (clearing tips/bonus)', () => {
-    const out = buildWirePatch({ tips: 0, bonusAmount: 0 }, 'uid');
+  test('keeps zero (clearing tips/bonus/reimbursement)', () => {
+    const out = buildWirePatch(
+      { tips: 0, bonusAmount: 0, reimbursementAmount: 0 },
+      'uid',
+    );
     expect(out.tips).toBe(0);
     expect(out.bonusAmount).toBe(0);
+    expect(out.reimbursementAmount).toBe(0);
   });
 
   test('round-trips a fully populated patch', () => {
@@ -79,6 +83,7 @@ describe('buildWirePatch — wire shape contract', () => {
         ],
         tips: 12.5,
         bonusAmount: 25,
+        reimbursementAmount: 50,
         notes: 'Worker came in 30m late',
       },
       'recruiter-uid',
@@ -91,6 +96,7 @@ describe('buildWirePatch — wire shape contract', () => {
     ]);
     expect(out.tips).toBe(12.5);
     expect(out.bonusAmount).toBe(25);
+    expect(out.reimbursementAmount).toBe(50);
     expect(out.notes).toBe('Worker came in 30m late');
     expect(out.updatedBy).toBe('recruiter-uid');
   });
@@ -103,6 +109,7 @@ describe('buildWirePatch — wire shape contract', () => {
         breaks: [],
         tips: 0,
         bonusAmount: 0,
+        reimbursementAmount: 0,
         notes: '',
       },
       'uid',
@@ -114,6 +121,7 @@ describe('buildWirePatch — wire shape contract', () => {
         'breaks',
         'tips',
         'bonusAmount',
+        'reimbursementAmount',
         'notes',
         'updatedAt',
         'updatedBy',

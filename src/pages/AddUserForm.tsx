@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 import { db } from '../firebase';
+import { useActiveTenantId } from '../contexts/AuthContext';
+import { tenantMembershipMergePayload } from '../shared/tenantMembership';
 
 const roles = ['Agency', 'HRX', 'Employee', 'Contractor', 'Applicant', 'Customer', 'Dismissed'];
 const securityLevels = ['7', '6', '5', '4', '3', '2', '1', '0'];
@@ -21,6 +23,7 @@ const AddUserForm = () => {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const activeTenantId = useActiveTenantId();
 
   const handleChange = (field: string, value: any) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -34,6 +37,20 @@ const AddUserForm = () => {
       const docRef = await addDoc(collection(db, 'users'), {
         ...form,
         createdAt: serverTimestamp(),
+        ...(activeTenantId
+          ? {
+              tenantId: activeTenantId,
+              // Without this map entry the user is invisible to "All Users"
+              // search and the worker directory, which both query
+              // tenantIds.{tenantId}.securityLevel (found 2026-08-27). addDoc
+              // has no dot-path parsing, so this must be the nested (merge) form.
+              ...tenantMembershipMergePayload(activeTenantId, {
+                securityLevel: form.securityLevel,
+                role: form.role,
+                addedAt: serverTimestamp(),
+              }),
+            }
+          : {}),
       });
       setSuccess(true);
       setTimeout(() => {

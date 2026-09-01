@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import StretchedRowLink from '../../components/StretchedRowLink';
 import {
   Box,
   Typography,
@@ -2357,16 +2358,15 @@ const ContactDetails: React.FC = () => {
                       <BusinessIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
                       <Typography
                         variant="body2"
+                        component={Link}
+                        to={`/companies/${company?.id || contact.companyId}`}
                         sx={{
                           fontSize: '14px',
                           fontWeight: 600,
                           color: 'rgb(74, 144, 226)',
                           cursor: 'pointer',
+                          textDecoration: 'none',
                           '&:hover': { textDecoration: 'underline' },
-                        }}
-                        onClick={() => {
-                          const id = company?.id || contact.companyId;
-                          if (id) navigate(`/companies/${id}`);
                         }}
                       >
                         {company?.companyName || company?.name || contact.companyName || 'Company'}
@@ -2388,14 +2388,15 @@ const ContactDetails: React.FC = () => {
                             <React.Fragment key={loc.id || idx}>
                               <Typography
                                 component="span"
+                                {...(company?.id
+                                  ? { component: Link, to: `/companies/${company.id}/locations/${loc.id}` }
+                                  : {})}
                                 sx={{
                                   color: 'rgb(74, 144, 226)',
                                   cursor: company?.id ? 'pointer' : 'default',
                                   fontWeight: 600,
+                                  textDecoration: 'none',
                                   '&:hover': company?.id ? { textDecoration: 'underline' } : undefined,
-                                }}
-                                onClick={() => {
-                                  if (company?.id) navigate(`/companies/${company.id}/locations/${loc.id}`);
                                 }}
                               >
                                 {displayText}
@@ -2417,14 +2418,15 @@ const ContactDetails: React.FC = () => {
                         {(associationsData.entities.deals || []).slice(0, 2).map((d: any, idx: number) => (
                           <React.Fragment key={d.id || idx}>
                             <Typography
-                              component="span"
+                              component={Link}
+                              to={`/crm/deals/${d.id}`}
                               sx={{
                                 color: 'rgb(74, 144, 226)',
                                 cursor: 'pointer',
                                 fontWeight: 600,
+                                textDecoration: 'none',
                                 '&:hover': { textDecoration: 'underline' },
                               }}
-                              onClick={() => navigate(`/crm/deals/${d.id}`)}
                             >
                               {d.name || d.title || 'Deal'}
                             </Typography>
@@ -2444,14 +2446,15 @@ const ContactDetails: React.FC = () => {
                         {jobOrders.slice(0, 2).map((jo: any, idx: number) => (
                           <React.Fragment key={jo.id || idx}>
                             <Typography
-                              component="span"
+                              component={Link}
+                              to={`/crm/job-orders/${jo.id}`}
                               sx={{
                                 color: 'rgb(74, 144, 226)',
                                 cursor: 'pointer',
                                 fontWeight: 600,
+                                textDecoration: 'none',
                                 '&:hover': { textDecoration: 'underline' },
                               }}
-                              onClick={() => navigate(`/crm/job-orders/${jo.id}`)}
                             >
                               {jo.jobOrderName || jo.jobTitle || 'Job Order'}
                             </Typography>
@@ -3734,6 +3737,7 @@ const ContactDetails: React.FC = () => {
                   {contact?.companyName ? (
                     <Box
                       sx={{
+                        position: 'relative',
                         display: 'flex',
                         alignItems: 'center',
                         gap: 1,
@@ -3743,16 +3747,8 @@ const ContactDetails: React.FC = () => {
                         cursor: contact?.companyId ? 'pointer' : undefined,
                         '&:hover': contact?.companyId ? { bgcolor: 'grey.100' } : undefined,
                       }}
-                      onClick={() => contact?.companyId && navigate(`/companies/${contact.companyId}`)}
-                      role={contact?.companyId ? 'button' : undefined}
-                      tabIndex={contact?.companyId ? 0 : undefined}
-                      onKeyDown={(e) => {
-                        if (contact?.companyId && (e.key === 'Enter' || e.key === ' ')) {
-                          e.preventDefault();
-                          navigate(`/companies/${contact.companyId}`);
-                        }
-                      }}
                     >
+                      {contact?.companyId && <StretchedRowLink to={`/companies/${contact.companyId}`} />}
                       <Avatar
                         sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}
                       >
@@ -3804,6 +3800,7 @@ const ContactDetails: React.FC = () => {
                           <Box
                             key={location.id}
                             sx={{
+                              position: 'relative',
                               display: 'flex',
                               alignItems: 'center',
                               gap: 1,
@@ -3813,16 +3810,8 @@ const ContactDetails: React.FC = () => {
                               cursor: isClickable ? 'pointer' : undefined,
                               '&:hover': isClickable ? { bgcolor: 'grey.100' } : undefined,
                             }}
-                            onClick={() => isClickable && navigate(`/companies/${companyId}/locations/${location.id}`)}
-                            role={isClickable ? 'button' : undefined}
-                            tabIndex={isClickable ? 0 : undefined}
-                            onKeyDown={(e) => {
-                              if (isClickable && (e.key === 'Enter' || e.key === ' ')) {
-                                e.preventDefault();
-                                navigate(`/companies/${companyId}/locations/${location.id}`);
-                              }
-                            }}
                           >
+                            {isClickable && <StretchedRowLink to={`/companies/${companyId}/locations/${location.id}`} />}
                             <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
                               <LocationIcon sx={{ fontSize: 16 }} />
                             </Avatar>
@@ -3950,22 +3939,23 @@ const ContactDetails: React.FC = () => {
                           }
                           
                           return (
-                            <Box 
-                              key={deal.id} 
-                              sx={{ 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                gap: 1, 
-                                p: 1, 
-                                borderRadius: 1, 
+                            <Box
+                              key={deal.id}
+                              sx={{
+                                position: 'relative',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 1,
+                                p: 1,
+                                borderRadius: 1,
                                 bgcolor: 'grey.50',
                                 cursor: 'pointer',
                                 '&:hover': {
                                   bgcolor: 'grey.100'
                                 }
                               }}
-                              onClick={() => navigate(`/crm/deals/${deal.id}`)}
                             >
+                              <StretchedRowLink to={`/crm/deals/${deal.id}`} />
                               <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
                                 <BusinessIcon sx={{ fontSize: 16 }} />
                               </Avatar>
@@ -4050,22 +4040,23 @@ const ContactDetails: React.FC = () => {
                           const jobOrderNumber = jobOrder.jobOrderNumber || jobOrder.jobOrderSeq?.toString().padStart(4, '0') || 'N/A';
                           
                           return (
-                            <Box 
-                              key={jobOrder.id} 
-                              sx={{ 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                gap: 1, 
-                                p: 1, 
-                                borderRadius: 1, 
+                            <Box
+                              key={jobOrder.id}
+                              sx={{
+                                position: 'relative',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 1,
+                                p: 1,
+                                borderRadius: 1,
                                 bgcolor: 'grey.50',
                                 cursor: 'pointer',
                                 '&:hover': {
                                   bgcolor: 'grey.100'
                                 }
                               }}
-                              onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
                             >
+                              <StretchedRowLink to={`/jobs/job-orders/${jobOrder.id}`} />
                               <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
                                 <WorkIcon sx={{ fontSize: 16 }} />
                               </Avatar>
