@@ -57,6 +57,7 @@ import { evereeRequest } from '../integrations/everee/evereeHttp';
 import { listPayables } from '../integrations/everee/evereePayables';
 import { finalizeTimesheetBatch } from './finalizeTimesheetBatch';
 import { maybeRunDailyFinanceRollups } from './financeWeekRollups';
+import { maybeRunDailyLedgerFreeze } from './payrollCostReport';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -448,7 +449,9 @@ export const reconcileTimesheetBatchesCron = onSchedule(
     schedule: 'every 15 minutes',
     timeZone: 'UTC',
     timeoutSeconds: 540,
-    memory: '512MiB',
+    // 1GiB: the daily ledger freeze walks the full Everee payment set
+    // (same workload getPayrollCostReport runs at 1GiB).
+    memory: '1GiB',
   },
   async () => {
     const startedAt = Date.now();
@@ -474,6 +477,15 @@ export const reconcileTimesheetBatchesCron = onSchedule(
       await maybeRunDailyFinanceRollups('BCiP2bQ9CgVOCTfV6MhD');
     } catch (err) {
       logger.error('[reconcileTimesheetBatchesCron] finance_rollups_failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    // Attribution-ledger freeze (Greg 2026-09-01) — same once-per-day
+    // claim pattern; isolated so a freeze failure never fails the sweep.
+    try {
+      await maybeRunDailyLedgerFreeze('BCiP2bQ9CgVOCTfV6MhD');
+    } catch (err) {
+      logger.error('[reconcileTimesheetBatchesCron] ledger_freeze_failed', {
         err: err instanceof Error ? err.message : String(err),
       });
     }

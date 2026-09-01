@@ -1162,6 +1162,73 @@ export async function buildEvereeBurdenRates(
   return out;
 }
 
+/**
+ * Daily attribution-ledger freeze (Greg 2026-09-01: "it's critical that
+ * every payroll dollar is classed correctly"). Rides the reconcile cron
+ * behind a once-per-day function_runs claim. Freezes every payment that
+ * is (a) fully resolved (<0.5% unresolved), (b) mature — last funding
+ * ≥3 days old, Everee attaches corrections to fresh fundings — and
+ * (c) not already frozen. Frozen shares become the attribution of
+ * record: later Everee drift or rule changes can't reshuffle history.
+ */
+export async function maybeRunDailyLedgerFreeze(tenantId: string): Promise<void> {
+  const day = new Date().toISOString().slice(0, 10);
+  const claimRef = db.doc(`function_runs/payrollLedgerFreeze_${day}`);
+  const claimed = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(claimRef);
+    if (snap.exists) return false;
+    tx.set(claimRef, { startedAt: admin.firestore.FieldValue.serverTimestamp(), tenantId });
+    return true;
+  });
+  if (!claimed) return;
+  try {
+    const matureCutoff = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+    const start = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+    const recs: Array<{
+      paymentId: string; worker: string; entityId: string;
+      shares: Array<{ cls: string; amt: number; method: string }>;
+      resolvedWeight: number; unresolvedWeight: number; fundingDates: string[];
+    }> = [];
+    await buildWireJournal(tenantId, start, day, null, { onPayment: (r) => recs.push(r) });
+    const toFreeze = recs.filter((r) => {
+      const total = r.resolvedWeight + r.unresolvedWeight;
+      if (total <= 0 || r.unresolvedWeight / total >= 0.005) return false;
+      if (r.shares.some((sd) => sd.method === 'ledger')) return false; // already frozen
+      const last = r.fundingDates.reduce((a, b) => (a > b ? a : b), '');
+      return Boolean(last) && last <= matureCutoff;
+    });
+    for (let i = 0; i < toFreeze.length; i += 400) {
+      const batch = db.batch();
+      for (const r of toFreeze.slice(i, i + 400)) {
+        batch.set(db.doc(`tenants/${tenantId}/payroll_payment_attributions/${r.paymentId}`), {
+          paymentId: r.paymentId,
+          worker: r.worker,
+          entityId: r.entityId,
+          shares: r.shares,
+          resolvedWeight: r.resolvedWeight,
+          unresolvedWeight: r.unresolvedWeight,
+          firstFundingDate: r.fundingDates[0] ?? null,
+          source: `daily_freeze_${day}`,
+          frozenAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await batch.commit();
+    }
+    await claimRef.set(
+      { finishedAt: admin.firestore.FieldValue.serverTimestamp(), frozen: toFreeze.length, seen: recs.length },
+      { merge: true },
+    );
+    console.info('[payrollLedgerFreeze] complete', { frozen: toFreeze.length, seen: recs.length });
+  } catch (e) {
+    console.error('[payrollLedgerFreeze] failed', { error: e instanceof Error ? e.message : String(e) });
+    await claimRef.set(
+      { failedAt: admin.firestore.FieldValue.serverTimestamp(), error: String(e).slice(0, 300) },
+      { merge: true },
+    );
+  }
+}
+
 /* -------------------------------------------------------------------------
  * Payroll Journal by QBO class (Greg 2026-08-19): the July wire-recon
  * engine (functions/.scratch/build-everee-wire-class-report.ts) as a
