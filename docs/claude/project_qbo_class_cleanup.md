@@ -40,6 +40,18 @@ unclassed), plus $1.22M sitting directly on the "Venue Smart" parent class.
 - **PO email backfill**: 56 emails → **37 event classes created**, 12
   matched existing, PO→class ledger seeded (~49 rows).
 - `/reports/qbo-classes` gained a From/To date range (was hardcoded YTD).
+- Unclassed-income drill-down: the −$509K = JE `Rev 063026` unclassed debit
+  legs (−$615.6K) + 46 invoices with NO class (+$106.6K). JE fix waits on
+  Tabitha: what fed the 4200 balance (classed 2026 / unclassed / prior-year)?
+- **RS3 = Proof of the Pudding (Greg ruling)** — RS3 was the old name. Merged:
+  55 transactions / $183,057 reclassed RS3→`Proof of Pudding`, plus the 5
+  RS3-customer unclassed invoices ($15,272); `RS3` and `Dell Diamond Cooks`
+  classes deactivated after emptying; mappings cleaned. This also explains JE
+  line 4 ("RS3 rev" classed Proof of Pudding — class was right, label old).
+- Sodexo (12/$13,404) and G6 (2/$672) unclassed invoices classed by customer.
+  HOLDS: Indeed Flex 13/$7,700 (Greg), Venue Smart 14/$69,595 (PO export).
+- Mazzella deposit (Id 4674): Venue Smart class stripped, $100K, verified —
+  account side (capital vs revenue) left for Tabitha.
 
 ## The VenueSmart PO automation (live)
 
