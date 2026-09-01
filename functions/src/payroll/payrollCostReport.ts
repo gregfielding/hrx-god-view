@@ -267,6 +267,15 @@ export const savePayrollVenueMapping = onCall(
       return await pushScreeningAllocations(tenantId, request.data?.dryRun !== false);
     }
 
+    // Revenue-account rule (Greg 2026-09-01): monthly 4200→4100 reclass
+    // for events-family revenue misposted via item mappings. Level 7.
+    if (action === 'pushRevenueAccountReclass') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushRevenueAccountReclass } = await import('./revenueAccountReclass');
+      return await pushRevenueAccountReclass(tenantId, request.data?.dryRun !== false);
+    }
+
     // Batch resolve (Greg 2026-09-01: "apply to all" — one confirmed
     // guess applied to every flagged row sharing it, like the timesheet
     // layout). Same writes as the single action, chunked.
@@ -1572,6 +1581,18 @@ export async function maybeRunWeeklyClassificationHealth(
           (badRatios.length ? `\n⚠️ Class health (rev÷labor outside the staffing band):\n${ratioLines}\n` : '') +
           `\nReview + fix inline: https://hrxone.com/reports/classification-audit`,
       );
+    }
+    // Revenue-account rule rides the weekly run too — one idempotent
+    // monthly 4200→4100 reclass JE per matured month (Greg 2026-09-01).
+    try {
+      const { pushRevenueAccountReclass } = await import('./revenueAccountReclass');
+      const rr = (await pushRevenueAccountReclass(tenantId, false)) as Record<string, any>;
+      const made = ((rr.months ?? []) as Array<Record<string, any>>).filter((x) => x.status === 'created');
+      if (made.length && postText) {
+        await postText(`🔀 Revenue reclass: posted ${made.length} monthly 4200→4100 entr${made.length === 1 ? 'y' : 'ies'} (events-family revenue).`);
+      }
+    } catch (e) {
+      console.error('[classificationHealth] revenue reclass failed', { error: String(e) });
     }
     // Screening allocation rides the weekly run — idempotent per charge,
     // mature charges only, ~$8/screen amounts (Greg 2026-09-01).
