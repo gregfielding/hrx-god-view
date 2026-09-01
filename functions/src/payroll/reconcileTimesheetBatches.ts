@@ -50,6 +50,7 @@
 
 import * as admin from 'firebase-admin';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions/v2';
 
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
@@ -57,7 +58,7 @@ import { evereeRequest } from '../integrations/everee/evereeHttp';
 import { listPayables } from '../integrations/everee/evereePayables';
 import { finalizeTimesheetBatch } from './finalizeTimesheetBatch';
 import { maybeRunDailyFinanceRollups } from './financeWeekRollups';
-import { maybeRunDailyLedgerFreeze } from './payrollCostReport';
+import { maybeRunDailyLedgerFreeze, maybeRunWeeklyClassificationHealth } from './payrollCostReport';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -444,11 +445,14 @@ export async function runReconcileSweep(): Promise<ReconcileSweepSummary> {
 // Scheduled cron
 // ─────────────────────────────────────────────────────────────────────
 
+const RECONCILE_SLACK_BOT_TOKEN = defineSecret('SLACK_BOT_TOKEN');
+
 export const reconcileTimesheetBatchesCron = onSchedule(
   {
     schedule: 'every 15 minutes',
     timeZone: 'UTC',
     timeoutSeconds: 540,
+    secrets: [RECONCILE_SLACK_BOT_TOKEN],
     // 1GiB: the daily ledger freeze walks the full Everee payment set
     // (same workload getPayrollCostReport runs at 1GiB).
     memory: '1GiB',
@@ -486,6 +490,31 @@ export const reconcileTimesheetBatchesCron = onSchedule(
       await maybeRunDailyLedgerFreeze('BCiP2bQ9CgVOCTfV6MhD');
     } catch (err) {
       logger.error('[reconcileTimesheetBatchesCron] ledger_freeze_failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    // Weekly classification health (Greg 2026-09-01) — once per ISO week,
+    // deferred to a tick after the day's freeze; Slack is a mirror, never
+    // a dependency (posts to the payroll help-desk channel when set).
+    try {
+      const postSlack = async (text: string): Promise<void> => {
+        try {
+          const cfg = await admin.firestore().doc('app_config/payroll_help_desk').get();
+          const channel = String(cfg.get('slackChannelId') ?? '').trim();
+          const token = RECONCILE_SLACK_BOT_TOKEN.value() || process.env.SLACK_BOT_TOKEN;
+          if (!channel || !token) return;
+          await fetch('https://slack.com/api/chat.postMessage', {
+            method: 'POST',
+            headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ channel, text, unfurl_links: false }),
+          });
+        } catch (e) {
+          logger.warn('[reconcileTimesheetBatchesCron] health slack post failed', { err: String(e) });
+        }
+      };
+      await maybeRunWeeklyClassificationHealth('BCiP2bQ9CgVOCTfV6MhD', postSlack);
+    } catch (err) {
+      logger.error('[reconcileTimesheetBatchesCron] classification_health_failed', {
         err: err instanceof Error ? err.message : String(err),
       });
     }

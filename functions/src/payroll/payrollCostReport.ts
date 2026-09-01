@@ -1465,6 +1465,80 @@ export async function buildClassificationAudit(
   };
 }
 
+/**
+ * Weekly classification health check (Greg 2026-09-01: "wire these health
+ * checks into the weekly cron"). Rides the reconcile cron behind a
+ * once-per-ISO-week claim, staggered to a tick AFTER the day's ledger
+ * freeze (both walk the full Everee payment set — together they would
+ * blow the 540s budget). Persists the summary to
+ * classification_health_runs/{monday} and pings Slack when anything
+ * needs eyes. Detection layer for what attribution cannot see from
+ * inside: stale JOs, under-billing, weak-evidence drift.
+ */
+export async function maybeRunWeeklyClassificationHealth(
+  tenantId: string,
+  postText?: (text: string) => Promise<void>,
+): Promise<void> {
+  const now = Date.now();
+  const day = new Date(now).toISOString().slice(0, 10);
+  const dow = new Date(now).getUTCDay();
+  const monday = new Date(now - ((dow + 6) % 7) * 86400000).toISOString().slice(0, 10);
+  const freezeDone = await db.doc(`function_runs/payrollLedgerFreeze_${day}`).get();
+  if (!freezeDone.exists || !freezeDone.get('finishedAt')) return;
+  const claimRef = db.doc(`function_runs/classificationHealth_${monday}`);
+  const claimed = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(claimRef);
+    if (snap.exists) return false;
+    tx.set(claimRef, { startedAt: admin.firestore.FieldValue.serverTimestamp(), tenantId });
+    return true;
+  });
+  if (!claimed) return;
+  try {
+    const start = new Date(now - 45 * 86400000).toISOString().slice(0, 10);
+    const audit = (await buildClassificationAudit(tenantId, start, day)) as Record<string, any>;
+    const tiers = (audit.tiers ?? []) as Array<{ tier: string; amount: number }>;
+    const flaggedAmt = tiers.filter((t) => t.tier.startsWith('FLAG')).reduce((s, t) => s + t.amount, 0);
+    const payrollFlags = (audit.payrollFlags ?? []) as Array<Record<string, unknown>>;
+    const invoiceFlags = (audit.invoiceFlags ?? []) as Array<Record<string, unknown>>;
+    const unhealthyJos = (audit.unhealthyJos ?? []) as Array<Record<string, any>>;
+    const badRatios = ((audit.ratios ?? []) as Array<Record<string, any>>).filter((r) => r.verdict !== 'OK');
+    await db.doc(`tenants/${tenantId}/classification_health_runs/${monday}`).set({
+      weekOf: monday, startDate: start, endDate: day,
+      tiers, flaggedCount: payrollFlags.length, flaggedAmount: round2(flaggedAmt),
+      invoiceFlagCount: invoiceFlags.length,
+      unhealthyJos, badRatios: badRatios.slice(0, 40),
+      ranAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    if (postText && (payrollFlags.length > 0 || invoiceFlags.length > 0 || unhealthyJos.length > 0 || badRatios.length > 0)) {
+      const joLines = unhealthyJos
+        .map((j) => `• ${j.jobOrderName}: timesheets to ${j.timesheetsTo}, billing ends ${j.billingEnds}`)
+        .join('\n');
+      const ratioLines = badRatios
+        .slice(0, 8)
+        .map((r) => `• ${r.cls}: rev $${Math.round(r.revenue).toLocaleString()} / labor $${Math.round(r.labor).toLocaleString()} — ${r.verdict}`)
+        .join('\n');
+      await postText(
+        `📊 Weekly classification health (trailing 45 days)\n` +
+          `Flagged payroll: ${payrollFlags.length} lines / $${Math.round(flaggedAmt).toLocaleString()} · invoice flags: ${invoiceFlags.length}\n` +
+          (unhealthyJos.length ? `\n⚠️ Job orders clocking past billing (crew rolled or weeks unbilled):\n${joLines}\n` : '') +
+          (badRatios.length ? `\n⚠️ Class health (rev÷labor outside the staffing band):\n${ratioLines}\n` : '') +
+          `\nReview + fix inline: https://hrxone.com/reports/classification-audit`,
+      );
+    }
+    await claimRef.set(
+      { finishedAt: admin.firestore.FieldValue.serverTimestamp(), flagged: payrollFlags.length, unhealthyJos: unhealthyJos.length },
+      { merge: true },
+    );
+    console.info('[classificationHealth] complete', { flagged: payrollFlags.length, badRatios: badRatios.length });
+  } catch (e) {
+    console.error('[classificationHealth] failed', { error: e instanceof Error ? e.message : String(e) });
+    await claimRef.set(
+      { failedAt: admin.firestore.FieldValue.serverTimestamp(), error: String(e).slice(0, 300) },
+      { merge: true },
+    );
+  }
+}
+
 /* -------------------------------------------------------------------------
  * Payroll Journal by QBO class (Greg 2026-08-19): the July wire-recon
  * engine (functions/.scratch/build-everee-wire-class-report.ts) as a
