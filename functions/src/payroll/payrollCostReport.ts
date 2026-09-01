@@ -1266,6 +1266,8 @@ export async function buildWireJournal(
     { re: /crystal\s*falls|roy\s*kizer/i, leaf: 'Proof of Pudding' },
     { re: /carrier\b/i, leaf: 'Carrier Enterprise' },
     { re: /obama/i, leaf: 'Obama Presidential Viewing' },
+    // BTS concert was at the Oakland venue (Greg 2026-08-31).
+    { re: /\bbts\b/i, leaf: 'Oakland' },
     // Sodexo campus dining roles carry the university name, never "Sodexo".
     { re: /prairie\s*view|nc\s*a&t|carthage|stanford|\buniversity\b/i, leaf: 'Sodexo' },
     { re: /sips\s*and\s*sounds/i, leaf: 'Black Caviar' },
