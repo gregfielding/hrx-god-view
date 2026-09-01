@@ -93,6 +93,7 @@ const PayrollJournalPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<JournalData | null>(null);
+  const [pushing, setPushing] = useState(false);
   const [rangeLabel, setRangeLabel] = useState('');
 
   useEffect(() => {
@@ -107,6 +108,45 @@ const PayrollJournalPage: React.FC = () => {
       )
       .catch(() => setEntities([]));
   }, [tenantId]);
+
+  /**
+   * Phase 4 (Greg 2026-08-31): post each wire's class splits to QBO as a
+   * reallocation JE (credit 5010 unclassed / debit 5010 per class) —
+   * Tabitha's manual "EV Pay Alloc" pattern, automated. Dry-run first;
+   * wires she (or a prior push) already allocated are skipped.
+   */
+  const pushToQbo = async (): Promise<void> => {
+    if (!tenantId) return;
+    setPushing(true);
+    setError(null);
+    try {
+      const fn = httpsCallable(functions, 'savePayrollVenueMapping', { timeout: 300000 });
+      const dry = await fn({
+        tenantId, action: 'pushWireAllocations', startDate, endDate, dryRun: true,
+        ...(entityId ? { hiringEntityId: entityId } : {}),
+      });
+      const d = dry.data as { wires: Array<{ fundingDate: string; entity: string; amount: number; status: string; docNumber?: string }> };
+      const create = d.wires.filter((w) => w.status === 'would_create');
+      const skip = d.wires.filter((w) => w.status === 'already_allocated');
+      const summary =
+        `Push wire allocations to QBO — dry run:\n\n` +
+        `Would post ${create.length} reallocation JE(s):\n` +
+        create.map((w) => `  ${w.fundingDate}  ${w.entity}  $${w.amount.toLocaleString()}  → ${w.docNumber}`).join('\n') +
+        `\n\nAlready allocated (skipped): ${skip.length}\n\nEach JE credits 5010 unclassed and debits 5010 per class, penny-exact to the wire. Proceed?`;
+      if (create.length === 0) { window.alert('Nothing to push — every wire in range is already allocated.'); return; }
+      if (!window.confirm(summary)) return;
+      const real = await fn({
+        tenantId, action: 'pushWireAllocations', startDate, endDate, dryRun: false,
+        ...(entityId ? { hiringEntityId: entityId } : {}),
+      });
+      const r = real.data as { wires: Array<{ status: string }> };
+      window.alert(`Done. Created: ${r.wires.filter((w) => w.status === 'created').length} · Skipped: ${r.wires.filter((w) => w.status === 'already_allocated').length}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPushing(false);
+    }
+  };
 
   const load = async (): Promise<void> => {
     if (!tenantId) return;
@@ -215,6 +255,9 @@ const PayrollJournalPage: React.FC = () => {
             </Button>
             <Button variant="outlined" startIcon={<FileDownloadIcon />} onClick={exportCsv} disabled={!data}>
               Export CSV
+            </Button>
+            <Button variant="outlined" color="secondary" onClick={() => void pushToQbo()} disabled={!data || pushing}>
+              {pushing ? 'Pushing…' : 'Push to QBO'}
             </Button>
           </Stack>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>

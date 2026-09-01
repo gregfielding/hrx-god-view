@@ -238,6 +238,116 @@ export const savePayrollVenueMapping = onCall(
       return { ok: true, dryRun, created, fixedClass, verified: verified.length, skipped, mismatched };
     }
 
+    // ── Phase 4: push wire allocations to QBO (Greg 2026-08-31). Everee
+    //    wires land as UNCLASSED bank-feed Purchases on 5010 Direct Labor;
+    //    this posts a reclass JE per wire — credit 5010 unclassed, debit
+    //    5010 per class from buildWireJournal's penny-exact splits —
+    //    mirroring Tabitha's own manual "EV Pay Alloc" July entries. A
+    //    wire is skipped when an allocation JE already exists (hers or
+    //    ours), matched by DocNumber or by an existing 5010-unclassed
+    //    credit within $1 of the wire. Unattributed remainder stays
+    //    honestly unclassed. Level 7; dryRun first. ──
+    if (action === 'pushWireAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const dryRun = request.data?.dryRun !== false;
+      const startDate = trim(request.data?.startDate);
+      const endDate = trim(request.data?.endDate);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+        throw new HttpsError('invalid-argument', 'startDate/endDate (YYYY-MM-DD) required.');
+      }
+
+      const journal = (await buildWireJournal(tenantId, startDate, endDate, trim(request.data?.hiringEntityId) || null)) as {
+        wires: Array<{ fundingDate: string; entityName: string; amount: number; splits: Array<{ class: string; qboClass: string | null; qboClassExists: boolean; amount: number }> }>;
+      };
+
+      // QBO context: the 5010 account, class ids, existing allocation JEs.
+      const acctRes = (await qboQuery(tenantId, "SELECT Id, Name FROM Account WHERE AcctNum = '5010'")) as Record<string, any>;
+      const acct5010 = (acctRes.QueryResponse?.Account ?? acctRes.Account ?? [])[0];
+      if (!acct5010) throw new HttpsError('failed-precondition', 'Account 5010 (Direct Labor) not found.');
+      const ACCT = String(acct5010.Id);
+      const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class MAXRESULTS 1000')) as Record<string, any>;
+      const classIdByFqn = new Map<string, string>(
+        ((clsRes.QueryResponse?.Class ?? clsRes.Class ?? []) as Array<Record<string, any>>).map((c) => [
+          String(c.FullyQualifiedName), String(c.Id),
+        ]),
+      );
+      const existingDocs = new Set<string>();
+      const existingCredits: Array<{ amt: number }> = [];
+      let jstart = 1;
+      for (;;) {
+        // eslint-disable-next-line no-await-in-loop
+        const jr = (await qboQuery(tenantId, `SELECT * FROM JournalEntry WHERE TxnDate >= '2026-01-01' STARTPOSITION ${jstart} MAXRESULTS 1000`)) as Record<string, any>;
+        const jrows: Array<Record<string, any>> = jr.QueryResponse?.JournalEntry ?? jr.JournalEntry ?? [];
+        for (const je of jrows) {
+          existingDocs.add(trim(je.DocNumber));
+          for (const line of (je.Line ?? []) as Array<Record<string, any>>) {
+            const d = line.JournalEntryLineDetail;
+            if (d?.PostingType === 'Credit' && String(d.AccountRef?.value) === ACCT && !d.ClassRef) {
+              existingCredits.push({ amt: Number(line.Amount) || 0 });
+            }
+          }
+        }
+        if (jrows.length < 1000) break;
+        jstart += 1000;
+      }
+
+      const results: Array<Record<string, unknown>> = [];
+      for (const w of journal.wires) {
+        const mmdd = w.fundingDate.slice(5).replace('-', '');
+        const ent = /events/i.test(w.entityName) ? 'EVT' : /select/i.test(w.entityName) ? 'SEL' : /workforce/i.test(w.entityName) ? 'WF' : 'C1';
+        const docNumber = `EV Alloc ${mmdd} ${ent}`; // QBO caps DocNumber at 21 chars
+        const already = existingDocs.has(docNumber) || existingCredits.some((c) => Math.abs(c.amt - w.amount) <= 1);
+        if (already) {
+          results.push({ fundingDate: w.fundingDate, entity: w.entityName, amount: w.amount, status: 'already_allocated' });
+          continue;
+        }
+        const lines: Array<Record<string, unknown>> = [];
+        let unresolved = 0;
+        for (const s of w.splits) {
+          const cid = s.qboClass ? classIdByFqn.get(s.qboClass) : undefined;
+          if (s.class === 'Unattributed' || !s.qboClassExists || !cid) { unresolved += s.amount; continue; }
+          lines.push({
+            DetailType: 'JournalEntryLineDetail',
+            Amount: Math.round(s.amount * 100) / 100,
+            Description: `Everee wire ${w.fundingDate} ${w.entityName} — ${s.class}`,
+            JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: ACCT }, ClassRef: { value: cid, name: s.qboClass } },
+          });
+        }
+        if (unresolved > 0.005) {
+          lines.push({
+            DetailType: 'JournalEntryLineDetail',
+            Amount: Math.round(unresolved * 100) / 100,
+            Description: `Everee wire ${w.fundingDate} — unattributed remainder`,
+            JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: ACCT } },
+          });
+        }
+        lines.push({
+          DetailType: 'JournalEntryLineDetail',
+          Amount: Math.round(w.amount * 100) / 100,
+          Description: `Everee wire ${w.fundingDate} ${w.entityName} — reallocation`,
+          JournalEntryLineDetail: { PostingType: 'Credit', AccountRef: { value: ACCT } },
+        });
+        if (dryRun) {
+          results.push({
+            fundingDate: w.fundingDate, entity: w.entityName, amount: w.amount, status: 'would_create', docNumber,
+            splits: w.splits.map((s) => ({ class: s.qboClass ?? s.class, amount: s.amount, resolves: s.qboClassExists })),
+          });
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await qboEntityCreate(tenantId, 'JournalEntry', {
+          DocNumber: docNumber,
+          TxnDate: w.fundingDate,
+          PrivateNote: `Auto allocation from /payroll-costs wire worksheet (Phase 4). Wire $${w.amount.toFixed(2)} ${w.entityName}.`,
+          Line: lines,
+        });
+        existingDocs.add(docNumber);
+        results.push({ fundingDate: w.fundingDate, entity: w.entityName, amount: w.amount, status: 'created', docNumber });
+      }
+      return { ok: true, dryRun, wires: results };
+    }
+
     // ── QBO class mapping/creation branches (Greg 2026-08-19). Rides
     //    this callable to stay under the Cloud Run service cap. Level 7
     //    — these shape the books. Mark's email-driven VenueSmart class
