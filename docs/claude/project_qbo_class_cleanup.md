@@ -114,6 +114,21 @@ assign those from memory. Bonus: **AEG Oakland invoices carry per-event
 POs too** ("Summer Walker 6.28.26") — same treatment available when the
 Legends/AEG tree is settled.
 
+## Legends/AEG tree settled (2026-08-31, Greg ruling)
+
+**Legends = top level, Oakland = its subclass, AEG merged into Oakland.**
+Executed: `AEG:Legends` (the empty $0 class) PROMOTED to top-level `Legends`
+(drop ParentRef + SubClass:false); `Oakland` re-parented under it — kept its
+class Id (784543) so the HRX mapping survived, fqn refreshed to
+`Legends:Oakland`; **100 transactions / $219,407** swept AEG→Oakland
+(invoices, the $33K JE leg, ~90 small purchases, deposits — snapshot-first,
+totals verified); `AEG` deactivated after emptying; its (absent) mapping
+cleaned. ☠️ QBO renames deactivated entities to "Name (deleted)" — exact-name
+lookups miss them afterward. Verified: 0 AEG-classed lines remain in 2026.
+Future option on file: AEG Oakland invoices carry per-event POs
+("Summer Walker 6.28.26") if per-event subclasses under Oakland are ever
+wanted.
+
 ## Open
 
 - 58 invoices / $303,490 still on the bare VS parent: 17 stay (non-factored),
