@@ -367,3 +367,35 @@ surface the same way.
 **Rule for future pushes**: never push a wire dated within the last ~3
 days — Everee keeps attaching corrections to fresh fundings (the 8/31
 wires changed twice during this session).
+
+## Attribution audit + logic revision (2026-09-01)
+
+Greg asked to audit HOW the CFO wire report applies classes. buildWireJournal
+now returns `attributionAudit` — every dollar tagged with its resolution
+method. June–Aug ($1.41M): 63.9% note_dates_x_index (structured notes with
+ISO dates × timesheet/assignment index — the gold path), 15.0%
+payment_override (Greg's 8/14 CSV, per-payment, precise), 10.5%
+note_venue_text, 7.9% sole_assignment_class, 2.2% note_alias, 0.5%
+worker_override, 0.1% unattributed. May: 58.5% unattributed (the Mark punch
+list), 30.4% worker_override (the CSV describes exactly that era).
+
+**Logic flaw found and fixed**: payroll_class_overrides holds 1,037 docs
+(source `greg_filled_csv_2026-08-14`): 714 payment-kind + 323 worker-kind.
+Worker-kind docs were TIMELESS TRUMPS — a worker marked "Oakland Arena" in
+the CSV had every later payment forced to Oakland even after moving
+events (~$255K of June–Aug steered this way). Demoted: worker-kind now
+only answers what the pipeline can't otherwise resolve; payment-kind
+stays absolute. 37 posted JEs repatched.
+
+**Resolution chain (current)**: payment_override → JO# note tag → note
+ISO-dates × index → sole-assignment-class for the period → note venue
+text → note alias → worker_override → period day-split → unattributed.
+Index = timesheets (any non-rejected status incl. draft) overlaid with
+assignment date-ranges (userId/accountId/startDate..endDate); JO labels =
+account-kind mapping (qbo_class_mappings targetKind=account, unique
+accountId) → ACCOUNT_CLASS_RULES regex → JO name.
+
+**Durable rule**: every dollar paid should carry account+JO at payment
+creation (JO# tag or ISO dates in the Everee note is what feeds the gold
+path). The pay flow should enforce that — the report can only recover
+what was recorded.
