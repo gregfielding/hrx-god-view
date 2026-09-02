@@ -486,3 +486,30 @@ resolveClassificationFlags action).
   contact line after "—"; never a bare "Greg" line above "Greg Fielding
   ·…" (doubled name looked broken; API drafts never get the Gmail rich
   signature appended).
+
+## Account retirements + recon hardening (2026-09-03, second wave)
+
+- Retired accounts (flipped since 2026-01-01, then deactivated):
+  "Meals" (45) -> "Travel:Travel meals" (102), 69 txns $3,473.71;
+  "Vehicle:Fuel" (124) -> "Travel:Ground Transport" (115), 54 txns
+  $1,986.28. Write-back CATEGORY_ALIASES map lingering Expensify picks
+  (meals, fuel, vehicle:fuel). Expensify category toggles (Meals, Fuel,
+  Vehicle:Leased) are MANUAL — our EXPENSIFY_PARTNER creds are not a
+  policy admin (policyList empty; make the integration user a workspace
+  admin to script it).
+- Google: >$700 -> "Software & Subscriptions:C1 App" (acct 172,
+  created) = Firebase/GCP; <=$700 -> "Google Workspace". Amount-banded
+  rules (minAmount/maxAmount on |TotalAmt|); cardholder rules with
+  overwriteClass (danny rodriguez -> Legends:Oakland, always).
+- "je gusto" rule DELETED: Gusto payroll JEs only hit Uncategorized on
+  reimbursement lines — the rule misfiled Donna P.'s $247.60 (now
+  G&A:Office expenses, JE 7007 line 29). Reimbursements = human pick.
+- Categorized tab includes human JE debit expense lines (automated
+  wire/revrc/screen JEs excluded); cap 4000 + total; search field.
+- ☠️ FOUND 2026-09-03: 212 QBO purchases ($18,580.62, Jul-Aug) created
+  by Expensify report exports ("Imported from Expensify" in
+  PrivateNote) — ALL duplicate bank-feed charges (feed is
+  authoritative). Whoever exported reports from Expensify to QBO must
+  stop. Cleanup pending Greg's go-ahead.
+- Scratch runs needing a QBO token REFRESH must load env:
+  DOTENV_CONFIG_PATH=.env.hrx1-d3beb npx ts-node -r dotenv/config …
