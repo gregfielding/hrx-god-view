@@ -712,6 +712,18 @@ export const expensifyClassWritebackCron = onSchedule(
           logger.error('[expensify] tag sync failed', { tenantId: tenantRef.id, error: String(err) });
         }
         await runExpensifyClassWriteback(tenantRef.id);
+        // Merchant rules run AFTER the write-back: they only touch lines
+        // still on Uncategorized, so Expensify categorization always wins
+        // (Greg 2026-09-02).
+        try {
+          const { applyQboMerchantRules } = await import('../quickbooks/qboMerchantRules');
+          const rr = (await applyQboMerchantRules(tenantRef.id, false)) as Record<string, any>;
+          if (Number(rr.applied) > 0) {
+            logger.info('[expensify] merchant rules applied', { tenantId: tenantRef.id, applied: rr.applied });
+          }
+        } catch (err) {
+          logger.error('[expensify] merchant rules failed', { tenantId: tenantRef.id, error: String(err) });
+        }
       } catch (err) {
         logger.error('[expensify] class write-back tenant run failed', {
           tenantId: tenantRef.id,
