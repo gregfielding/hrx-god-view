@@ -280,6 +280,12 @@ export const savePayrollVenueMapping = onCall(
       const { categorizePurchase } = await import('../integrations/quickbooks/qboMerchantRules');
       return await categorizePurchase(tenantId, trim(request.data?.purchaseId), trim(request.data?.account), trim(request.data?.class) || undefined);
     }
+    if (action === 'setExpenseClass') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { setExpenseClass } = await import('../integrations/quickbooks/qboMerchantRules');
+      return await setExpenseClass(tenantId, trim(request.data?.purchaseId), trim(request.data?.class), trim(request.data?.lineId) || undefined);
+    }
     if (action === 'saveMerchantRule') {
       if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);

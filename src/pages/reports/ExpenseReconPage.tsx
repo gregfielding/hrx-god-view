@@ -52,16 +52,18 @@ const usd = (n: unknown): string =>
 
 interface ReconRow {
   purchaseId: string; date: string; merchant: string; amount: number;
-  cardholder: string; last4: string; source: 'card' | 'bank';
+  cardholder: string; last4: string; source: 'card' | 'bank' | 'journal';
+  cls?: string;
   suggestedAccount?: string; suggestionPct?: number; suggestionUses?: number;
 }
 interface RuleRow { id: string; pattern: string; account: string; class?: string | null; minAgeDays?: number }
 interface CategorizedRow {
+  purchaseId: string; lineId: string;
   date: string; merchant: string; amount: number; account: string; cls: string;
   cardholder: string; source: string;
 }
 interface ReconData {
-  rows: ReconRow[]; categorized: CategorizedRow[]; rules: RuleRow[]; expenseAccounts: string[]; uncategorizedTotal: number;
+  rows: ReconRow[]; categorized: CategorizedRow[]; rules: RuleRow[]; expenseAccounts: string[]; classes?: string[]; uncategorizedTotal: number;
 }
 
 const ExpenseReconPage: React.FC = () => {
@@ -76,7 +78,10 @@ const ExpenseReconPage: React.FC = () => {
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [done, setDone] = useState<Record<string, string>>({});
-  const [ruleDialog, setRuleDialog] = useState<{ pattern: string; account: string } | null>(null);
+  const [ruleDialog, setRuleDialog] = useState<{ pattern: string; account: string; cls: string } | null>(null);
+  // class edits, keyed purchaseId (uncategorized) or purchaseId:lineId (categorized)
+  const [clsSaved, setClsSaved] = useState<Record<string, string>>({});
+  const [clsSaving, setClsSaving] = useState<Record<string, boolean>>({});
   const [ruleBusy, setRuleBusy] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applyNote, setApplyNote] = useState<string | null>(null);
@@ -119,12 +124,25 @@ const ExpenseReconPage: React.FC = () => {
     }
   };
 
+  const setClass = async (key: string, purchaseId: string, className: string, lineId?: string): Promise<void> => {
+    if (!tenantId || !className) return;
+    setClsSaving((s0) => ({ ...s0, [key]: true }));
+    try {
+      await call({ tenantId, action: 'setExpenseClass', purchaseId, class: className, lineId }, 60000);
+      setClsSaved((s0) => ({ ...s0, [key]: className }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClsSaving((s0) => ({ ...s0, [key]: false }));
+    }
+  };
+
   const saveRule = async (): Promise<void> => {
     if (!tenantId || !ruleDialog?.pattern || !ruleDialog.account) return;
     setRuleBusy(true);
     try {
       const pattern = ruleDialog.pattern;
-      await call({ tenantId, action: 'saveMerchantRule', pattern, account: ruleDialog.account }, 30000);
+      await call({ tenantId, action: 'saveMerchantRule', pattern, account: ruleDialog.account, class: ruleDialog.cls || undefined }, 30000);
       setRuleDialog(null);
       const dry = await call({ tenantId, action: 'applyMerchantRulesNow', dryRun: true, pattern, ignoreMinAge: true });
       const count = Number((dry.data as { applied: number }).applied) || 0;
@@ -264,6 +282,7 @@ const ExpenseReconPage: React.FC = () => {
                     <TableCell>Who / source</TableCell>
                     <TableCell align="right">Amount</TableCell>
                     <TableCell sx={{ minWidth: 280 }}>Account</TableCell>
+                    <TableCell sx={{ minWidth: 220 }}>Class</TableCell>
                     <TableCell />
                   </TableRow>
                 </TableHead>
@@ -309,6 +328,16 @@ const ExpenseReconPage: React.FC = () => {
                           )}
                         </TableCell>
                         <TableCell>
+                          <Autocomplete
+                            size="small"
+                            options={data.classes ?? []}
+                            value={clsSaved[r.purchaseId] ?? (r.cls || null)}
+                            disabled={clsSaving[r.purchaseId]}
+                            onChange={(_, v) => { if (v) void setClass(r.purchaseId, r.purchaseId, v); }}
+                            renderInput={(params) => <TextField {...params} placeholder="Class…" />}
+                          />
+                        </TableCell>
+                        <TableCell>
                           {!saved && (
                             <Stack direction="row" spacing={1}>
                               <Button
@@ -324,6 +353,7 @@ const ExpenseReconPage: React.FC = () => {
                                   setRuleDialog({
                                     pattern: r.merchant.toLowerCase(),
                                     account: picks[r.purchaseId] || r.suggestedAccount || '',
+                                    cls: clsSaved[r.purchaseId] ?? r.cls ?? '',
                                   })
                                 }
                               >
@@ -354,16 +384,28 @@ const ExpenseReconPage: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {(data.categorized ?? []).map((c, i) => (
-                    <TableRow key={`${c.date}-${c.merchant}-${i}`}>
-                      <TableCell>{c.date}</TableCell>
-                      <TableCell>{c.merchant}</TableCell>
-                      <TableCell>{c.cardholder || '—'} <Chip size="small" label={c.source} /></TableCell>
-                      <TableCell align="right">{usd(c.amount)}</TableCell>
-                      <TableCell>{c.account}</TableCell>
-                      <TableCell>{c.cls || '—'}</TableCell>
-                    </TableRow>
-                  ))}
+                  {(data.categorized ?? []).map((c, i) => {
+                    const key = `${c.purchaseId}:${c.lineId || i}`;
+                    return (
+                      <TableRow key={key + c.date}>
+                        <TableCell>{c.date}</TableCell>
+                        <TableCell>{c.merchant}</TableCell>
+                        <TableCell>{c.cardholder || '—'} <Chip size="small" label={c.source} /></TableCell>
+                        <TableCell align="right">{usd(c.amount)}</TableCell>
+                        <TableCell>{c.account}</TableCell>
+                        <TableCell sx={{ minWidth: 220 }}>
+                          <Autocomplete
+                            size="small"
+                            options={data.classes ?? []}
+                            value={clsSaved[key] ?? (c.cls || null)}
+                            disabled={clsSaving[key]}
+                            onChange={(_, v) => { if (v) void setClass(key, c.purchaseId, v, c.lineId); }}
+                            renderInput={(params) => <TextField {...params} placeholder="Class…" />}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -372,7 +414,7 @@ const ExpenseReconPage: React.FC = () => {
           {tab === 2 && (
             <>
               <Stack direction="row" spacing={2} sx={{ mb: 1 }}>
-                <Button variant="outlined" onClick={() => setRuleDialog({ pattern: '', account: '' })}>
+                <Button variant="outlined" onClick={() => setRuleDialog({ pattern: '', account: '', cls: '' })}>
                   New rule
                 </Button>
                 <Button variant="contained" disabled={applying} onClick={() => void applyRules()}>
@@ -385,6 +427,7 @@ const ExpenseReconPage: React.FC = () => {
                     <TableRow>
                       <TableCell>Merchant pattern</TableCell>
                       <TableCell>Account</TableCell>
+                      <TableCell>Class</TableCell>
                       <TableCell>Min age (days)</TableCell>
                       <TableCell />
                     </TableRow>
@@ -394,6 +437,7 @@ const ExpenseReconPage: React.FC = () => {
                       <TableRow key={r.id}>
                         <TableCell>{r.pattern}</TableCell>
                         <TableCell>{r.account}</TableCell>
+                        <TableCell>{r.class || '—'}</TableCell>
                         <TableCell>{r.minAgeDays ?? 7}</TableCell>
                         <TableCell>
                           <IconButton size="small" onClick={() => void deleteRule(r.id, r.pattern, r.account)}>
@@ -438,6 +482,12 @@ const ExpenseReconPage: React.FC = () => {
               value={ruleDialog?.account || null}
               onChange={(_, v) => setRuleDialog((d) => (d ? { ...d, account: v ?? '' } : d))}
               renderInput={(params) => <TextField {...params} label="Account" />}
+            />
+            <Autocomplete
+              options={data?.classes ?? []}
+              value={ruleDialog?.cls || null}
+              onChange={(_, v) => setRuleDialog((d) => (d ? { ...d, cls: v ?? '' } : d))}
+              renderInput={(params) => <TextField {...params} label="Class (optional)" />}
             />
           </Stack>
         </DialogContent>

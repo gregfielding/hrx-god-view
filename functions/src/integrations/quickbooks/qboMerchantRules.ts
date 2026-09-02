@@ -122,6 +122,10 @@ export async function buildExpenseReconReport(
     .filter((a) => ['Expense', 'Cost of Goods Sold', 'Other Expense'].includes(trim(a.AccountType)))
     .map((a) => trim(a.FullyQualifiedName) || trim(a.Name))
     .sort();
+  const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class WHERE Active = true MAXRESULTS 1000')) as Record<string, any>;
+  const classes = ((clsRes.Class ?? clsRes.QueryResponse?.Class ?? []) as Array<Record<string, any>>)
+    .map((c) => trim(c.FullyQualifiedName) || trim(c.Name))
+    .sort();
   const since = new Date(Date.now() - 240 * 86400000).toISOString().slice(0, 10);
   const hist = new Map<string, Map<string, number>>();
   const rows: Array<Record<string, unknown>> = [];
@@ -136,12 +140,15 @@ export async function buildExpenseReconReport(
       const merchant = trim(parsed?.merchant);
       const mkey = merchant.toLowerCase();
       let uncAmt = 0;
+      const uncClasses = new Set<string>();
       for (const l of (p.Line ?? []) as Array<Record<string, any>>) {
         const d = l.AccountBasedExpenseLineDetail;
         if (!d) continue;
         const acct = trim(d.AccountRef?.name);
-        if (trim(d.AccountRef?.value) === UNC) uncAmt += Number(l.Amount) || 0;
-        else if (mkey && acct) {
+        if (trim(d.AccountRef?.value) === UNC) {
+          uncAmt += Number(l.Amount) || 0;
+          if (trim(d.ClassRef?.name)) uncClasses.add(trim(d.ClassRef?.name));
+        } else if (mkey && acct) {
           if (!hist.has(mkey)) hist.set(mkey, new Map());
           const m = hist.get(mkey)!;
           m.set(acct, (m.get(acct) ?? 0) + 1);
@@ -152,7 +159,7 @@ export async function buildExpenseReconReport(
       if (uncAmt > 0.005 && inRange) {
         rows.push({
           purchaseId: trim(p.Id), date: String(p.TxnDate), merchant: merchant || trim(p.EntityRef?.name) || '(unknown)',
-          amount: Math.round(uncAmt * 100) / 100,
+          amount: Math.round(uncAmt * 100) / 100, cls: [...uncClasses].join(', '),
           cardholder: trim(parsed?.cardholderName), last4: trim(parsed?.last4),
           source: String(p.PaymentType) === 'CreditCard' ? 'card' : 'bank',
         });
@@ -162,6 +169,7 @@ export async function buildExpenseReconReport(
           const d = l.AccountBasedExpenseLineDetail;
           if (!d || trim(d.AccountRef?.value) === UNC) continue;
           categorized.push({
+            purchaseId: trim(p.Id), lineId: trim(l.Id),
             date: String(p.TxnDate), merchant: merchant || trim(p.EntityRef?.name) || '(unknown)',
             amount: Math.round((Number(l.Amount) || 0) * 100) / 100,
             account: trim(d.AccountRef?.name), cls: trim(d.ClassRef?.name),
@@ -186,15 +194,20 @@ export async function buildExpenseReconReport(
         (!startDate || String(je.TxnDate) >= startDate) && (!endDate || String(je.TxnDate) <= endDate);
       if (!inRange) continue;
       let uncAmt = 0;
+      const uncClasses = new Set<string>();
       for (const l of (je.Line ?? []) as Array<Record<string, any>>) {
         const d = l.JournalEntryLineDetail;
-        if (d?.PostingType === 'Debit' && trim(d.AccountRef?.value) === UNC) uncAmt += Number(l.Amount) || 0;
+        if (d?.PostingType === 'Debit' && trim(d.AccountRef?.value) === UNC) {
+          uncAmt += Number(l.Amount) || 0;
+          if (trim(d.ClassRef?.name)) uncClasses.add(trim(d.ClassRef?.name));
+        }
       }
       if (uncAmt > 0.005) {
         rows.push({
           purchaseId: `je_${trim(je.Id)}`, date: String(je.TxnDate),
           merchant: trim(je.DocNumber) ? `JE ${trim(je.DocNumber)}` : `Journal Entry ${trim(je.Id)}`,
-          amount: Math.round(uncAmt * 100) / 100, cardholder: '', last4: '', source: 'journal',
+          amount: Math.round(uncAmt * 100) / 100, cls: [...uncClasses].join(', '),
+          cardholder: '', last4: '', source: 'journal',
         });
       }
     }
@@ -216,7 +229,7 @@ export async function buildExpenseReconReport(
   const rulesSnap = await db.collection(`tenants/${tenantId}/qbo_merchant_rules`).get();
   const rules = rulesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, any>) }));
   return {
-    ok: true, rows: rows.slice(0, 500), categorized: categorized.slice(0, 800), rules, expenseAccounts,
+    ok: true, rows: rows.slice(0, 500), categorized: categorized.slice(0, 800), rules, expenseAccounts, classes,
     uncategorizedTotal: Math.round(rows.reduce((s, x) => s + Number(x.amount), 0) * 100) / 100,
   };
 }
@@ -263,4 +276,49 @@ export async function categorizePurchase(
   if (changed === 0) return { ok: true, changed: 0, note: 'no uncategorized lines left on this transaction' };
   await qboEntityUpdate(tenantId, entity, { ...p, sparse: false });
   return { ok: true, changed };
+}
+
+/** Class-only edit from the recon page (Greg 2026-09-02: "category and
+ *  class are two different things... an admin area to edit it").
+ *  With lineId: that one line. Without: the still-Uncategorized lines,
+ *  falling back to every expense line. Overwrites any existing ClassRef. */
+export async function setExpenseClass(
+  tenantId: string,
+  purchaseId: string,
+  className: string,
+  lineId?: string,
+): Promise<Record<string, unknown>> {
+  const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class WHERE Active = true MAXRESULTS 1000')) as Record<string, any>;
+  const cls = ((clsRes.Class ?? clsRes.QueryResponse?.Class ?? []) as Array<Record<string, any>>).find(
+    (x) => (trim(x.FullyQualifiedName) || trim(x.Name)).toLowerCase() === trim(className).toLowerCase() || trim(x.Name).toLowerCase() === trim(className).toLowerCase(),
+  );
+  if (!cls) throw new Error(`Class "${className}" not found`);
+  const acctRes = (await qboQuery(tenantId, "SELECT Id, Name FROM Account WHERE Name = 'Uncategorized Expense'")) as Record<string, any>;
+  const UNC = trim(((acctRes.Account ?? acctRes.QueryResponse?.Account ?? []) as Array<Record<string, any>>)[0]?.Id);
+  const isJe = purchaseId.startsWith('je_');
+  const rawId = (isJe ? purchaseId.slice(3) : purchaseId).replace(/'/g, '');
+  const entity = isJe ? 'JournalEntry' : 'Purchase';
+  const pr = (await qboQuery(tenantId, `SELECT * FROM ${entity} WHERE Id = '${rawId}'`)) as Record<string, any>;
+  const p = ((pr.QueryResponse?.[entity] ?? pr[entity] ?? []) as Array<Record<string, any>>)[0];
+  if (!p) throw new Error(`${entity} not found`);
+  const lines = ((p.Line ?? []) as Array<Record<string, any>>).filter((l) => {
+    const d = isJe ? l.JournalEntryLineDetail : l.AccountBasedExpenseLineDetail;
+    if (!d) return false;
+    if (isJe && d.PostingType !== 'Debit') return false;
+    return trim(lineId) ? trim(l.Id) === trim(lineId) : true;
+  });
+  const uncLines = lines.filter((l) => {
+    const d = isJe ? l.JournalEntryLineDetail : l.AccountBasedExpenseLineDetail;
+    return trim(d.AccountRef?.value) === UNC;
+  });
+  const targets = trim(lineId) ? lines : uncLines.length > 0 ? uncLines : lines;
+  let changed = 0;
+  for (const l of targets) {
+    const d = isJe ? l.JournalEntryLineDetail : l.AccountBasedExpenseLineDetail;
+    d.ClassRef = { value: trim(cls.Id), name: trim(cls.FullyQualifiedName) || trim(cls.Name) };
+    changed += 1;
+  }
+  if (changed === 0) return { ok: true, changed: 0 };
+  await qboEntityUpdate(tenantId, entity, { ...p, sparse: false });
+  return { ok: true, changed, class: trim(cls.FullyQualifiedName) || trim(cls.Name) };
 }
