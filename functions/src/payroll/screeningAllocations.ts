@@ -34,6 +34,41 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 const ACCUSOURCE_VENDOR_ID = '191';
 const OVERHEAD_CLASS = 'National';
 
+// requestedPackageName -> class leaf (Greg 2026-09-03): the order's
+// package names the client pipeline even when the order's account is
+// just the hiring entity — Flex workers have no HRX assignment, so 82%
+// of screening cost was falling to National. Checked AFTER a real
+// client accountName (Carrier orders a Sodexo-style package).
+const PACKAGE_CLASS_RULES: Array<{ re: RegExp; leaf: string }> = [
+  { re: /cort/i, leaf: 'Cort' },
+  { re: /sodexo/i, leaf: 'Sodexo' },
+  { re: /continental/i, leaf: 'Continental Battery Systems' },
+  { re: /purolator/i, leaf: 'Purolator' },
+  { re: /mattress/i, leaf: 'Mattress Firm' },
+  { re: /domino/i, leaf: "Domino's" },
+  { re: /ors\s*nasco/i, leaf: 'ORS Nasco' },
+  { re: /hyatt/i, leaf: 'Hyatt' },
+  { re: /carrier/i, leaf: 'Carrier' },
+];
+
+// Package costs (Greg's AccuSource sheet, 2026-09-03) — screens weight
+// the charge split by what their package actually costs ($7.36 Database
+// vs $105.29 Sodexo PA), not a flat per-screen share. "Sodexo Basic+
+// Aliases" has a $105.29 PA-registry variant indistinguishable by name;
+// the common $37.04 is used. Unknown packages weight at $30.
+const PACKAGE_COSTS: Array<{ re: RegExp; cost: number }> = [
+  { re: /sodexo basic\+/i, cost: 37.04 },
+  { re: /sodexo basic/i, cost: 28.63 },
+  { re: /cort rapid/i, cost: 42.61 },
+  { re: /cort basic/i, cost: 39.1 },
+  { re: /continental battery rapid/i, cost: 52.42 },
+  { re: /continental battery basic/i, cost: 40.61 },
+  { re: /purolator/i, cost: 22.85 },
+  { re: /carrier/i, cost: 67.39 },
+  { re: /database/i, cost: 7.36 },
+];
+const DEFAULT_SCREEN_COST = 30;
+
 export async function pushScreeningAllocations(
   tenantId: string,
   dryRun: boolean,
@@ -103,7 +138,7 @@ export async function pushScreeningAllocations(
     });
   });
 
-  interface Screen { ordered: string; leaf: string | null }
+  interface Screen { ordered: string; leaf: string | null; cost: number }
   const screens: Screen[] = [];
   bcSnap.forEach((d) => {
     const x = d.data();
@@ -120,12 +155,19 @@ export async function pushScreeningAllocations(
       }
     }
     if (!leaf) {
+      const pkg = trim(x.requestedPackageName);
+      const pr = pkg ? PACKAGE_CLASS_RULES.find((r) => r.re.test(pkg)) : undefined;
+      if (pr) leaf = pr.leaf;
+    }
+    if (!leaf) {
       const cand = trim(x.candidateId) || trim(x.applicantId);
       const grace = new Date(Date.parse(ordered) - 7 * 86400000).toISOString().slice(0, 10);
       const hit = (byWorker.get(cand) ?? []).find((a) => a.start >= grace);
       if (hit) leaf = leafForAccount(hit.accountId, hit.companyName) ?? (hit.companyName || null);
     }
-    screens.push({ ordered, leaf });
+    const pkgName = trim(x.requestedPackageName);
+    const pc = pkgName ? PACKAGE_COSTS.find((r) => r.re.test(pkgName)) : undefined;
+    screens.push({ ordered, leaf, cost: pc ? pc.cost : DEFAULT_SCREEN_COST });
   });
 
   // ── AccuSource charges ──
@@ -176,11 +218,12 @@ export async function pushScreeningAllocations(
     // screens in the charge's window: [txnDate−35d, txnDate]
     const winStart = new Date(Date.parse(txnDate) - 35 * 86400000).toISOString().slice(0, 10);
     const inWindow = screens.filter((sc) => sc.ordered >= winStart && sc.ordered <= txnDate);
-    const perScreen = inWindow.length > 0 ? total / inWindow.length : 0;
+    const weightTotal = inWindow.reduce((s2, sc) => s2 + sc.cost, 0);
     const splitByLeaf = new Map<string, number>();
     for (const sc of inWindow) {
       const leaf = sc.leaf && classFor(sc.leaf) ? sc.leaf : OVERHEAD_CLASS;
-      splitByLeaf.set(leaf, (splitByLeaf.get(leaf) ?? 0) + perScreen);
+      const share = weightTotal > 0 ? (total * sc.cost) / weightTotal : 0;
+      splitByLeaf.set(leaf, (splitByLeaf.get(leaf) ?? 0) + share);
     }
     if (inWindow.length === 0) splitByLeaf.set(OVERHEAD_CLASS, total);
     // largest-remainder to the penny
