@@ -403,10 +403,16 @@ export async function runExpensifyClassWriteback(
     const unc = ((acctRes.Account ?? []) as Array<Record<string, any>>).find((a) => trim(a.Name) === 'Uncategorized Expense');
     uncategorizedAcctId = unc ? trim(unc.Id) : '';
   }
+  // Retired categories that must land on their replacement even when a
+  // worker's Expensify pick still says the old name (Greg 2026-09-03:
+  // "Meals" deactivated in QBO — only Travel:Travel meals going forward).
+  const CATEGORY_ALIASES: Record<string, string> = {
+    meals: 'travel:travel meals',
+  };
   const resolveAccount = (rawCategory: string): { id: string; name: string } | null => {
     const cat = rawCategory.replace(/\\:/g, ':').replace(/^:+|:+$/g, '').trim();
     if (!cat) return null;
-    return acctByName.get(cat.toLowerCase()) ?? null;
+    return acctByName.get(cat.toLowerCase()) ?? acctByName.get(CATEGORY_ALIASES[cat.toLowerCase()] ?? '') ?? null;
   };
 
   // Purchases in-window, keyed for both match paths.

@@ -82,6 +82,7 @@ const ExpenseReconPage: React.FC = () => {
   const [done, setDone] = useState<Record<string, string>>({});
   const [ruleDialog, setRuleDialog] = useState<{ pattern: string; account: string; cls: string; matchDescriptor: boolean; recat: boolean } | null>(null);
   const [acctSaved, setAcctSaved] = useState<Record<string, string>>({});
+  const [catSearch, setCatSearch] = useState('');
   const [acctSaving, setAcctSaving] = useState<Record<string, boolean>>({});
   // class edits, keyed purchaseId (uncategorized) or purchaseId:lineId (categorized)
   const [clsSaved, setClsSaved] = useState<Record<string, string>>({});
@@ -257,6 +258,18 @@ const ExpenseReconPage: React.FC = () => {
   };
 
   const pending = useMemo(() => (data ? data.rows.filter((r) => !done[r.purchaseId]) : []), [data, done]);
+  const filteredCategorized = useMemo(() => {
+    const list = data?.categorized ?? [];
+    const q = catSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((c, i) => {
+      const key = `${c.purchaseId}:${c.lineId || i}`;
+      const acct = acctSaved[key] ?? c.account;
+      const cls = clsSaved[key] ?? c.cls;
+      return [c.merchant, c.descriptor, c.cardholder, acct, cls, c.date, String(c.amount)]
+        .some((v) => String(v ?? '').toLowerCase().includes(q));
+    });
+  }, [data, catSearch, acctSaved, clsSaved]);
   const cardTotal = useMemo(() => pending.filter((r) => r.source === 'card').reduce((s, r) => s + r.amount, 0), [pending]);
   const bankTotal = useMemo(() => pending.filter((r) => r.source === 'bank').reduce((s, r) => s + r.amount, 0), [pending]);
 
@@ -421,6 +434,11 @@ const ExpenseReconPage: React.FC = () => {
           )}
 
           {tab === 1 && (
+            <>
+            <TextField
+              size="small" fullWidth placeholder="Search merchant, descriptor, who, account, class…"
+              value={catSearch} onChange={(e) => setCatSearch(e.target.value)} sx={{ mb: 1 }}
+            />
             <TableContainer component={Paper} variant="outlined">
               <Table size="small">
                 <TableHead>
@@ -435,7 +453,7 @@ const ExpenseReconPage: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {(data.categorized ?? []).map((c, i) => {
+                  {filteredCategorized.map((c, i) => {
                     const key = `${c.purchaseId}:${c.lineId || i}`;
                     return (
                       <TableRow key={key + c.date}>
@@ -491,6 +509,7 @@ const ExpenseReconPage: React.FC = () => {
                 </TableBody>
               </Table>
             </TableContainer>
+            </>
           )}
 
           {tab === 2 && (
