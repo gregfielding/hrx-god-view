@@ -62,6 +62,8 @@ interface ReconData {
 const ExpenseReconPage: React.FC = () => {
   const navigate = useNavigate();
   const { tenantId } = useAuth();
+  const [startDate, setStartDate] = useState('2026-06-01');
+  const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ReconData | null>(null);
@@ -82,7 +84,7 @@ const ExpenseReconPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await call({ tenantId, action: 'expenseReconReport' });
+      const res = await call({ tenantId, action: 'expenseReconReport', startDate, endDate });
       setData(res.data as ReconData);
       setPicks({});
       setDone({});
@@ -174,6 +176,14 @@ const ExpenseReconPage: React.FC = () => {
       </Typography>
 
       <Stack direction="row" spacing={2} sx={{ mb: 2 }} alignItems="center">
+        <TextField
+          label="Start" type="date" size="small" value={startDate}
+          onChange={(e) => setStartDate(e.target.value)} InputLabelProps={{ shrink: true }}
+        />
+        <TextField
+          label="End" type="date" size="small" value={endDate}
+          onChange={(e) => setEndDate(e.target.value)} InputLabelProps={{ shrink: true }}
+        />
         <Button variant="contained" onClick={() => void load()} disabled={loading || !tenantId}>
           {loading ? 'Loading…' : 'Load'}
         </Button>

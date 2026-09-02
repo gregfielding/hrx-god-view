@@ -272,7 +272,7 @@ export const savePayrollVenueMapping = onCall(
       if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
       const { buildExpenseReconReport } = await import('../integrations/quickbooks/qboMerchantRules');
-      return await buildExpenseReconReport(tenantId);
+      return await buildExpenseReconReport(tenantId, trim(request.data?.startDate) || undefined, trim(request.data?.endDate) || undefined);
     }
     if (action === 'categorizePurchase') {
       if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
