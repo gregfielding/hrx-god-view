@@ -589,3 +589,21 @@ Mondragon 80.1h, Kennedy Austin, Bryson Jeffery... top names). If FIFA
 NY -> bill VS with HRX clock as backup (fifa_ny_detail.csv + rolled
 worker list in functions/.scratch/connecteam/). If elsewhere -> re-split
 the payroll_jo_date_splits classes.
+
+## Travel-team payroll resolved via ConnectTeam (2026-09-03)
+
+The \$36.6K parent-class 'Venue Smart' payroll = 7 traveling supervisors
+(Vaughn, Spencer, Magana x2, True, K. Perez, De Julian) whose venue
+label 'Venue Smart Supervisors Travel Team' maps to no QBO class ->
+account-level fallback (some paid via C1 Events pre-hire, then C1
+Select — Greg). Fixed: 56 payment_override ledger docs (source
+connecteam_travel_team_20260903) assigning each payment its CT
+dominant-hours event; true-up rewrote 18 wire JEs. Parent payroll now
+\$1,065. DC Open \$1.4K -> \$16.4K (\$24.75/CTh). Ratio audit method:
+QBO 5010-by-class / CT hours; healthy \$14-18; salaried staff (Mark
+True) break the ratio — ignore. Partial-staffing events (FIFA Dallas
+2,245 our-hours vs 6,516 CT) explain low ratios; Greg confirms whether
+Dallas/DC Open used subcontract labor (cost then lives outside W-2
+payroll and should be classed to events). OPEN: Silvia Orozco 8/13
+attributed Black Caviar while CT shows Lolla — verify; FIFA NY Danny
+question; August concert classes still to pre-create.
