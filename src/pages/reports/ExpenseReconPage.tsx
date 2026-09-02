@@ -440,7 +440,14 @@ const ExpenseReconPage: React.FC = () => {
                     return (
                       <TableRow key={key + c.date}>
                         <TableCell>{c.date}</TableCell>
-                        <TableCell>{c.merchant}</TableCell>
+                        <TableCell>
+                          {c.merchant}
+                          {c.descriptor && (
+                            <Typography variant="caption" color="text.secondary" noWrap component="div" sx={{ maxWidth: 420 }}>
+                              {c.descriptor.slice(0, 120)}
+                            </Typography>
+                          )}
+                        </TableCell>
                         <TableCell>{c.cardholder || '—'} <Chip size="small" label={c.source} /></TableCell>
                         <TableCell align="right">{usd(c.amount)}</TableCell>
                         <TableCell sx={{ minWidth: 260 }}>
