@@ -29,11 +29,13 @@ const trim = (v: unknown): string => String(v ?? '').trim();
 export async function applyQboMerchantRules(
   tenantId: string,
   dryRun: boolean,
+  opts?: { pattern?: string; ignoreMinAge?: boolean },
 ): Promise<Record<string, unknown>> {
   const rulesSnap = await db.collection(`tenants/${tenantId}/qbo_merchant_rules`).get();
-  const rules = rulesSnap.docs
+  let rules = rulesSnap.docs
     .map((d) => ({ ...(d.data() as Record<string, any>), id: d.id }) as Record<string, any>)
     .filter((r) => trim(r.pattern) && trim(r.account));
+  if (trim(opts?.pattern)) rules = rules.filter((r) => trim(r.pattern).toLowerCase() === trim(opts?.pattern).toLowerCase());
   if (rules.length === 0) return { ok: true, dryRun, applied: 0, rules: 0 };
 
   const acctRes = (await qboQuery(tenantId, "SELECT Id, Name, FullyQualifiedName, AccountType FROM Account WHERE Active = true MAXRESULTS 1000")) as Record<string, any>;
@@ -78,7 +80,7 @@ export async function applyQboMerchantRules(
         return new RegExp(`(^|[^a-z0-9])${pat}([^a-z0-9]|$)`).test(merchant);
       });
       if (!rule) continue;
-      const minAge = Number(rule.minAgeDays ?? 7);
+      const minAge = opts?.ignoreMinAge ? 0 : Number(rule.minAgeDays ?? 7);
       const ageDays = (Date.now() - Date.parse(String(p.TxnDate))) / 86400000;
       if (ageDays < minAge) continue;
       const acct = byName.get(trim(rule.account).toLowerCase());
@@ -123,6 +125,7 @@ export async function buildExpenseReconReport(
   const since = new Date(Date.now() - 240 * 86400000).toISOString().slice(0, 10);
   const hist = new Map<string, Map<string, number>>();
   const rows: Array<Record<string, unknown>> = [];
+  const categorized: Array<Record<string, unknown>> = [];
   let start = 1;
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
@@ -154,6 +157,46 @@ export async function buildExpenseReconReport(
           source: String(p.PaymentType) === 'CreditCard' ? 'card' : 'bank',
         });
       }
+      if (inRange) {
+        for (const l of (p.Line ?? []) as Array<Record<string, any>>) {
+          const d = l.AccountBasedExpenseLineDetail;
+          if (!d || trim(d.AccountRef?.value) === UNC) continue;
+          categorized.push({
+            date: String(p.TxnDate), merchant: merchant || trim(p.EntityRef?.name) || '(unknown)',
+            amount: Math.round((Number(l.Amount) || 0) * 100) / 100,
+            account: trim(d.AccountRef?.name), cls: trim(d.ClassRef?.name),
+            cardholder: trim(parsed?.cardholderName),
+            source: String(p.PaymentType) === 'CreditCard' ? 'card' : 'bank',
+          });
+        }
+      }
+    }
+    if (page.length < 1000) break;
+    start += 1000;
+  }
+  // Journal-entry lines on Uncategorized too (the Gusto reimbursement JE
+  // was invisible when only Purchases were scanned — Greg 2026-09-02).
+  start = 1;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = (await qboQuery(tenantId, `SELECT * FROM JournalEntry WHERE TxnDate >= '${since}' STARTPOSITION ${start} MAXRESULTS 1000`)) as Record<string, any>;
+    const page: Array<Record<string, any>> = r.QueryResponse?.JournalEntry ?? r.JournalEntry ?? [];
+    for (const je of page) {
+      const inRange =
+        (!startDate || String(je.TxnDate) >= startDate) && (!endDate || String(je.TxnDate) <= endDate);
+      if (!inRange) continue;
+      let uncAmt = 0;
+      for (const l of (je.Line ?? []) as Array<Record<string, any>>) {
+        const d = l.JournalEntryLineDetail;
+        if (d?.PostingType === 'Debit' && trim(d.AccountRef?.value) === UNC) uncAmt += Number(l.Amount) || 0;
+      }
+      if (uncAmt > 0.005) {
+        rows.push({
+          purchaseId: `je_${trim(je.Id)}`, date: String(je.TxnDate),
+          merchant: trim(je.DocNumber) ? `JE ${trim(je.DocNumber)}` : `Journal Entry ${trim(je.Id)}`,
+          amount: Math.round(uncAmt * 100) / 100, cardholder: '', last4: '', source: 'journal',
+        });
+      }
     }
     if (page.length < 1000) break;
     start += 1000;
@@ -169,9 +212,13 @@ export async function buildExpenseReconReport(
     row.suggestionUses = total;
   }
   rows.sort((a, b) => Number(b.amount) - Number(a.amount));
+  categorized.sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const rulesSnap = await db.collection(`tenants/${tenantId}/qbo_merchant_rules`).get();
   const rules = rulesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, any>) }));
-  return { ok: true, rows: rows.slice(0, 500), rules, expenseAccounts, uncategorizedTotal: Math.round(rows.reduce((s, x) => s + Number(x.amount), 0) * 100) / 100 };
+  return {
+    ok: true, rows: rows.slice(0, 500), categorized: categorized.slice(0, 800), rules, expenseAccounts,
+    uncategorizedTotal: Math.round(rows.reduce((s, x) => s + Number(x.amount), 0) * 100) / 100,
+  };
 }
 
 /** One-off inline categorization from the recon page. Only flips lines
@@ -190,9 +237,12 @@ export async function categorizePurchase(
   if (!target) throw new Error(`Account "${accountName}" not found`);
   const unc = accounts.find((a) => trim(a.Name) === 'Uncategorized Expense');
   const UNC = unc ? trim(unc.Id) : '';
-  const pr = (await qboQuery(tenantId, `SELECT * FROM Purchase WHERE Id = '${purchaseId.replace(/'/g, '')}'`)) as Record<string, any>;
-  const p = ((pr.QueryResponse?.Purchase ?? pr.Purchase ?? []) as Array<Record<string, any>>)[0];
-  if (!p) throw new Error('Purchase not found');
+  const isJe = purchaseId.startsWith('je_');
+  const rawId = (isJe ? purchaseId.slice(3) : purchaseId).replace(/'/g, '');
+  const entity = isJe ? 'JournalEntry' : 'Purchase';
+  const pr = (await qboQuery(tenantId, `SELECT * FROM ${entity} WHERE Id = '${rawId}'`)) as Record<string, any>;
+  const p = ((pr.QueryResponse?.[entity] ?? pr[entity] ?? []) as Array<Record<string, any>>)[0];
+  if (!p) throw new Error(`${entity} not found`);
   let cls: { id: string; name: string } | undefined;
   if (trim(className)) {
     const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class WHERE Active = true MAXRESULTS 1000')) as Record<string, any>;
@@ -203,13 +253,14 @@ export async function categorizePurchase(
   }
   let changed = 0;
   for (const l of (p.Line ?? []) as Array<Record<string, any>>) {
-    const d = l.AccountBasedExpenseLineDetail;
+    const d = isJe ? l.JournalEntryLineDetail : l.AccountBasedExpenseLineDetail;
     if (!d || trim(d.AccountRef?.value) !== UNC) continue;
+    if (isJe && d.PostingType !== 'Debit') continue;
     d.AccountRef = { value: trim(target.Id), name: trim(target.FullyQualifiedName) || trim(target.Name) };
     if (cls && !d.ClassRef) d.ClassRef = { value: cls.id, name: cls.name };
     changed += 1;
   }
-  if (changed === 0) return { ok: true, changed: 0, note: 'no uncategorized lines left on this purchase' };
-  await qboEntityUpdate(tenantId, 'Purchase', { ...p, sparse: false });
+  if (changed === 0) return { ok: true, changed: 0, note: 'no uncategorized lines left on this transaction' };
+  await qboEntityUpdate(tenantId, entity, { ...p, sparse: false });
   return { ok: true, changed };
 }

@@ -303,7 +303,10 @@ export const savePayrollVenueMapping = onCall(
       if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
       const { applyQboMerchantRules } = await import('../integrations/quickbooks/qboMerchantRules');
-      return await applyQboMerchantRules(tenantId, request.data?.dryRun !== false);
+      return await applyQboMerchantRules(tenantId, request.data?.dryRun !== false, {
+        pattern: trim(request.data?.pattern) || undefined,
+        ignoreMinAge: request.data?.ignoreMinAge === true,
+      });
     }
 
     // True-up posted allocation JEs to CURRENT attribution (Greg

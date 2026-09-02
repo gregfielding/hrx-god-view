@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Alert,
   Autocomplete,
+  Snackbar,
   Box,
   Button,
   Card,
@@ -55,8 +56,12 @@ interface ReconRow {
   suggestedAccount?: string; suggestionPct?: number; suggestionUses?: number;
 }
 interface RuleRow { id: string; pattern: string; account: string; class?: string | null; minAgeDays?: number }
+interface CategorizedRow {
+  date: string; merchant: string; amount: number; account: string; cls: string;
+  cardholder: string; source: string;
+}
 interface ReconData {
-  rows: ReconRow[]; rules: RuleRow[]; expenseAccounts: string[]; uncategorizedTotal: number;
+  rows: ReconRow[]; categorized: CategorizedRow[]; rules: RuleRow[]; expenseAccounts: string[]; uncategorizedTotal: number;
 }
 
 const ExpenseReconPage: React.FC = () => {
@@ -75,6 +80,10 @@ const ExpenseReconPage: React.FC = () => {
   const [ruleBusy, setRuleBusy] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applyNote, setApplyNote] = useState<string | null>(null);
+  // toast after a rule is created: apply it to all matching rows in place
+  // (the timesheet-layout pattern — Greg 2026-09-02)
+  const [ruleToast, setRuleToast] = useState<{ pattern: string; count: number } | null>(null);
+  const [ruleToastBusy, setRuleToastBusy] = useState(false);
 
   const call = (payload: Record<string, unknown>, timeout = 540000) =>
     httpsCallable(functions, 'savePayrollVenueMapping', { timeout })(payload);
@@ -114,9 +123,13 @@ const ExpenseReconPage: React.FC = () => {
     if (!tenantId || !ruleDialog?.pattern || !ruleDialog.account) return;
     setRuleBusy(true);
     try {
-      await call({ tenantId, action: 'saveMerchantRule', pattern: ruleDialog.pattern, account: ruleDialog.account }, 30000);
+      const pattern = ruleDialog.pattern;
+      await call({ tenantId, action: 'saveMerchantRule', pattern, account: ruleDialog.account }, 30000);
       setRuleDialog(null);
-      await load();
+      const dry = await call({ tenantId, action: 'applyMerchantRulesNow', dryRun: true, pattern, ignoreMinAge: true });
+      const count = Number((dry.data as { applied: number }).applied) || 0;
+      if (count > 0) setRuleToast({ pattern, count });
+      else setApplyNote('Rule saved. No existing uncategorized purchases match it.');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -153,6 +166,31 @@ const ExpenseReconPage: React.FC = () => {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setApplying(false);
+    }
+  };
+
+  const matchesPattern = (merchant: string, pattern: string): boolean => {
+    const pat = pattern.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^a-z0-9])${pat}([^a-z0-9]|$)`).test(merchant.toLowerCase());
+  };
+  const applyRuleToast = async (): Promise<void> => {
+    if (!tenantId || !ruleToast) return;
+    setRuleToastBusy(true);
+    try {
+      await call({ tenantId, action: 'applyMerchantRulesNow', dryRun: false, pattern: ruleToast.pattern, ignoreMinAge: true });
+      // mark matching rows done in place — no refresh needed
+      setDone((d) => {
+        const next = { ...d };
+        for (const r of data?.rows ?? []) {
+          if (!next[r.purchaseId] && matchesPattern(r.merchant, ruleToast.pattern)) next[r.purchaseId] = 'rule applied';
+        }
+        return next;
+      });
+      setRuleToast(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRuleToastBusy(false);
     }
   };
 
@@ -212,6 +250,7 @@ const ExpenseReconPage: React.FC = () => {
         <>
           <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 1 }}>
             <Tab label={`Uncategorized (${pending.length})`} />
+            <Tab label={`Categorized (${data.categorized?.length ?? 0})`} />
             <Tab label={`Rules (${data.rules.length})`} />
           </Tabs>
 
@@ -302,6 +341,35 @@ const ExpenseReconPage: React.FC = () => {
           )}
 
           {tab === 1 && (
+            <TableContainer component={Paper} variant="outlined">
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Date</TableCell>
+                    <TableCell>Merchant</TableCell>
+                    <TableCell>Who / source</TableCell>
+                    <TableCell align="right">Amount</TableCell>
+                    <TableCell>Account</TableCell>
+                    <TableCell>Class</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {(data.categorized ?? []).map((c, i) => (
+                    <TableRow key={`${c.date}-${c.merchant}-${i}`}>
+                      <TableCell>{c.date}</TableCell>
+                      <TableCell>{c.merchant}</TableCell>
+                      <TableCell>{c.cardholder || '—'} <Chip size="small" label={c.source} /></TableCell>
+                      <TableCell align="right">{usd(c.amount)}</TableCell>
+                      <TableCell>{c.account}</TableCell>
+                      <TableCell>{c.cls || '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+
+          {tab === 2 && (
             <>
               <Stack direction="row" spacing={2} sx={{ mb: 1 }}>
                 <Button variant="outlined" onClick={() => setRuleDialog({ pattern: '', account: '' })}>
@@ -342,6 +410,19 @@ const ExpenseReconPage: React.FC = () => {
         </>
       )}
 
+      <Snackbar
+        open={Boolean(ruleToast)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        onClose={() => setRuleToast(null)}
+        message={ruleToast ? `Rule saved. ${ruleToast.count} uncategorized purchase(s) match "${ruleToast.pattern}".` : ''}
+        action={
+          ruleToast ? (
+            <Button color="secondary" size="small" disabled={ruleToastBusy} onClick={() => void applyRuleToast()}>
+              {ruleToastBusy ? 'Applying…' : `Apply to all ${ruleToast.count}`}
+            </Button>
+          ) : undefined
+        }
+      />
       <Dialog open={Boolean(ruleDialog)} onClose={() => setRuleDialog(null)} fullWidth maxWidth="sm">
         <DialogTitle>Merchant rule</DialogTitle>
         <DialogContent>
