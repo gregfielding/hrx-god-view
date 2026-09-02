@@ -2998,8 +2998,14 @@ const JobPostingDetail: React.FC = () => {
                     );
                   }
                 }
-                // For non-gig jobs or gigs without shifts, show start date if available
+                // For non-gig jobs or gigs without shifts, show start date if available.
+                // A start date in the past is noise — an ongoing gig kept
+                // showing "Starts 6/6/2026" months later (Danny 2026-09-03).
                 if (posting.startDate) {
+                  const startMs = new Date(posting.startDate as any).getTime();
+                  const today = new Date();
+                  today.setHours(0, 0, 0, 0);
+                  if (!isNaN(startMs) && startMs < today.getTime()) return null;
                   const dateStr = formatDate(posting.startDate);
                   return (
                     <Chip

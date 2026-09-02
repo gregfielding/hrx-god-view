@@ -1392,22 +1392,26 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     setLoadingUsers(true);
     
     try {
+      // Tenant-scoped query — the old getDocs(users) pulled the ENTIRE
+      // global users collection: minutes of spinner, and any failure left
+      // an empty list that read "No eligible users found" for every
+      // search (Danny 2026-09-03). 'in' with both types covers docs that
+      // stored the level as number or string.
       const usersRef = collection(db, 'users');
-      const usersSnapshot = await getDocs(usersRef);
-      
+      const usersSnapshot = await getDocs(
+        query(
+          usersRef,
+          where(`tenantIds.${tenantId}.securityLevel`, 'in', [2, 3, '2', '3'])
+        )
+      );
+
       const users: any[] = [];
-      
+
       usersSnapshot.docs.forEach(doc => {
         const userData = doc.data();
-        
-        // Check if user belongs to this tenant
-        if (!userData.tenantIds || !userData.tenantIds[tenantId]) return;
-        
-        const tenantData = userData.tenantIds[tenantId];
+
+        const tenantData = userData.tenantIds?.[tenantId] || {};
         const securityLevel = parseInt(tenantData.securityLevel || userData.securityLevel || '0');
-        
-        // Only include users with securityLevel 2 or 3 (Applicants and Candidates)
-        if (securityLevel !== 2 && securityLevel !== 3) return;
         
         // If job order has userGroup restrictions, only show members of those groups
         if (jobOrder?.restrictedGroups && jobOrder.restrictedGroups.length > 0) {

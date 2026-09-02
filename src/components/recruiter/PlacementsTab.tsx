@@ -2335,14 +2335,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       const list = await Promise.all(userPromises);
       if (cancelled) return;
       const valid = list.filter((w): w is Worker => w !== null);
-      const statusRank = (w: Worker) =>
-        w.confirmationStatus === 'confirmed' ? 2 : w.assignmentStatus ? 1 : 0;
-      valid.sort((a, b) => {
-        const aPlace = a.isPlacementOnly ? 0 : 1;
-        const bPlace = b.isPlacementOnly ? 0 : 1;
-        if (aPlace !== bPlace) return aPlace - bPlace;
-        return statusRank(b) - statusRank(a);
-      });
+      // First-name alphabetical (Danny 2026-09-03: with 48 staff on a shift
+      // he scrolls hunting for names — status grouping made order look
+      // random; the roster email preview already sorts this way).
+      const sortName = (w: Worker) =>
+        (w.firstName || w.displayName || '').trim().toLowerCase();
+      valid.sort((a, b) => sortName(a).localeCompare(sortName(b)));
       setAssignmentWorkersList(valid);
       lastAssignmentShiftIdRef.current = selectedShiftId;
     };

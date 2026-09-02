@@ -309,3 +309,12 @@ click-through. The c1_app does NOT yet surface other-shifts on its
 schedule (provider reads only the worker's own assignment shifts), so no
 app change needed today — but when the app gains that feed, it MUST
 apply the same qualifying filter.
+
+## 2026-09-03 — hide stale "Starts <date>" chip on job detail
+
+Web fix (JobPostingDetail.tsx, hero date chip): when a posting's
+startDate is before today, the "Starts {date}" / "Estimated start"
+fallback chip is suppressed (gig with future shifts already shows
+"Next shift" instead). Danny: ongoing Oakland Arena gig showed
+"Starts 6/6/2026" months after start. c1_app: apply the same guard
+wherever the job header renders a start-date chip/label.
