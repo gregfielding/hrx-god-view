@@ -2685,6 +2685,28 @@ export async function buildJobOrderCosting(
   const isContractor =
     trim(entSnap?.data()?.workerType).toLowerCase() === 'contractor' || /events|workforce/i.test(entityId);
 
+  // Crew-roll date splits (Greg 2026-09-03): work clocked under this JO
+  // but re-attributed to another event's class (payroll_jo_date_splits —
+  // the same rule wire allocation applies) is reported as a separate
+  // "rolled" bucket, so the JO P&L stays apples-to-apples with QBO's
+  // class P&L (Gov Ball showed -\$23K because 85% of its payroll was
+  // FIFA NY work matched against Gov-Ball-only billing).
+  const splitsSnap = await db.collection(`tenants/${tenantId}/payroll_jo_date_splits`).get().catch(() => null);
+  const splitsByJo = new Map<string, Array<{ fromDate: string; toDate: string; cls: string }>>();
+  if (splitsSnap) {
+    splitsSnap.forEach((d) => {
+      const m = d.data() as Record<string, unknown>;
+      const sJoId = trim(m.jobOrderId);
+      if (!sJoId) return;
+      if (!splitsByJo.has(sJoId)) splitsByJo.set(sJoId, []);
+      splitsByJo.get(sJoId)!.push({ fromDate: trim(m.fromDate), toDate: trim(m.toDate), cls: trim(m.class) });
+    });
+  }
+  let rolledPay = 0;
+  let rolledHours = 0;
+  let rolledEntries = 0;
+  const rolledByClass: Record<string, number> = {};
+
   // Every entry the JOs have ever had (single-field queries, auto-indexed).
   const PAID = new Set(['sent_to_everee', 'submitted', 'paid']);
   const PENDING = new Set(['draft', 'pending', 'approved']);
@@ -2724,6 +2746,17 @@ export async function buildJobOrderCosting(
       if (!(total > 0)) return;
       const wd = trim(e.workDate);
       if (PAID.has(status)) {
+        const split = (splitsByJo.get(joId) ?? []).find(
+          (sp) => sp.fromDate && wd >= sp.fromDate && (!sp.toDate || wd <= sp.toDate),
+        );
+        if (split) {
+          rolledPay = round2(rolledPay + total);
+          rolledHours = round2(rolledHours + reg + ot + dt);
+          rolledEntries += 1;
+          const key = split.cls || 'other event';
+          rolledByClass[key] = round2((rolledByClass[key] ?? 0) + total);
+          return;
+        }
         pay = round2(pay + total);
         hours = round2(hours + reg + ot + dt);
         tips = round2(tips + num(e.tips));
@@ -2912,6 +2945,7 @@ export async function buildJobOrderCosting(
     workers: workers.size,
     hours,
     pay,
+    rolled: rolledEntries > 0 ? { pay: rolledPay, hours: rolledHours, entries: rolledEntries, byClass: rolledByClass } : null,
     pendingPay,
     tips,
     bonus,
