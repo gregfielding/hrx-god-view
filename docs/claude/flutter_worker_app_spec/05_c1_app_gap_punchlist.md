@@ -296,3 +296,16 @@ grounded assistant, one queue, no dead ends; standalone web Q&A retired.
 - Sessions from evereeCreateOnboardingSession are single-use; never cache.
 - `everee_payroll_setup_sheet.dart` + `everee_my_pay_sheet.dart` are dead
   (hardcoded channel name, legacy embedUrl) — delete when convenient.
+
+## 2026-09-02 — available-shift calendar feed: qualifying filter
+
+Web fix (Danny's Oakland report): the My Schedule calendar's grey
+"available" feed (other shifts on engaged job orders,
+`src/pages/c1/workers/assignments.tsx`) now mirrors the jobs board's
+qualifying filter — skip shifts with `status` ∈
+{closed, cancelled, canceled, filled} or `hidden === true`. A closed
+(handpick-only) shift was showing on workers' calendars but vanishing on
+click-through. The c1_app does NOT yet surface other-shifts on its
+schedule (provider reads only the worker's own assignment shifts), so no
+app change needed today — but when the app gains that feed, it MUST
+apply the same qualifying filter.
