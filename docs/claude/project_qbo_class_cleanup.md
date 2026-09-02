@@ -463,3 +463,26 @@ charges backfilled ($7,558).
 **Verification page** now has batch "Apply to all N" (toast after any
 save — applies the class to every flagged row sharing the guess,
 resolveClassificationFlags action).
+
+## Expense recon page + merchant rules (2026-09-02/03)
+
+- /reports/expense-recon: Uncategorized + Categorized tabs, date range,
+  auto-save account AND class pickers (class = its own editable column,
+  per line — category and class are different things), JE rows included
+  (`je_` ids). Saving a rule applies it live immediately and greys
+  matching rows — no second click.
+- Rules (`tenants/{t}/qbo_merchant_rules`): word-boundary match on parsed
+  merchant; `matchDescriptor: true` also tests entity+note+line text —
+  the only way to split same-merchant charges (Google = `google
+  workspace` vs `google cloud`, the latter being HRX's Firebase/GCP
+  spend). Rules engine sweeps JournalEntries too (JE merchant = `JE
+  {DocNumber}`).
+- AccuSource convention: categorize to 5010 Direct Labor — Field Staff,
+  NO class; the weekly screening job reclasses to 5300 Field Staff
+  Recruitment split per worker class. Job now matches AccuSource by
+  descriptor as well as vendor 191 (bank-feed purchases have no vendor —
+  they were invisible before 2026-09-03).
+- Outbound draft sign-offs (inbox chief-of-staff + reply desks): single
+  contact line after "—"; never a bare "Greg" line above "Greg Fielding
+  ·…" (doubled name looked broken; API drafts never get the Gmail rich
+  signature appended).
