@@ -325,7 +325,8 @@ export async function buildExpenseReconReport(
   const rulesSnap = await db.collection(`tenants/${tenantId}/qbo_merchant_rules`).get();
   const rules = rulesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, any>) }));
   return {
-    ok: true, rows: rows.slice(0, 500), categorized: categorized.slice(0, 800), rules, expenseAccounts, classes,
+    ok: true, rows: rows.slice(0, 500), categorized: categorized.slice(0, 4000), categorizedTotal: categorized.length,
+    rules, expenseAccounts, classes,
     uncategorizedTotal: Math.round(rows.reduce((s, x) => s + Number(x.amount), 0) * 100) / 100,
   };
 }

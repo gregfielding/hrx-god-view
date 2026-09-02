@@ -65,7 +65,7 @@ interface CategorizedRow {
   cardholder: string; source: string;
 }
 interface ReconData {
-  rows: ReconRow[]; categorized: CategorizedRow[]; rules: RuleRow[]; expenseAccounts: string[]; classes?: string[]; uncategorizedTotal: number;
+  rows: ReconRow[]; categorized: CategorizedRow[]; rules: RuleRow[]; expenseAccounts: string[]; classes?: string[]; uncategorizedTotal: number; categorizedTotal?: number;
 }
 
 const ExpenseReconPage: React.FC = () => {
@@ -325,7 +325,7 @@ const ExpenseReconPage: React.FC = () => {
         <>
           <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 1 }}>
             <Tab label={`Uncategorized (${pending.length})`} />
-            <Tab label={`Categorized (${data.categorized?.length ?? 0})`} />
+            <Tab label={`Categorized (${data.categorizedTotal ?? data.categorized?.length ?? 0})`} />
             <Tab label={`Rules (${data.rules.length})`} />
           </Tabs>
 
@@ -435,6 +435,13 @@ const ExpenseReconPage: React.FC = () => {
 
           {tab === 1 && (
             <>
+            {(data.categorizedTotal ?? 0) > (data.categorized?.length ?? 0) && (
+              <Alert severity="info" sx={{ mb: 1 }}>
+                Showing the {data.categorized.length.toLocaleString()} most recent of{' '}
+                {(data.categorizedTotal ?? 0).toLocaleString()} categorized lines in this range — narrow the
+                dates to see the rest.
+              </Alert>
+            )}
             <TextField
               size="small" fullWidth placeholder="Search merchant, descriptor, who, account, class…"
               value={catSearch} onChange={(e) => setCatSearch(e.target.value)} sx={{ mb: 1 }}
