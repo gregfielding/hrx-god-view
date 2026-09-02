@@ -104,6 +104,45 @@ export async function applyQboMerchantRules(
     if (rows.length < 1000) break;
     start += 1000;
   }
+  // Journal entries too — the recon page lists them (merchant "JE {DocNumber}"),
+  // so a rule created from a JE row must be able to fire (Greg 2026-09-02:
+  // "je gusto" rule saved but nothing updated).
+  start = 1;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = (await qboQuery(tenantId, `SELECT * FROM JournalEntry WHERE TxnDate >= '${since}' STARTPOSITION ${start} MAXRESULTS 1000`)) as Record<string, any>;
+    const rows: Array<Record<string, any>> = r.QueryResponse?.JournalEntry ?? r.JournalEntry ?? [];
+    for (const je of rows) {
+      const merchant = (trim(je.DocNumber) ? `JE ${trim(je.DocNumber)}` : `Journal Entry ${trim(je.Id)}`).toLowerCase();
+      const rule = rules.find((ru) => {
+        const pat = trim(ru.pattern).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`(^|[^a-z0-9])${pat}([^a-z0-9]|$)`).test(merchant);
+      });
+      if (!rule) continue;
+      const minAge = opts?.ignoreMinAge ? 0 : Number(rule.minAgeDays ?? 7);
+      const ageDays = (Date.now() - Date.parse(String(je.TxnDate))) / 86400000;
+      if (ageDays < minAge) continue;
+      const acct = byName.get(trim(rule.account).toLowerCase());
+      if (!acct || acct.id === UNC) continue;
+      const cls = trim(rule.class) ? classByFqn.get(trim(rule.class).toLowerCase()) : undefined;
+      let changed = 0;
+      for (const l of (je.Line ?? []) as Array<Record<string, any>>) {
+        const d = l.JournalEntryLineDetail;
+        if (!d || d.PostingType !== 'Debit' || trim(d.AccountRef?.value) !== UNC) continue;
+        d.AccountRef = { value: acct.id, name: acct.name };
+        if (cls && !d.ClassRef) d.ClassRef = { value: cls.id, name: cls.name };
+        changed += 1;
+      }
+      if (!changed) continue;
+      applied += 1;
+      appliedRows.push({ date: je.TxnDate, merchant, amount: je.TotalAmt, account: acct.name, rule: rule.id, source: 'journal' });
+      if (dryRun) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await qboEntityUpdate(tenantId, 'JournalEntry', { ...je, sparse: false });
+    }
+    if (rows.length < 1000) break;
+    start += 1000;
+  }
   return { ok: true, dryRun, rules: rules.length, applied, appliedRows: appliedRows.slice(0, 60) };
 }
 

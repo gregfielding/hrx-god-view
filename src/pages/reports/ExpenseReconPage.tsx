@@ -88,7 +88,6 @@ const ExpenseReconPage: React.FC = () => {
   // toast after a rule is created: apply it to all matching rows in place
   // (the timesheet-layout pattern — Greg 2026-09-02)
   const [ruleToast, setRuleToast] = useState<{ pattern: string; count: number } | null>(null);
-  const [ruleToastBusy, setRuleToastBusy] = useState(false);
 
   const call = (payload: Record<string, unknown>, timeout = 540000) =>
     httpsCallable(functions, 'savePayrollVenueMapping', { timeout })(payload);
@@ -142,12 +141,22 @@ const ExpenseReconPage: React.FC = () => {
     setRuleBusy(true);
     try {
       const pattern = ruleDialog.pattern;
-      await call({ tenantId, action: 'saveMerchantRule', pattern, account: ruleDialog.account, class: ruleDialog.cls || undefined }, 30000);
+      const account = ruleDialog.account;
+      await call({ tenantId, action: 'saveMerchantRule', pattern, account, class: ruleDialog.cls || undefined }, 30000);
       setRuleDialog(null);
-      const dry = await call({ tenantId, action: 'applyMerchantRulesNow', dryRun: true, pattern, ignoreMinAge: true });
-      const count = Number((dry.data as { applied: number }).applied) || 0;
-      if (count > 0) setRuleToast({ pattern, count });
-      else setApplyNote('Rule saved. No existing uncategorized purchases match it.');
+      // Saving a rule applies it right away and greys the matching rows —
+      // no second click (Greg 2026-09-02: "it should automatically apply
+      // and save the row").
+      const live = await call({ tenantId, action: 'applyMerchantRulesNow', dryRun: false, pattern, ignoreMinAge: true });
+      const count = Number((live.data as { applied: number }).applied) || 0;
+      setDone((d) => {
+        const next = { ...d };
+        for (const r of data?.rows ?? []) {
+          if (!next[r.purchaseId] && matchesPattern(r.merchant, pattern)) next[r.purchaseId] = account;
+        }
+        return next;
+      });
+      setRuleToast({ pattern, count });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -191,27 +200,6 @@ const ExpenseReconPage: React.FC = () => {
     const pat = pattern.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(^|[^a-z0-9])${pat}([^a-z0-9]|$)`).test(merchant.toLowerCase());
   };
-  const applyRuleToast = async (): Promise<void> => {
-    if (!tenantId || !ruleToast) return;
-    setRuleToastBusy(true);
-    try {
-      await call({ tenantId, action: 'applyMerchantRulesNow', dryRun: false, pattern: ruleToast.pattern, ignoreMinAge: true });
-      // mark matching rows done in place — no refresh needed
-      setDone((d) => {
-        const next = { ...d };
-        for (const r of data?.rows ?? []) {
-          if (!next[r.purchaseId] && matchesPattern(r.merchant, ruleToast.pattern)) next[r.purchaseId] = 'rule applied';
-        }
-        return next;
-      });
-      setRuleToast(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRuleToastBusy(false);
-    }
-  };
-
   const pending = useMemo(() => (data ? data.rows.filter((r) => !done[r.purchaseId]) : []), [data, done]);
   const cardTotal = useMemo(() => pending.filter((r) => r.source === 'card').reduce((s, r) => s + r.amount, 0), [pending]);
   const bankTotal = useMemo(() => pending.filter((r) => r.source === 'bank').reduce((s, r) => s + r.amount, 0), [pending]);
@@ -458,14 +446,8 @@ const ExpenseReconPage: React.FC = () => {
         open={Boolean(ruleToast)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         onClose={() => setRuleToast(null)}
-        message={ruleToast ? `Rule saved. ${ruleToast.count} uncategorized purchase(s) match "${ruleToast.pattern}".` : ''}
-        action={
-          ruleToast ? (
-            <Button color="secondary" size="small" disabled={ruleToastBusy} onClick={() => void applyRuleToast()}>
-              {ruleToastBusy ? 'Applying…' : `Apply to all ${ruleToast.count}`}
-            </Button>
-          ) : undefined
-        }
+        autoHideDuration={6000}
+        message={ruleToast ? `Rule "${ruleToast.pattern}" saved — applied to ${ruleToast.count} transaction(s) in QBO.` : ''}
       />
       <Dialog open={Boolean(ruleDialog)} onClose={() => setRuleDialog(null)} fullWidth maxWidth="sm">
         <DialogTitle>Merchant rule</DialogTitle>
