@@ -135,7 +135,13 @@ export async function pushScreeningAllocations(
     // eslint-disable-next-line no-await-in-loop
     const r = (await qboQuery(tenantId, `SELECT * FROM Purchase WHERE TxnDate >= '2026-01-01' STARTPOSITION ${start} MAXRESULTS 1000`)) as Record<string, any>;
     const rows: Array<Record<string, any>> = r.QueryResponse?.Purchase ?? r.Purchase ?? [];
-    for (const p of rows) if (String(p.EntityRef?.value ?? '') === ACCUSOURCE_VENDOR_ID) charges.push(p);
+    for (const p of rows) {
+      // Vendor 191 when set — but bank-feed purchases arrive with NO vendor
+      // (Greg's 2026-07-15 $154.50 charge), so match the descriptor too.
+      const hay = [p.EntityRef?.name, p.PrivateNote, ...((p.Line ?? []) as Array<Record<string, any>>).map((l) => l.Description)]
+        .map((x) => String(x ?? '')).join(' ').toLowerCase();
+      if (String(p.EntityRef?.value ?? '') === ACCUSOURCE_VENDOR_ID || hay.includes('accusource')) charges.push(p);
+    }
     if (rows.length < 1000) break;
     start += 1000;
   }

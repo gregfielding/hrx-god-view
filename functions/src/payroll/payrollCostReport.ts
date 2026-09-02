@@ -299,6 +299,7 @@ export const savePayrollVenueMapping = onCall(
       }
       await db.doc(`tenants/${tenantId}/qbo_merchant_rules/${id}`).set({
         pattern, account, class: trim(request.data?.class) || null,
+        matchDescriptor: request.data?.matchDescriptor === true,
         minAgeDays: Number(request.data?.minAgeDays ?? 7),
         source: 'expense_recon_page', createdBy: request.auth?.uid ?? null,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),

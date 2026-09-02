@@ -25,6 +25,10 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 const trim = (v: unknown): string => String(v ?? '').trim();
+const wordMatch = (pattern: string, hay: string): boolean => {
+  const pat = trim(pattern).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9])${pat}([^a-z0-9]|$)`).test(hay);
+};
 
 export async function applyQboMerchantRules(
   tenantId: string,
@@ -74,11 +78,13 @@ export async function applyQboMerchantRules(
       const merchant = trim(parsed?.merchant).toLowerCase();
       // Word-boundary match on the MERCHANT only — plain substring matched
       // "apple" against Applebee's, and descriptors mention "Apple Pay"
-      // (caught in the first dry run, 2026-09-02).
-      const rule = rules.find((ru) => {
-        const pat = trim(ru.pattern).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        return new RegExp(`(^|[^a-z0-9])${pat}([^a-z0-9]|$)`).test(merchant);
-      });
+      // (caught in the first dry run, 2026-09-02). Rules with
+      // matchDescriptor=true ALSO test the full bank descriptor — the only
+      // way to split merchants that parse identically ("Google" =
+      // Workspace + Cloud, Greg 2026-09-02).
+      const descriptor = [p.EntityRef?.name, p.PrivateNote, ...((p.Line ?? []) as Array<Record<string, any>>).map((l) => l.Description)]
+        .map((x) => trim(x)).join(' ').toLowerCase();
+      const rule = rules.find((ru) => wordMatch(ru.pattern, merchant) || (ru.matchDescriptor === true && wordMatch(ru.pattern, descriptor)));
       if (!rule) continue;
       const minAge = opts?.ignoreMinAge ? 0 : Number(rule.minAgeDays ?? 7);
       const ageDays = (Date.now() - Date.parse(String(p.TxnDate))) / 86400000;
@@ -114,10 +120,9 @@ export async function applyQboMerchantRules(
     const rows: Array<Record<string, any>> = r.QueryResponse?.JournalEntry ?? r.JournalEntry ?? [];
     for (const je of rows) {
       const merchant = (trim(je.DocNumber) ? `JE ${trim(je.DocNumber)}` : `Journal Entry ${trim(je.Id)}`).toLowerCase();
-      const rule = rules.find((ru) => {
-        const pat = trim(ru.pattern).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        return new RegExp(`(^|[^a-z0-9])${pat}([^a-z0-9]|$)`).test(merchant);
-      });
+      const descriptor = [je.DocNumber, je.PrivateNote, ...((je.Line ?? []) as Array<Record<string, any>>).map((l) => l.Description)]
+        .map((x) => trim(x)).join(' ').toLowerCase();
+      const rule = rules.find((ru) => wordMatch(ru.pattern, merchant) || (ru.matchDescriptor === true && wordMatch(ru.pattern, descriptor)));
       if (!rule) continue;
       const minAge = opts?.ignoreMinAge ? 0 : Number(rule.minAgeDays ?? 7);
       const ageDays = (Date.now() - Date.parse(String(je.TxnDate))) / 86400000;
@@ -201,6 +206,8 @@ export async function buildExpenseReconReport(
           amount: Math.round(uncAmt * 100) / 100, cls: [...uncClasses].join(', '),
           cardholder: trim(parsed?.cardholderName), last4: trim(parsed?.last4),
           source: String(p.PaymentType) === 'CreditCard' ? 'card' : 'bank',
+          descriptor: [p.EntityRef?.name, p.PrivateNote, ...((p.Line ?? []) as Array<Record<string, any>>).map((l) => l.Description)]
+            .map((x) => trim(x)).join(' ').toLowerCase().slice(0, 300),
         });
       }
       if (inRange) {
@@ -247,6 +254,8 @@ export async function buildExpenseReconReport(
           merchant: trim(je.DocNumber) ? `JE ${trim(je.DocNumber)}` : `Journal Entry ${trim(je.Id)}`,
           amount: Math.round(uncAmt * 100) / 100, cls: [...uncClasses].join(', '),
           cardholder: '', last4: '', source: 'journal',
+          descriptor: [je.DocNumber, je.PrivateNote, ...((je.Line ?? []) as Array<Record<string, any>>).map((l) => l.Description)]
+            .map((x) => trim(x)).join(' ').toLowerCase().slice(0, 300),
         });
       }
     }

@@ -18,6 +18,8 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
+  FormControlLabel,
   Chip,
   CircularProgress,
   Dialog,
@@ -53,10 +55,10 @@ const usd = (n: unknown): string =>
 interface ReconRow {
   purchaseId: string; date: string; merchant: string; amount: number;
   cardholder: string; last4: string; source: 'card' | 'bank' | 'journal';
-  cls?: string;
+  cls?: string; descriptor?: string;
   suggestedAccount?: string; suggestionPct?: number; suggestionUses?: number;
 }
-interface RuleRow { id: string; pattern: string; account: string; class?: string | null; minAgeDays?: number }
+interface RuleRow { id: string; pattern: string; account: string; class?: string | null; matchDescriptor?: boolean; minAgeDays?: number }
 interface CategorizedRow {
   purchaseId: string; lineId: string;
   date: string; merchant: string; amount: number; account: string; cls: string;
@@ -78,7 +80,7 @@ const ExpenseReconPage: React.FC = () => {
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [done, setDone] = useState<Record<string, string>>({});
-  const [ruleDialog, setRuleDialog] = useState<{ pattern: string; account: string; cls: string } | null>(null);
+  const [ruleDialog, setRuleDialog] = useState<{ pattern: string; account: string; cls: string; matchDescriptor: boolean } | null>(null);
   // class edits, keyed purchaseId (uncategorized) or purchaseId:lineId (categorized)
   const [clsSaved, setClsSaved] = useState<Record<string, string>>({});
   const [clsSaving, setClsSaving] = useState<Record<string, boolean>>({});
@@ -142,7 +144,8 @@ const ExpenseReconPage: React.FC = () => {
     try {
       const pattern = ruleDialog.pattern;
       const account = ruleDialog.account;
-      await call({ tenantId, action: 'saveMerchantRule', pattern, account, class: ruleDialog.cls || undefined }, 30000);
+      const matchDescriptor = ruleDialog.matchDescriptor;
+      await call({ tenantId, action: 'saveMerchantRule', pattern, account, class: ruleDialog.cls || undefined, matchDescriptor }, 30000);
       setRuleDialog(null);
       // Saving a rule applies it right away and greys the matching rows —
       // no second click (Greg 2026-09-02: "it should automatically apply
@@ -152,7 +155,8 @@ const ExpenseReconPage: React.FC = () => {
       setDone((d) => {
         const next = { ...d };
         for (const r of data?.rows ?? []) {
-          if (!next[r.purchaseId] && matchesPattern(r.merchant, pattern)) next[r.purchaseId] = account;
+          const hit = matchesPattern(r.merchant, pattern) || (matchDescriptor && matchesPattern(r.descriptor ?? '', pattern));
+          if (!next[r.purchaseId] && hit) next[r.purchaseId] = account;
         }
         return next;
       });
@@ -282,6 +286,11 @@ const ExpenseReconPage: React.FC = () => {
                         <TableCell>{r.date}</TableCell>
                         <TableCell>
                           {r.merchant}{' '}
+                          {r.descriptor && (
+                            <Typography variant="caption" color="text.secondary" noWrap component="div" sx={{ maxWidth: 460 }}>
+                              {r.descriptor.slice(0, 120)}
+                            </Typography>
+                          )}
                           {r.suggestedAccount && !saved && (
                             <Chip
                               size="small"
@@ -342,6 +351,7 @@ const ExpenseReconPage: React.FC = () => {
                                     pattern: r.merchant.toLowerCase(),
                                     account: picks[r.purchaseId] || r.suggestedAccount || '',
                                     cls: clsSaved[r.purchaseId] ?? r.cls ?? '',
+                                    matchDescriptor: false,
                                   })
                                 }
                               >
@@ -402,7 +412,7 @@ const ExpenseReconPage: React.FC = () => {
           {tab === 2 && (
             <>
               <Stack direction="row" spacing={2} sx={{ mb: 1 }}>
-                <Button variant="outlined" onClick={() => setRuleDialog({ pattern: '', account: '', cls: '' })}>
+                <Button variant="outlined" onClick={() => setRuleDialog({ pattern: '', account: '', cls: '', matchDescriptor: false })}>
                   New rule
                 </Button>
                 <Button variant="contained" disabled={applying} onClick={() => void applyRules()}>
@@ -423,7 +433,9 @@ const ExpenseReconPage: React.FC = () => {
                   <TableBody>
                     {data.rules.map((r) => (
                       <TableRow key={r.id}>
-                        <TableCell>{r.pattern}</TableCell>
+                        <TableCell>
+                          {r.pattern} {r.matchDescriptor && <Chip size="small" variant="outlined" label="descriptor" />}
+                        </TableCell>
                         <TableCell>{r.account}</TableCell>
                         <TableCell>{r.class || '—'}</TableCell>
                         <TableCell>{r.minAgeDays ?? 7}</TableCell>
@@ -470,6 +482,15 @@ const ExpenseReconPage: React.FC = () => {
               value={ruleDialog?.cls || null}
               onChange={(_, v) => setRuleDialog((d) => (d ? { ...d, cls: v ?? '' } : d))}
               renderInput={(params) => <TextField {...params} label="Class (optional)" />}
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={ruleDialog?.matchDescriptor ?? false}
+                  onChange={(e) => setRuleDialog((d) => (d ? { ...d, matchDescriptor: e.target.checked } : d))}
+                />
+              }
+              label='Also match the full bank descriptor — for merchants that parse identically (e.g. "google workspace" vs "google cloud", both shown as Google)'
             />
           </Stack>
         </DialogContent>
