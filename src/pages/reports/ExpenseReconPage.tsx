@@ -95,9 +95,9 @@ const ExpenseReconPage: React.FC = () => {
     }
   };
 
-  const categorize = async (row: ReconRow): Promise<void> => {
+  const categorize = async (row: ReconRow, explicitAccount?: string): Promise<void> => {
     if (!tenantId) return;
-    const account = picks[row.purchaseId] || row.suggestedAccount;
+    const account = explicitAccount || picks[row.purchaseId] || row.suggestedAccount;
     if (!account) return;
     setSaving((s) => ({ ...s, [row.purchaseId]: true }));
     try {
@@ -257,7 +257,14 @@ const ExpenseReconPage: React.FC = () => {
                               size="small"
                               options={data.expenseAccounts}
                               value={picks[r.purchaseId] ?? r.suggestedAccount ?? null}
-                              onChange={(_, v) => setPicks((p) => ({ ...p, [r.purchaseId]: v ?? '' }))}
+                              disabled={saving[r.purchaseId]}
+                              onChange={(_, v) => {
+                                setPicks((p) => ({ ...p, [r.purchaseId]: v ?? '' }));
+                                // Picking an account saves immediately (Greg
+                                // 2026-09-02); Save stays for accepting the
+                                // pre-filled suggestion.
+                                if (v) void categorize(r, v);
+                              }}
                               renderInput={(params) => <TextField {...params} placeholder="Pick account…" />}
                             />
                           )}
