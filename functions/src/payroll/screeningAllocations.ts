@@ -89,8 +89,12 @@ export async function pushScreeningAllocations(
   };
   const acctRes = (await qboQuery(tenantId, "SELECT * FROM Account WHERE AccountType = 'Cost of Goods Sold' MAXRESULTS 1000")) as Record<string, any>;
   const accts: Array<Record<string, any>> = acctRes.QueryResponse?.Account ?? acctRes.Account ?? [];
-  const recruitAcct = accts.find((a) => /recruitment/i.test(String(a.Name)));
-  if (!recruitAcct) throw new Error('5300 Field Staff Recruitment account not found');
+  // 5310 Background & Drug Screening (Greg 2026-09-03) — screening gets
+  // its own COGS line; 5300 stays recruitment/advertising only.
+  const recruitAcct =
+    accts.find((a) => /background.*screening/i.test(String(a.Name))) ??
+    accts.find((a) => /recruitment/i.test(String(a.Name)));
+  if (!recruitAcct) throw new Error('5310 Background & Drug Screening account not found');
   const RECRUIT = String(recruitAcct.Id);
 
   // ── screens + assignment index ──
