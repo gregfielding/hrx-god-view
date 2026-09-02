@@ -216,6 +216,11 @@ export async function buildExpenseReconReport(
   const classes = ((clsRes.Class ?? clsRes.QueryResponse?.Class ?? []) as Array<Record<string, any>>)
     .map((c) => trim(c.FullyQualifiedName) || trim(c.Name))
     .sort();
+  const expenseAcctIds = new Set(
+    accounts
+      .filter((a) => ['Expense', 'Cost of Goods Sold', 'Other Expense'].includes(trim(a.AccountType)))
+      .map((a) => trim(a.Id)),
+  );
   const since = new Date(Date.now() - 240 * 86400000).toISOString().slice(0, 10);
   const hist = new Map<string, Map<string, number>>();
   const rows: Array<Record<string, unknown>> = [];
@@ -305,6 +310,28 @@ export async function buildExpenseReconReport(
           descriptor: [je.DocNumber, je.PrivateNote, ...((je.Line ?? []) as Array<Record<string, any>>).map((l) => l.Description)]
             .map((x) => trim(x)).join(' ').toLowerCase().slice(0, 300),
         });
+      }
+      // Categorized JE debit lines too — Donna's Gusto reimbursement
+      // vanished from review the moment it got an account (Greg
+      // 2026-09-03). Skip our own automated allocation JEs (wire /
+      // revenue-reclass / screening tags) so the tab stays human-scale.
+      if (!/\[(wire|revrc|screen):/.test(trim(je.PrivateNote))) {
+        for (const l of (je.Line ?? []) as Array<Record<string, any>>) {
+          const d = l.JournalEntryLineDetail;
+          if (!d || d.PostingType !== 'Debit') continue;
+          if (trim(d.AccountRef?.value) === UNC) continue;
+          if (!expenseAcctIds.has(trim(d.AccountRef?.value))) continue;
+          categorized.push({
+            purchaseId: `je_${trim(je.Id)}`, lineId: trim(l.Id),
+            descriptor: [je.DocNumber, je.PrivateNote, trim(l.Description)]
+              .map((x) => trim(x)).join(' ').toLowerCase().slice(0, 200),
+            date: String(je.TxnDate),
+            merchant: trim(je.DocNumber) ? `JE ${trim(je.DocNumber)}` : `Journal Entry ${trim(je.Id)}`,
+            amount: Math.round((Number(l.Amount) || 0) * 100) / 100,
+            account: trim(d.AccountRef?.name), cls: trim(d.ClassRef?.name),
+            cardholder: '', source: 'journal',
+          });
+        }
       }
     }
     if (page.length < 1000) break;
