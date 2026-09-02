@@ -408,6 +408,8 @@ export async function runExpensifyClassWriteback(
   // "Meals" deactivated in QBO — only Travel:Travel meals going forward).
   const CATEGORY_ALIASES: Record<string, string> = {
     meals: 'travel:travel meals',
+    fuel: 'travel:ground transport',
+    'vehicle:fuel': 'travel:ground transport',
   };
   const resolveAccount = (rawCategory: string): { id: string; name: string } | null => {
     const cat = rawCategory.replace(/\\:/g, ':').replace(/^:+|:+$/g, '').trim();
