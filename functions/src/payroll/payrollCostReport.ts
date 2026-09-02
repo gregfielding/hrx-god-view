@@ -280,6 +280,12 @@ export const savePayrollVenueMapping = onCall(
       const { categorizePurchase } = await import('../integrations/quickbooks/qboMerchantRules');
       return await categorizePurchase(tenantId, trim(request.data?.purchaseId), trim(request.data?.account), trim(request.data?.class) || undefined);
     }
+    if (action === 'setExpenseAccount') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { setExpenseAccount } = await import('../integrations/quickbooks/qboMerchantRules');
+      return await setExpenseAccount(tenantId, trim(request.data?.purchaseId), trim(request.data?.account), trim(request.data?.lineId) || undefined);
+    }
     if (action === 'setExpenseClass') {
       if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
@@ -313,6 +319,7 @@ export const savePayrollVenueMapping = onCall(
       return await applyQboMerchantRules(tenantId, request.data?.dryRun !== false, {
         pattern: trim(request.data?.pattern) || undefined,
         ignoreMinAge: request.data?.ignoreMinAge === true,
+        recategorize: request.data?.recategorize === true,
       });
     }
 

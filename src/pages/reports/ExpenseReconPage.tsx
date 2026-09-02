@@ -60,7 +60,7 @@ interface ReconRow {
 }
 interface RuleRow { id: string; pattern: string; account: string; class?: string | null; matchDescriptor?: boolean; minAgeDays?: number }
 interface CategorizedRow {
-  purchaseId: string; lineId: string;
+  purchaseId: string; lineId: string; descriptor?: string;
   date: string; merchant: string; amount: number; account: string; cls: string;
   cardholder: string; source: string;
 }
@@ -80,7 +80,9 @@ const ExpenseReconPage: React.FC = () => {
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [done, setDone] = useState<Record<string, string>>({});
-  const [ruleDialog, setRuleDialog] = useState<{ pattern: string; account: string; cls: string; matchDescriptor: boolean } | null>(null);
+  const [ruleDialog, setRuleDialog] = useState<{ pattern: string; account: string; cls: string; matchDescriptor: boolean; recat: boolean } | null>(null);
+  const [acctSaved, setAcctSaved] = useState<Record<string, string>>({});
+  const [acctSaving, setAcctSaving] = useState<Record<string, boolean>>({});
   // class edits, keyed purchaseId (uncategorized) or purchaseId:lineId (categorized)
   const [clsSaved, setClsSaved] = useState<Record<string, string>>({});
   const [clsSaving, setClsSaving] = useState<Record<string, boolean>>({});
@@ -125,6 +127,19 @@ const ExpenseReconPage: React.FC = () => {
     }
   };
 
+  const setAccount = async (key: string, purchaseId: string, accountName: string, lineId?: string): Promise<void> => {
+    if (!tenantId || !accountName) return;
+    setAcctSaving((s0) => ({ ...s0, [key]: true }));
+    try {
+      await call({ tenantId, action: 'setExpenseAccount', purchaseId, account: accountName, lineId }, 60000);
+      setAcctSaved((s0) => ({ ...s0, [key]: accountName }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAcctSaving((s0) => ({ ...s0, [key]: false }));
+    }
+  };
+
   const setClass = async (key: string, purchaseId: string, className: string, lineId?: string): Promise<void> => {
     if (!tenantId || !className) return;
     setClsSaving((s0) => ({ ...s0, [key]: true }));
@@ -150,16 +165,10 @@ const ExpenseReconPage: React.FC = () => {
       // Saving a rule applies it right away and greys the matching rows —
       // no second click (Greg 2026-09-02: "it should automatically apply
       // and save the row").
-      const live = await call({ tenantId, action: 'applyMerchantRulesNow', dryRun: false, pattern, ignoreMinAge: true });
+      const recat = ruleDialog.recat;
+      const live = await call({ tenantId, action: 'applyMerchantRulesNow', dryRun: false, pattern, ignoreMinAge: true, recategorize: recat });
       const count = Number((live.data as { applied: number }).applied) || 0;
-      setDone((d) => {
-        const next = { ...d };
-        for (const r of data?.rows ?? []) {
-          const hit = matchesPattern(r.merchant, pattern) || (matchDescriptor && matchesPattern(r.descriptor ?? '', pattern));
-          if (!next[r.purchaseId] && hit) next[r.purchaseId] = account;
-        }
-        return next;
-      });
+      markRuleApplied(pattern, matchDescriptor, account, recat);
       setRuleToast({ pattern, count });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -204,6 +213,49 @@ const ExpenseReconPage: React.FC = () => {
     const pat = pattern.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(^|[^a-z0-9])${pat}([^a-z0-9]|$)`).test(merchant.toLowerCase());
   };
+  const ruleHits = (merchant: string, descriptor: string | undefined, pattern: string, matchDescriptor: boolean): boolean =>
+    matchesPattern(merchant, pattern) || (matchDescriptor && matchesPattern(descriptor ?? '', pattern));
+
+  // mark rows/lines in place after a rule apply — no refresh
+  const markRuleApplied = (pattern: string, matchDescriptor: boolean, account: string, recat: boolean): void => {
+    setDone((d) => {
+      const next = { ...d };
+      for (const r of data?.rows ?? []) {
+        if (!next[r.purchaseId] && ruleHits(r.merchant, r.descriptor, pattern, matchDescriptor)) next[r.purchaseId] = account;
+      }
+      return next;
+    });
+    if (recat) {
+      setAcctSaved((a) => {
+        const next = { ...a };
+        for (let i = 0; i < (data?.categorized ?? []).length; i += 1) {
+          const c = (data?.categorized ?? [])[i];
+          const key = `${c.purchaseId}:${c.lineId || i}`;
+          if (ruleHits(c.merchant, c.descriptor, pattern, matchDescriptor)) next[key] = account;
+        }
+        return next;
+      });
+    }
+  };
+
+  const applyExistingRule = async (rule: RuleRow): Promise<void> => {
+    if (!tenantId) return;
+    setApplying(true);
+    try {
+      const dry = await call({ tenantId, action: 'applyMerchantRulesNow', dryRun: true, pattern: rule.pattern, ignoreMinAge: true, recategorize: true });
+      const n = Number((dry.data as { applied: number }).applied) || 0;
+      if (n === 0) { setApplyNote(`Rule "${rule.pattern}" matches nothing to change.`); return; }
+      if (!window.confirm(`Rule "${rule.pattern}" would update ${n} transaction(s) — INCLUDING already-categorized ones — to ${rule.account}. Apply?`)) return;
+      await call({ tenantId, action: 'applyMerchantRulesNow', dryRun: false, pattern: rule.pattern, ignoreMinAge: true, recategorize: true });
+      markRuleApplied(rule.pattern, rule.matchDescriptor === true, rule.account, true);
+      setApplyNote(`Rule "${rule.pattern}" applied to ${n} transaction(s).`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setApplying(false);
+    }
+  };
+
   const pending = useMemo(() => (data ? data.rows.filter((r) => !done[r.purchaseId]) : []), [data, done]);
   const cardTotal = useMemo(() => pending.filter((r) => r.source === 'card').reduce((s, r) => s + r.amount, 0), [pending]);
   const bankTotal = useMemo(() => pending.filter((r) => r.source === 'bank').reduce((s, r) => s + r.amount, 0), [pending]);
@@ -351,7 +403,7 @@ const ExpenseReconPage: React.FC = () => {
                                     pattern: r.merchant.toLowerCase(),
                                     account: picks[r.purchaseId] || r.suggestedAccount || '',
                                     cls: clsSaved[r.purchaseId] ?? r.cls ?? '',
-                                    matchDescriptor: false,
+                                    matchDescriptor: false, recat: false,
                                   })
                                 }
                               >
@@ -379,6 +431,7 @@ const ExpenseReconPage: React.FC = () => {
                     <TableCell align="right">Amount</TableCell>
                     <TableCell>Account</TableCell>
                     <TableCell>Class</TableCell>
+                    <TableCell />
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -390,7 +443,16 @@ const ExpenseReconPage: React.FC = () => {
                         <TableCell>{c.merchant}</TableCell>
                         <TableCell>{c.cardholder || '—'} <Chip size="small" label={c.source} /></TableCell>
                         <TableCell align="right">{usd(c.amount)}</TableCell>
-                        <TableCell>{c.account}</TableCell>
+                        <TableCell sx={{ minWidth: 260 }}>
+                          <Autocomplete
+                            size="small"
+                            options={data.expenseAccounts}
+                            value={acctSaved[key] ?? (c.account || null)}
+                            disabled={acctSaving[key]}
+                            onChange={(_, v) => { if (v) void setAccount(key, c.purchaseId, v, c.lineId); }}
+                            renderInput={(params) => <TextField {...params} placeholder="Account…" />}
+                          />
+                        </TableCell>
                         <TableCell sx={{ minWidth: 220 }}>
                           <Autocomplete
                             size="small"
@@ -400,6 +462,21 @@ const ExpenseReconPage: React.FC = () => {
                             onChange={(_, v) => { if (v) void setClass(key, c.purchaseId, v, c.lineId); }}
                             renderInput={(params) => <TextField {...params} placeholder="Class…" />}
                           />
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="small"
+                            onClick={() =>
+                              setRuleDialog({
+                                pattern: c.merchant.toLowerCase(),
+                                account: acctSaved[key] ?? c.account ?? '',
+                                cls: clsSaved[key] ?? c.cls ?? '',
+                                matchDescriptor: false, recat: true,
+                              })
+                            }
+                          >
+                            Rule…
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );
@@ -412,7 +489,7 @@ const ExpenseReconPage: React.FC = () => {
           {tab === 2 && (
             <>
               <Stack direction="row" spacing={2} sx={{ mb: 1 }}>
-                <Button variant="outlined" onClick={() => setRuleDialog({ pattern: '', account: '', cls: '', matchDescriptor: false })}>
+                <Button variant="outlined" onClick={() => setRuleDialog({ pattern: '', account: '', cls: '', matchDescriptor: false, recat: false })}>
                   New rule
                 </Button>
                 <Button variant="contained" disabled={applying} onClick={() => void applyRules()}>
@@ -440,9 +517,14 @@ const ExpenseReconPage: React.FC = () => {
                         <TableCell>{r.class || '—'}</TableCell>
                         <TableCell>{r.minAgeDays ?? 7}</TableCell>
                         <TableCell>
-                          <IconButton size="small" onClick={() => void deleteRule(r.id, r.pattern, r.account)}>
-                            <DeleteOutlineIcon fontSize="small" />
-                          </IconButton>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Button size="small" disabled={applying} onClick={() => void applyExistingRule(r)}>
+                              Apply…
+                            </Button>
+                            <IconButton size="small" onClick={() => void deleteRule(r.id, r.pattern, r.account)}>
+                              <DeleteOutlineIcon fontSize="small" />
+                            </IconButton>
+                          </Stack>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -491,6 +573,15 @@ const ExpenseReconPage: React.FC = () => {
                 />
               }
               label='Also match the full bank descriptor — for merchants that parse identically (e.g. "google workspace" vs "google cloud", both shown as Google)'
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={ruleDialog?.recat ?? false}
+                  onChange={(e) => setRuleDialog((d) => (d ? { ...d, recat: e.target.checked } : d))}
+                />
+              }
+              label="Also recategorize matching expenses that are ALREADY categorized (not just uncategorized ones)"
             />
           </Stack>
         </DialogContent>

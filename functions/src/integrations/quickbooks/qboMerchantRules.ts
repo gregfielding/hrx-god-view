@@ -33,7 +33,7 @@ const wordMatch = (pattern: string, hay: string): boolean => {
 export async function applyQboMerchantRules(
   tenantId: string,
   dryRun: boolean,
-  opts?: { pattern?: string; ignoreMinAge?: boolean },
+  opts?: { pattern?: string; ignoreMinAge?: boolean; recategorize?: boolean },
 ): Promise<Record<string, unknown>> {
   const rulesSnap = await db.collection(`tenants/${tenantId}/qbo_merchant_rules`).get();
   let rules = rulesSnap.docs
@@ -73,7 +73,10 @@ export async function applyQboMerchantRules(
       const hasUnc = ((p.Line ?? []) as Array<Record<string, any>>).some(
         (l) => trim(l.AccountBasedExpenseLineDetail?.AccountRef?.value) === UNC,
       );
-      if (!hasUnc) continue;
+      // recategorize (human-initiated only, never the cron): matched
+      // purchases are rewritten even when already categorized (Greg
+      // 2026-09-03: anthropic rule must reach categorized expenses).
+      if (!hasUnc && !opts?.recategorize) continue;
       const parsed = parsePurchase(p) as Record<string, any>;
       const merchant = trim(parsed?.merchant).toLowerCase();
       // Word-boundary match on the MERCHANT only — plain substring matched
@@ -95,7 +98,10 @@ export async function applyQboMerchantRules(
       let changed = 0;
       for (const l of (p.Line ?? []) as Array<Record<string, any>>) {
         const d = l.AccountBasedExpenseLineDetail;
-        if (!d || trim(d.AccountRef?.value) !== UNC) continue;
+        if (!d) continue;
+        const cur = trim(d.AccountRef?.value);
+        if (cur !== UNC && !opts?.recategorize) continue;
+        if (cur === acct.id) continue;
         d.AccountRef = { value: acct.id, name: acct.name };
         if (cls && !d.ClassRef) d.ClassRef = { value: cls.id, name: cls.name };
         changed += 1;
@@ -133,7 +139,10 @@ export async function applyQboMerchantRules(
       let changed = 0;
       for (const l of (je.Line ?? []) as Array<Record<string, any>>) {
         const d = l.JournalEntryLineDetail;
-        if (!d || d.PostingType !== 'Debit' || trim(d.AccountRef?.value) !== UNC) continue;
+        if (!d || d.PostingType !== 'Debit') continue;
+        const cur = trim(d.AccountRef?.value);
+        if (cur !== UNC && !opts?.recategorize) continue;
+        if (cur === acct.id) continue;
         d.AccountRef = { value: acct.id, name: acct.name };
         if (cls && !d.ClassRef) d.ClassRef = { value: cls.id, name: cls.name };
         changed += 1;
@@ -216,6 +225,8 @@ export async function buildExpenseReconReport(
           if (!d || trim(d.AccountRef?.value) === UNC) continue;
           categorized.push({
             purchaseId: trim(p.Id), lineId: trim(l.Id),
+            descriptor: [p.EntityRef?.name, p.PrivateNote, ...((p.Line ?? []) as Array<Record<string, any>>).map((x) => x.Description)]
+              .map((x) => trim(x)).join(' ').toLowerCase().slice(0, 200),
             date: String(p.TxnDate), merchant: merchant || trim(p.EntityRef?.name) || '(unknown)',
             amount: Math.round((Number(l.Amount) || 0) * 100) / 100,
             account: trim(d.AccountRef?.name), cls: trim(d.ClassRef?.name),
@@ -369,4 +380,38 @@ export async function setExpenseClass(
   if (changed === 0) return { ok: true, changed: 0 };
   await qboEntityUpdate(tenantId, entity, { ...p, sparse: false });
   return { ok: true, changed, class: trim(cls.FullyQualifiedName) || trim(cls.Name) };
+}
+
+/** Account edit on an already-categorized line (Categorized tab admin
+ *  area). Same targeting as setExpenseClass; overwrites AccountRef. */
+export async function setExpenseAccount(
+  tenantId: string,
+  purchaseId: string,
+  accountName: string,
+  lineId?: string,
+): Promise<Record<string, unknown>> {
+  const acctRes = (await qboQuery(tenantId, "SELECT Id, Name, FullyQualifiedName, AccountType FROM Account WHERE Active = true MAXRESULTS 1000")) as Record<string, any>;
+  const accounts = ((acctRes.Account ?? []) as Array<Record<string, any>>);
+  const target = accounts.find(
+    (a) => (trim(a.FullyQualifiedName) || trim(a.Name)).toLowerCase() === trim(accountName).toLowerCase() || trim(a.Name).toLowerCase() === trim(accountName).toLowerCase(),
+  );
+  if (!target) throw new Error(`Account "${accountName}" not found`);
+  const isJe = purchaseId.startsWith('je_');
+  const rawId = (isJe ? purchaseId.slice(3) : purchaseId).replace(/'/g, '');
+  const entity = isJe ? 'JournalEntry' : 'Purchase';
+  const pr = (await qboQuery(tenantId, `SELECT * FROM ${entity} WHERE Id = '${rawId}'`)) as Record<string, any>;
+  const p = ((pr.QueryResponse?.[entity] ?? pr[entity] ?? []) as Array<Record<string, any>>)[0];
+  if (!p) throw new Error(`${entity} not found`);
+  let changed = 0;
+  for (const l of (p.Line ?? []) as Array<Record<string, any>>) {
+    const d = isJe ? l.JournalEntryLineDetail : l.AccountBasedExpenseLineDetail;
+    if (!d) continue;
+    if (isJe && d.PostingType !== 'Debit') continue;
+    if (trim(lineId) && trim(l.Id) !== trim(lineId)) continue;
+    d.AccountRef = { value: trim(target.Id), name: trim(target.FullyQualifiedName) || trim(target.Name) };
+    changed += 1;
+  }
+  if (changed === 0) return { ok: true, changed: 0 };
+  await qboEntityUpdate(tenantId, entity, { ...p, sparse: false });
+  return { ok: true, changed, account: trim(target.FullyQualifiedName) || trim(target.Name) };
 }
