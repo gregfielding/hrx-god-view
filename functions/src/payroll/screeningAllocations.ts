@@ -205,7 +205,9 @@ export async function pushScreeningAllocations(
     start += 1000;
   }
 
-  const matureCutoff = new Date(Date.now() - 35 * 86400000).toISOString().slice(0, 10);
+  // 7-day maturity (Greg 2026-09-03, was 35): charges allocate the week
+  // after they post; the 35-day screen lookback window is unchanged.
+  const matureCutoff = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   const results: Array<Record<string, unknown>> = [];
   for (const p of charges.sort((a, b) => String(a.TxnDate).localeCompare(String(b.TxnDate)))) {
     const pid = String(p.Id);
