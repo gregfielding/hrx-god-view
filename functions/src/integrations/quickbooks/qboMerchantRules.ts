@@ -25,6 +25,30 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 const trim = (v: unknown): string => String(v ?? '').trim();
+/** Amount-banded / cardholder rules (Greg 2026-09-03: "google" >700 =
+ *  C1 App infra, <=700 = Workspace; everything on Danny's card = class
+ *  Legends:Oakland). A rule needs pattern OR cardholder, and account OR
+ *  class. Class-only cardholder rules touch class on ANY line;
+ *  overwriteClass beats an existing class. */
+const ruleApplies = (
+  ru: Record<string, any>,
+  merchant: string,
+  descriptor: string,
+  cardholder: string,
+  amount: number,
+): boolean => {
+  const hasPattern = trim(ru.pattern) !== '';
+  const hasCardholder = trim(ru.cardholder) !== '';
+  if (!hasPattern && !hasCardholder) return false;
+  if (hasPattern) {
+    const hit = wordMatch(ru.pattern, merchant) || (ru.matchDescriptor === true && wordMatch(ru.pattern, descriptor));
+    if (!hit) return false;
+  }
+  if (hasCardholder && !cardholder.includes(trim(ru.cardholder).toLowerCase())) return false;
+  if (ru.minAmount != null && amount < Number(ru.minAmount)) return false;
+  if (ru.maxAmount != null && amount > Number(ru.maxAmount)) return false;
+  return true;
+};
 const wordMatch = (pattern: string, hay: string): boolean => {
   const pat = trim(pattern).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(^|[^a-z0-9])${pat}([^a-z0-9]|$)`).test(hay);
@@ -33,13 +57,14 @@ const wordMatch = (pattern: string, hay: string): boolean => {
 export async function applyQboMerchantRules(
   tenantId: string,
   dryRun: boolean,
-  opts?: { pattern?: string; ignoreMinAge?: boolean; recategorize?: boolean },
+  opts?: { pattern?: string; ignoreMinAge?: boolean; recategorize?: boolean; since?: string; ruleId?: string },
 ): Promise<Record<string, unknown>> {
   const rulesSnap = await db.collection(`tenants/${tenantId}/qbo_merchant_rules`).get();
   let rules = rulesSnap.docs
     .map((d) => ({ ...(d.data() as Record<string, any>), id: d.id }) as Record<string, any>)
-    .filter((r) => trim(r.pattern) && trim(r.account));
+    .filter((r) => (trim(r.pattern) || trim(r.cardholder)) && (trim(r.account) || trim(r.class)));
   if (trim(opts?.pattern)) rules = rules.filter((r) => trim(r.pattern).toLowerCase() === trim(opts?.pattern).toLowerCase());
+  if (trim(opts?.ruleId)) rules = rules.filter((r) => r.id === trim(opts?.ruleId));
   if (rules.length === 0) return { ok: true, dryRun, applied: 0, rules: 0 };
 
   const acctRes = (await qboQuery(tenantId, "SELECT Id, Name, FullyQualifiedName, AccountType FROM Account WHERE Active = true MAXRESULTS 1000")) as Record<string, any>;
@@ -61,7 +86,7 @@ export async function applyQboMerchantRules(
     ]),
   );
 
-  const since = new Date(Date.now() - 150 * 86400000).toISOString().slice(0, 10);
+  const since = trim(opts?.since) || new Date(Date.now() - 150 * 86400000).toISOString().slice(0, 10);
   let start = 1;
   let applied = 0;
   const appliedRows: Array<Record<string, unknown>> = [];
@@ -87,28 +112,40 @@ export async function applyQboMerchantRules(
       // Workspace + Cloud, Greg 2026-09-02).
       const descriptor = [p.EntityRef?.name, p.PrivateNote, ...((p.Line ?? []) as Array<Record<string, any>>).map((l) => l.Description)]
         .map((x) => trim(x)).join(' ').toLowerCase();
-      const rule = rules.find((ru) => wordMatch(ru.pattern, merchant) || (ru.matchDescriptor === true && wordMatch(ru.pattern, descriptor)));
+      const cardholder = trim(parsed?.cardholderName).toLowerCase();
+      const amount = Math.abs(Number(p.TotalAmt) || 0);
+      const rule = rules.find((ru) => ruleApplies(ru, merchant, descriptor, cardholder, amount));
       if (!rule) continue;
       const minAge = opts?.ignoreMinAge ? 0 : Number(rule.minAgeDays ?? 7);
       const ageDays = (Date.now() - Date.parse(String(p.TxnDate))) / 86400000;
       if (ageDays < minAge) continue;
-      const acct = byName.get(trim(rule.account).toLowerCase());
-      if (!acct || acct.id === UNC) continue;
+      const acct = trim(rule.account) ? byName.get(trim(rule.account).toLowerCase()) : undefined;
+      if (trim(rule.account) && (!acct || acct.id === UNC)) continue;
       const cls = trim(rule.class) ? classByFqn.get(trim(rule.class).toLowerCase()) : undefined;
+      if (!acct && !cls) continue;
       let changed = 0;
       for (const l of (p.Line ?? []) as Array<Record<string, any>>) {
         const d = l.AccountBasedExpenseLineDetail;
         if (!d) continue;
         const cur = trim(d.AccountRef?.value);
-        if (cur !== UNC && !opts?.recategorize) continue;
-        if (cur === acct.id) continue;
-        d.AccountRef = { value: acct.id, name: acct.name };
-        if (cls && !d.ClassRef) d.ClassRef = { value: cls.id, name: cls.name };
-        changed += 1;
+        let lineChanged = false;
+        if (acct && (cur === UNC || opts?.recategorize) && cur !== acct.id) {
+          d.AccountRef = { value: acct.id, name: acct.name };
+          lineChanged = true;
+        }
+        // class: cardholder rules reach every line; merchant rules stay
+        // tied to lines the account gate would touch
+        const classEligible = trim(rule.cardholder) ? true : cur === UNC || opts?.recategorize === true;
+        const classWins = !d.ClassRef || rule.overwriteClass === true || opts?.recategorize === true;
+        if (cls && classEligible && classWins && trim(d.ClassRef?.value) !== cls.id) {
+          d.ClassRef = { value: cls.id, name: cls.name };
+          lineChanged = true;
+        }
+        if (lineChanged) changed += 1;
       }
       if (!changed) continue;
       applied += 1;
-      appliedRows.push({ date: p.TxnDate, merchant: parsed?.merchant, amount: p.TotalAmt, account: acct.name, rule: rule.id });
+      appliedRows.push({ date: p.TxnDate, merchant: parsed?.merchant, amount: p.TotalAmt, account: acct?.name ?? '(unchanged)', cls: cls?.name, rule: rule.id });
       if (dryRun) continue;
       // eslint-disable-next-line no-await-in-loop
       await qboEntityUpdate(tenantId, 'Purchase', { ...p, sparse: false });
@@ -128,12 +165,12 @@ export async function applyQboMerchantRules(
       const merchant = (trim(je.DocNumber) ? `JE ${trim(je.DocNumber)}` : `Journal Entry ${trim(je.Id)}`).toLowerCase();
       const descriptor = [je.DocNumber, je.PrivateNote, ...((je.Line ?? []) as Array<Record<string, any>>).map((l) => l.Description)]
         .map((x) => trim(x)).join(' ').toLowerCase();
-      const rule = rules.find((ru) => wordMatch(ru.pattern, merchant) || (ru.matchDescriptor === true && wordMatch(ru.pattern, descriptor)));
+      const rule = rules.find((ru) => ruleApplies(ru, merchant, descriptor, '', Math.abs(Number(je.TotalAmt) || 0)));
       if (!rule) continue;
       const minAge = opts?.ignoreMinAge ? 0 : Number(rule.minAgeDays ?? 7);
       const ageDays = (Date.now() - Date.parse(String(je.TxnDate))) / 86400000;
       if (ageDays < minAge) continue;
-      const acct = byName.get(trim(rule.account).toLowerCase());
+      const acct = trim(rule.account) ? byName.get(trim(rule.account).toLowerCase()) : undefined;
       if (!acct || acct.id === UNC) continue;
       const cls = trim(rule.class) ? classByFqn.get(trim(rule.class).toLowerCase()) : undefined;
       let changed = 0;

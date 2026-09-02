@@ -58,7 +58,7 @@ interface ReconRow {
   cls?: string; descriptor?: string;
   suggestedAccount?: string; suggestionPct?: number; suggestionUses?: number;
 }
-interface RuleRow { id: string; pattern: string; account: string; class?: string | null; matchDescriptor?: boolean; minAgeDays?: number }
+interface RuleRow { id: string; pattern: string; account: string; class?: string | null; matchDescriptor?: boolean; minAgeDays?: number; cardholder?: string; minAmount?: number; maxAmount?: number; overwriteClass?: boolean }
 interface CategorizedRow {
   purchaseId: string; lineId: string; descriptor?: string;
   date: string; merchant: string; amount: number; account: string; cls: string;
@@ -519,6 +519,9 @@ const ExpenseReconPage: React.FC = () => {
                       <TableRow key={r.id}>
                         <TableCell>
                           {r.pattern} {r.matchDescriptor && <Chip size="small" variant="outlined" label="descriptor" />}
+                          {r.cardholder && <Chip size="small" variant="outlined" label={`card: ${r.cardholder}`} />}{' '}
+                          {r.minAmount != null && <Chip size="small" variant="outlined" label={`> ${usd(Number(r.minAmount) - 0.01)}`} />}{' '}
+                          {r.maxAmount != null && <Chip size="small" variant="outlined" label={`≤ ${usd(r.maxAmount)}`} />}
                         </TableCell>
                         <TableCell>{r.account}</TableCell>
                         <TableCell>{r.class || '—'}</TableCell>
