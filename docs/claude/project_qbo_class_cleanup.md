@@ -641,3 +641,22 @@ fact, not a data error.
   out-of-scope. Verizon: rule verizon -> Occupancy Costs:Utilities &
   Communications:Phone service (typo 'Communciations' fixed); Misc PO
   true-up list = 12 paid VS invoices \$20,101 on class 2026 Misc.
+
+## Workers' comp allocation (2026-09-03)
+
+7140 held ALL carrier payments (\$56,608 YTD to InSource). Fix:
+(1) rate backfill — 2,369 entries stamped workersCompRate from the
+matrix (state via entry.workState / assignment.worksiteState; title via
+assignment; matrix = tenants/{t}/workers_comp_rates {STATE_CODE} docs
+w/ jobTitles + '*' state defaults). Was 36% of gross unrated, now 0.1%
+(\$631: VA supervisor title + stateless strays).
+(2) pushWcAllocations (wcAllocations.ts): self-truing monthly JE
+[wcalloc:YYYY-MM] debit 5100 WC — Field Staff per class (gross x rate;
+JO -> payroll_jo_date_splits -> account rules -> JO name;
+WC_LEAF_ALIASES for fuzzy misses), credit 7140. Posted Jun \$8,717.85 /
+Jul \$10,187.90 / Aug \$10,955.72. Runs weekly after screening; action
+'pushWcAllocations'. Residual on 7140 = internal WC + InSource
+deposit variance — computed ~\$10K/mo vs ~\$7.5K/mo paid means a
+carrier catch-up bill is building; watch 7140. Jan–May stays on 7140
+(pre-Everee, Greg's scope ruling). Known limit: GB->FIFA WC follows
+the JO-wide date split (~\$1.5K NY/Dallas blur).
