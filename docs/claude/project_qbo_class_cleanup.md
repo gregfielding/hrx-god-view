@@ -549,3 +549,22 @@ Equipment (COGS, Id 174).
   \$104,691.96 vs invoiced \$68,682; expected billing at normal multiple
   ~\$155-175K → likely \$85-105K gap. Evidence: GB crew 6/15-7/05,
   Kelis Teran on FIFA NY invoice 7/18-19.
+
+## ConnectTeam-driven VS billing attribution (Q1 done 2026-09-03)
+
+Method that works: VS bills weekly, one invoice per event per Sunday
+batch, most labeled only "C1 Events Non Factored Revenue" on the bare
+"Venue Smart" parent class. ConnectTeam timesheet export ("All
+Employees" sheet; per-shift rows; "Type" = event descriptor; NO bill
+rates in the overview export) gives hours by event by week — rank-match
+each batch's invoice amounts to that week's event hours; implied
+blended rates land $16-26/h and confirm the match. Q1 result: 21
+invoices $132,698.20 attributed (Okeechobee = 3 invoices \$90,200.40
+per Greg incl. the 4/2 adjustment rebill); 6 oddballs -> new class
+"Venue Smart:2026 Misc" (Greg: clear via misc PO). New classes: 2026
+Misc, 2026 USFO Innings/Okeechobee/Extra Innings (separate per Greg).
+Descriptor->class map: functions/.scratch/connecteam/descriptor_map.json
+(gitignored; rebuild from this doc if lost). Remaining parent-class:
+\$88,585.60 (4/05, 4/12, 4/19 batches) + 15 unclassed invoices
+\$69,595.20 (4/26, 5/03) — resolve with Q2 ConnectTeam file, then FIFA
+NY gap with Q3. Worker PII stays in functions/.scratch/ — never commit.
