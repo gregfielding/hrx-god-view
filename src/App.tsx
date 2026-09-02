@@ -207,6 +207,7 @@ const AcaLookbackReportPage = lazy(() => import('./pages/reports/AcaLookbackRepo
 const TaxSickLeaveReportPage = lazy(() => import('./pages/reports/TaxSickLeaveReportPage'));
 const QboClassesPage = lazy(() => import('./pages/reports/QboClassesPage'));
 const ClassificationAuditPage = lazy(() => import('./pages/reports/ClassificationAuditPage'));
+const ExpenseReconPage = lazy(() => import('./pages/reports/ExpenseReconPage'));
 const CashFlowReportPage = lazy(() => import('./pages/reports/CashFlowReportPage'));
 const WcClassCodesReportPage = lazy(() =>
   import('./pages/reports/WcLibraryReportPages').then((m) => ({ default: m.WcClassCodesReportPage })),
@@ -1004,6 +1005,16 @@ function App() {
             <ProtectedRoute requiredSecurityLevel="7">
               <RecruiterAccessGuard>
                 <DataHealthPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reports/expense-recon"
+          element={
+            <ProtectedRoute requiredSecurityLevel="7">
+              <RecruiterAccessGuard>
+                <ExpenseReconPage />
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }

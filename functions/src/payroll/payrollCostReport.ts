@@ -267,6 +267,45 @@ export const savePayrollVenueMapping = onCall(
       return await pushScreeningAllocations(tenantId, request.data?.dryRun !== false);
     }
 
+    // Expense reconciliation page (Greg 2026-09-02). Level 7.
+    if (action === 'expenseReconReport') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { buildExpenseReconReport } = await import('../integrations/quickbooks/qboMerchantRules');
+      return await buildExpenseReconReport(tenantId);
+    }
+    if (action === 'categorizePurchase') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { categorizePurchase } = await import('../integrations/quickbooks/qboMerchantRules');
+      return await categorizePurchase(tenantId, trim(request.data?.purchaseId), trim(request.data?.account), trim(request.data?.class) || undefined);
+    }
+    if (action === 'saveMerchantRule') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const pattern = trim(request.data?.pattern).toLowerCase();
+      const account = trim(request.data?.account);
+      if (!pattern || !account) throw new HttpsError('invalid-argument', 'pattern and account are required.');
+      const id = trim(request.data?.id) || pattern.replace(/[^a-z0-9]+/g, '_').slice(0, 40);
+      if (request.data?.delete === true) {
+        await db.doc(`tenants/${tenantId}/qbo_merchant_rules/${id}`).delete();
+        return { ok: true, deleted: id };
+      }
+      await db.doc(`tenants/${tenantId}/qbo_merchant_rules/${id}`).set({
+        pattern, account, class: trim(request.data?.class) || null,
+        minAgeDays: Number(request.data?.minAgeDays ?? 7),
+        source: 'expense_recon_page', createdBy: request.auth?.uid ?? null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return { ok: true, id };
+    }
+    if (action === 'applyMerchantRulesNow') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { applyQboMerchantRules } = await import('../integrations/quickbooks/qboMerchantRules');
+      return await applyQboMerchantRules(tenantId, request.data?.dryRun !== false);
+    }
+
     // True-up posted allocation JEs to CURRENT attribution (Greg
     // 2026-09-01): flag fixes flow to QBO without re-pushing. Level 7.
     if (action === 'trueUpAllocations') {

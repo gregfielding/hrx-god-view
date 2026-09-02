@@ -16,6 +16,7 @@ import CalculateOutlinedIcon from '@mui/icons-material/CalculateOutlined';
 import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
 import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
+import RuleOutlinedIcon from '@mui/icons-material/RuleOutlined';
 import GppMaybeOutlinedIcon from '@mui/icons-material/GppMaybeOutlined';
 import TimelineOutlinedIcon from '@mui/icons-material/TimelineOutlined';
 import MonitorHeartOutlinedIcon from '@mui/icons-material/MonitorHeartOutlined';
@@ -108,6 +109,15 @@ export const REPORTS: ReportDef[] = [
     category: 'Payroll',
     minLevel: 6,
     icon: <ListAltOutlinedIcon />,
+  },
+  {
+    slug: 'expense-recon',
+    title: 'Expense Reconciliation',
+    description:
+      'Every purchase still on Uncategorized Expense with a history-mined suggestion — categorize inline, or turn a merchant into a standing rule that runs daily after the Expensify write-back.',
+    category: 'Finance & receivables',
+    minLevel: 7,
+    icon: <RuleOutlinedIcon />,
   },
   {
     slug: 'classification-audit',
