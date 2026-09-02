@@ -518,3 +518,17 @@ resolveClassificationFlags action).
   charge; Expensify is tagging-only (write-back copies tags over).
 - Scratch runs needing a QBO token REFRESH must load env:
   DOTENV_CONFIG_PATH=.env.hrx1-d3beb npx ts-node -r dotenv/config …
+
+## June revenue double-reclass (found + fixed 2026-09-03)
+
+June 4200 went NEGATIVE (−$578K) / 4100 doubled ($1.27M): the month was
+reclassed twice — a MANUAL close JE "Rev 063026" (−$615,617 from 4200,
+pre-automation) plus our automated "Rev Reclass 2606" (−$652,021).
+Manual JE deleted (Greg's call); the tagged [revrc:] JE is the single
+source of reclass truth. RULE: no manual month-end revenue reclasses —
+the weekly cron posts one per month; a manual one double-moves. Tell
+Mark before the next close. Also new accounts 2026-09-03: 5210
+ConnectTeam Fees (items 33 + 37 repointed, 81 invoices resaved — item
+37 "VS Tech Fee (deleted)" is INACTIVE and invisible to default Item
+queries; query Active IN (true,false)), 5400 Event Supplies and
+Equipment (COGS, Id 174).
