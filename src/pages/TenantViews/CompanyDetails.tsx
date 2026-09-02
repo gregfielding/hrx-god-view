@@ -3618,9 +3618,12 @@ const CompanyDashboardTab: React.FC<{
                 titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
               />
               <CardContent sx={{ p: 2 }}>
-                {company.shortDescription || company.description ? (
+                {/* Apollo fills shortDescription/description; when Apollo is out of
+                    credits (or has no record) fall back to the Claude-written
+                    businessSummary, which AI Enhance always produces in full mode. */}
+                {company.shortDescription || company.description || company.aiEnrichment?.businessSummary ? (
                   <Typography variant="body2" color="text.primary" sx={{ lineHeight: 1.6 }}>
-                    {company.shortDescription || company.description}
+                    {company.shortDescription || company.description || company.aiEnrichment?.businessSummary}
                   </Typography>
                 ) : (
                   <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
