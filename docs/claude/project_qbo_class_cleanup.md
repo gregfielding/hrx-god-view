@@ -509,7 +509,12 @@ resolveClassificationFlags action).
 - ☠️ FOUND 2026-09-03: 212 QBO purchases ($18,580.62, Jul-Aug) created
   by Expensify report exports ("Imported from Expensify" in
   PrivateNote) — ALL duplicate bank-feed charges (feed is
-  authoritative). Whoever exported reports from Expensify to QBO must
-  stop. Cleanup pending Greg's go-ahead.
+  authoritative). Greg had exported the reports himself; confirmed +
+  DELETED 210 of 212 same day ($18,547.62 removed; ids in session log).
+  The 2 survivors were QBO bank-MATCHED (each backed by its own bank
+  line — same-amount twins were different real charges): a matched
+  import copy is authoritative, only unmatched ones are dupes. RULE:
+  never export reports from Expensify into QBO — the feed brings every
+  charge; Expensify is tagging-only (write-back copies tags over).
 - Scratch runs needing a QBO token REFRESH must load env:
   DOTENV_CONFIG_PATH=.env.hrx1-d3beb npx ts-node -r dotenv/config …
