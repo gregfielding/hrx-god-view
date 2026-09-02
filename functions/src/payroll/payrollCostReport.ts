@@ -280,6 +280,12 @@ export const savePayrollVenueMapping = onCall(
       const { categorizePurchase } = await import('../integrations/quickbooks/qboMerchantRules');
       return await categorizePurchase(tenantId, trim(request.data?.purchaseId), trim(request.data?.account), trim(request.data?.class) || undefined);
     }
+    if (action === 'pushWcAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushWcAllocations } = await import('./wcAllocations');
+      return await pushWcAllocations(tenantId, request.data?.dryRun !== false);
+    }
     if (action === 'setExpenseAccount') {
       if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
@@ -1675,6 +1681,8 @@ export async function maybeRunWeeklyClassificationHealth(
     try {
       const { pushScreeningAllocations } = await import('./screeningAllocations');
       const scr = (await pushScreeningAllocations(tenantId, false)) as Record<string, any>;
+      const { pushWcAllocations } = await import('./wcAllocations');
+      const wc = (await pushWcAllocations(tenantId, false).catch((e) => ({ ok: false, error: String(e) }))) as Record<string, any>;
       const created = ((scr.charges ?? []) as Array<Record<string, any>>).filter((c) => c.status === 'created');
       if (created.length && postText) {
         await postText(`🧾 Screening allocation: posted ${created.length} AccuSource reclass entr${created.length === 1 ? 'y' : 'ies'} (5010 → 5300 per class).`);
