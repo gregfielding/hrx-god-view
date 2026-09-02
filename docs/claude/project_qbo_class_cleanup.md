@@ -607,3 +607,20 @@ Dallas/DC Open used subcontract labor (cost then lives outside W-2
 payroll and should be classed to events). OPEN: Silvia Orozco 8/13
 attributed Black Caviar while CT shows Lolla — verify; FIFA NY Danny
 question; August concert classes still to pre-create.
+
+## FIFA rolled-crew resolution (2026-09-03) — the real story
+
+The GB-JO date-split's "crew rolled to FIFA NY" was wrong for most of
+the crew: ConnectTeam name-matching proved 47 of the 68 rolled workers
+(Coleman, Austin, Jeffery, Vaughn...) worked FIFA WC DALLAS 6/13-7/24.
+111 payment_override docs (source connecteam_dallas_reattribution_
+20260903) moved ~\$54.7K of weight NY->Dallas (+Guzman->GB); Orozco
+8/13 -> Lollapalooza (Greg). True-up rewrote 10 JEs. FIFA family now:
+Dallas \$95.3K/\$14.63 CTh, NY \$63.8K/\$20.22, KC \$107.7K/\$16.52,
+GB \$51.6K/\$16.19. NO under-billing claim against VS — Dallas's
+\$134,262 invoice already covered those workers' hours; the "NY gap"
+was payroll misattribution. Greg confirmed FIFA staffing was all-C1
+(no subcontractors). NOTE: payment_override in the ledger BEATS the
+payroll_jo_date_splits rule — worker-level CT evidence > JO-wide split.
+FIFA margins ran thin (billed/labor ~1.1-1.4x pre-burden) — business
+fact, not a data error.
