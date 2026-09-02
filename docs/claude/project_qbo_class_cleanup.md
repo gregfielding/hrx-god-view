@@ -624,3 +624,20 @@ was payroll misattribution. Greg confirmed FIFA staffing was all-C1
 payroll_jo_date_splits rule — worker-level CT evidence > JO-wide split.
 FIFA margins ran thin (billed/labor ~1.1-1.4x pre-burden) — business
 fact, not a data error.
+
+## Screening pipeline final form (2026-09-03)
+
+- Account: 5310 Background & Drug Screening (COGS, Id 175) — allocator
+  targets it by /background.*screening/i with 5300 fallback.
+- Classing chain per screen: JO -> client accountName -> PACKAGE
+  (requestedPackageName regex -> leaf; CORT/Sodexo/Continental/
+  Purolator/Carrier/Mattress/Domino's/ORS Nasco/Hyatt) -> assignment ->
+  National. Splits COST-WEIGHTED per package (Greg's AccuSource rate
+  sheet in code: Database \$7.36 ... Carrier \$67.39; Sodexo Basic+ PA
+  variant shares a name with the \$37.04 one — common cost used).
+- Maturity 7 days (was 35); screen lookback window per charge stays 35.
+- All 2026 charges allocated: \$15,544.74 / 10 charges (Aug three
+  forced 2026-09-03: Cort \$3,589, Sodexo \$2,418). 2025's \$630
+  out-of-scope. Verizon: rule verizon -> Occupancy Costs:Utilities &
+  Communications:Phone service (typo 'Communciations' fixed); Misc PO
+  true-up list = 12 paid VS invoices \$20,101 on class 2026 Misc.
