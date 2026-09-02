@@ -257,6 +257,7 @@ export interface ClassWritebackStats {
   unknownTags: string[];
   errors: number;
   details: Array<{ purchaseId: string; merchant: string; amount: number; tag: string; action: string }>;
+  recategorized: number;
 }
 
 function tripleKey(dateIso: string, cents: number, merchant: string): string {
@@ -332,7 +333,8 @@ export async function runExpensifyClassWriteback(
     unknownTags: [],
     errors: 0,
     details: [],
-  };
+    recategorized: 0,
+};
 
   const expenses = await fetchExpensifyExpenses(since);
   stats.expensesSeen = expenses.length;
@@ -371,6 +373,37 @@ export async function runExpensifyClassWriteback(
     return leaf && leaf.length === 1 ? leaf[0] : null;
   };
 
+  // ── Expensify category → QBO expense account (Greg 2026-09-02): the
+  // bank feed lands every card charge as "Uncategorized Expense"; workers
+  // pick the real category in Expensify but only the CLASS ever flowed
+  // back. Map category name ↔ account Name/FullyQualifiedName the same
+  // way tags map to classes. ONLY applied to lines still sitting on
+  // Uncategorized Expense — a bookkeeper's categorization is never
+  // overwritten. ──
+  const acctRes = await qboQuery(
+    tenantId,
+    "SELECT Id, Name, FullyQualifiedName, AccountType FROM Account WHERE Active = true MAXRESULTS 1000",
+  );
+  const accounts = ((acctRes.Account ?? []) as Array<Record<string, any>>).filter((a) =>
+    ['Expense', 'Cost of Goods Sold', 'Other Expense'].includes(trim(a.AccountType)),
+  );
+  const acctByName = new Map<string, { id: string; name: string }>();
+  for (const a of accounts) {
+    const entry = { id: trim(a.Id), name: trim(a.FullyQualifiedName) || trim(a.Name) };
+    acctByName.set((trim(a.FullyQualifiedName) || trim(a.Name)).toLowerCase(), entry);
+    acctByName.set(trim(a.Name).toLowerCase(), entry);
+  }
+  let uncategorizedAcctId = '';
+  {
+    const unc = ((acctRes.Account ?? []) as Array<Record<string, any>>).find((a) => trim(a.Name) === 'Uncategorized Expense');
+    uncategorizedAcctId = unc ? trim(unc.Id) : '';
+  }
+  const resolveAccount = (rawCategory: string): { id: string; name: string } | null => {
+    const cat = rawCategory.replace(/\\:/g, ':').replace(/^:+|:+$/g, '').trim();
+    if (!cat) return null;
+    return acctByName.get(cat.toLowerCase()) ?? null;
+  };
+
   // Purchases in-window, keyed for both match paths.
   const purchases: Array<Record<string, any>> = [];
   let start = 1;
@@ -401,6 +434,7 @@ export async function runExpensifyClassWriteback(
   const ledgerMap = new Map<string, Record<string, any>>();
   ledgerSnap.forEach((d) => ledgerMap.set(d.id, d.data() as Record<string, any>));
   const unknownTags = new Set<string>();
+  const unknownCategories = new Set<string>();
   let pdfCache: { reportID: string; buf: Buffer } | null = null;
 
   for (const e of actionable) {
@@ -465,6 +499,32 @@ export async function runExpensifyClassWriteback(
               classId: resolved.id,
               className: resolved.name,
             });
+          }
+        }
+      }
+
+      // ── Category → line AccountRef, ONLY off Uncategorized Expense ──
+      if (e.category && uncategorizedAcctId) {
+        const resolvedAcct = resolveAccount(e.category);
+        if (!resolvedAcct) {
+          unknownCategories.add(e.category);
+        } else if (resolvedAcct.id !== uncategorizedAcctId) {
+          const lines = Array.isArray(purchase.Line)
+            ? (purchase.Line as Array<Record<string, any>>)
+            : [];
+          let recategorized = 0;
+          for (const l of lines) {
+            const d = l.AccountBasedExpenseLineDetail;
+            if (!d) continue;
+            if (trim(d.AccountRef?.value) !== uncategorizedAcctId) continue;
+            d.AccountRef = { value: resolvedAcct.id, name: resolvedAcct.name };
+            recategorized += 1;
+          }
+          if (recategorized > 0) {
+            entityChanged = true;
+            stats.recategorized += 1;
+            actions.push('account');
+            Object.assign(ledgerPatch, { category: e.category, accountId: resolvedAcct.id, accountName: resolvedAcct.name });
           }
         }
       }
