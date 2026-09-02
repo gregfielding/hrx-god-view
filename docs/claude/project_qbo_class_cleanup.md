@@ -568,3 +568,24 @@ Descriptor->class map: functions/.scratch/connecteam/descriptor_map.json
 \$88,585.60 (4/05, 4/12, 4/19 batches) + 15 unclassed invoices
 \$69,595.20 (4/26, 5/03) — resolve with Q2 ConnectTeam file, then FIFA
 NY gap with Q3. Worker PII stays in functions/.scratch/ — never commit.
+
+## ConnectTeam attribution COMPLETE Jan-Aug (2026-09-03)
+
+All VS billing Jan 1 -> today attributed by event (final sweep: one $0
+line left). April batches + the 15 unclassed invoices resolved via
+weekly hours rank-matching; 5/03 batch: SRO GT (3 invoices $5,432.60),
+Kid Cudi ($2,236.60), Seabreeze, LIV Golf VA; strays -> 2026 Misc.
+Full-book implied rates all land $19.46-29.56/h (Lolla $21.99, WI State
+Fair $20.75, Bonnaroo $24.49...) — VS billing tracks ConnectTeam hours.
+
+FIFA NY VERDICT (inverts the under-billing theory): NY bills $21.77/h
+on THEIR ConnectTeam hours (3,155.5h / $68,682) — richest FIFA site,
+no gap vs their records. Real issue: HRX rolled GB-JO crew 6/15-7/05 =
+68 workers / 4,713.9h / $76,245.67 paid, but ConnectTeam NY shows only
+~19 workers / ~1,900h that window. ~50 workers / ~2,800h / ~$55-60K
+billable have NO VS-side record. PENDING: Danny/ops to confirm where
+those workers actually worked (Michelle Coleman 82.6h, Bibiana
+Mondragon 80.1h, Kennedy Austin, Bryson Jeffery... top names). If FIFA
+NY -> bill VS with HRX clock as backup (fifa_ny_detail.csv + rolled
+worker list in functions/.scratch/connecteam/). If elsewhere -> re-split
+the payroll_jo_date_splits classes.
