@@ -532,3 +532,20 @@ ConnectTeam Fees (items 33 + 37 repointed, 81 invoices resaved — item
 37 "VS Tech Fee (deleted)" is INACTIVE and invisible to default Item
 queries; query Active IN (true,false)), 5400 Event Supplies and
 Equipment (COGS, Id 174).
+
+## Gov Ball vs QBO class audit (2026-09-03) — resolved + open items
+
+- HRX Job Costing now applies payroll_jo_date_splits: rolled work
+  (crew-roll windows) is excluded from the JO's pay/GP and shown as a
+  "rolled to {class}" chip. Gov Ball JO #162: \$13,185.28 own-event pay
+  (102 entries) vs \$76,245.67 rolled to FIFA NY (596 entries). QBO
+  class P&L was already correct (GB class 5010 \$51,683.47 = event
+  labor across ALL GB JOs). Exact ties: HRX billed == GB-classed
+  invoices; P&L income = billed + ConnectTeam 5210 gross-up.
+- OPEN: 15 unclassed Venue Smart invoices \$69,595.20 (batches 4/26 +
+  5/03, incl. 60500752 \$42,154.40) — pre-Everee, blank descriptions,
+  no PO/entry/sibling evidence. Needs Greg/Rosa to name the events.
+- OPEN: FIFA NY under-billing hardened — labor classed FIFA NY
+  \$104,691.96 vs invoiced \$68,682; expected billing at normal multiple
+  ~\$155-175K → likely \$85-105K gap. Evidence: GB crew 6/15-7/05,
+  Kelis Teran on FIFA NY invoice 7/18-19.
