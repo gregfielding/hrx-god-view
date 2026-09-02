@@ -53,7 +53,10 @@ const db = admin.firestore();
 
 const EXPENSIFY_API = 'https://integrations.expensify.com/Integration-Server/ExpensifyIntegrations';
 const DEFAULT_LOOKBACK_DAYS = 60;
-const MAX_PURCHASES = 1500;
+// 4000: with the 150-day lookback (2026-09-02) the newest-first fetch was
+// capping out before reaching June purchases — their categorized Expensify
+// matches could never recategorize them.
+const MAX_PURCHASES = 4000;
 const QBO_COMMENT_RE = /QBO #(\d+)/;
 /** Receipt uploads per run — keeps a big backlog inside the function
  *  timeout; the daily cron drains the remainder. */
@@ -340,7 +343,9 @@ export async function runExpensifyClassWriteback(
   stats.expensesSeen = expenses.length;
   // The "QBO #id" marker in pushed comments is plumbing, not a note.
   const noteOf = (e: ExpensifyExpense): string => e.comment.replace(QBO_COMMENT_RE, '').trim();
-  const actionable = expenses.filter((e) => e.tag || noteOf(e) || e.receiptUrl);
+  // category included since 2026-09-02: a category-only expense (no class
+  // tag) must still recategorize its QBO purchase off Uncategorized.
+  const actionable = expenses.filter((e) => e.tag || e.category || noteOf(e) || e.receiptUrl);
   stats.tagged = expenses.filter((e) => e.tag).length;
   if (actionable.length === 0) return stats;
 
