@@ -363,6 +363,19 @@ recruiters via the dashboardFeed rail (`worker_running_late`, eta-keyed
 dedupe). Informational only — never touches status/cortConfirmation.
 The WEB worker dashboard has no day-of card and no running-late
 affordance; recruiters DO see the feed alert. Port to web alongside the
-day-of-logistics fields work (structured onsiteContact/parking/entrance
-on worksite+JO — not yet built anywhere; the app card already reads the
-assignment-level fields when they appear).
+day-of-logistics fields work.
+
+**Layer 1 SHIPPED 2026-09-03** (hrx-god-view feat(jo) + c1_app 7569c47):
+structured on-site contact lives on the JO doc
+(`onsiteContactName/Phone/Role`), edited on the new **Day-of logistics
+card** at the top of the JO Staff Instructions tab (with a day-of
+readiness strip: contact / first day / parking / check-in / uniform).
+The app resolves it assignment → shift → JO and renders tap-to-text/
+call on the day-of hero and an On-site contact card on Assignment
+Details. Parking/entrance/check-in text already existed as
+`staffInstructions` (account → location → JO → shift → assignment) —
+nothing new needed there; venue-level defaults are edited on
+AccountLocationDetail. STILL WEB-SIDE GAP: the worker-facing web
+assignment view doesn't render the structured on-site contact (app
+does). Remaining layers: T-2h logistics push assembled from these
+fields; bag-policy convention (use `staffInstructions.other` for now).
