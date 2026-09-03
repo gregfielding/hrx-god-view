@@ -133,6 +133,7 @@ import { JobsBoardService, JobsBoardPost } from '../services/recruiter/jobsBoard
 import ManageContactsDialog from '../components/ManageContactsDialog';
 import ManageSalespeopleDialog from '../components/ManageSalespeopleDialog';
 import StaffInstructionCard from '../components/recruiter/StaffInstructionCard';
+import JobOrderDayOfLogisticsCard from '../components/recruiter/JobOrderDayOfLogisticsCard';
 import ShiftSetupTab from '../components/recruiter/ShiftSetupTab';
 import JobOrderHiringTab from '../components/recruiter/JobOrderHiringTab';
 import CRMNotesTab from '../components/CRMNotesTab';
@@ -5973,6 +5974,15 @@ const RecruiterJobOrderDetail: React.FC = () => {
       <TabPanel value={activeTab} index="staff_instructions">
         {/* Staff Instructions Tab */}
         <Grid container spacing={3}>
+          {/* Day-of logistics: structured on-site contact + readiness strip */}
+          <Grid item xs={12}>
+            <JobOrderDayOfLogisticsCard
+              jobOrder={jobOrder}
+              jobOrderId={jobOrderId || ''}
+              tenantId={tenantId || ''}
+            />
+          </Grid>
+
           {/* First Day Instructions */}
           <Grid item xs={12}>
             <StaffInstructionCard
