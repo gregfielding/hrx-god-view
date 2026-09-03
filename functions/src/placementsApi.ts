@@ -40,7 +40,7 @@ import {
   buildWorkerAssignmentUrl,
 } from './utils/workerUrls';
 import { assertWorkerHeadshotApproved } from './avatar/headshotAcceptGate';
-import { applyAppShiftConfirmation, applyAppShiftCancellation } from './cadence/appConfirmationWrites';
+import { applyAppShiftConfirmation, applyAppShiftCancellation, applyAppRunningLate } from './cadence/appConfirmationWrites';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -96,7 +96,7 @@ const ONBOARDING_LIFECYCLE_CORE: HiringLifecycleCore = {
 //                   cancelled their application on the jobs board) →
 //                   distinct status 'worker-cancelled' so the jobs board
 //                   can offer "Re-apply to Shift".
-type AssignmentDecision = 'accept' | 'decline' | 'worker_cancel' | 'cadence_confirm' | 'cadence_cancel';
+type AssignmentDecision = 'accept' | 'decline' | 'worker_cancel' | 'cadence_confirm' | 'cadence_cancel' | 'running_late';
 
 export function toDateOnly(value: any): string {
   if (!value) return '';
@@ -1655,19 +1655,20 @@ export const respondToAssignment = onCall(
       throw new HttpsError('unauthenticated', 'Authentication required');
     }
 
-    const { tenantId, assignmentId, decision } = (request.data || {}) as {
+    const { tenantId, assignmentId, decision, etaMinutes } = (request.data || {}) as {
     tenantId?: string;
     assignmentId?: string;
     decision?: AssignmentDecision;
+    etaMinutes?: number;
   };
 
   if (
     !tenantId ||
     !assignmentId ||
     !decision ||
-    !['accept', 'decline', 'worker_cancel', 'cadence_confirm', 'cadence_cancel'].includes(decision)
+    !['accept', 'decline', 'worker_cancel', 'cadence_confirm', 'cadence_cancel', 'running_late'].includes(decision)
   ) {
-    throw new HttpsError('invalid-argument', 'tenantId, assignmentId, and decision (accept|decline|worker_cancel|cadence_confirm|cadence_cancel) are required');
+    throw new HttpsError('invalid-argument', 'tenantId, assignmentId, and decision (accept|decline|worker_cancel|cadence_confirm|cadence_cancel|running_late) are required');
   }
 
   const uid = request.auth.uid;
@@ -1703,6 +1704,16 @@ export const respondToAssignment = onCall(
     }
     await applyAppShiftCancellation({ tenantId, assignmentId, uid, assignment });
     return { ok: true, state: 'cancelled' };
+  }
+
+  // Day-of hero "Running late" (worker app, 2026-09-03): informational only —
+  // stamps runningLate on the assignment + recruiter feed alert. Never
+  // touches status/cortConfirmation, so it can't un-confirm a shift.
+  if (decision === 'running_late') {
+    const eta = Number(etaMinutes);
+    const clampedEta = Number.isFinite(eta) && eta >= 1 ? Math.min(Math.round(eta), 240) : null;
+    await applyAppRunningLate({ tenantId, assignmentId, uid, assignment, etaMinutes: clampedEta });
+    return { ok: true, state: 'running_late' };
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
