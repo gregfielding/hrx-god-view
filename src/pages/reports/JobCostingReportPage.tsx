@@ -65,6 +65,7 @@ interface JoCosting {
   workers: number;
   hours: number;
   pay: number;
+  rolled?: { pay: number; hours: number; entries: number; byClass: Record<string, number> } | null;
   pendingPay: number;
   tips: number;
   bonus: number;
@@ -356,6 +357,16 @@ const JobCostingReportPage: React.FC = () => {
               <Chip size="small" variant="outlined" label={`work ${data.workSpan.start} → ${data.workSpan.end}`} />
             )}
             <Chip size="small" variant="outlined" label={`${data.workers} workers · ${data.hours} hrs · ${data.entryCount} paid entries`} />
+            {data.rolled && (
+              <Tooltip title="Work clocked under this JO but re-attributed to another event's class by a crew-roll date split — excluded from this JO's payroll so P&L matches QBO's class view.">
+                <Chip
+                  size="small"
+                  color="info"
+                  variant="outlined"
+                  label={`rolled to ${Object.keys(data.rolled.byClass).join(', ')}: ${usd(data.rolled.pay)} (${data.rolled.entries} entries)`}
+                />
+              </Tooltip>
+            )}
             {data.pendingPay > 0 && (
               <Tooltip title="Approved/draft entries not yet sent to Everee — cost still coming.">
                 <Chip size="small" color="warning" variant="outlined" label={`pending pay ${usd(data.pendingPay)}`} />

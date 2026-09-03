@@ -131,6 +131,13 @@ async function locateCompanyByDomain(tenantId: string, domain: string): Promise<
 
 // Trigger: when a company is created, attempt Apollo firmographics enrichment
 export const onCompanyCreatedApollo = onDocumentCreated({ document: 'tenants/{tenantId}/crm_companies/{companyId}', secrets: [APOLLO_API_KEY] }, async (event) => {
+  // Automatic enrichment disabled (Greg 2026-09-02: "we don't need to be
+  // enhancing companies automatically") — bulk CRM loads were burning the
+  // entire monthly Apollo credit allowance (~11 lead credits per record).
+  // On-demand enrichment (the AI Enhance button, getFirmographics) stays.
+  if ((process.env.ENABLE_AUTO_ENRICHMENT || 'false').toLowerCase() !== 'true') {
+    return;
+  }
   const tenantId = event.params.tenantId as string;
   const companyId = event.params.companyId as string;
   const data = event.data?.data() as any;
@@ -163,6 +170,13 @@ export const onCompanyCreatedApollo = onDocumentCreated({ document: 'tenants/{te
 
 // Trigger: when a contact is created, try to find verified email/phone
 export const onContactCreatedApollo = onDocumentCreated({ document: 'tenants/{tenantId}/crm_contacts/{contactId}', secrets: [APOLLO_API_KEY] }, async (event) => {
+  // Automatic enrichment disabled (Greg 2026-09-02: "we don't need to be
+  // enhancing companies automatically") — bulk CRM loads were burning the
+  // entire monthly Apollo credit allowance (~11 lead credits per record).
+  // On-demand enrichment (the AI Enhance button, getFirmographics) stays.
+  if ((process.env.ENABLE_AUTO_ENRICHMENT || 'false').toLowerCase() !== 'true') {
+    return;
+  }
   const tenantId = event.params.tenantId as string;
   const contactId = event.params.contactId as string;
   const contact = event.data?.data() as any;

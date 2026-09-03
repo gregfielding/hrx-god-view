@@ -290,9 +290,104 @@ grounded assistant, one queue, no dead ends; standalone web Q&A retired.
   is exactly what a new worker does — treat the riverpod 3 migration
   (2.6.1 is the last 2.x) as a Phase 2 blocker before TestFlight, and
   re-test boot rates on a quiet machine.
+- ☠️ **Providers that capture Firebase at construction are null forever
+  (fixed for language 2026-09-02, c1_app 2974b8a)**: `C1AppBootstrap.build`
+  reads `appLocaleProvider` on the splash frame, BEFORE
+  `Firebase.initializeApp` completes — any plain Provider in that graph
+  that snapshots `Firebase.apps.isNotEmpty` (or grabs
+  `FirebaseAuth/Firestore.instance`) at construction caches the
+  pre-init null state for the app's life. Bit us: preferredLanguage
+  never synced to `users/{uid}`, so the first-login Select Your Language
+  dialog re-appeared every fresh install/device (and Firestore's local
+  latency compensation MASKS it on the device that made the choice —
+  test against the server, not the client). Pattern: services resolve
+  Firebase lazily per call; constructor injection only for test fakes.
+  Audit any new bootstrap-adjacent provider for this.
 - `.cursorrules` lies (freezed/Either/arb claims) — trust the map above.
 - `payrollEvereeAccessProvider` hides the Payroll tab until provisioning
   loads — new Home earnings strip must not depend on the tab being visible.
 - Sessions from evereeCreateOnboardingSession are single-use; never cache.
 - `everee_payroll_setup_sheet.dart` + `everee_my_pay_sheet.dart` are dead
   (hardcoded channel name, legacy embedUrl) — delete when convenient.
+
+## 2026-09-02 — available-shift calendar feed: qualifying filter
+
+Web fix (Danny's Oakland report): the My Schedule calendar's grey
+"available" feed (other shifts on engaged job orders,
+`src/pages/c1/workers/assignments.tsx`) now mirrors the jobs board's
+qualifying filter — skip shifts with `status` ∈
+{closed, cancelled, canceled, filled} or `hidden === true`. A closed
+(handpick-only) shift was showing on workers' calendars but vanishing on
+click-through. The c1_app does NOT yet surface other-shifts on its
+schedule (provider reads only the worker's own assignment shifts), so no
+app change needed today — but when the app gains that feed, it MUST
+apply the same qualifying filter.
+
+## 2026-09-03 — hide stale "Starts <date>" chip on job detail
+
+Web fix (JobPostingDetail.tsx, hero date chip): when a posting's
+startDate is before today, the "Starts {date}" / "Estimated start"
+fallback chip is suppressed (gig with future shifts already shows
+"Next shift" instead). Danny: ongoing Oakland Arena gig showed
+"Starts 6/6/2026" months after start. c1_app: apply the same guard
+wherever the job header renders a start-date chip/label.
+
+## 2026-09-02 — REVERSE GAP: app Schedule IA ahead of web (tier-system prep)
+
+c1_app 828c1b9 (Greg live review): worker Schedule sub-nav is now
+**Calendar | List | History** — the Applications tab is gone. List =
+everything current/upcoming in one feed (confirmed shifts, offers pinned
+to top, in-flight applications); History absorbs outcomes (rejected,
+cancelled, completed, past-dated, and dateless applications idle >30
+days). Rationale: with the tier system, gig work becomes **Claim Shift**
+(instant commit, no application) and Careers keeps apply — a dedicated
+Applications tab stops making sense. The WEB worker schedule still has
+the old Active/Applications layout — port this IA to web when the
+tier-system/Claim Shift work is specced (bigger backend change: claim
+semantics, eligibility gates, conflicts). Until then this is a known,
+tracked divergence.
+
+## 2026-09-03 — REVERSE GAP: app day-of shift hero (web dashboard lacks it)
+
+c1_app: on the day of a confirmed/active shift, Home replaces the
+welcome hero with a **day-of card** (day_of_shift_hero_card.dart):
+countdown to start, address + Get Directions, contact row
+(onsiteContactName/Phone from the assignment raw when present, else the
+first assigned recruiter with a phone — tap-to-text + tap-to-call),
+Clock in (shift/assignment clockInUrl), and **"Running late?"** — ETA
+sheet (10/20/30/45/not-sure) → `respondToAssignment` decision
+`running_late` (DEPLOYED 2026-09-03) → stamps
+`runningLate{state,etaMinutes,reportedAt,reportedVia}` +
+`needsRecruiterAttention` on the assignment and alerts assigned
+recruiters via the dashboardFeed rail (`worker_running_late`, eta-keyed
+dedupe). Informational only — never touches status/cortConfirmation.
+The WEB worker dashboard has no day-of card and no running-late
+affordance; recruiters DO see the feed alert. Port to web alongside the
+day-of-logistics fields work.
+
+**Layer 1 SHIPPED 2026-09-03** (hrx-god-view feat(jo) + c1_app 7569c47):
+structured on-site contact lives on the JO doc
+(`onsiteContactName/Phone/Role`), edited on the new **Day-of logistics
+card** at the top of the JO Staff Instructions tab (with a day-of
+readiness strip: contact / first day / parking / check-in / uniform).
+The app resolves it assignment → shift → JO and renders tap-to-text/
+call on the day-of hero and an On-site contact card on Assignment
+Details. Parking/entrance/check-in text already existed as
+`staffInstructions` (account → location → JO → shift → assignment) —
+nothing new needed there; venue-level defaults are edited on
+AccountLocationDetail. STILL WEB-SIDE GAP: the worker-facing web
+assignment view doesn't render the structured on-site contact (app
+does). Bag-policy convention: use `staffInstructions.other` for now.
+
+**T-2h logistics push SHIPPED 2026-09-03** (hrx-god-view daeb0af1,
+deployed dispatchScheduledWorkerReminders +
+onAssignmentConfirmedScheduleReminders): the gig-track
+`assignment_reminder_2h_instructions` (push + SMS + inbox) now carries
+the on-site contact and parking/check-in snippets, resolved at
+DISPATCH time (recruiter edits after scheduling still land). Scope =
+gigs that are NOT open shifts, enforced by the existing hard fences in
+shiftReminderProfile.ts (open shifts → default two-step, careers →
+career track) — Greg 2026-09-03: gig/open-shift/career messaging
+treatment needs a deep dive before touching the other tracks. Caveat:
+messagingSequences copy OVERRIDES replace the built-in SMS body — an
+overridden sequence won't show logistics until its template adds them.

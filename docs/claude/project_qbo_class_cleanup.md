@@ -463,3 +463,200 @@ charges backfilled ($7,558).
 **Verification page** now has batch "Apply to all N" (toast after any
 save — applies the class to every flagged row sharing the guess,
 resolveClassificationFlags action).
+
+## Expense recon page + merchant rules (2026-09-02/03)
+
+- /reports/expense-recon: Uncategorized + Categorized tabs, date range,
+  auto-save account AND class pickers (class = its own editable column,
+  per line — category and class are different things), JE rows included
+  (`je_` ids). Saving a rule applies it live immediately and greys
+  matching rows — no second click.
+- Rules (`tenants/{t}/qbo_merchant_rules`): word-boundary match on parsed
+  merchant; `matchDescriptor: true` also tests entity+note+line text —
+  the only way to split same-merchant charges (Google = `google
+  workspace` vs `google cloud`, the latter being HRX's Firebase/GCP
+  spend). Rules engine sweeps JournalEntries too (JE merchant = `JE
+  {DocNumber}`).
+- AccuSource convention: categorize to 5010 Direct Labor — Field Staff,
+  NO class; the weekly screening job reclasses to 5300 Field Staff
+  Recruitment split per worker class. Job now matches AccuSource by
+  descriptor as well as vendor 191 (bank-feed purchases have no vendor —
+  they were invisible before 2026-09-03).
+- Outbound draft sign-offs (inbox chief-of-staff + reply desks): single
+  contact line after "—"; never a bare "Greg" line above "Greg Fielding
+  ·…" (doubled name looked broken; API drafts never get the Gmail rich
+  signature appended).
+
+## Account retirements + recon hardening (2026-09-03, second wave)
+
+- Retired accounts (flipped since 2026-01-01, then deactivated):
+  "Meals" (45) -> "Travel:Travel meals" (102), 69 txns $3,473.71;
+  "Vehicle:Fuel" (124) -> "Travel:Ground Transport" (115), 54 txns
+  $1,986.28. Write-back CATEGORY_ALIASES map lingering Expensify picks
+  (meals, fuel, vehicle:fuel). Expensify category toggles (Meals, Fuel,
+  Vehicle:Leased) are MANUAL — our EXPENSIFY_PARTNER creds are not a
+  policy admin (policyList empty; make the integration user a workspace
+  admin to script it).
+- Google: >$700 -> "Software & Subscriptions:C1 App" (acct 172,
+  created) = Firebase/GCP; <=$700 -> "Google Workspace". Amount-banded
+  rules (minAmount/maxAmount on |TotalAmt|); cardholder rules with
+  overwriteClass (danny rodriguez -> Legends:Oakland, always).
+- "je gusto" rule DELETED: Gusto payroll JEs only hit Uncategorized on
+  reimbursement lines — the rule misfiled Donna P.'s $247.60 (now
+  G&A:Office expenses, JE 7007 line 29). Reimbursements = human pick.
+- Categorized tab includes human JE debit expense lines (automated
+  wire/revrc/screen JEs excluded); cap 4000 + total; search field.
+- ☠️ FOUND 2026-09-03: 212 QBO purchases ($18,580.62, Jul-Aug) created
+  by Expensify report exports ("Imported from Expensify" in
+  PrivateNote) — ALL duplicate bank-feed charges (feed is
+  authoritative). Greg had exported the reports himself; confirmed +
+  DELETED 210 of 212 same day ($18,547.62 removed; ids in session log).
+  The 2 survivors were QBO bank-MATCHED (each backed by its own bank
+  line — same-amount twins were different real charges): a matched
+  import copy is authoritative, only unmatched ones are dupes. RULE:
+  never export reports from Expensify into QBO — the feed brings every
+  charge; Expensify is tagging-only (write-back copies tags over).
+- Scratch runs needing a QBO token REFRESH must load env:
+  DOTENV_CONFIG_PATH=.env.hrx1-d3beb npx ts-node -r dotenv/config …
+
+## June revenue double-reclass (found + fixed 2026-09-03)
+
+June 4200 went NEGATIVE (−$578K) / 4100 doubled ($1.27M): the month was
+reclassed twice — a MANUAL close JE "Rev 063026" (−$615,617 from 4200,
+pre-automation) plus our automated "Rev Reclass 2606" (−$652,021).
+Manual JE deleted (Greg's call); the tagged [revrc:] JE is the single
+source of reclass truth. RULE: no manual month-end revenue reclasses —
+the weekly cron posts one per month; a manual one double-moves. Tell
+Mark before the next close. Also new accounts 2026-09-03: 5210
+ConnectTeam Fees (items 33 + 37 repointed, 81 invoices resaved — item
+37 "VS Tech Fee (deleted)" is INACTIVE and invisible to default Item
+queries; query Active IN (true,false)), 5400 Event Supplies and
+Equipment (COGS, Id 174).
+
+## Gov Ball vs QBO class audit (2026-09-03) — resolved + open items
+
+- HRX Job Costing now applies payroll_jo_date_splits: rolled work
+  (crew-roll windows) is excluded from the JO's pay/GP and shown as a
+  "rolled to {class}" chip. Gov Ball JO #162: \$13,185.28 own-event pay
+  (102 entries) vs \$76,245.67 rolled to FIFA NY (596 entries). QBO
+  class P&L was already correct (GB class 5010 \$51,683.47 = event
+  labor across ALL GB JOs). Exact ties: HRX billed == GB-classed
+  invoices; P&L income = billed + ConnectTeam 5210 gross-up.
+- OPEN: 15 unclassed Venue Smart invoices \$69,595.20 (batches 4/26 +
+  5/03, incl. 60500752 \$42,154.40) — pre-Everee, blank descriptions,
+  no PO/entry/sibling evidence. Needs Greg/Rosa to name the events.
+- OPEN: FIFA NY under-billing hardened — labor classed FIFA NY
+  \$104,691.96 vs invoiced \$68,682; expected billing at normal multiple
+  ~\$155-175K → likely \$85-105K gap. Evidence: GB crew 6/15-7/05,
+  Kelis Teran on FIFA NY invoice 7/18-19.
+
+## ConnectTeam-driven VS billing attribution (Q1 done 2026-09-03)
+
+Method that works: VS bills weekly, one invoice per event per Sunday
+batch, most labeled only "C1 Events Non Factored Revenue" on the bare
+"Venue Smart" parent class. ConnectTeam timesheet export ("All
+Employees" sheet; per-shift rows; "Type" = event descriptor; NO bill
+rates in the overview export) gives hours by event by week — rank-match
+each batch's invoice amounts to that week's event hours; implied
+blended rates land $16-26/h and confirm the match. Q1 result: 21
+invoices $132,698.20 attributed (Okeechobee = 3 invoices \$90,200.40
+per Greg incl. the 4/2 adjustment rebill); 6 oddballs -> new class
+"Venue Smart:2026 Misc" (Greg: clear via misc PO). New classes: 2026
+Misc, 2026 USFO Innings/Okeechobee/Extra Innings (separate per Greg).
+Descriptor->class map: functions/.scratch/connecteam/descriptor_map.json
+(gitignored; rebuild from this doc if lost). Remaining parent-class:
+\$88,585.60 (4/05, 4/12, 4/19 batches) + 15 unclassed invoices
+\$69,595.20 (4/26, 5/03) — resolve with Q2 ConnectTeam file, then FIFA
+NY gap with Q3. Worker PII stays in functions/.scratch/ — never commit.
+
+## ConnectTeam attribution COMPLETE Jan-Aug (2026-09-03)
+
+All VS billing Jan 1 -> today attributed by event (final sweep: one $0
+line left). April batches + the 15 unclassed invoices resolved via
+weekly hours rank-matching; 5/03 batch: SRO GT (3 invoices $5,432.60),
+Kid Cudi ($2,236.60), Seabreeze, LIV Golf VA; strays -> 2026 Misc.
+Full-book implied rates all land $19.46-29.56/h (Lolla $21.99, WI State
+Fair $20.75, Bonnaroo $24.49...) — VS billing tracks ConnectTeam hours.
+
+FIFA NY VERDICT (inverts the under-billing theory): NY bills $21.77/h
+on THEIR ConnectTeam hours (3,155.5h / $68,682) — richest FIFA site,
+no gap vs their records. Real issue: HRX rolled GB-JO crew 6/15-7/05 =
+68 workers / 4,713.9h / $76,245.67 paid, but ConnectTeam NY shows only
+~19 workers / ~1,900h that window. ~50 workers / ~2,800h / ~$55-60K
+billable have NO VS-side record. PENDING: Danny/ops to confirm where
+those workers actually worked (Michelle Coleman 82.6h, Bibiana
+Mondragon 80.1h, Kennedy Austin, Bryson Jeffery... top names). If FIFA
+NY -> bill VS with HRX clock as backup (fifa_ny_detail.csv + rolled
+worker list in functions/.scratch/connecteam/). If elsewhere -> re-split
+the payroll_jo_date_splits classes.
+
+## Travel-team payroll resolved via ConnectTeam (2026-09-03)
+
+The \$36.6K parent-class 'Venue Smart' payroll = 7 traveling supervisors
+(Vaughn, Spencer, Magana x2, True, K. Perez, De Julian) whose venue
+label 'Venue Smart Supervisors Travel Team' maps to no QBO class ->
+account-level fallback (some paid via C1 Events pre-hire, then C1
+Select — Greg). Fixed: 56 payment_override ledger docs (source
+connecteam_travel_team_20260903) assigning each payment its CT
+dominant-hours event; true-up rewrote 18 wire JEs. Parent payroll now
+\$1,065. DC Open \$1.4K -> \$16.4K (\$24.75/CTh). Ratio audit method:
+QBO 5010-by-class / CT hours; healthy \$14-18; salaried staff (Mark
+True) break the ratio — ignore. Partial-staffing events (FIFA Dallas
+2,245 our-hours vs 6,516 CT) explain low ratios; Greg confirms whether
+Dallas/DC Open used subcontract labor (cost then lives outside W-2
+payroll and should be classed to events). OPEN: Silvia Orozco 8/13
+attributed Black Caviar while CT shows Lolla — verify; FIFA NY Danny
+question; August concert classes still to pre-create.
+
+## FIFA rolled-crew resolution (2026-09-03) — the real story
+
+The GB-JO date-split's "crew rolled to FIFA NY" was wrong for most of
+the crew: ConnectTeam name-matching proved 47 of the 68 rolled workers
+(Coleman, Austin, Jeffery, Vaughn...) worked FIFA WC DALLAS 6/13-7/24.
+111 payment_override docs (source connecteam_dallas_reattribution_
+20260903) moved ~\$54.7K of weight NY->Dallas (+Guzman->GB); Orozco
+8/13 -> Lollapalooza (Greg). True-up rewrote 10 JEs. FIFA family now:
+Dallas \$95.3K/\$14.63 CTh, NY \$63.8K/\$20.22, KC \$107.7K/\$16.52,
+GB \$51.6K/\$16.19. NO under-billing claim against VS — Dallas's
+\$134,262 invoice already covered those workers' hours; the "NY gap"
+was payroll misattribution. Greg confirmed FIFA staffing was all-C1
+(no subcontractors). NOTE: payment_override in the ledger BEATS the
+payroll_jo_date_splits rule — worker-level CT evidence > JO-wide split.
+FIFA margins ran thin (billed/labor ~1.1-1.4x pre-burden) — business
+fact, not a data error.
+
+## Screening pipeline final form (2026-09-03)
+
+- Account: 5310 Background & Drug Screening (COGS, Id 175) — allocator
+  targets it by /background.*screening/i with 5300 fallback.
+- Classing chain per screen: JO -> client accountName -> PACKAGE
+  (requestedPackageName regex -> leaf; CORT/Sodexo/Continental/
+  Purolator/Carrier/Mattress/Domino's/ORS Nasco/Hyatt) -> assignment ->
+  National. Splits COST-WEIGHTED per package (Greg's AccuSource rate
+  sheet in code: Database \$7.36 ... Carrier \$67.39; Sodexo Basic+ PA
+  variant shares a name with the \$37.04 one — common cost used).
+- Maturity 7 days (was 35); screen lookback window per charge stays 35.
+- All 2026 charges allocated: \$15,544.74 / 10 charges (Aug three
+  forced 2026-09-03: Cort \$3,589, Sodexo \$2,418). 2025's \$630
+  out-of-scope. Verizon: rule verizon -> Occupancy Costs:Utilities &
+  Communications:Phone service (typo 'Communciations' fixed); Misc PO
+  true-up list = 12 paid VS invoices \$20,101 on class 2026 Misc.
+
+## Workers' comp allocation (2026-09-03)
+
+7140 held ALL carrier payments (\$56,608 YTD to InSource). Fix:
+(1) rate backfill — 2,369 entries stamped workersCompRate from the
+matrix (state via entry.workState / assignment.worksiteState; title via
+assignment; matrix = tenants/{t}/workers_comp_rates {STATE_CODE} docs
+w/ jobTitles + '*' state defaults). Was 36% of gross unrated, now 0.1%
+(\$631: VA supervisor title + stateless strays).
+(2) pushWcAllocations (wcAllocations.ts): self-truing monthly JE
+[wcalloc:YYYY-MM] debit 5100 WC — Field Staff per class (gross x rate;
+JO -> payroll_jo_date_splits -> account rules -> JO name;
+WC_LEAF_ALIASES for fuzzy misses), credit 7140. Posted Jun \$8,717.85 /
+Jul \$10,187.90 / Aug \$10,955.72. Runs weekly after screening; action
+'pushWcAllocations'. Residual on 7140 = internal WC + InSource
+deposit variance — computed ~\$10K/mo vs ~\$7.5K/mo paid means a
+carrier catch-up bill is building; watch 7140. Jan–May stays on 7140
+(pre-Everee, Greg's scope ruling). Known limit: GB->FIFA WC follows
+the JO-wide date split (~\$1.5K NY/Dallas blur).

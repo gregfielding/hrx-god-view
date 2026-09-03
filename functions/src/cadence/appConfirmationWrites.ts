@@ -173,3 +173,64 @@ export async function applyAppShiftCancellation(args: {
     cancelledReminders: cancelled,
   });
 }
+
+/**
+ * In-app "Running late" (worker app day-of hero card, 2026-09-03): purely
+ * informational — never touches assignment status or cortConfirmation, so a
+ * late worker who already confirmed stays confirmed. Re-reports with a new
+ * ETA overwrite the field and (via the eta-suffixed dedupe key) re-alert
+ * the recruiter feed; identical double-taps dedupe away.
+ */
+export async function applyAppRunningLate(args: {
+  tenantId: string;
+  assignmentId: string;
+  uid: string;
+  assignment: Record<string, unknown>;
+  etaMinutes: number | null;
+}): Promise<void> {
+  const { tenantId, assignmentId, uid, assignment, etaMinutes } = args;
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
+    {
+      runningLate: {
+        state: 'reported',
+        etaMinutes: etaMinutes ?? null,
+        reportedAt: now,
+        updatedAt: now,
+        reportedVia: {
+          channel: 'app',
+          byUid: uid,
+        },
+      },
+      needsRecruiterAttention: true,
+    },
+    { merge: true },
+  );
+
+  const jobTitle =
+    normalize(assignment.jobTitle) ||
+    normalize(assignment.jobOrderName) ||
+    normalize(assignment.title) ||
+    'Shift';
+  const etaText = etaMinutes ? `~${etaMinutes} min late` : 'running late';
+  await notifyRecruitersOnWorkerEvent({
+    tenantId,
+    assignmentId,
+    assignment,
+    event: {
+      kind: 'worker_running_late',
+      title: `Running late — ${jobTitle}`,
+      snippet: `Worker reports ${etaText} (worker app day-of card).`,
+      dedupeKey: `worker_running_late__${assignmentId}__${etaMinutes ?? 'na'}`,
+      extra: { channel: 'app', byUid: uid, etaMinutes: etaMinutes ?? null },
+    },
+  });
+
+  logger.info('[cadence_app] running_late applied', {
+    tenantId,
+    assignmentId,
+    uid,
+    etaMinutes,
+  });
+}

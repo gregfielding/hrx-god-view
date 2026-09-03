@@ -452,6 +452,12 @@ const WorkerAssignments: React.FC = () => {
                 const sid = sDoc.id;
                 if (coveredShiftIds.has(sid)) return; // already shown as a colored item
                 const sd = sDoc.data() as Record<string, any>;
+                // Mirror the jobs board's qualifying filter (Danny 2026-09-02:
+                // a closed/hidden shift showed on the calendar but vanished on
+                // click-through — the board filtered, the calendar didn't).
+                const shiftStatus = String(sd.status ?? 'open').toLowerCase();
+                if (['closed', 'cancelled', 'canceled', 'filled'].includes(shiftStatus)) return;
+                if (sd.hidden === true) return;
                 const startAt = toStartAt({
                   startDate: sd.shiftDate || sd.startDate,
                   startTime: sd.startTime || sd.defaultStartTime,

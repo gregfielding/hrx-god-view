@@ -125,7 +125,7 @@ async function classifyInboxMessage(input: { from: string; subject: string; body
     `- personal_or_sensitive: personal, financial, legal, HR-sensitive, government — never auto-handled.`,
     `When unsure between junk and business, choose business_fyi (safe default — it stays in the inbox).`,
     ``,
-    `draftReply (ONLY for business_needs_reply, else empty string) — Greg's voice: calm, brief, unhurried; ≤70 words; no over-promising, no capability lists; 1-2 short qualifying questions when natural; close "Thank you!" then sign "Greg\\nGreg Fielding · C1 Staffing · 925-448-0579". Never state prices or commit to terms — if the email asks for pricing/contracts, acknowledge and say Greg will follow up with specifics.`,
+    `draftReply (ONLY for business_needs_reply, else empty string) — Greg's voice: calm, brief, unhurried; ≤70 words; no over-promising, no capability lists; 1-2 short qualifying questions when natural; close "Thank you!" then sign with EXACTLY these two lines and nothing else:\n—\nGreg Fielding · C1 Staffing · 925-448-0579\n(no bare "Greg" line above the signature — the doubled name looked broken in Gmail). Never state prices or commit to terms — if the email asks for pricing/contracts, acknowledge and say Greg will follow up with specifics.`,
     ``,
     `From: ${input.from}`,
     `Subject: ${input.subject}`,

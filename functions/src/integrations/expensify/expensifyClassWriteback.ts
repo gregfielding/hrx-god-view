@@ -53,7 +53,10 @@ const db = admin.firestore();
 
 const EXPENSIFY_API = 'https://integrations.expensify.com/Integration-Server/ExpensifyIntegrations';
 const DEFAULT_LOOKBACK_DAYS = 60;
-const MAX_PURCHASES = 1500;
+// 4000: with the 150-day lookback (2026-09-02) the newest-first fetch was
+// capping out before reaching June purchases — their categorized Expensify
+// matches could never recategorize them.
+const MAX_PURCHASES = 4000;
 const QBO_COMMENT_RE = /QBO #(\d+)/;
 /** Receipt uploads per run — keeps a big backlog inside the function
  *  timeout; the daily cron drains the remainder. */
@@ -257,6 +260,7 @@ export interface ClassWritebackStats {
   unknownTags: string[];
   errors: number;
   details: Array<{ purchaseId: string; merchant: string; amount: number; tag: string; action: string }>;
+  recategorized: number;
 }
 
 function tripleKey(dateIso: string, cents: number, merchant: string): string {
@@ -332,13 +336,16 @@ export async function runExpensifyClassWriteback(
     unknownTags: [],
     errors: 0,
     details: [],
-  };
+    recategorized: 0,
+};
 
   const expenses = await fetchExpensifyExpenses(since);
   stats.expensesSeen = expenses.length;
   // The "QBO #id" marker in pushed comments is plumbing, not a note.
   const noteOf = (e: ExpensifyExpense): string => e.comment.replace(QBO_COMMENT_RE, '').trim();
-  const actionable = expenses.filter((e) => e.tag || noteOf(e) || e.receiptUrl);
+  // category included since 2026-09-02: a category-only expense (no class
+  // tag) must still recategorize its QBO purchase off Uncategorized.
+  const actionable = expenses.filter((e) => e.tag || e.category || noteOf(e) || e.receiptUrl);
   stats.tagged = expenses.filter((e) => e.tag).length;
   if (actionable.length === 0) return stats;
 
@@ -371,6 +378,45 @@ export async function runExpensifyClassWriteback(
     return leaf && leaf.length === 1 ? leaf[0] : null;
   };
 
+  // ── Expensify category → QBO expense account (Greg 2026-09-02): the
+  // bank feed lands every card charge as "Uncategorized Expense"; workers
+  // pick the real category in Expensify but only the CLASS ever flowed
+  // back. Map category name ↔ account Name/FullyQualifiedName the same
+  // way tags map to classes. ONLY applied to lines still sitting on
+  // Uncategorized Expense — a bookkeeper's categorization is never
+  // overwritten. ──
+  const acctRes = await qboQuery(
+    tenantId,
+    "SELECT Id, Name, FullyQualifiedName, AccountType FROM Account WHERE Active = true MAXRESULTS 1000",
+  );
+  const accounts = ((acctRes.Account ?? []) as Array<Record<string, any>>).filter((a) =>
+    ['Expense', 'Cost of Goods Sold', 'Other Expense'].includes(trim(a.AccountType)),
+  );
+  const acctByName = new Map<string, { id: string; name: string }>();
+  for (const a of accounts) {
+    const entry = { id: trim(a.Id), name: trim(a.FullyQualifiedName) || trim(a.Name) };
+    acctByName.set((trim(a.FullyQualifiedName) || trim(a.Name)).toLowerCase(), entry);
+    acctByName.set(trim(a.Name).toLowerCase(), entry);
+  }
+  let uncategorizedAcctId = '';
+  {
+    const unc = ((acctRes.Account ?? []) as Array<Record<string, any>>).find((a) => trim(a.Name) === 'Uncategorized Expense');
+    uncategorizedAcctId = unc ? trim(unc.Id) : '';
+  }
+  // Retired categories that must land on their replacement even when a
+  // worker's Expensify pick still says the old name (Greg 2026-09-03:
+  // "Meals" deactivated in QBO — only Travel:Travel meals going forward).
+  const CATEGORY_ALIASES: Record<string, string> = {
+    meals: 'travel:travel meals',
+    fuel: 'travel:ground transport',
+    'vehicle:fuel': 'travel:ground transport',
+  };
+  const resolveAccount = (rawCategory: string): { id: string; name: string } | null => {
+    const cat = rawCategory.replace(/\\:/g, ':').replace(/^:+|:+$/g, '').trim();
+    if (!cat) return null;
+    return acctByName.get(cat.toLowerCase()) ?? acctByName.get(CATEGORY_ALIASES[cat.toLowerCase()] ?? '') ?? null;
+  };
+
   // Purchases in-window, keyed for both match paths.
   const purchases: Array<Record<string, any>> = [];
   let start = 1;
@@ -401,6 +447,7 @@ export async function runExpensifyClassWriteback(
   const ledgerMap = new Map<string, Record<string, any>>();
   ledgerSnap.forEach((d) => ledgerMap.set(d.id, d.data() as Record<string, any>));
   const unknownTags = new Set<string>();
+  const unknownCategories = new Set<string>();
   let pdfCache: { reportID: string; buf: Buffer } | null = null;
 
   for (const e of actionable) {
@@ -465,6 +512,32 @@ export async function runExpensifyClassWriteback(
               classId: resolved.id,
               className: resolved.name,
             });
+          }
+        }
+      }
+
+      // ── Category → line AccountRef, ONLY off Uncategorized Expense ──
+      if (e.category && uncategorizedAcctId) {
+        const resolvedAcct = resolveAccount(e.category);
+        if (!resolvedAcct) {
+          unknownCategories.add(e.category);
+        } else if (resolvedAcct.id !== uncategorizedAcctId) {
+          const lines = Array.isArray(purchase.Line)
+            ? (purchase.Line as Array<Record<string, any>>)
+            : [];
+          let recategorized = 0;
+          for (const l of lines) {
+            const d = l.AccountBasedExpenseLineDetail;
+            if (!d) continue;
+            if (trim(d.AccountRef?.value) !== uncategorizedAcctId) continue;
+            d.AccountRef = { value: resolvedAcct.id, name: resolvedAcct.name };
+            recategorized += 1;
+          }
+          if (recategorized > 0) {
+            entityChanged = true;
+            stats.recategorized += 1;
+            actions.push('account');
+            Object.assign(ledgerPatch, { category: e.category, accountId: resolvedAcct.id, accountName: resolvedAcct.name });
           }
         }
       }
@@ -647,6 +720,18 @@ export const expensifyClassWritebackCron = onSchedule(
           logger.error('[expensify] tag sync failed', { tenantId: tenantRef.id, error: String(err) });
         }
         await runExpensifyClassWriteback(tenantRef.id);
+        // Merchant rules run AFTER the write-back: they only touch lines
+        // still on Uncategorized, so Expensify categorization always wins
+        // (Greg 2026-09-02).
+        try {
+          const { applyQboMerchantRules } = await import('../quickbooks/qboMerchantRules');
+          const rr = (await applyQboMerchantRules(tenantRef.id, false)) as Record<string, any>;
+          if (Number(rr.applied) > 0) {
+            logger.info('[expensify] merchant rules applied', { tenantId: tenantRef.id, applied: rr.applied });
+          }
+        } catch (err) {
+          logger.error('[expensify] merchant rules failed', { tenantId: tenantRef.id, error: String(err) });
+        }
       } catch (err) {
         logger.error('[expensify] class write-back tenant run failed', {
           tenantId: tenantRef.id,

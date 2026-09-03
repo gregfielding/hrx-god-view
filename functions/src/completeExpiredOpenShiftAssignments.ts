@@ -135,6 +135,17 @@ export const completeExpiredOpenShiftAssignments = onSchedule(
         let reason = 'open_shift_ended';
 
         if (!stampedEnd) {
+          // Career assignments with an empty endDate are ongoing BY
+          // DEFINITION — the same signal isOngoingDoc (assignment
+          // lifecycle API / Career Assignments roster) trusts. Never
+          // derive an end for them from the parent shift: a career JO
+          // hired via an auto-created shiftMode 'single' shift would
+          // otherwise be completed WITH endDate = the shift's date
+          // stamped here, hiding the worker from the roster (JO #404
+          // Prairie View, 2026-09-03). A career doc with a genuinely
+          // stamped endDate (openShiftSetEndDate / endAssignment) still
+          // completes via the stampedEnd branch above.
+          if (String(a.jobOrderType ?? '') === 'career') continue;
           // No endDate on the assignment — ask the parent shift.
           const jobOrderId = String(a.jobOrderId || '');
           const shiftId = String(a.shiftId || '');

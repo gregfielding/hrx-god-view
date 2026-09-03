@@ -16,7 +16,7 @@
  */
 import * as admin from 'firebase-admin';
 
-import { qboQuery, qboEntityCreate } from '../integrations/quickbooks/qboAuth';
+import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -73,38 +73,48 @@ export async function pushRevenueAccountReclass(
     start += 1000;
   }
 
-  // existing reclass tags
-  const existing = new Set<string>();
+  // existing reclass tags -> their JE docs (so amounts can be trued up)
+  const existing = new Map<string, Record<string, any>>();
   start = 1;
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
     const r = (await qboQuery(tenantId, `SELECT * FROM JournalEntry WHERE TxnDate >= '2026-01-01' STARTPOSITION ${start} MAXRESULTS 1000`)) as Record<string, any>;
     const rows: Array<Record<string, any>> = r.QueryResponse?.JournalEntry ?? r.JournalEntry ?? [];
     for (const je of rows) {
-      for (const m of trim(je.PrivateNote).matchAll(/\[revrc:([^\]]+)\]/g)) existing.add(trim(m[1]));
+      for (const m of trim(je.PrivateNote).matchAll(/\[revrc:([^\]]+)\]/g)) existing.set(trim(m[1]), je);
     }
     if (rows.length < 1000) break;
     start += 1000;
   }
 
-  const matureMonth = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 7);
+  // Self-truing (Greg 2026-09-03: mid-month P&L must always show the
+  // 4100/4200 split — waiting for month+3d left August unsplit): every
+  // month with data gets a JE immediately, and existing JEs are
+  // REWRITTEN whenever the recomputed amount drifts > $1 (late
+  // invoices, edits). Idempotent per month via the [revrc:] tag.
   const results: Array<Record<string, unknown>> = [];
   for (const [month, m] of [...byMonth.entries()].sort()) {
     const total = round2([...m.values()].reduce((s, v) => s + v, 0));
-    if (existing.has(month)) {
-      results.push({ month, amount: total, status: 'already_reclassed' });
-      continue;
-    }
-    if (month >= matureMonth) {
-      results.push({ month, amount: total, status: 'not_mature_yet' });
-      continue;
+    const prior = existing.get(month);
+    if (prior) {
+      let net = 0;
+      for (const l of (prior.Line ?? []) as Array<Record<string, any>>) {
+        const d = l.JournalEntryLineDetail;
+        if (!d || String(d.AccountRef?.value) !== String(a4200.Id)) continue;
+        net += (d.PostingType === 'Debit' ? 1 : -1) * (Number(l.Amount) || 0);
+      }
+      if (Math.abs(round2(net) - total) <= 1) {
+        results.push({ month, amount: total, status: 'already_reclassed' });
+        continue;
+      }
     }
     if (Math.abs(total) < 0.01) continue;
     const splits = [...m.entries()]
       .map(([clsId, amt]) => ({ clsId, fqn: clsById.get(clsId) ?? clsId, amount: round2(amt) }))
       .filter((s) => Math.abs(s.amount) >= 0.01)
       .sort((a, b) => b.amount - a.amount);
-    results.push({ month, amount: total, status: dryRun ? 'would_create' : 'created', classes: splits.length, splits: splits.slice(0, 50) });
+    const action = existing.get(month) ? 'true_up' : 'create';
+    results.push({ month, amount: total, status: dryRun ? `would_${action}` : `${action}d`, classes: splits.length, splits: splits.slice(0, 50) });
     if (dryRun) continue;
     const lines: Array<Record<string, unknown>> = [];
     for (const s of splits) {
@@ -130,6 +140,12 @@ export async function pushRevenueAccountReclass(
           ClassRef: { value: s.clsId, name: s.fqn },
         },
       });
+    }
+    const prior2 = existing.get(month);
+    if (prior2) {
+      // eslint-disable-next-line no-await-in-loop
+      await qboEntityUpdate(tenantId, 'JournalEntry', { ...prior2, Line: lines, sparse: false });
+      continue;
     }
     // eslint-disable-next-line no-await-in-loop
     await qboEntityCreate(tenantId, 'JournalEntry', {

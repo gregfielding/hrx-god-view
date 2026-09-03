@@ -616,3 +616,34 @@ state, groups derive via wwEntity (hiringEntityId) + wwAccount filters —
 summary/money/OT all follow. Verified: C1 Select = all 10 this wk;
 C1 Events = 0 this wk (portal-first, appears via imports in past wks) —
 expected, explain to Greg if asked.
+
+## Footgun: career hires via a DATED open shift (found 2026-09-03)
+
+Hiring workers onto a dated open shift of a CAREER job order stamps
+endDate = the shift day on the assignment — they vanish from Active/
+Career Assignments (isOngoingDoc requires empty endDate) and read as
+one-day engagements. Symptom report: Deborah, JO #404 Prairie View
+cashiers — 5 confirmed workers missing from the tab. Fix applied: clear
+endDate on the five + the JO's own endDate (a career JO had
+endDate 2026-09-04). The tab tolerates sweep status flips ('ended'/
+'completed') as long as endDate is EMPTY (sibling proof: Labba).
+DURABLE FIX SHIPPED (2026-09-02): `placementsCreateAssignments`
+(functions/src/placementsApi.ts) now stamps endDate '' for career JOs in
+BOTH creation branches — the open-shift fast path (previously only the
+auto-created one-day heuristic was career-exempt; an explicit
+shift.endDate still leaked through) and the standard single/spanning
+branch (the one that minted the five JO #404 docs: `effectiveEndDate ||
+effectiveStartDate` defaulted to the shift day). Career detection =
+`jobOrder.jobType === 'career'`, same as the pre-existing isGigJob
+check. ALSO fixed the second half of the footgun:
+`completeExpiredOpenShiftAssignments` (daily 13:00 UTC sweep) used to
+resolve an end from the parent shift for empty-endDate docs — a
+career hire on an auto-created shiftMode 'single' shift would get
+completed WITH endDate = the shift's date re-stamped the morning after,
+re-hiding the worker. The sweep now skips shift-derived completion when
+the assignment's `jobOrderType` denorm says 'career' (same signal
+isOngoingDoc trusts); career docs with a genuinely stamped endDate
+(openShiftSetEndDate / endAssignment) still complete normally. Gig
+behavior untouched in both files. The per-day bulk fan-out branch was
+left alone: it is gig-gated server-side and no UI caller sends
+applyDates for a career JO.

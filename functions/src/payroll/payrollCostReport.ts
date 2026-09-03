@@ -267,6 +267,68 @@ export const savePayrollVenueMapping = onCall(
       return await pushScreeningAllocations(tenantId, request.data?.dryRun !== false);
     }
 
+    // Expense reconciliation page (Greg 2026-09-02). Level 7.
+    if (action === 'expenseReconReport') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { buildExpenseReconReport } = await import('../integrations/quickbooks/qboMerchantRules');
+      return await buildExpenseReconReport(tenantId, trim(request.data?.startDate) || undefined, trim(request.data?.endDate) || undefined);
+    }
+    if (action === 'categorizePurchase') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { categorizePurchase } = await import('../integrations/quickbooks/qboMerchantRules');
+      return await categorizePurchase(tenantId, trim(request.data?.purchaseId), trim(request.data?.account), trim(request.data?.class) || undefined);
+    }
+    if (action === 'pushWcAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushWcAllocations } = await import('./wcAllocations');
+      return await pushWcAllocations(tenantId, request.data?.dryRun !== false);
+    }
+    if (action === 'setExpenseAccount') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { setExpenseAccount } = await import('../integrations/quickbooks/qboMerchantRules');
+      return await setExpenseAccount(tenantId, trim(request.data?.purchaseId), trim(request.data?.account), trim(request.data?.lineId) || undefined);
+    }
+    if (action === 'setExpenseClass') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { setExpenseClass } = await import('../integrations/quickbooks/qboMerchantRules');
+      return await setExpenseClass(tenantId, trim(request.data?.purchaseId), trim(request.data?.class), trim(request.data?.lineId) || undefined);
+    }
+    if (action === 'saveMerchantRule') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const pattern = trim(request.data?.pattern).toLowerCase();
+      const account = trim(request.data?.account);
+      if (!pattern || !account) throw new HttpsError('invalid-argument', 'pattern and account are required.');
+      const id = trim(request.data?.id) || pattern.replace(/[^a-z0-9]+/g, '_').slice(0, 40);
+      if (request.data?.delete === true) {
+        await db.doc(`tenants/${tenantId}/qbo_merchant_rules/${id}`).delete();
+        return { ok: true, deleted: id };
+      }
+      await db.doc(`tenants/${tenantId}/qbo_merchant_rules/${id}`).set({
+        pattern, account, class: trim(request.data?.class) || null,
+        matchDescriptor: request.data?.matchDescriptor === true,
+        minAgeDays: Number(request.data?.minAgeDays ?? 7),
+        source: 'expense_recon_page', createdBy: request.auth?.uid ?? null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return { ok: true, id };
+    }
+    if (action === 'applyMerchantRulesNow') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { applyQboMerchantRules } = await import('../integrations/quickbooks/qboMerchantRules');
+      return await applyQboMerchantRules(tenantId, request.data?.dryRun !== false, {
+        pattern: trim(request.data?.pattern) || undefined,
+        ignoreMinAge: request.data?.ignoreMinAge === true,
+        recategorize: request.data?.recategorize === true,
+      });
+    }
+
     // True-up posted allocation JEs to CURRENT attribution (Greg
     // 2026-09-01): flag fixes flow to QBO without re-pushing. Level 7.
     if (action === 'trueUpAllocations') {
@@ -1619,6 +1681,8 @@ export async function maybeRunWeeklyClassificationHealth(
     try {
       const { pushScreeningAllocations } = await import('./screeningAllocations');
       const scr = (await pushScreeningAllocations(tenantId, false)) as Record<string, any>;
+      const { pushWcAllocations } = await import('./wcAllocations');
+      const wc = (await pushWcAllocations(tenantId, false).catch((e) => ({ ok: false, error: String(e) }))) as Record<string, any>;
       const created = ((scr.charges ?? []) as Array<Record<string, any>>).filter((c) => c.status === 'created');
       if (created.length && postText) {
         await postText(`🧾 Screening allocation: posted ${created.length} AccuSource reclass entr${created.length === 1 ? 'y' : 'ies'} (5010 → 5300 per class).`);
@@ -2629,6 +2693,28 @@ export async function buildJobOrderCosting(
   const isContractor =
     trim(entSnap?.data()?.workerType).toLowerCase() === 'contractor' || /events|workforce/i.test(entityId);
 
+  // Crew-roll date splits (Greg 2026-09-03): work clocked under this JO
+  // but re-attributed to another event's class (payroll_jo_date_splits —
+  // the same rule wire allocation applies) is reported as a separate
+  // "rolled" bucket, so the JO P&L stays apples-to-apples with QBO's
+  // class P&L (Gov Ball showed -\$23K because 85% of its payroll was
+  // FIFA NY work matched against Gov-Ball-only billing).
+  const splitsSnap = await db.collection(`tenants/${tenantId}/payroll_jo_date_splits`).get().catch(() => null);
+  const splitsByJo = new Map<string, Array<{ fromDate: string; toDate: string; cls: string }>>();
+  if (splitsSnap) {
+    splitsSnap.forEach((d) => {
+      const m = d.data() as Record<string, unknown>;
+      const sJoId = trim(m.jobOrderId);
+      if (!sJoId) return;
+      if (!splitsByJo.has(sJoId)) splitsByJo.set(sJoId, []);
+      splitsByJo.get(sJoId)!.push({ fromDate: trim(m.fromDate), toDate: trim(m.toDate), cls: trim(m.class) });
+    });
+  }
+  let rolledPay = 0;
+  let rolledHours = 0;
+  let rolledEntries = 0;
+  const rolledByClass: Record<string, number> = {};
+
   // Every entry the JOs have ever had (single-field queries, auto-indexed).
   const PAID = new Set(['sent_to_everee', 'submitted', 'paid']);
   const PENDING = new Set(['draft', 'pending', 'approved']);
@@ -2668,6 +2754,17 @@ export async function buildJobOrderCosting(
       if (!(total > 0)) return;
       const wd = trim(e.workDate);
       if (PAID.has(status)) {
+        const split = (splitsByJo.get(joId) ?? []).find(
+          (sp) => sp.fromDate && wd >= sp.fromDate && (!sp.toDate || wd <= sp.toDate),
+        );
+        if (split) {
+          rolledPay = round2(rolledPay + total);
+          rolledHours = round2(rolledHours + reg + ot + dt);
+          rolledEntries += 1;
+          const key = split.cls || 'other event';
+          rolledByClass[key] = round2((rolledByClass[key] ?? 0) + total);
+          return;
+        }
         pay = round2(pay + total);
         hours = round2(hours + reg + ot + dt);
         tips = round2(tips + num(e.tips));
@@ -2856,6 +2953,7 @@ export async function buildJobOrderCosting(
     workers: workers.size,
     hours,
     pay,
+    rolled: rolledEntries > 0 ? { pay: rolledPay, hours: rolledHours, entries: rolledEntries, byClass: rolledByClass } : null,
     pendingPay,
     tips,
     bonus,

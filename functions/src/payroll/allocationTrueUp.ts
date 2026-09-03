@@ -26,6 +26,7 @@ const ACCT_5010 = '73';
 export async function trueUpAllocationJes(
   tenantId: string,
   dryRun: boolean,
+  opts?: { fixCreditDocs?: string[] },
 ): Promise<Record<string, unknown>> {
   const today = new Date().toISOString().slice(0, 10);
   const journal = (await buildWireJournal(tenantId, '2026-05-01', today, null)) as Record<string, any>;
@@ -79,8 +80,24 @@ export async function trueUpAllocationJes(
     }
     if (wireTotal <= 0 || credit <= 0) continue;
     if (Math.abs(credit - wireTotal) > Math.max(1, credit * 0.02)) {
-      skippedDrift.push({ doc, credit, wireTotal });
-      continue;
+      if (!opts?.fixCreditDocs?.includes(doc)) {
+        skippedDrift.push({ doc, credit, wireTotal });
+        continue;
+      }
+      // Approved credit true-up (Greg 2026-09-03): rewrite the credit
+      // side to the current wire total so the debit split can follow.
+      const f = wireTotal / credit;
+      const creditLines = ((je.Line ?? []) as Array<Record<string, any>>).filter(
+        (l) => l.JournalEntryLineDetail?.PostingType === 'Credit',
+      );
+      for (const l of creditLines) l.Amount = Math.round((Number(l.Amount) || 0) * f * 100) / 100;
+      let newCredit = creditLines.reduce((s2, l) => s2 + (Number(l.Amount) || 0), 0);
+      const diffC = Math.round((wireTotal - newCredit) * 100);
+      if (diffC !== 0 && creditLines.length) {
+        const big = [...creditLines].sort((a, b) => (Number(b.Amount) || 0) - (Number(a.Amount) || 0))[0];
+        big.Amount = Math.round(((Number(big.Amount) || 0) + diffC / 100) * 100) / 100;
+      }
+      credit = wireTotal;
     }
     const scale = credit / wireTotal;
     const floored = [...combined.values()].map((x) => ({ ...x, cents: Math.floor(x.amt * scale * 100), frac: x.amt * scale * 100 - Math.floor(x.amt * scale * 100) }));
