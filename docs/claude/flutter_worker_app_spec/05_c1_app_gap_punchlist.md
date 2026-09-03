@@ -377,5 +377,17 @@ Details. Parking/entrance/check-in text already existed as
 nothing new needed there; venue-level defaults are edited on
 AccountLocationDetail. STILL WEB-SIDE GAP: the worker-facing web
 assignment view doesn't render the structured on-site contact (app
-does). Remaining layers: T-2h logistics push assembled from these
-fields; bag-policy convention (use `staffInstructions.other` for now).
+does). Bag-policy convention: use `staffInstructions.other` for now.
+
+**T-2h logistics push SHIPPED 2026-09-03** (hrx-god-view daeb0af1,
+deployed dispatchScheduledWorkerReminders +
+onAssignmentConfirmedScheduleReminders): the gig-track
+`assignment_reminder_2h_instructions` (push + SMS + inbox) now carries
+the on-site contact and parking/check-in snippets, resolved at
+DISPATCH time (recruiter edits after scheduling still land). Scope =
+gigs that are NOT open shifts, enforced by the existing hard fences in
+shiftReminderProfile.ts (open shifts → default two-step, careers →
+career track) — Greg 2026-09-03: gig/open-shift/career messaging
+treatment needs a deep dive before touching the other tracks. Caveat:
+messagingSequences copy OVERRIDES replace the built-in SMS body — an
+overridden sequence won't show logistics until its template adds them.
