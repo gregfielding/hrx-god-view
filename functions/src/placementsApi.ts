@@ -709,6 +709,14 @@ export const placementsCreateAssignments = onCall(
   const skipPlacementWorkerNotifications = Boolean(jobOrder.muted);
   const shift = shiftSnap.data() || {};
   const isGigJob = String(jobOrder.jobType || '').toLowerCase() === 'gig';
+  // Career placements are ongoing standing roles: an empty endDate is what
+  // keeps them on the Active/Career Assignments roster (isOngoingDoc in
+  // assignmentLifecycleApi requires it). Every endDate default below must
+  // therefore resolve to '' for career JOs — stamping the shift's date as
+  // an endDate collapses the hire to a one-day engagement (JO #404 Prairie
+  // View cashiers, 2026-09-03: five confirmed workers vanished from the
+  // roster because their dated-shift hire stamped endDate = shift day).
+  const isCareerJob = String(jobOrder.jobType || '').toLowerCase() === 'career';
 
   // DNR (Do Not Return) — a worker marked DNR for this JO's account (child
   // or national) can never be assigned here. Hard reject with names so the
@@ -860,19 +868,20 @@ export const placementsCreateAssignments = onCall(
     // 7:49am with endDate stamped six weeks in the past). Rolling stays
     // endDate '' until "End open shift" stamps a real one.
     const openShiftMode = String(shift.shiftMode || 'single').toLowerCase();
-    // Career JOs are exempt from closed-range-at-birth even when the shift
-    // was auto-created (Christine Karl, 2026-08-14: Fieldglass career order
+    // Career JOs never get an endDate at hire — not from the one-day
+    // heuristic (Christine Karl, 2026-08-14: Fieldglass career order
     // auto-creates its open shift with shiftDate = the start date, but the
     // placement is an ongoing standing role — stamping endDate=startDate
-    // hid her from the Career Assignments roster the day she was hired).
-    // The one-day heuristic exists for auto-created EVENT gigs only.
-    const openResolvedEnd =
-      toDateOnly(shift.endDate) ||
-      (shift.autoCreatedOpenShift === true &&
-      openShiftMode === 'single' &&
-      String(jobOrder.jobType || '') !== 'career'
-        ? shiftDate
-        : '');
+    // hid her from the Career Assignments roster the day she was hired)
+    // and not from an explicit shift endDate either (JO #404, 2026-09-03:
+    // any non-empty endDate hides the worker from the roster). The one-day
+    // heuristic exists for auto-created EVENT gigs only.
+    const openResolvedEnd = isCareerJob
+      ? ''
+      : toDateOnly(shift.endDate) ||
+        (shift.autoCreatedOpenShift === true && openShiftMode === 'single'
+          ? shiftDate
+          : '');
     const openEndDate =
       openResolvedEnd && openStartDate && openResolvedEnd < openStartDate
         ? openStartDate
@@ -1503,11 +1512,20 @@ export const placementsCreateAssignments = onCall(
         // follows the SHIFT's range: rolling shift → open-ended.
         const isOpenShiftOfferPlacement =
           String(shift.shiftType || '').toLowerCase() === 'open';
-        const resolvedEndDate = isOngoingRecurringPlacement
+        // Career hires via a DATED shift are STILL ongoing placements —
+        // the shift's date (or a recruiter-picked applyDate) is the start
+        // day, never a single working day. The single-date default here
+        // stamped endDate = shift day and made the hire read as a one-day
+        // engagement (JO #404 Prairie View cashiers, 2026-09-03: an auto-
+        // created shiftMode 'single' shift on a career JO — five workers
+        // hired via assign_now vanished from Career Assignments).
+        const resolvedEndDate = isCareerJob
           ? ''
-          : isOpenShiftOfferPlacement
-            ? toDateOnly(shift.endDate) || ''
-            : effectiveEndDate || effectiveStartDate || '';
+          : isOngoingRecurringPlacement
+            ? ''
+            : isOpenShiftOfferPlacement
+              ? toDateOnly(shift.endDate) || ''
+              : effectiveEndDate || effectiveStartDate || '';
         const assignmentData: any = {
           tenantId,
           jobOrderId,
