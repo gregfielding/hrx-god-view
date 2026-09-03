@@ -290,6 +290,19 @@ grounded assistant, one queue, no dead ends; standalone web Q&A retired.
   is exactly what a new worker does — treat the riverpod 3 migration
   (2.6.1 is the last 2.x) as a Phase 2 blocker before TestFlight, and
   re-test boot rates on a quiet machine.
+- ☠️ **Providers that capture Firebase at construction are null forever
+  (fixed for language 2026-09-02, c1_app 2974b8a)**: `C1AppBootstrap.build`
+  reads `appLocaleProvider` on the splash frame, BEFORE
+  `Firebase.initializeApp` completes — any plain Provider in that graph
+  that snapshots `Firebase.apps.isNotEmpty` (or grabs
+  `FirebaseAuth/Firestore.instance`) at construction caches the
+  pre-init null state for the app's life. Bit us: preferredLanguage
+  never synced to `users/{uid}`, so the first-login Select Your Language
+  dialog re-appeared every fresh install/device (and Firestore's local
+  latency compensation MASKS it on the device that made the choice —
+  test against the server, not the client). Pattern: services resolve
+  Firebase lazily per call; constructor injection only for test fakes.
+  Audit any new bootstrap-adjacent provider for this.
 - `.cursorrules` lies (freezed/Either/arb claims) — trust the map above.
 - `payrollEvereeAccessProvider` hides the Payroll tab until provisioning
   loads — new Home earnings strip must not depend on the tab being visible.
