@@ -43,6 +43,14 @@ export interface CadenceMessagePayload {
   emailIntro?: string;
   shiftId?: string;
   jobOrderId?: string;
+
+  // Day-of logistics (fetchDayOfLogistics, resolved at dispatch time) —
+  // consumed by the T-2h instructions message only.
+  onsiteContactName?: string;
+  onsiteContactPhone?: string;
+  onsiteContactRole?: string;
+  parkingText?: string;
+  checkInText?: string;
 }
 
 export type CadenceReminderType =
@@ -119,19 +127,44 @@ export function buildCadenceMessage(
 
   switch (reminderType) {
     case 'assignment_reminder_2h_instructions': {
+      // Day-of logistics (2026-09-03): structured check-in / parking /
+      // on-site contact beat the free-text detail blob — the blob only
+      // rides when no structured snippet exists, so the SMS stays inside
+      // its ~2-segment budget.
+      const checkIn = truncate(payload.checkInText || '', 90);
+      const parking = truncate(payload.parkingText || '', 90);
+      const contactName = truncate(payload.onsiteContactName || '', 40);
+      const contactRole = truncate(payload.onsiteContactRole || '', 40);
+      const contactPhone = String(payload.onsiteContactPhone ?? '').trim();
+      const contactLine = contactName
+        ? (es
+            ? `Busca a ${contactName}${contactRole ? ` (${contactRole})` : ''}${contactPhone ? `: ${contactPhone}` : ''}.`
+            : `Find ${contactName}${contactRole ? ` (${contactRole})` : ''}${contactPhone ? `: ${contactPhone}` : ''}.`)
+        : '';
+
       const parts = [
         es
           ? `${brand}: Tu turno de ${job} en ${location} empieza el ${startLabel}.`
           : `${brand}: Your ${job} shift at ${location} starts at ${startLabel}.`,
       ];
       if (address) parts.push(es ? `Dirección: ${address}.` : `Address: ${address}.`);
-      if (detail) parts.push(detail);
+      if (checkIn) parts.push(es ? `Registro: ${checkIn}` : `Check-in: ${checkIn}`);
+      if (parking) parts.push(es ? `Estacionamiento: ${parking}` : `Parking: ${parking}`);
+      if (contactLine) parts.push(contactLine);
+      if (!checkIn && !parking && detail) parts.push(detail);
       parts.push(es ? 'Responde HELP si necesitas algo.' : 'Reply HELP if you need anything.');
+
+      const bodyBits = [
+        es ? `${job} empieza el ${startLabel}.` : `${job} starts at ${startLabel}.`,
+        address ? `${address}.` : '',
+        contactLine,
+        checkIn ? (es ? `Registro: ${truncate(checkIn, 70)}` : `Check-in: ${truncate(checkIn, 70)}`) : '',
+        parking ? (es ? `Estacionamiento: ${truncate(parking, 70)}` : `Parking: ${truncate(parking, 70)}`) : '',
+        !checkIn && !parking && detail ? detail : '',
+      ].filter(Boolean);
       return {
         title: es ? 'Detalles del lugar de trabajo' : 'Worksite details for today',
-        body: es
-          ? `${job} empieza el ${startLabel}.${address ? ` ${address}.` : ''}${detail ? ` ${detail}` : ''}`
-          : `${job} starts at ${startLabel}.${address ? ` ${address}.` : ''}${detail ? ` ${detail}` : ''}`,
+        body: bodyBits.join(' ').trim(),
         sms: parts.join(' ').trim(),
       };
     }

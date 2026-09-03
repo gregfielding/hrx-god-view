@@ -30,6 +30,7 @@ import {
   type ShiftReminderStep,
 } from './cadence/shiftReminderProfile';
 import {
+  fetchDayOfLogistics,
   fetchShiftPayloadExtras,
   resolveShiftIdFromAssignment,
   type ShiftPayloadExtras,
@@ -135,6 +136,14 @@ type ReminderPayload = {
   emailIntro?: string;
   shiftId?: string;
   jobOrderId?: string;
+  // Day-of logistics — resolved at DISPATCH time (never stored on the
+  // reminder doc) so a contact added to the JO after scheduling still makes
+  // the T-2h message. Consumed only by assignment_reminder_2h_instructions.
+  onsiteContactName?: string;
+  onsiteContactPhone?: string;
+  onsiteContactRole?: string;
+  parkingText?: string;
+  checkInText?: string;
 };
 
 type ReminderDoc = {
@@ -849,6 +858,11 @@ function buildReminderMessage(
       emailIntro: payload.emailIntro,
       shiftId: payload.shiftId,
       jobOrderId: payload.jobOrderId,
+      onsiteContactName: payload.onsiteContactName,
+      onsiteContactPhone: payload.onsiteContactPhone,
+      onsiteContactRole: payload.onsiteContactRole,
+      parkingText: payload.parkingText,
+      checkInText: payload.checkInText,
     };
     return buildCadenceMessage(reminderType, cadencePayload, lang, brand);
   }
@@ -1074,7 +1088,27 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     /* default en */
   }
   const smsBrand = await getTenantSmsBrand(reminder.tenantId);
-  const message = buildReminderMessage(reminder.reminderType, reminder.payload, reminder.assignmentId, reminderProfileId, workerLang, smsBrand);
+  // T-2h instructions: pull day-of logistics FRESH (on-site contact,
+  // parking/check-in snippets) so recruiter edits after scheduling still
+  // reach the worker. Fail-open — a read error just means the base message.
+  let dispatchPayload = reminder.payload;
+  if (canonicalReminderType === 'assignment_reminder_2h_instructions') {
+    try {
+      const asgSnap = await db
+        .doc(`tenants/${reminder.tenantId}/assignments/${reminder.assignmentId}`)
+        .get();
+      const logistics = await fetchDayOfLogistics({
+        tenantId: reminder.tenantId,
+        assignment: asgSnap.exists ? (asgSnap.data() as Record<string, unknown>) : {},
+        jobOrderId: reminder.payload.jobOrderId,
+        shiftId: reminder.payload.shiftId,
+      });
+      dispatchPayload = { ...reminder.payload, ...logistics };
+    } catch {
+      /* base payload */
+    }
+  }
+  const message = buildReminderMessage(reminder.reminderType, dispatchPayload, reminder.assignmentId, reminderProfileId, workerLang, smsBrand);
   // Per-sequence copy override (Phase B): a recruiter-edited SMS template on
   // the governing messagingSequences doc replaces the built-in body. Blank or
   // missing override → built-in copy, so editing can never silence a step.
