@@ -616,3 +616,16 @@ state, groups derive via wwEntity (hiringEntityId) + wwAccount filters —
 summary/money/OT all follow. Verified: C1 Select = all 10 this wk;
 C1 Events = 0 this wk (portal-first, appears via imports in past wks) —
 expected, explain to Greg if asked.
+
+## Footgun: career hires via a DATED open shift (found 2026-09-03)
+
+Hiring workers onto a dated open shift of a CAREER job order stamps
+endDate = the shift day on the assignment — they vanish from Active/
+Career Assignments (isOngoingDoc requires empty endDate) and read as
+one-day engagements. Symptom report: Deborah, JO #404 Prairie View
+cashiers — 5 confirmed workers missing from the tab. Fix applied: clear
+endDate on the five + the JO's own endDate (a career JO had
+endDate 2026-09-04). The tab tolerates sweep status flips ('ended'/
+'completed') as long as endDate is EMPTY (sibling proof: Labba).
+DURABLE FIX PENDING: the shift-hire flow should skip the endDate stamp
+(or stamp '') when the JO is jobOrderType 'career'.
