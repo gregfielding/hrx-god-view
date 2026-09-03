@@ -331,3 +331,18 @@ fallback chip is suppressed (gig with future shifts already shows
 "Next shift" instead). Danny: ongoing Oakland Arena gig showed
 "Starts 6/6/2026" months after start. c1_app: apply the same guard
 wherever the job header renders a start-date chip/label.
+
+## 2026-09-02 — REVERSE GAP: app Schedule IA ahead of web (tier-system prep)
+
+c1_app 828c1b9 (Greg live review): worker Schedule sub-nav is now
+**Calendar | List | History** — the Applications tab is gone. List =
+everything current/upcoming in one feed (confirmed shifts, offers pinned
+to top, in-flight applications); History absorbs outcomes (rejected,
+cancelled, completed, past-dated, and dateless applications idle >30
+days). Rationale: with the tier system, gig work becomes **Claim Shift**
+(instant commit, no application) and Careers keeps apply — a dedicated
+Applications tab stops making sense. The WEB worker schedule still has
+the old Active/Applications layout — port this IA to web when the
+tier-system/Claim Shift work is specced (bigger backend change: claim
+semantics, eligibility gates, conflicts). Until then this is a known,
+tracked divergence.
