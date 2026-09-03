@@ -346,3 +346,23 @@ the old Active/Applications layout — port this IA to web when the
 tier-system/Claim Shift work is specced (bigger backend change: claim
 semantics, eligibility gates, conflicts). Until then this is a known,
 tracked divergence.
+
+## 2026-09-03 — REVERSE GAP: app day-of shift hero (web dashboard lacks it)
+
+c1_app: on the day of a confirmed/active shift, Home replaces the
+welcome hero with a **day-of card** (day_of_shift_hero_card.dart):
+countdown to start, address + Get Directions, contact row
+(onsiteContactName/Phone from the assignment raw when present, else the
+first assigned recruiter with a phone — tap-to-text + tap-to-call),
+Clock in (shift/assignment clockInUrl), and **"Running late?"** — ETA
+sheet (10/20/30/45/not-sure) → `respondToAssignment` decision
+`running_late` (DEPLOYED 2026-09-03) → stamps
+`runningLate{state,etaMinutes,reportedAt,reportedVia}` +
+`needsRecruiterAttention` on the assignment and alerts assigned
+recruiters via the dashboardFeed rail (`worker_running_late`, eta-keyed
+dedupe). Informational only — never touches status/cortConfirmation.
+The WEB worker dashboard has no day-of card and no running-late
+affordance; recruiters DO see the feed alert. Port to web alongside the
+day-of-logistics fields work (structured onsiteContact/parking/entrance
+on worksite+JO — not yet built anywhere; the app card already reads the
+assignment-level fields when they appear).
