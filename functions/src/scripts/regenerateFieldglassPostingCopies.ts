@@ -75,11 +75,20 @@ async function main(): Promise<void> {
     const clientDesc = trim(jo.jobDescriptionFromClient);
 
     const postDesc = trim(p.jobDescription);
+    const joDescNow = trim(jo.jobDescription);
     const machineOwned =
       !postDesc ||
       postDesc === stampedAi ||
       (stampedAi !== '' && postDesc === stripPostingMarkdown(stampedAi)) ||
-      postDesc === clientDesc;
+      postDesc === clientDesc ||
+      // Posting drifted from the stamp (enrichment upgrades historically
+      // updated the JO stamp without the posting) — still machine when it
+      // matches the JO's own copy…
+      (joDescNow !== '' &&
+        (postDesc === joDescNow || postDesc === stripPostingMarkdown(joDescNow))) ||
+      // …or when it opens with the auto-template header no human writes:
+      // "Title — $14.25/Hour | City, ST (37813)".
+      /^[^\n]{0,90} — \$\d[\d.,]*\/Hour \| /i.test(postDesc);
     if (!machineOwned) {
       skippedHumanEdited++;
       continue;
