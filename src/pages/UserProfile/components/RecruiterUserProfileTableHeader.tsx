@@ -129,6 +129,12 @@ export type RecruiterUserProfileTableHeaderProps = {
     ssnComplete: boolean;
     everify: 'authorized' | 'pending' | 'error' | 'none';
     allComplete: boolean;
+    /** Completed dates for attestation-form copy (Daniel 2026-09-04). */
+    taxDate?: string | null;
+    directDepositDate?: string | null;
+    i9Complete?: boolean;
+    i9Date?: string | null;
+    everifyDate?: string | null;
   } | null;
   /** C1 Events (1099) onboarding checklist: W-9 + direct deposit — same
    *  chip treatment as Select (Greg 2026-09-04). */
@@ -136,6 +142,8 @@ export type RecruiterUserProfileTableHeaderProps = {
     taxComplete: boolean;
     directDepositComplete: boolean;
     allComplete: boolean;
+    taxDate?: string | null;
+    directDepositDate?: string | null;
   } | null;
   /** entityKey → Everee deep link — when present the entity chip renders as
    *  a link that opens the worker's Everee record in a new tab. */
@@ -935,8 +943,15 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                           // (Greg 2026-09-04). Select = tax + DD + SSN +
                           // E-Verify; Events (1099) = W-9 + DD.
                           // Terminated/DNR stays red.
+                          // Row tuples: [label, state, completedDate] — the
+                          // date rides next to each line so recruiters can
+                          // copy I-9 / E-Verify dates straight onto client
+                          // attestation forms (Daniel 2026-09-04).
                           const mirrorChecklist:
-                            | { allComplete: boolean; items: Array<[string, 'done' | 'open' | 'error']> }
+                            | {
+                                allComplete: boolean;
+                                items: Array<[string, 'done' | 'open' | 'error', string | null]>;
+                              }
                             | null =
                             slot.displayState === 'terminated_or_dnr'
                               ? null
@@ -944,12 +959,22 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                                 ? {
                                     allComplete: selectOnboarding.allComplete,
                                     items: [
-                                      ['Tax forms', selectOnboarding.taxComplete ? 'done' : 'open'],
+                                      [
+                                        'Tax forms',
+                                        selectOnboarding.taxComplete ? 'done' : 'open',
+                                        selectOnboarding.taxDate ?? null,
+                                      ],
                                       [
                                         'Direct deposit',
                                         selectOnboarding.directDepositComplete ? 'done' : 'open',
+                                        selectOnboarding.directDepositDate ?? null,
                                       ],
-                                      ['SSN', selectOnboarding.ssnComplete ? 'done' : 'open'],
+                                      ['SSN', selectOnboarding.ssnComplete ? 'done' : 'open', null],
+                                      [
+                                        'I-9',
+                                        selectOnboarding.i9Complete ? 'done' : 'open',
+                                        selectOnboarding.i9Date ?? null,
+                                      ],
                                       [
                                         selectOnboarding.everify === 'pending'
                                           ? 'E-Verify (in progress)'
@@ -961,6 +986,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                                           : selectOnboarding.everify === 'error'
                                             ? 'error'
                                             : 'open',
+                                        selectOnboarding.everifyDate ?? null,
                                       ],
                                     ],
                                   }
@@ -971,10 +997,12 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                                         [
                                           'Tax form (1099)',
                                           eventsOnboarding.taxComplete ? 'done' : 'open',
+                                          eventsOnboarding.taxDate ?? null,
                                         ],
                                         [
                                           'Direct deposit',
                                           eventsOnboarding.directDepositComplete ? 'done' : 'open',
+                                          eventsOnboarding.directDepositDate ?? null,
                                         ],
                                       ],
                                     }
@@ -1026,7 +1054,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                               )}
                               {mirrorChecklist && (
                                 <Stack spacing={0.2} sx={{ mt: 0.35, pl: 1 }}>
-                                  {checklistItems.map(([label, state]) => (
+                                  {checklistItems.map(([label, state, completedDate]) => (
                                     <Stack
                                       key={label}
                                       direction="row"
@@ -1049,6 +1077,15 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                                       <Typography variant="body2" sx={recordHeaderBodyTextSx}>
                                         {label}
                                       </Typography>
+                                      {completedDate ? (
+                                        <Typography
+                                          variant="caption"
+                                          color="text.secondary"
+                                          sx={{ whiteSpace: 'nowrap' }}
+                                        >
+                                          {completedDate}
+                                        </Typography>
+                                      ) : null}
                                     </Stack>
                                   ))}
                                 </Stack>

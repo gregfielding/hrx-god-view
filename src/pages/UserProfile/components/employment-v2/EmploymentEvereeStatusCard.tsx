@@ -159,6 +159,14 @@ const EmploymentEvereeStatusCard: React.FC<EmploymentEvereeStatusCardProps> = ({
       detail: fmt(ddAt),
     });
     out.push({ label: 'SSN', state: ssnComplete ? 'done' : 'open', detail: null });
+    // Completed dates for I-9 / E-Verify ride the rows — recruiters copy
+    // them onto client attestation forms (Daniel 2026-09-04). Chip gating
+    // stays the four Greg items; E-Verify authorized implies I-9 anyway.
+    out.push({
+      label: 'I-9',
+      state: i9At ? 'done' : 'open',
+      detail: fmt(employerI9At ?? i9At),
+    });
     out.push({
       label:
         everify === 'pending'
@@ -170,9 +178,14 @@ const EmploymentEvereeStatusCard: React.FC<EmploymentEvereeStatusCardProps> = ({
       detail: fmt(everifyUpdatedAt),
     });
     return out;
-  }, [entityKey, taxAt, ddAt, ddReady, ssnComplete, everify, everifyUpdatedAt]);
+  }, [entityKey, taxAt, ddAt, ddReady, ssnComplete, everify, everifyUpdatedAt, i9At, employerI9At]);
 
-  const allComplete = rows.every((r) => r.state === 'done');
+  // Chip gate = the same four items as the record header (I-9 is display
+  // only; E-Verify authorized implies it).
+  const allComplete =
+    entityKey === 'events'
+      ? Boolean(taxAt) && ddReady
+      : Boolean(taxAt) && ddReady && ssnComplete && everify === 'authorized';
 
   // Everee reports the worker's Section 1 but never the employer's Section 2
   // e-signature — recruiters attest it here (same E.7 callable as the record

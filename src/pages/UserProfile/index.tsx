@@ -277,10 +277,17 @@ const UserProfilePage = () => {
     directDepositComplete: boolean;
     onboardingComplete: boolean;
     everify: 'authorized' | 'pending' | 'error' | 'none';
+    taxDate: string | null;
+    directDepositDate: string | null;
+    i9Complete: boolean;
+    i9Date: string | null;
+    everifyDate: string | null;
   } | null>(null);
   const [eventsHeaderMirror, setEventsHeaderMirror] = useState<{
     taxComplete: boolean;
     directDepositComplete: boolean;
+    taxDate: string | null;
+    directDepositDate: string | null;
   } | null>(null);
   const [recordHeaderAvatarHover, setRecordHeaderAvatarHover] = useState(false);
   const [recordHeaderCropOpen, setRecordHeaderCropOpen] = useState(false);
@@ -2060,6 +2067,29 @@ const UserProfilePage = () => {
       return;
     }
     let cancelled = false;
+    // Completed dates ride each checklist row (Daniel via Greg 2026-09-04
+    // — recruiters copy the I-9 / E-Verify dates onto client attestation
+    // forms). Mirror values may be Timestamps or ISO strings.
+    const mirrorDate = (v: unknown): string | null => {
+      if (v == null) return null;
+      let d: Date | null = null;
+      const maybe = v as { toDate?: () => Date };
+      if (typeof maybe.toDate === 'function') {
+        try {
+          d = maybe.toDate();
+        } catch {
+          d = null;
+        }
+      } else if (typeof v === 'string' || typeof v === 'number') {
+        d = new Date(v);
+      }
+      if (!d || Number.isNaN(d.getTime())) return null;
+      return d.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+    };
     void (async () => {
       try {
         const [selectSnap, eventsSnap] = await Promise.all([
@@ -2073,6 +2103,7 @@ const UserProfilePage = () => {
           const data = selectSnap.data() as {
             readinessMirror?: Record<string, unknown>;
             everifyCaseStatus?: string;
+            everifyCaseStatusUpdatedAt?: unknown;
           };
           const m = data.readinessMirror ?? {};
           const cs = String(data.everifyCaseStatus || '').toLowerCase();
@@ -2089,6 +2120,13 @@ const UserProfilePage = () => {
               Boolean(m.directDepositVerifiedAt) || m.directDepositReady === true,
             onboardingComplete: Boolean(m.completedOnboardingAt),
             everify,
+            taxDate: mirrorDate(m.w4SignedAt) ?? mirrorDate(m.w9SignedAt),
+            directDepositDate: mirrorDate(m.directDepositVerifiedAt),
+            // I-9 fully complete = employer Section 2 countersigned; the
+            // worker's Section 1 (i9SignedAt) marks it in-progress-done.
+            i9Complete: Boolean(m.i9SignedAt),
+            i9Date: mirrorDate(m.employerI9SignedAt) ?? mirrorDate(m.i9SignedAt),
+            everifyDate: mirrorDate(data.everifyCaseStatusUpdatedAt),
           });
         }
         if (!eventsSnap.exists()) {
@@ -2101,6 +2139,8 @@ const UserProfilePage = () => {
             taxComplete: Boolean(m.w9SignedAt || m.w4SignedAt),
             directDepositComplete:
               Boolean(m.directDepositVerifiedAt) || m.directDepositReady === true,
+            taxDate: mirrorDate(m.w9SignedAt) ?? mirrorDate(m.w4SignedAt),
+            directDepositDate: mirrorDate(m.directDepositVerifiedAt),
           });
         }
       } catch {
@@ -2132,6 +2172,11 @@ const UserProfilePage = () => {
       ssnComplete,
       everify: selectHeaderMirror.everify,
       allComplete,
+      taxDate: selectHeaderMirror.taxDate,
+      directDepositDate: selectHeaderMirror.directDepositDate,
+      i9Complete: selectHeaderMirror.i9Complete,
+      i9Date: selectHeaderMirror.i9Date,
+      everifyDate: selectHeaderMirror.everifyDate,
     };
   }, [selectHeaderMirror, skillsData?.last4SSN]);
 
