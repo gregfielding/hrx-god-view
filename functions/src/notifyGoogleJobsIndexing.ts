@@ -25,7 +25,10 @@ async function maybeTranslatePostingDescription(
   const data = after.data() ?? {};
   // Field names match what the worker app ALREADY parses
   // (JobPostingModel: jobDescription_i18n / jobTitle_i18n).
-  const description = String(data.description ?? '').trim();
+  // Postings store the body under `jobDescription` — reading `description`
+  // here left all 201 active postings with translated titles and NO
+  // description translation (found 2026-09-04, Greg in ES mode).
+  const description = String(data.jobDescription ?? data.description ?? '').trim();
   const title = String(data.jobTitle ?? data.title ?? '').trim();
   const source = `${title}\n${description}`.trim();
   if (!source) return;
