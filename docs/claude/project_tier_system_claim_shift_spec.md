@@ -164,3 +164,39 @@ Not re-opened here. The parts this build consumes:
 4. Tier fields + release-window enforcement (can ship after claim v1 with
    everyone treated as one tier, windows off).
 5. Tier computation cron + worker-visible tier UI + cancel teeth.
+
+## Open shifts — the ON-CALL model (Greg 2026-09-03, follow-up session)
+
+Open shift = regular staff where the CLIENT manages the schedule on-site.
+HRX never states hours; the worker is simply on-call for X job at Y site.
+Doubles as a recruiting tool: the posting advertises on the jobs board,
+applicants build the labor pool / feeder group, and when real (claimable)
+shifts land that group is notified in tier order.
+
+Decisions + state:
+
+- **Worker display (app SHIPPED c1_app 1bf6119; web = tracked gap)**:
+  Schedule shows an on-call banner ("On-call at {site} — hours are
+  managed on-site"), List rows read "On-call" (never a clock time — the
+  midnight bug was date-only startDate rendered as 12:00 AM), an active
+  engagement always lives in List regardless of contract startDate, and
+  Assignment Details' schedule card reads "On-call — exact shift hours
+  are managed on-site."
+- **NO day-of hero for open shifts** (Greg: workers may be on-call at
+  multiple sites and work few hours/month — a persistent hero would
+  clutter and confuse). Excluded in dayOfShiftFrom.
+- **Messaging (SHIPPED)**: welcome at creation ("your shift hours are
+  managed on-site") + **bi-weekly Sunday-evening check-in** ("You're
+  still on our on-call crew at {site}. Everything going OK?") replacing
+  the weekly schedule digest — career-adjacent voice, doubles as roster
+  hygiene via replies. Reminder doc keeps the openshift_weekly_digest
+  type/id; first check-in lands the second Sunday after creation.
+- **weeklySchedule stays as an internal scaffold** where ops wants
+  pre-materialized timesheet rows — worker surfaces just never show it.
+  NOTE: the web timesheet grid ALREADY materializes a blank enterable
+  row for EVERY day in the window for isOpenShift assignments (the
+  "Open · enter hours" rows) — Greg's "all 7 days available" already
+  exists; no build needed.
+- **Buttons**: Apply → **"Submitted"** post-apply (app tag shipped; web
+  already said "Application Submitted"). "Under Review" only if it ever
+  reflects a real recruiter action — no fake process states.
