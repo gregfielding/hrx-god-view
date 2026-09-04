@@ -36,6 +36,7 @@ import SmsIcon from '@mui/icons-material/Sms';
 import { useNavigate } from 'react-router-dom';
 import MessageDrawer, { type MessageRecipient } from '../../MessageDrawer';
 import FavoriteButton from '../../FavoriteButton';
+import WorkerTierBadge from '../../WorkerTierBadge';
 import { useFavorites } from '../../../hooks/useFavorites';
 import StandardTablePagination from '../../StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
@@ -781,6 +782,12 @@ const UserGroupMembersTable: React.FC<UserGroupMembersTableProps> = ({
                                   <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, minWidth: 0, fontSize: '0.8125rem', lineHeight: 1.3 }} noWrap>
                                     {String(u.firstName || '').trim()} {String(u.lastName || '').trim()}
                                   </Typography>
+                                  <WorkerTierBadge
+                                    userId={u.id}
+                                    user={u as Record<string, unknown>}
+                                    userName={`${String(u.firstName || '').trim()} ${String(u.lastName || '').trim()}`.trim()}
+                                    compact
+                                  />
                                   <Box onClick={(e) => e.stopPropagation()} sx={{ flexShrink: 0, ml: 0.25 }}>
                                     <FavoriteButton
                                       itemId={u.id}

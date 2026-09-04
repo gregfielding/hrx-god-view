@@ -39,6 +39,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import FavoriteButton from '../../../components/FavoriteButton';
+import WorkerTierBadge from '../../../components/WorkerTierBadge';
 import OpenPayrollTicketChip from '../../../components/payroll/OpenPayrollTicketChip';
 import { PhoneVerifiedInlineCheck } from '../../../components/PhoneVerifiedInlineCheck';
 import UserTableIndeedFlexBadge from '../../../components/tables/UserTableIndeedFlexBadge';
@@ -549,6 +550,16 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               >
                 {`${firstName} ${lastName}`.trim() || 'User Profile'}
               </Typography>
+              {canViewAdminContent &&
+                uid &&
+                targetUserSecurityLevel &&
+                !['5', '6', '7'].includes(String(targetUserSecurityLevel)) && (
+                  <WorkerTierBadge
+                    userId={uid}
+                    user={userDocForTableIcons}
+                    userName={`${firstName} ${lastName}`.trim()}
+                  />
+                )}
               {canViewAdminContent &&
                 uid &&
                 targetUserSecurityLevel &&

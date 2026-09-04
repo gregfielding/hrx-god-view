@@ -55,6 +55,7 @@ import { useNavigate } from 'react-router-dom';
 
 import StandardTablePagination from '../components/StandardTablePagination';
 import FavoriteButton from '../components/FavoriteButton';
+import WorkerTierBadge from '../components/WorkerTierBadge';
 import RecruiterUserTableContactBlock from '../components/tables/RecruiterUserTableContactBlock';
 import { useTenantRecruiterNamesByUid } from '../hooks/useTenantRecruiterNamesByUid';
 import OrderInterviewInlineAction from '../components/recruiter/OrderInterviewInlineAction';
@@ -656,6 +657,12 @@ const GroupMembersTable: React.FC<GroupMembersTableProps> = ({
                             >
                               {String(u.firstName || '').trim()} {String(u.lastName || '').trim()}
                             </Typography>
+                            <WorkerTierBadge
+                              userId={u.id}
+                              user={u as Record<string, unknown>}
+                              userName={`${String(u.firstName || '').trim()} ${String(u.lastName || '').trim()}`.trim()}
+                              compact
+                            />
                             <Box onClick={(e) => e.stopPropagation()} sx={{ flexShrink: 0, ml: 0.25 }}>
                               <FavoriteButton
                                 itemId={u.id}

@@ -547,6 +547,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       phoneE164: userData.phoneE164,
       phoneVerified: userData.phoneVerified === true,
       displayName: userData.displayName || `${userData.firstName || ''} ${userData.lastName || ''}`.trim(),
+      workerTiers:
+        userData.workerTiers && typeof userData.workerTiers === 'object' ? userData.workerTiers : undefined,
       city,
       state,
       resumeUrl,

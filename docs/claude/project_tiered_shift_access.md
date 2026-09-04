@@ -1,5 +1,18 @@
 # Tiered shift access (Tier 1/2/3) — how gig platforms do it + HRX integration plan
 
+> ⚡ **PARTIAL ACTIVATION SHIPPED 2026-09-04** (Greg's call): tier is live as a
+> **label + audit trail only** — `users/{uid}.workerTiers = { global, updatedAt,
+> lastChange }` (ABSENT = Tier 3, deliberately no 14k-doc backfill), rendered by
+> `src/components/WorkerTierBadge.tsx` on the profile header, placement tiles,
+> and the applicants/users/group-members tables. Staff (level 5+) click-to-change;
+> writes batch the tier + an `activityLogs` audit entry (actionType
+> `security_change`) via `src/utils/workerTier.ts` — client-side writes, zero new
+> functions, zero rules changes. **NOTHING gates job visibility yet.** Plan: ~1
+> week of manual + threshold promotions (threshold engine next), then activate
+> Claim Shift release windows around the app-store launch (~2026-09-11). Workers
+> see nothing until then; worker-facing NAMED statuses (never "Tier 3") ship with
+> claim windows.
+
 > Greg + Claude design discussion 2026-08-29, written for Mark + his Claude. Status:
 > **design brief, nothing built.** Emerged from the signup-flow review
 > ([[project_signup_flow_review]]): the end-state for gig work is claim-based shifts with
@@ -192,6 +205,10 @@ consulted directly; these are decisions, not proposals.
 - **AI "Tier Score"** reviews Tier 3s for promotion to **Tier 2 only** (never
   straight to 1). Inputs: interview scoring, resume upload, profile
   completeness, qualifications, and app download/usage. **Be picky.**
+  - **Completed background checks and drug screenings score points too**
+    (Greg 2026-09-04): usually ordered post-promotion, but completing one
+    is a strong "serious about showing up" signal — read from the user
+    doc's `backgroundCheckOrders[]` / screening results, completed+clear.
   - App-usage input **takes effect 2026-10-01**, not before — at launch nobody
     has the app and it would suppress every promotion.
   - App usage is a **light thumb on the scale, not a major term.** It

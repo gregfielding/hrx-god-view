@@ -5,6 +5,7 @@ import type { PrescreenCategoryScoresV1 } from '../../types/prescreenCategorySco
 import type { RecruiterUser } from '../../types/recruiterUserListRow';
 import type { RecruiterUserEmploymentBreakdownContext } from '../../types/recruiterEmploymentBreakdownContext';
 import FavoriteButton from '../FavoriteButton';
+import WorkerTierBadge from '../WorkerTierBadge';
 import RecruiterUserTableContactBlock from '../tables/RecruiterUserTableContactBlock';
 import { TABLE_AVATAR_SIZE } from '../../utils/uiConstants';
 import {
@@ -135,6 +136,12 @@ export const ApplicantsUsersStyleTableBodyCells: React.FC<ApplicantsUsersStyleTa
               >
                 {user.firstName} {user.lastName}
               </Typography>
+              <WorkerTierBadge
+                userId={user.id}
+                user={user as unknown as Record<string, unknown>}
+                userName={`${user.firstName} ${user.lastName}`.trim()}
+                compact
+              />
               <Box
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => e.stopPropagation()}

@@ -1926,8 +1926,9 @@ const UserProfilePage = () => {
         skills: skillsData?.skills,
         addedToIndeedFlex,
         addedToFieldglass,
+        workerTiers: skillsData?.workerTiers,
       }) as Record<string, unknown>,
-    [skillsData?.resume, skillsData?.skills, addedToIndeedFlex, addedToFieldglass],
+    [skillsData?.resume, skillsData?.skills, addedToIndeedFlex, addedToFieldglass, skillsData?.workerTiers],
   );
 
   const viewerIsAdminContent = parseInt(String(securityLevel || '0'), 10) >= 5;
