@@ -68,6 +68,7 @@ const Dashboard: React.FC = () => {
   const [confirmationsDashboard, setConfirmationsDashboard] = useState<{
     title: string;
     companyMatch: string[];
+    worksiteMatch: string[];
   } | null>(null);
   useEffect(() => {
     if (!user?.uid) {
@@ -81,12 +82,16 @@ const Dashboard: React.FC = () => {
         variant?: string;
         title?: string;
         companyMatch?: string[];
+        worksiteMatch?: string[];
       } | null;
       if (cfg?.variant === 'worker_confirmations') {
         setConfirmationsDashboard({
           title: String(cfg.title ?? 'Worker confirmations'),
           companyMatch: Array.isArray(cfg.companyMatch)
             ? cfg.companyMatch.map((m) => String(m))
+            : [],
+          worksiteMatch: Array.isArray(cfg.worksiteMatch)
+            ? cfg.worksiteMatch.map((m) => String(m))
             : [],
         });
       } else {
@@ -204,6 +209,7 @@ const Dashboard: React.FC = () => {
         tenantId={effectiveTenantId}
         title={confirmationsDashboard.title}
         companyMatch={confirmationsDashboard.companyMatch}
+        worksiteMatch={confirmationsDashboard.worksiteMatch}
       />
     );
   }

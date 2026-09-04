@@ -106,9 +106,11 @@ const WorkerConfirmationsDashboard: React.FC<{
   title: string;
   /** Lowercase substrings matched against companyName; empty = all accounts. */
   companyMatch: string[];
+  /** Lowercase substrings matched against the worksite name; empty = all sites. */
+  worksiteMatch?: string[];
   /** How many days ahead to include (default 3, today inclusive). */
   daysAhead?: number;
-}> = ({ tenantId, title, companyMatch, daysAhead = 3 }) => {
+}> = ({ tenantId, title, companyMatch, worksiteMatch = [], daysAhead = 3 }) => {
   const navigate = useNavigate();
   const [rows, setRows] = useState<RowModel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -131,14 +133,23 @@ const WorkerConfirmationsDashboard: React.FC<{
         ),
       );
       const matches = companyMatch.map((m) => m.toLowerCase()).filter(Boolean);
+      const siteMatches = worksiteMatch.map((m) => m.toLowerCase()).filter(Boolean);
       const raw = snap.docs
         .map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }))
         .filter(({ data }) => {
           const st = normStatus(data.status ?? data.normalizedStatus);
           if (st && !SCHEDULED_STATUSES.has(st)) return false;
-          if (matches.length === 0) return true;
-          const co = String(data.companyName ?? data.companyTitle ?? '').toLowerCase();
-          return matches.some((m) => co.includes(m));
+          if (matches.length > 0) {
+            const co = String(data.companyName ?? data.companyTitle ?? '').toLowerCase();
+            if (!matches.some((m) => co.includes(m))) return false;
+          }
+          if (siteMatches.length > 0) {
+            const site = String(
+              data.worksiteDisplayName ?? data.worksiteName ?? '',
+            ).toLowerCase();
+            if (!siteMatches.some((m) => site.includes(m))) return false;
+          }
+          return true;
         });
 
       // Worker names/phones — batch fetch the user docs in chunks of 30.
@@ -216,7 +227,7 @@ const WorkerConfirmationsDashboard: React.FC<{
     } finally {
       setLoading(false);
     }
-  }, [tenantId, companyMatch.join('|'), daysAhead]);
+  }, [tenantId, companyMatch.join('|'), worksiteMatch.join('|'), daysAhead]);
 
   useEffect(() => {
     void load();
