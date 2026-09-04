@@ -27,6 +27,22 @@ import {
 
 export type { ReadinessEntityBundle, ReadinessJobOrderHiringBrief, AssignmentComplianceContext, EmploymentEntityKey };
 
+/**
+ * Everee readiness mirror as read client-side (Timestamps arrive as
+ * Firestore Timestamp objects — only truthiness/nullness is consumed).
+ * @see functions/src/integrations/everee/evereeReadinessMirror.ts
+ */
+export interface EvereeReadinessMirrorWebLike {
+  directDepositReady?: boolean;
+  i9SignedAt?: unknown;
+  employerI9SignedAt?: unknown;
+  w4SignedAt?: unknown;
+  w9SignedAt?: unknown;
+  payable?: boolean;
+  onboardingComplete?: boolean;
+  hasWorkbrightDocs?: boolean;
+}
+
 /** Web bundle uses full employment types; structurally compatible with shared `ReadinessEntityBundle`. */
 export type ReadinessEntityBundleWeb = ReadinessEntityBundle & {
   employmentsByKey: Record<EmploymentEntityKey, EntityEmploymentRecord | null>;
@@ -35,6 +51,9 @@ export type ReadinessEntityBundleWeb = ReadinessEntityBundle & {
   payrollByKey: Record<EmploymentEntityKey, (WorkerPayrollAccount & { id: string }) | null>;
   /** `entities.{id}.workerType` for TempWorks W-4 vs W-9 branch. */
   entityWorkerTypeRawByKey: Record<EmploymentEntityKey, string | null>;
+  /** Everee readiness mirror per entity (everee_workers.readinessMirror) —
+   *  the authoritative signed/verified stamps (2026-09-03). */
+  evereeMirrorByKey: Record<EmploymentEntityKey, EvereeReadinessMirrorWebLike | null>;
 };
 
 export async function fetchReadinessEntityBundle(
@@ -52,10 +71,28 @@ export async function fetchReadinessEntityBundle(
     entityIdToKey.set(e.id, deriveC1EntityKeyFromEntityName(e.name));
   });
 
-  const [eeSnap, woSnap] = await Promise.all([
+  const [eeSnap, woSnap, ewSnap] = await Promise.all([
     getDocs(query(collection(db, p.entityEmployments(tenantId)), where('userId', '==', userId))),
     getDocs(query(collection(db, p.workerOnboarding(tenantId)), where('userId', '==', userId))),
+    getDocs(query(collection(db, p.evereeWorkers(tenantId)), where('userId', '==', userId))).catch(
+      () => null,
+    ),
   ]);
+
+  const evereeMirrorByKey: Record<EmploymentEntityKey, EvereeReadinessMirrorWebLike | null> = {
+    select: null,
+    events: null,
+    workforce: null,
+  };
+  ewSnap?.docs.forEach((d) => {
+    const data = d.data() as { entityId?: string; readinessMirror?: EvereeReadinessMirrorWebLike };
+    if (!data.readinessMirror) return;
+    const entityId = String(data.entityId || d.id.split('__')[0] || '');
+    // everee_workers.entityId matches the entities doc id; fall back to
+    // token-derivation for safety (ids read like "c1_select_llc").
+    const ek = entityIdToKey.get(entityId) ?? deriveC1EntityKeyFromEntityName(entityId);
+    if (ek) evereeMirrorByKey[ek] = data.readinessMirror;
+  });
 
   const employmentsByKey: Record<EmploymentEntityKey, EntityEmploymentRecord | null> = {
     select: null,
@@ -169,6 +206,7 @@ export async function fetchReadinessEntityBundle(
     jobOrderById,
     payrollByKey,
     entityWorkerTypeRawByKey,
+    evereeMirrorByKey,
   };
 }
 

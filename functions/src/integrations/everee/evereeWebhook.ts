@@ -653,6 +653,13 @@ async function processEvent(tenantId: string, data: StoredEvent): Promise<string
     case 'worker.onboarding_completed':
       return handleWorkerOnboardingCompleted(tenantId, data, payload);
 
+    // E-Verify case result (WorkBright pipeline surfaced through Everee,
+    // 2026-09-03) — payload: { workerId, externalWorkerId, status:
+    // 'closed_authorized' | ... }. Stamped on the everee_workers doc; the
+    // readiness bridge translates it into the `e_verify` item.
+    case 'worker.everify-case-updated':
+      return handleEverifyCaseUpdated(tenantId, data, payload);
+
     // TS.1.P4 Slice 5 — Payables / payment lifecycle.
     //
     // Each of these events references one or more `payableExternalIds`
@@ -681,7 +688,15 @@ async function processEvent(tenantId: string, data: StoredEvent): Promise<string
 function parsePayload(rawBody: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(rawBody) as EvereeEventEnvelope;
-    return (parsed.data || parsed.payload || {}) as Record<string, unknown>;
+    const d = (parsed.data || parsed.payload || {}) as Record<string, unknown>;
+    // Everee nests the event body under `data.object` (envelope docs).
+    // Merge it up so handlers can read `payload.workerId` regardless of
+    // shape — before this, the generic post-event reconcile logged
+    // "could not resolve worker tuple" on every nested event, which is
+    // exactly the delay recruiters felt (fixed 2026-09-03: statuses now
+    // refresh within seconds of any Everee event).
+    const obj = (d as { object?: unknown }).object;
+    return obj && typeof obj === 'object' ? { ...d, ...(obj as Record<string, unknown>) } : d;
   } catch {
     return {};
   }
@@ -700,6 +715,59 @@ function parsePayload(rawBody: string): Record<string, unknown> {
  *   { workerId: string (Everee's), externalId?: string (our everee_worker doc id),
  *     userId?: string, entityId?: string }
  */
+/**
+ * worker.everify-case-updated — stamp the case status on the
+ * everee_workers link doc. `externalWorkerId` on these events is the
+ * plain Firebase uid (not the `${entityId}__${userId}` shape the create
+ * path stashes), so resolution goes: evereeWorkerId query → composite
+ * doc id from the event's own entityId + uid.
+ */
+async function handleEverifyCaseUpdated(
+  tenantId: string,
+  data: StoredEvent,
+  payload: Record<string, unknown>,
+): Promise<string[]> {
+  const status = typeof payload.status === 'string' ? payload.status.trim() : '';
+  if (!status) return ['everify-case-updated: no status in payload; skipped.'];
+
+  const evereeWorkerId = typeof payload.workerId === 'string' ? payload.workerId : '';
+  const externalWorkerId =
+    typeof payload.externalWorkerId === 'string' ? payload.externalWorkerId.trim() : '';
+
+  let workerRef: admin.firestore.DocumentReference | null = null;
+  if (evereeWorkerId) {
+    const q = await db()
+      .collection(evereePaths.workers(tenantId))
+      .where('evereeWorkerId', '==', evereeWorkerId)
+      .limit(1)
+      .get();
+    if (!q.empty) workerRef = q.docs[0].ref;
+  }
+  if (!workerRef && externalWorkerId && data.entityId) {
+    const composite = externalWorkerId.includes('__')
+      ? externalWorkerId
+      : `${data.entityId}__${externalWorkerId}`;
+    const tryRef = db().doc(`${evereePaths.workers(tenantId)}/${composite}`);
+    if ((await tryRef.get()).exists) workerRef = tryRef;
+  }
+  if (!workerRef) {
+    return [
+      `everify-case-updated: worker not found (evereeWorkerId=${evereeWorkerId || '?'}, externalWorkerId=${externalWorkerId || '?'}); skipped.`,
+    ];
+  }
+
+  await workerRef.set(
+    {
+      everifyCaseStatus: status,
+      everifyCaseStatusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastWebhookEventId: data.eventId,
+    },
+    { merge: true },
+  );
+  return [`Stamped everifyCaseStatus=${status}`];
+}
+
 async function handleWorkerOnboardingCompleted(
   tenantId: string,
   data: StoredEvent,

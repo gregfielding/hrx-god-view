@@ -1603,7 +1603,9 @@
     "markAllRead": "Mark all read",
     "markRead": "Mark read",
     "emptyTitle": "No notifications yet.",
-    "emptySubtitle": "We'll notify you about applications, documents, and shifts here."
+    "emptySubtitle": "We'll notify you about applications, documents, and shifts here.",
+    "filterShifts": "Shifts",
+    "filterJobs": "Jobs"
   },
   "inbox": {
     "title": "Inbox",
