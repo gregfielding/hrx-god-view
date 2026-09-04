@@ -4,7 +4,8 @@
  * Unified activity feed showing recent items from Email, Slack DMs, and Slack Channels.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import WorkerConfirmationsDashboard from './dashboard/WorkerConfirmationsDashboard';
 import { Box, Button, Card, CardContent, CardHeader, IconButton, Tab, Tabs, Typography, useMediaQuery } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 import PageHeader from '../components/PageHeader';
@@ -25,7 +26,7 @@ import { useNavigate } from 'react-router-dom';
 import { useGoogleStatus } from '../contexts/GoogleStatusContext';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { DASHBOARD_WIDGET } from '../utils/dashboardWidgetTokens';
-import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import MissingHomeAddressAlert from '../components/MissingHomeAddressAlert';
 
@@ -58,6 +59,44 @@ const Dashboard: React.FC = () => {
   // Get mentions for the drawer
   const { feedItems } = useDashboardFeed({ limit: 500 });
   const mentions = feedItems.filter((item) => item.sourceType === 'mention');
+
+  // Per-recruiter dashboard override (Greg 2026-09-04, Daniel Sanchez's
+  // idea): when users/{uid}.recruiterDashboard.variant ===
+  // 'worker_confirmations', the whole /dashboard renders the worker
+  // confirmation board scoped to that recruiter's book instead of the
+  // default feed (Deborah → Sodexo, Daniel → Indeed Flex).
+  const [confirmationsDashboard, setConfirmationsDashboard] = useState<{
+    title: string;
+    companyMatch: string[];
+  } | null>(null);
+  useEffect(() => {
+    if (!user?.uid) {
+      setConfirmationsDashboard(null);
+      return;
+    }
+    let cancelled = false;
+    void getDoc(doc(db, 'users', user.uid)).then((snap) => {
+      if (cancelled) return;
+      const cfg = (snap.data()?.recruiterDashboard ?? null) as {
+        variant?: string;
+        title?: string;
+        companyMatch?: string[];
+      } | null;
+      if (cfg?.variant === 'worker_confirmations') {
+        setConfirmationsDashboard({
+          title: String(cfg.title ?? 'Worker confirmations'),
+          companyMatch: Array.isArray(cfg.companyMatch)
+            ? cfg.companyMatch.map((m) => String(m))
+            : [],
+        });
+      } else {
+        setConfirmationsDashboard(null);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid]);
 
   // Get Slack channels for drawer (need channel object for SlackChannelDrawer)
   const { channels: slackChannels } = useSlackChannels(
@@ -159,8 +198,18 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  if (confirmationsDashboard) {
+    return (
+      <WorkerConfirmationsDashboard
+        tenantId={effectiveTenantId}
+        title={confirmationsDashboard.title}
+        companyMatch={confirmationsDashboard.companyMatch}
+      />
+    );
+  }
+
   return (
-    <Box sx={{ 
+    <Box sx={{
       minHeight: '150vh',
       maxHeight: '150vh',
       display: 'flex', 
