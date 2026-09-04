@@ -11,7 +11,13 @@
 import { expect } from 'chai';
 import * as admin from 'firebase-admin';
 
-import { buildCadenceMessage, type CadenceMessagePayload } from '../../cadence/cadenceMessages';
+import {
+  buildCadenceMessage,
+  buildOpenShiftMessage,
+  renderWeeklyScheduleSummary,
+  type CadenceMessagePayload,
+} from '../../cadence/cadenceMessages';
+import { renderCadenceTemplate } from '../../cadence/sequenceCopyOverrides';
 
 function basePayload(overrides: Partial<CadenceMessagePayload> = {}): CadenceMessagePayload {
   return {
@@ -65,5 +71,52 @@ describe('buildCadenceMessage assignment_reminder_2h_instructions', () => {
     expect(msg.sms).to.contain('Busca a Maria Lopez.');
     expect(msg.sms).to.contain('Estacionamiento: Lote C.');
     expect(msg.sms).to.not.contain(': undefined');
+  });
+});
+
+describe('renderWeeklyScheduleSummary', () => {
+  it('groups contiguous same-time runs and lists differing days', () => {
+    expect(
+      renderWeeklyScheduleSummary({ 1: '09:00–17:00', 2: '09:00–17:00', 3: '09:00–17:00', 5: '10:00–14:00' } as never),
+    ).to.equal('Mon–Wed 09:00–17:00, Fri 10:00–14:00');
+    expect(renderWeeklyScheduleSummary({ 1: '09:00–17:00' } as never, 'es')).to.equal('lun 09:00–17:00');
+    expect(renderWeeklyScheduleSummary(undefined)).to.equal('');
+  });
+});
+
+describe('buildOpenShiftMessage', () => {
+  const payload = basePayload({
+    weeklySchedule: { 1: '09:00–17:00', 2: '09:00–17:00', 3: '09:00–17:00', 4: '09:00–17:00', 5: '09:00–17:00' },
+  });
+
+  it('welcome carries schedule + address + details URL', () => {
+    const msg = buildOpenShiftMessage('openshift_welcome', payload, 'en', 'C1 Staffing', 'https://hrxone.com/a/1');
+    expect(msg.sms).to.contain("You're on the crew at Oracle Park!");
+    expect(msg.sms).to.contain('Schedule: Mon–Fri 09:00–17:00.');
+    expect(msg.sms).to.contain('Details: https://hrxone.com/a/1');
+  });
+
+  it('digest summarizes the week and falls back to the app pointer', () => {
+    const msg = buildOpenShiftMessage('openshift_weekly_digest', payload, 'en', 'C1 Staffing', '');
+    expect(msg.sms).to.contain('Your week at Oracle Park: Mon–Fri 09:00–17:00.');
+    const bare = buildOpenShiftMessage('openshift_weekly_digest', basePayload(), 'es', 'C1 Staffing', '');
+    expect(bare.sms).to.contain('está en la app');
+  });
+});
+
+describe('renderCadenceTemplate logistics variables', () => {
+  it('exposes onsiteContact composition, parking, and checkIn tokens', () => {
+    const out = renderCadenceTemplate(
+      '{brand}: find {onsiteContact}. Parking: {parking} Check-in: {checkIn} {bogus}',
+      {
+        brand: 'C1 Staffing',
+        onsiteContactName: 'Maria Lopez',
+        onsiteContactRole: 'Catering Lead',
+        onsiteContactPhone: '+14155550123',
+        parking: 'Lot C.',
+        checkIn: 'Gate B.',
+      },
+    );
+    expect(out).to.equal('C1 Staffing: find Maria Lopez (Catering Lead): +14155550123. Parking: Lot C. Check-in: Gate B.');
   });
 });

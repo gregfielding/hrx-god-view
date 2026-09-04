@@ -63,7 +63,11 @@ const EDITABLE_STEPS: Array<{ id: string; label: string; cortOnly?: boolean }> =
 ];
 
 const TOKENS_HINT =
-  'Tokens: {brand} {jobTitle} {startLabel} {locationName} {address} {clockInUrl} {companyName}';
+  'Tokens: {brand} {jobTitle} {startLabel} {locationName} {address} {clockInUrl} {companyName} ' +
+  // Day-of logistics (2026-09-03): resolved at dispatch from the JO's Day-of
+  // logistics card + staffInstructions chain. {onsiteContact} composes
+  // "Name (Role): phone".
+  '{onsiteContact} {onsiteContactName} {onsiteContactPhone} {onsiteContactRole} {parking} {checkIn}';
 
 export interface AccountOption {
   id: string;

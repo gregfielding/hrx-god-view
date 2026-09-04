@@ -92,6 +92,33 @@ notification settings; bodies localize EN/ES off `users/{uid}.preferredLanguage`
 - **Not in the cadence**: interview invites, apply-wizard nudges, profile
   reminders, phone-change — separate senders, out of scope here.
 
+## Decisions (Greg, 2026-09-03)
+
+1. **Claim Shift**: agreed — a claim IS the confirmation; skip the
+   24h/23h/22h ask ladder, keep reconfirm_4h + T-2h logistics + check-in.
+   Build with the tier-system claim flow (no field exists to fence on yet).
+2. **Open shifts**: SHIPPED — welcome once at assignment creation
+   (`openshift_welcome`, skipped for assignments older than 7 days so the
+   rollout can't greet long-standing crews) + Sunday-17:00-local weekly
+   digest (`openshift_weekly_digest`, self-re-arming doc, week-scoped
+   dedupe, stops at endDate/terminal status). Replaces the per-day 24h+2h
+   pairs — the open-shift fence now routes to profile `open_shift`.
+3. **Careers silent after day 1**: intentional. No week-1 messaging.
+4. **Channels**: direction is app-first over time; SMS stays primary until
+   adoption justifies per-step demotion. No code change yet.
+5. **Template variables**: SHIPPED — sequence copy overrides can use
+   `{onsiteContact}` (composed "Name (Role): phone"), `{onsiteContactName}`,
+   `{onsiteContactPhone}`, `{onsiteContactRole}`, `{parking}`, `{checkIn}`.
+   NOTE: logistics values are resolved at dispatch only for the T-2h
+   instructions step — on other steps these tokens render empty.
+
+Related (Danny, 2026-09-03): AI-prescreen chase SMS now SKIPS workers who
+already hold a confirmed/active assignment
+(`processWorkerAiPrescreenReminders`, outcome `worker_already_scheduled`)
+— a placed worker being chased to "complete your 2-minute interview" read
+as mandatory and confused crews. Tenant-wide kill switch if ever needed:
+`tenants/{tid}.workerAiPrescreenOutreachEnabled = false`.
+
 ## Gaps & decision questions for the deep dive
 
 1. **Claim Shift (tier system) has no track yet.** A claimed gig shift is

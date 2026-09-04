@@ -182,6 +182,33 @@ async function processPrescreenChaseSms(args: {
     return 'skipped';
   }
 
+  // Danny 2026-09-03 ("people swear it's a real interview and necessary"):
+  // a worker who already holds a confirmed/active assignment is PLACED —
+  // chasing the AI prescreen after that reads as a mandatory extra step
+  // and confuses the crew (Carlos: invited Sunday, scheduled Wednesday,
+  // still getting "complete your 2-minute interview"). Skip and clear
+  // both chases. Fail-open: a query error never blocks the cadence.
+  try {
+    const activeSnap = await db
+      .collection(`tenants/${tenantId}/assignments`)
+      .where('userId', '==', userId)
+      .where('status', 'in', ['confirmed', 'active', 'in_progress'])
+      .limit(1)
+      .get();
+    if (!activeSnap.empty) {
+      await docSnap.ref.update({
+        workerAiPrescreenChase1Pending: false,
+        workerAiPrescreenChase2Pending: false,
+        [outcomeKey]: 'skipped',
+        [errKey]: 'worker_already_scheduled',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return 'skipped';
+    }
+  } catch {
+    /* fail-open */
+  }
+
   // Cumulative prescreen: the bank may have filled since the invite (e.g. an interview for a
   // different application) — complete instead of chasing when zero-delta.
   const autoCompleteResult = await maybeAutoCompletePrescreenFromBank({

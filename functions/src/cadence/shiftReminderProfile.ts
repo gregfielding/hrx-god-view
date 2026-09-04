@@ -50,9 +50,17 @@ export type ShiftReminderType =
   // dispatcher routes it through a custom path that checks
   // cortConfirmation.state and alerts recruiters if the worker hasn't
   // confirmed arrival (state still 'confirmed' — i.e. no HERE, no clock-in).
-  | 'assignment_noshow_check';
+  | 'assignment_noshow_check'
+  // Open-shift track (Greg 2026-09-03: "once to start, then 1x per week").
+  // Standing-crew, date-range assignments — the risk is schedule drift, not
+  // commitment. Welcome fires once shortly after the assignment is created;
+  // the digest fires Sunday evenings and re-arms itself for the next week
+  // until the assignment ends. Neither is an offset-from-start step, so the
+  // scheduler synthesizes them instead of running the planner.
+  | 'openshift_welcome'
+  | 'openshift_weekly_digest';
 
-export type ShiftReminderProfileId = 'default' | 'cort_gig' | 'gig_standard' | 'career_placement';
+export type ShiftReminderProfileId = 'default' | 'cort_gig' | 'gig_standard' | 'career_placement' | 'open_shift';
 
 export interface ShiftReminderStep {
   /** Canonical reminder type; used as the Firestore doc id per assignment. */
@@ -137,11 +145,24 @@ const CAREER_PLACEMENT_PROFILE: ShiftReminderProfile = {
   ],
 };
 
+/**
+ * Open shifts (Greg 2026-09-03): a welcome when the assignment is created
+ * and a weekly Sunday-evening schedule digest — replacing the per-day
+ * 24h+2h pairs (a 5-day standing week meant 10 near-identical texts).
+ * Steps stay empty: welcome/digest aren't offsets from a start time, so
+ * the scheduler synthesizes their docs when profile.id === 'open_shift'.
+ */
+const OPEN_SHIFT_PROFILE: ShiftReminderProfile = {
+  id: 'open_shift',
+  steps: [],
+};
+
 const PROFILES_BY_ID: Record<ShiftReminderProfileId, ShiftReminderProfile> = {
   default: DEFAULT_PROFILE,
   cort_gig: CORT_GIG_PROFILE,
   gig_standard: GIG_STANDARD_PROFILE,
   career_placement: CAREER_PLACEMENT_PROFILE,
+  open_shift: OPEN_SHIFT_PROFILE,
 };
 
 /**
@@ -160,6 +181,8 @@ export const ALL_SHIFT_REMINDER_TYPES: ReadonlyArray<ShiftReminderType> = [
   'assignment_confirm_now',
   'career_first_day',
   'assignment_noshow_check',
+  'openshift_welcome',
+  'openshift_weekly_digest',
 ];
 
 /**
@@ -289,7 +312,7 @@ export async function resolveShiftReminderProfile(args: {
   // probes); Open Shift (standing-crew, date-range) assignments get the
   // plain two-step reminders. No targeting doc, tenant switch, or
   // per-assignment override can pull either into the confirm cadence.
-  if (assignment?.isOpenShift === true) return { profile: DEFAULT_PROFILE, sequenceId: null };
+  if (assignment?.isOpenShift === true) return { profile: OPEN_SHIFT_PROFILE, sequenceId: null };
   if (String(assignment?.jobOrderType ?? '').trim().toLowerCase() === 'career') {
     return { profile: CAREER_PLACEMENT_PROFILE, sequenceId: null };
   }
@@ -363,7 +386,7 @@ export function resolveShiftReminderProfileSync(args: {
   assignment: Record<string, unknown>;
 }): ShiftReminderProfile {
   // Same hard fences as the async resolver: gig shift work only.
-  if (args.assignment?.isOpenShift === true) return DEFAULT_PROFILE;
+  if (args.assignment?.isOpenShift === true) return OPEN_SHIFT_PROFILE;
   if (String(args.assignment?.jobOrderType ?? '').trim().toLowerCase() === 'career') {
     return CAREER_PLACEMENT_PROFILE;
   }

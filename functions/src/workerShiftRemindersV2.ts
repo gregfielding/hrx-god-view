@@ -37,6 +37,7 @@ import {
 } from './cadence/enrichShiftPayload';
 import {
   buildCadenceMessage,
+  buildOpenShiftMessage,
   isCadenceReminderType,
   type CadenceMessagePayload,
 } from './cadence/cadenceMessages';
@@ -90,6 +91,9 @@ const HOURS_BY_TYPE: Record<ReminderType, number> = {
   assignment_checkin_0h: 0,
   // Negative = after start (30m past start).
   assignment_noshow_check: -0.5,
+  // Open-shift lifecycle — synthesized fire times, not offsets from start.
+  openshift_welcome: 0,
+  openshift_weekly_digest: 0,
   shift_reminder_24h: 24,
   shift_reminder_4h: 4,
 };
@@ -106,6 +110,8 @@ const DOC_ID_BY_TYPE: Record<ReminderType, string> = {
   assignment_reminder_15m_clockin: 'assignment_reminder_15m_clockin',
   assignment_checkin_0h: 'assignment_checkin_0h',
   assignment_noshow_check: 'assignment_noshow_check',
+  openshift_welcome: 'openshift_welcome',
+  openshift_weekly_digest: 'openshift_weekly_digest',
   shift_reminder_24h: 'shift_reminder_24h',
   shift_reminder_4h: 'shift_reminder_4h',
 };
@@ -144,6 +150,10 @@ type ReminderPayload = {
   onsiteContactRole?: string;
   parkingText?: string;
   checkInText?: string;
+  // Open-shift track: enabled days from assignment.weeklySchedule as
+  // { dowIndex: "HH:MM–HH:MM" } (0=Sun..6=Sat) — rendered per-language at
+  // dispatch by the welcome / weekly-digest bodies.
+  weeklySchedule?: Record<string, string>;
 };
 
 type ReminderDoc = {
@@ -467,6 +477,19 @@ function buildPayload(
     if (shiftExtras.shiftId) payload.shiftId = shiftExtras.shiftId;
     if (shiftExtras.jobOrderId) payload.jobOrderId = shiftExtras.jobOrderId;
   }
+  const ws = assignment.weeklySchedule;
+  if (ws && typeof ws === 'object') {
+    const compact: Record<string, string> = {};
+    for (const [dow, entry] of Object.entries(ws as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const e = entry as Record<string, unknown>;
+      if (e.enabled !== true) continue;
+      const startT = normalize(e.startTime);
+      const endT = normalize(e.endTime);
+      if (startT) compact[dow] = endT ? `${startT}–${endT}` : startT;
+    }
+    if (Object.keys(compact).length > 0) payload.weeklySchedule = compact;
+  }
   return payload;
 }
 
@@ -641,6 +664,36 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
     scheduleMode,
     profileId: profile.id,
   });
+
+  // Open-shift track (Greg 2026-09-03: "once to start, then 1x per week"):
+  // welcome shortly after the assignment is created + a Sunday-17:00 weekly
+  // digest, synthesized here — neither is an offset from a start time, so
+  // the planner doesn't model them. The digest re-arms itself at dispatch
+  // until the assignment window ends.
+  if (profile.id === 'open_shift') {
+    plan.clear();
+    const createdAtRaw = assignment.createdAt as { toMillis?: () => number } | undefined;
+    const createdAtMs = typeof createdAtRaw?.toMillis === 'function' ? createdAtRaw.toMillis() : null;
+    // Never greet a crew member hired long ago just because this code is
+    // new or the assignment was edited — welcome is for fresh adds only.
+    const welcomeStale = createdAtMs == null || nowMs - createdAtMs > 7 * 24 * 60 * 60 * 1000;
+    plan.set('openshift_welcome', {
+      offsetHours: 0,
+      rawScheduledForMs: nowMs + 2 * 60 * 1000,
+      scheduledForMs: nowMs + 2 * 60 * 1000,
+      deferred: false,
+      ...(welcomeStale ? { forceCancelReason: 'skipped_preexisting_assignment' } : {}),
+    });
+    const digestMs = nextWeeklyDigestMs(nowMs, resolvedTimezone);
+    const endMs = end ? end.toMillis() : null;
+    plan.set('openshift_weekly_digest', {
+      offsetHours: 0,
+      rawScheduledForMs: digestMs,
+      scheduledForMs: digestMs,
+      deferred: false,
+      ...(endMs != null && endMs < nowMs ? { forceCancelReason: 'assignment_ended' } : {}),
+    });
+  }
 
   // Cancel any non-terminal reminder doc whose type is NOT in the active
   // profile. Guards against duplicate sends when a tenant switches profile
@@ -840,6 +893,26 @@ function buildReminderMessage(
   const isCortProfile = reminderProfile === 'cort_gig' || reminderProfile === 'gig_standard';
   const es = lang === 'es';
 
+  // Open-shift lifecycle bodies live in cadenceMessages for testability.
+  if (reminderType === 'openshift_welcome' || reminderType === 'openshift_weekly_digest') {
+    return buildOpenShiftMessage(
+      reminderType,
+      {
+        jobTitle: payload.jobTitle,
+        companyName: payload.companyName,
+        locationName: payload.locationName,
+        locationAddress: payload.locationAddress,
+        startTime: payload.startTime,
+        endTime: payload.endTime,
+        timezone: payload.timezone,
+        weeklySchedule: payload.weeklySchedule,
+      },
+      lang,
+      brand,
+      assignmentUrl,
+    );
+  }
+
   // Cadence-specific types (T-2h_instructions, T-15m_clockin, T+0_checkin) get
   // their bodies from the cadenceMessages module, which knows how to use the
   // shift-level extras (clockInUrl, shiftDescription).
@@ -1025,7 +1098,9 @@ function toCanonicalReminderType(
   | 'assignment_reminder_22h_final'
   | 'assignment_reconfirm_4h'
   | 'assignment_confirm_now'
-  | 'career_first_day' {
+  | 'career_first_day'
+  | 'openshift_welcome'
+  | 'openshift_weekly_digest' {
   if (reminderType === 'assignment_reminder_24h' || reminderType === 'shift_reminder_24h') {
     return 'assignment_reminder_24h';
   }
@@ -1038,7 +1113,40 @@ function toCanonicalReminderType(
   if (reminderType === 'assignment_reminder_22h_final') return 'assignment_reminder_22h_final';
   if (reminderType === 'assignment_reconfirm_4h') return 'assignment_reconfirm_4h';
   if (reminderType === 'career_first_day') return 'career_first_day';
+  if (reminderType === 'openshift_welcome') return 'openshift_welcome';
+  if (reminderType === 'openshift_weekly_digest') return 'openshift_weekly_digest';
   return 'assignment_reminder_2h';
+}
+
+/**
+ * Next Sunday 17:00 wall-clock in `timezone`, as epoch ms (±15 min — the
+ * dispatch cron granularity dwarfs that). Scans quarter-hour steps so DST
+ * transitions can't produce an invalid constructed wall time.
+ */
+function nextWeeklyDigestMs(fromMs: number, timezone: string): number {
+  const STEP = 15 * 60 * 1000;
+  let fmt: Intl.DateTimeFormat;
+  try {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      weekday: 'short',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    });
+  } catch {
+    return fromMs + 7 * 24 * 60 * 60 * 1000;
+  }
+  let t = Math.ceil(fromMs / STEP) * STEP;
+  const scanEnd = fromMs + 9 * 24 * 60 * 60 * 1000;
+  for (; t <= scanEnd; t += STEP) {
+    const parts = fmt.formatToParts(t);
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+    if (get('weekday') === 'Sun' && Number(get('hour')) === 17 && Number(get('minute')) < 15) {
+      return t;
+    }
+  }
+  return fromMs + 7 * 24 * 60 * 60 * 1000;
 }
 
 async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapshot): Promise<void> {
@@ -1077,6 +1185,12 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   const reminder = claimedSnap.data() as ReminderDoc;
   const maxAttempts = Number(reminder.maxAttempts || MAX_ATTEMPTS);
   const canonicalReminderType = toCanonicalReminderType(reminder.reminderType);
+  // The weekly digest recurs on one doc — scope its per-channel dedupe keys
+  // to the fire date so week N+1 isn't suppressed as a duplicate of week N.
+  const dedupeScope =
+    canonicalReminderType === 'openshift_weekly_digest'
+      ? `${canonicalReminderType}_${reminder.scheduledFor.toDate().toISOString().slice(0, 10)}`
+      : canonicalReminderType;
   const reminderProfileId = normalize((reminder as unknown as Record<string, unknown>).reminderProfile);
   // Worker language drives the message body (bodies were English-only until
   // 2026-08-29). Fail-open to English on any read error.
@@ -1123,12 +1237,17 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     if (tpl) {
       message.sms = renderCadenceTemplate(tpl, {
         brand: smsBrand,
-        jobTitle: reminder.payload.jobTitle,
-        startLabel: formatStartInTimezone(reminder.payload.startTime, reminder.payload.timezone),
-        locationName: reminder.payload.locationName,
-        address: reminder.payload.locationAddress,
-        clockInUrl: reminder.payload.clockInUrl,
-        companyName: reminder.payload.companyName,
+        jobTitle: dispatchPayload.jobTitle,
+        startLabel: formatStartInTimezone(dispatchPayload.startTime, dispatchPayload.timezone),
+        locationName: dispatchPayload.locationName,
+        address: dispatchPayload.locationAddress,
+        clockInUrl: dispatchPayload.clockInUrl,
+        companyName: dispatchPayload.companyName,
+        onsiteContactName: dispatchPayload.onsiteContactName,
+        onsiteContactPhone: dispatchPayload.onsiteContactPhone,
+        onsiteContactRole: dispatchPayload.onsiteContactRole,
+        parking: dispatchPayload.parkingText,
+        checkIn: dispatchPayload.checkInText,
       });
     }
   }
@@ -1181,13 +1300,19 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   const isPostStartReminder =
     reminder.reminderType === 'assignment_checkin_0h' ||
     reminder.reminderType === 'assignment_noshow_check';
-  const allowPostStart = isPostStartReminder;
+  // Open-shift lifecycle messages are inherently post-start: standing-crew
+  // assignments started weeks or months ago and the digest recurs weekly.
+  const isOpenShiftLifecycle =
+    reminder.reminderType === 'openshift_welcome' ||
+    reminder.reminderType === 'openshift_weekly_digest';
+  const allowPostStart = isPostStartReminder || isOpenShiftLifecycle;
   const staleWindow =
     reminder.reminderType === 'assignment_noshow_check'
       ? NOSHOW_STALE_WINDOW_MS
       : CHECKIN_STALE_WINDOW_MS;
   const startInPast = !!assignmentStart && assignmentStart.toMillis() <= nowMs;
   const checkinStale = allowPostStart
+    && !isOpenShiftLifecycle
     && !!assignmentStart
     && (nowMs - assignmentStart.toMillis()) > staleWindow;
   const startPastBlocks = startInPast && (!allowPostStart || checkinStale);
@@ -1217,6 +1342,30 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       lock: admin.firestore.FieldValue.delete(),
     });
     return;
+  }
+
+  // Open-shift digest: stop the chain once the assignment window has ended
+  // (endDate is a YYYY-MM-DD string on most docs, a Timestamp on some).
+  if (reminder.reminderType === 'openshift_weekly_digest') {
+    const endRaw = assignmentData.endDate as unknown;
+    let endMs: number | null = null;
+    if (typeof endRaw === 'string' && endRaw.trim()) {
+      const d = new Date(`${endRaw.trim()}T23:59:59`);
+      if (!Number.isNaN(d.getTime())) endMs = d.getTime();
+    } else if (endRaw && typeof (endRaw as { toMillis?: () => number }).toMillis === 'function') {
+      endMs = (endRaw as { toMillis: () => number }).toMillis();
+    }
+    if (endMs != null && endMs < nowMs) {
+      await docSnap.ref.update({
+        status: 'cancelled',
+        cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        cancelReason: 'assignment_ended',
+        lastError: 'assignment_ended',
+        lock: admin.firestore.FieldValue.delete(),
+      });
+      return;
+    }
   }
 
   // Phase 2A: suppress cadence reminders based on worker's reply state.
@@ -1457,7 +1606,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     });
 
     // Durable in-app record is always required.
-    const inboxDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__inbox`;
+    const inboxDedupeKey = `${dedupeScope}__${reminder.assignmentId}__inbox`;
     let inboxClaimed = false;
     try {
       const inboxIsFirst = await markLifecycleEventIfFirst({
@@ -1510,7 +1659,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     if (reminder.channels.push && pushAllowed) {
       const tokens = await getEnabledPushTokens(reminder.workerId);
       pushAvailable = tokens.length > 0;
-      const pushDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__push`;
+      const pushDedupeKey = `${dedupeScope}__${reminder.assignmentId}__push`;
       let pushClaimed = false;
       if (pushAvailable) {
         try {
@@ -1589,7 +1738,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       const phoneE164 = toE164(userData?.phoneE164 || userData?.phone);
       smsAvailable = Boolean(smsAllowed && phoneE164);
 
-      const smsDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__sms`;
+      const smsDedupeKey = `${dedupeScope}__${reminder.assignmentId}__sms`;
       let smsClaimed = false;
       if (smsAvailable) {
         try {
@@ -1683,6 +1832,36 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
         lastError: admin.firestore.FieldValue.delete(),
         lock: admin.firestore.FieldValue.delete(),
       });
+
+      // Weekly digest self-perpetuates: re-arm the same doc for next Sunday
+      // unless the assignment window ends before then (the pre-send guard
+      // also cancels an already-ended chain). One doc per type keeps the
+      // reminder subcollection's id convention intact.
+      if (canonicalReminderType === 'openshift_weekly_digest') {
+        const nextMs = nextWeeklyDigestMs(
+          Date.now() + 60 * 60 * 1000,
+          reminder.resolvedTimezone || 'America/Los_Angeles',
+        );
+        const endRaw = assignmentData.endDate as unknown;
+        let endMs: number | null = null;
+        if (typeof endRaw === 'string' && endRaw.trim()) {
+          const d = new Date(`${endRaw.trim()}T23:59:59`);
+          if (!Number.isNaN(d.getTime())) endMs = d.getTime();
+        } else if (endRaw && typeof (endRaw as { toMillis?: () => number }).toMillis === 'function') {
+          endMs = (endRaw as { toMillis: () => number }).toMillis();
+        }
+        if (endMs == null || endMs >= nextMs) {
+          await docSnap.ref.update({
+            status: 'pending',
+            scheduledFor: admin.firestore.Timestamp.fromMillis(nextMs),
+            attempts: 0,
+            sentAt: admin.firestore.FieldValue.delete(),
+            lastDigestSentAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            lock: admin.firestore.FieldValue.delete(),
+          });
+        }
+      }
 
       // Record that THIS shift is the one we just asked about, so an inbound
       // YES/CANCEL binds here rather than to whichever pending shift happens

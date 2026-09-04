@@ -51,12 +51,108 @@ export interface CadenceMessagePayload {
   onsiteContactRole?: string;
   parkingText?: string;
   checkInText?: string;
+
+  // Open-shift track: enabled days as { dowIndex: "HH:MM–HH:MM" }
+  // (0=Sun..6=Sat), rendered per-language by the welcome / digest bodies.
+  weeklySchedule?: Record<string, string>;
 }
 
 export type CadenceReminderType =
   | 'assignment_reminder_2h_instructions'
   | 'assignment_reminder_15m_clockin'
   | 'assignment_checkin_0h';
+
+export type OpenShiftReminderType = 'openshift_welcome' | 'openshift_weekly_digest';
+
+const DOW_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DOW_ES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+
+/**
+ * "Mon–Fri 09:00–17:00" (grouping contiguous runs that share a time) from
+ * the compact { dowIndex: "HH:MM–HH:MM" } map the scheduler stores.
+ */
+export function renderWeeklyScheduleSummary(
+  weeklySchedule: Record<string, string> | undefined,
+  lang: 'en' | 'es' = 'en',
+): string {
+  if (!weeklySchedule) return '';
+  const names = lang === 'es' ? DOW_ES : DOW_EN;
+  const entries = Object.entries(weeklySchedule)
+    .map(([d, t]) => ({ d: Number(d), t: String(t ?? '').trim() }))
+    .filter((e) => Number.isInteger(e.d) && e.d >= 0 && e.d <= 6 && e.t)
+    .sort((a, b) => a.d - b.d);
+  if (entries.length === 0) return '';
+  const parts: string[] = [];
+  let i = 0;
+  while (i < entries.length) {
+    let j = i;
+    while (j + 1 < entries.length && entries[j + 1].d === entries[j].d + 1 && entries[j + 1].t === entries[i].t) {
+      j += 1;
+    }
+    const label = i === j ? names[entries[i].d] : `${names[entries[i].d]}–${names[entries[j].d]}`;
+    parts.push(`${label} ${entries[i].t}`);
+    i = j + 1;
+  }
+  return parts.join(', ');
+}
+
+/**
+ * Open-shift track bodies (Greg 2026-09-03: welcome at creation + Sunday
+ * weekly digest, replacing per-day reminder pairs for standing crews).
+ */
+export function buildOpenShiftMessage(
+  reminderType: OpenShiftReminderType,
+  payload: CadenceMessagePayload,
+  lang: 'en' | 'es' = 'en',
+  brand: string = 'C1 Staffing',
+  assignmentUrl: string = '',
+): BuiltMessage {
+  const es = lang === 'es';
+  const location = payload.locationName || (es ? 'tu lugar de trabajo' : 'your worksite');
+  const address = truncate(payload.locationAddress || '', 120);
+  const summary = renderWeeklyScheduleSummary(payload.weeklySchedule, lang);
+  const details = assignmentUrl
+    ? (es ? ` Detalles: ${assignmentUrl}` : ` Details: ${assignmentUrl}`)
+    : '';
+
+  if (reminderType === 'openshift_welcome') {
+    const parts = [
+      es
+        ? `${brand}: ¡Estás en el equipo de ${location}!`
+        : `${brand}: You're on the crew at ${location}!`,
+    ];
+    if (summary) parts.push(es ? `Horario: ${summary}.` : `Schedule: ${summary}.`);
+    if (address) parts.push(es ? `Dirección: ${address}.` : `Address: ${address}.`);
+    if (details) parts.push(details.trim());
+    parts.push(es ? 'Responde HELP si necesitas algo.' : 'Reply HELP if you need anything.');
+    return {
+      title: es ? '¡Estás en el equipo!' : "You're on the crew!",
+      body: es
+        ? `${location}.${summary ? ` Horario: ${summary}.` : ''}${address ? ` ${address}.` : ''}`
+        : `${location}.${summary ? ` Schedule: ${summary}.` : ''}${address ? ` ${address}.` : ''}`,
+      sms: parts.join(' ').trim(),
+    };
+  }
+
+  // openshift_weekly_digest
+  const scheduleLine = summary
+    ? (es ? `Tu semana en ${location}: ${summary}.` : `Your week at ${location}: ${summary}.`)
+    : (es
+        ? `Tu horario de la semana en ${location} está en la app.`
+        : `Your schedule this week at ${location} is in the app.`);
+  const parts = [`${brand}: ${scheduleLine}`];
+  if (details) parts.push(details.trim());
+  parts.push(
+    es
+      ? 'Responde HELP si algo cambió.'
+      : 'Reply HELP if anything has changed.',
+  );
+  return {
+    title: es ? `Tu semana en ${location}` : `Your week at ${location}`,
+    body: scheduleLine,
+    sms: parts.join(' ').trim(),
+  };
+}
 
 export interface BuiltMessage {
   title: string;
