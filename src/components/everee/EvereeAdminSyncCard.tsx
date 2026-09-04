@@ -761,7 +761,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
               onClick={handleResendPayrollLink}
               disabled={resending || syncing || recovering || restarting || pushingAddress || Boolean(disabledReason)}
             >
-              Send worker link
+              Text worker link
             </Button>
           </span>
         </Tooltip>
