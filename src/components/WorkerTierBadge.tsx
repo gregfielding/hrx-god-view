@@ -139,7 +139,7 @@ const WorkerTierBadge: React.FC<Props> = ({
   );
 
   return (
-    <Box sx={{ display: 'inline-flex', lineHeight: 0 }} onClick={(e) => e.stopPropagation()}>
+    <Box sx={{ display: 'inline-flex', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
       <Tooltip title={tooltip}>{chip}</Tooltip>
       {canEdit ? (
         <Menu
