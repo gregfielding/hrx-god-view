@@ -268,14 +268,19 @@ const UserProfilePage = () => {
   const [taskSubmitting, setTaskSubmitting] = useState(false);
   const [headerUserGroups, setHeaderUserGroups] = useState<Array<{ id: string; title: string }>>([]);
   const [recordHeaderAssignmentLines, setRecordHeaderAssignmentLines] = useState<RecordHeaderAssignmentLine[]>([]);
-  /** C1 Select onboarding checklist for the record header (Greg 2026-09-04):
-   *  ONE point of truth = everee_workers/c1_select_llc__{uid} (readiness
-   *  mirror + everifyCaseStatus). SSN joins in via the user doc's last-4. */
+  /** C1 Select / C1 Events onboarding checklists for the record header
+   *  (Greg 2026-09-04): ONE point of truth = everee_workers/{entity}__{uid}
+   *  (readiness mirror + everifyCaseStatus). SSN joins in via the user
+   *  doc's last-4. Select = tax + DD + SSN + E-Verify; Events = W-9 + DD. */
   const [selectHeaderMirror, setSelectHeaderMirror] = useState<{
     taxComplete: boolean;
     directDepositComplete: boolean;
     onboardingComplete: boolean;
     everify: 'authorized' | 'pending' | 'error' | 'none';
+  } | null>(null);
+  const [eventsHeaderMirror, setEventsHeaderMirror] = useState<{
+    taxComplete: boolean;
+    directDepositComplete: boolean;
   } | null>(null);
   const [recordHeaderAvatarHover, setRecordHeaderAvatarHover] = useState(false);
   const [recordHeaderCropOpen, setRecordHeaderCropOpen] = useState(false);
@@ -2051,41 +2056,58 @@ const UserProfilePage = () => {
   useEffect(() => {
     if (!uid || !effectiveTenantId || !showRecordHeaderEntityStatus) {
       setSelectHeaderMirror(null);
+      setEventsHeaderMirror(null);
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
-        const snap = await getDoc(
-          doc(db, 'tenants', effectiveTenantId, 'everee_workers', `c1_select_llc__${uid}`),
-        );
+        const [selectSnap, eventsSnap] = await Promise.all([
+          getDoc(doc(db, 'tenants', effectiveTenantId, 'everee_workers', `c1_select_llc__${uid}`)),
+          getDoc(doc(db, 'tenants', effectiveTenantId, 'everee_workers', `c1_events_llc__${uid}`)),
+        ]);
         if (cancelled) return;
-        if (!snap.exists()) {
+        if (!selectSnap.exists()) {
           setSelectHeaderMirror(null);
-          return;
+        } else {
+          const data = selectSnap.data() as {
+            readinessMirror?: Record<string, unknown>;
+            everifyCaseStatus?: string;
+          };
+          const m = data.readinessMirror ?? {};
+          const cs = String(data.everifyCaseStatus || '').toLowerCase();
+          const everify = /authorized/.test(cs)
+            ? ('authorized' as const)
+            : /submission_error|final|fnc/.test(cs)
+              ? ('error' as const)
+              : cs
+                ? ('pending' as const)
+                : ('none' as const);
+          setSelectHeaderMirror({
+            taxComplete: Boolean(m.w4SignedAt || m.w9SignedAt),
+            directDepositComplete:
+              Boolean(m.directDepositVerifiedAt) || m.directDepositReady === true,
+            onboardingComplete: Boolean(m.completedOnboardingAt),
+            everify,
+          });
         }
-        const data = snap.data() as {
-          readinessMirror?: Record<string, unknown>;
-          everifyCaseStatus?: string;
-        };
-        const m = data.readinessMirror ?? {};
-        const cs = String(data.everifyCaseStatus || '').toLowerCase();
-        const everify = /authorized/.test(cs)
-          ? ('authorized' as const)
-          : /submission_error|final|fnc/.test(cs)
-            ? ('error' as const)
-            : cs
-              ? ('pending' as const)
-              : ('none' as const);
-        setSelectHeaderMirror({
-          taxComplete: Boolean(m.w4SignedAt || m.w9SignedAt),
-          directDepositComplete:
-            Boolean(m.directDepositVerifiedAt) || m.directDepositReady === true,
-          onboardingComplete: Boolean(m.completedOnboardingAt),
-          everify,
-        });
+        if (!eventsSnap.exists()) {
+          setEventsHeaderMirror(null);
+        } else {
+          const data = eventsSnap.data() as { readinessMirror?: Record<string, unknown> };
+          const m = data.readinessMirror ?? {};
+          setEventsHeaderMirror({
+            // Events is the 1099 entity — the tax form is the W-9.
+            taxComplete: Boolean(m.w9SignedAt || m.w4SignedAt),
+            directDepositComplete:
+              Boolean(m.directDepositVerifiedAt) || m.directDepositReady === true,
+          });
+        }
       } catch {
-        if (!cancelled) setSelectHeaderMirror(null);
+        if (!cancelled) {
+          setSelectHeaderMirror(null);
+          setEventsHeaderMirror(null);
+        }
       }
     })();
     return () => {
@@ -2112,6 +2134,16 @@ const UserProfilePage = () => {
       allComplete,
     };
   }, [selectHeaderMirror, skillsData?.last4SSN]);
+
+  /** Header C1 Events checklist — W-9 + direct deposit (Greg 2026-09-04). */
+  const eventsOnboardingHeader = useMemo(() => {
+    if (!eventsHeaderMirror) return null;
+    return {
+      ...eventsHeaderMirror,
+      allComplete:
+        eventsHeaderMirror.taxComplete && eventsHeaderMirror.directDepositComplete,
+    };
+  }, [eventsHeaderMirror]);
 
   useEffect(() => {
     if (!uid || !effectiveTenantId || !showRecruiterUsersTableHeaderHook) {
@@ -2701,6 +2733,7 @@ const UserProfilePage = () => {
                   userDocForTableIcons={userDocForRecruiterTableIcons}
                   entitySlots={recordHeaderEntitySlots}
                   selectOnboarding={selectOnboardingHeader}
+                  eventsOnboarding={eventsOnboardingHeader}
                   evereeLinkByEntityKey={evereeLinkByEntityKey}
                   readinessRowsEntityKey={readinessRowsEntityKey}
                   employerI9EntityId={employerI9EntityId}

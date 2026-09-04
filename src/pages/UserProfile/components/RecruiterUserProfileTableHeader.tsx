@@ -130,6 +130,13 @@ export type RecruiterUserProfileTableHeaderProps = {
     everify: 'authorized' | 'pending' | 'error' | 'none';
     allComplete: boolean;
   } | null;
+  /** C1 Events (1099) onboarding checklist: W-9 + direct deposit — same
+   *  chip treatment as Select (Greg 2026-09-04). */
+  eventsOnboarding?: {
+    taxComplete: boolean;
+    directDepositComplete: boolean;
+    allComplete: boolean;
+  } | null;
   /** entityKey → Everee deep link — when present the entity chip renders as
    *  a link that opens the worker's Everee record in a new tab. */
   evereeLinkByEntityKey?: Record<string, string>;
@@ -221,6 +228,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   screeningPackageHint,
   entitySlots,
   selectOnboarding = null,
+  eventsOnboarding = null,
   evereeLinkByEntityKey = {},
   readinessRowsEntityKey = null,
   employerI9EntityId = null,
@@ -922,23 +930,62 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                       <Stack spacing={0.5} sx={{ mt: 0.35 }}>
                         {entitySlots.map((slot) => {
                           const v = entityChipVisuals(slot);
-                          // C1 Select chip color follows the FOUR onboarding
-                          // items (tax, direct deposit, SSN, E-Verify) from
-                          // the Everee mirror — yellow until all complete
-                          // (Greg 2026-09-04). Terminated/DNR stays red.
-                          const selectChecklist =
-                            slot.entityKey === 'select' &&
-                            selectOnboarding &&
-                            slot.displayState !== 'terminated_or_dnr'
-                              ? selectOnboarding
-                              : null;
-                          const chipColor = selectChecklist
-                            ? selectChecklist.allComplete
+                          // Entity chip color follows the Everee-mirror
+                          // onboarding items — yellow until all complete
+                          // (Greg 2026-09-04). Select = tax + DD + SSN +
+                          // E-Verify; Events (1099) = W-9 + DD.
+                          // Terminated/DNR stays red.
+                          const mirrorChecklist:
+                            | { allComplete: boolean; items: Array<[string, 'done' | 'open' | 'error']> }
+                            | null =
+                            slot.displayState === 'terminated_or_dnr'
+                              ? null
+                              : slot.entityKey === 'select' && selectOnboarding
+                                ? {
+                                    allComplete: selectOnboarding.allComplete,
+                                    items: [
+                                      ['Tax forms', selectOnboarding.taxComplete ? 'done' : 'open'],
+                                      [
+                                        'Direct deposit',
+                                        selectOnboarding.directDepositComplete ? 'done' : 'open',
+                                      ],
+                                      ['SSN', selectOnboarding.ssnComplete ? 'done' : 'open'],
+                                      [
+                                        selectOnboarding.everify === 'pending'
+                                          ? 'E-Verify (in progress)'
+                                          : selectOnboarding.everify === 'error'
+                                            ? 'E-Verify (needs attention)'
+                                            : 'E-Verify',
+                                        selectOnboarding.everify === 'authorized'
+                                          ? 'done'
+                                          : selectOnboarding.everify === 'error'
+                                            ? 'error'
+                                            : 'open',
+                                      ],
+                                    ],
+                                  }
+                                : slot.entityKey === 'events' && eventsOnboarding
+                                  ? {
+                                      allComplete: eventsOnboarding.allComplete,
+                                      items: [
+                                        [
+                                          'Tax form (1099)',
+                                          eventsOnboarding.taxComplete ? 'done' : 'open',
+                                        ],
+                                        [
+                                          'Direct deposit',
+                                          eventsOnboarding.directDepositComplete ? 'done' : 'open',
+                                        ],
+                                      ],
+                                    }
+                                  : null;
+                          const chipColor = mirrorChecklist
+                            ? mirrorChecklist.allComplete
                               ? 'success'
                               : 'warning'
                             : v.color;
-                          const chipLabel = selectChecklist
-                            ? `${slot.title}: ${selectChecklist.allComplete ? 'Active' : 'Onboarding'}`
+                          const chipLabel = mirrorChecklist
+                            ? `${slot.title}: ${mirrorChecklist.allComplete ? 'Active' : 'Onboarding'}`
                             : `${slot.title}: ${slot.statusLabel}`;
                           const evereeUrl = evereeLinkByEntityKey[slot.entityKey];
                           const chipSx = {
@@ -947,29 +994,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                             alignSelf: 'flex-start',
                             '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem', fontWeight: 400 },
                           } as const;
-                          const checklistItems: Array<[string, 'done' | 'open' | 'error']> =
-                            selectChecklist
-                              ? [
-                                  ['Tax forms', selectChecklist.taxComplete ? 'done' : 'open'],
-                                  [
-                                    'Direct deposit',
-                                    selectChecklist.directDepositComplete ? 'done' : 'open',
-                                  ],
-                                  ['SSN', selectChecklist.ssnComplete ? 'done' : 'open'],
-                                  [
-                                    selectChecklist.everify === 'pending'
-                                      ? 'E-Verify (in progress)'
-                                      : selectChecklist.everify === 'error'
-                                        ? 'E-Verify (needs attention)'
-                                        : 'E-Verify',
-                                    selectChecklist.everify === 'authorized'
-                                      ? 'done'
-                                      : selectChecklist.everify === 'error'
-                                        ? 'error'
-                                        : 'open',
-                                  ],
-                                ]
-                              : [];
+                          const checklistItems = mirrorChecklist?.items ?? [];
                           return (
                             <Box key={slot.entityKey}>
                               {evereeUrl ? (
@@ -999,7 +1024,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                                   sx={chipSx}
                                 />
                               )}
-                              {selectChecklist && (
+                              {mirrorChecklist && (
                                 <Stack spacing={0.2} sx={{ mt: 0.35, pl: 1 }}>
                                   {checklistItems.map(([label, state]) => (
                                     <Stack
@@ -1030,7 +1055,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                               )}
                               {slot.entityKey === nestKey && (
                                 <Stack spacing={0.2} sx={{ mt: 0.35, pl: 1 }}>
-                                  {(selectChecklist
+                                  {(mirrorChecklist
                                     ? pendingRows.filter((r) => r.key !== 'direct_deposit')
                                     : pendingRows
                                   ).map(renderReadinessRow)}
