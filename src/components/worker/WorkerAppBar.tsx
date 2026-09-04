@@ -25,6 +25,7 @@ import {
 } from '@mui/material';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import NotificationsIcon from '@mui/icons-material/Notifications';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -121,6 +122,16 @@ const WorkerAppBar: React.FC = () => {
                 </Typography>
               </React.Fragment>
             ))}
+          {/* Help one tap from every screen — same header ? as the app
+              (Greg 2026-09-04). */}
+          <IconButton
+            color="inherit"
+            onClick={() => navigate(`/${tenantSlug}/workers/support`)}
+            aria-label={t('nav.helpSupport')}
+            sx={{ color: 'text.secondary' }}
+          >
+            <HelpOutlineIcon sx={{ fontSize: 24 }} />
+          </IconButton>
           <IconButton
             color="inherit"
             onClick={() => navigate(`/${tenantSlug}/workers/notifications`)}

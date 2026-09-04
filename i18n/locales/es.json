@@ -1141,7 +1141,7 @@
     "location": "Ubicación",
     "jobType": "Tipo de trabajo",
     "sortBy": "Ordenar por",
-    "searchPlaceholder": "Buscar trabajos por título o ubicación",
+    "searchPlaceholder": "Buscar trabajos, palabras clave o ubicaciones",
     "allLocations": "Todas las ubicaciones",
     "allTypes": "Todos los tipos",
     "newestFirst": "Más recientes primero",
