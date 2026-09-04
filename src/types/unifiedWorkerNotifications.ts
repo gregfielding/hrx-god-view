@@ -57,6 +57,10 @@ export interface WorkerNotification {
   category?: NotificationCategory;
   title: string;
   body: string;
+  /** Both-language variants (2026-09-03): render the viewer's CURRENT
+   *  language; title/body stay the send-time-language fallback. */
+  title_i18n?: { en?: string; es?: string };
+  body_i18n?: { en?: string; es?: string };
   severity: NotificationSeverity;
   createdAt: Timestamp;
   readAt: Timestamp | null;

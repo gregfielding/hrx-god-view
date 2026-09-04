@@ -204,6 +204,15 @@ export async function writeWorkerInboxNotification(payload: {
   tenantId: string;
   title: string;
   body: string;
+  /**
+   * Both-language variants (Greg 2026-09-03): when a sender can build EN
+   * and ES bodies (the cadence builders always can), pass both and the
+   * inbox renders the viewer's CURRENT language — a worker who switches
+   * EN→ES sees their history in Spanish. `title`/`body` stay the send-time
+   * language for legacy readers. Same {en, es} shape as staffInstructions.
+   */
+  titleI18n?: { en?: string; es?: string };
+  bodyI18n?: { en?: string; es?: string };
   type?: NotificationType;
   category?: NotificationCategory;
   deepLink?: string;
@@ -236,6 +245,12 @@ export async function writeWorkerInboxNotification(payload: {
     category,
     title: payload.title,
     body: payload.body,
+    ...(payload.titleI18n && (payload.titleI18n.en || payload.titleI18n.es)
+      ? { title_i18n: payload.titleI18n }
+      : {}),
+    ...(payload.bodyI18n && (payload.bodyI18n.en || payload.bodyI18n.es)
+      ? { body_i18n: payload.bodyI18n }
+      : {}),
     createdAt: now,
     readAt: null,
     deepLink: deepLink || undefined,
@@ -269,6 +284,9 @@ export async function sendNotificationAndPush(payload: {
   tenantId: string;
   title: string;
   body: string;
+  /** Both-language inbox variants — see writeWorkerInboxNotification. */
+  titleI18n?: { en?: string; es?: string };
+  bodyI18n?: { en?: string; es?: string };
   severity?: NotificationSeverity;
   type?: NotificationType;
   category?: NotificationCategory;
@@ -303,6 +321,12 @@ export async function sendNotificationAndPush(payload: {
     category,
     title: payload.title,
     body: payload.body,
+    ...(payload.titleI18n && (payload.titleI18n.en || payload.titleI18n.es)
+      ? { title_i18n: payload.titleI18n }
+      : {}),
+    ...(payload.bodyI18n && (payload.bodyI18n.en || payload.bodyI18n.es)
+      ? { body_i18n: payload.bodyI18n }
+      : {}),
     severity: payload.severity ?? 'info',
     createdAt: now,
     readAt: null,

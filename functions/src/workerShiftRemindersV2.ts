@@ -1634,11 +1634,28 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
         });
       } else {
         inboxClaimed = true;
+        // Both-language inbox variants (Greg 2026-09-03): the bodies are
+        // template-built, so the other language is a free re-render —
+        // switching EN↔ES later re-localizes notification history.
+        // (Sequence copy overrides only replace SMS, never title/body.)
+        const otherLang: 'en' | 'es' = workerLang === 'es' ? 'en' : 'es';
+        const otherMessage = buildReminderMessage(
+          reminder.reminderType,
+          dispatchPayload,
+          reminder.assignmentId,
+          reminderProfileId,
+          otherLang,
+          smsBrand,
+        );
+        const enMsg = workerLang === 'en' ? message : otherMessage;
+        const esMsg = workerLang === 'es' ? message : otherMessage;
         await writeWorkerInboxNotification({
           uid: reminder.workerId,
           tenantId: reminder.tenantId,
           title: message.title,
           body: message.body,
+          titleI18n: { en: enMsg.title, es: esMsg.title },
+          bodyI18n: { en: enMsg.body, es: esMsg.body },
           type: 'assignment',
           category: 'assignments',
           deepLink: reminder.deepLink,

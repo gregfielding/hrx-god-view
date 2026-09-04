@@ -13,6 +13,7 @@ import { onCall, HttpsError, type CallableRequest } from 'firebase-functions/v2/
 import { logger } from 'firebase-functions/v2';
 import { sendLegacyGroupMessage } from './messaging/legacyMessageHelpers';
 import { sendNotificationAndPush } from './messaging/unifiedWorkerNotifications';
+import { translateWorkerTextToSpanish } from './messaging/translateWorkerText';
 import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
 import { buildWorkerJobPostUrl } from './utils/workerUrls';
 import { resolveRadiusRecipientUids } from './jobOrderAutoMessagingRadius';
@@ -645,6 +646,10 @@ export async function runJobOrderAutoMessagingForShift(
       ? options.customMessage.trim().split('{link}').join(inviteUrl)
       : `${options.customMessage.trim()} ${inviteUrl}`
     : null;
+  // Recruiter-typed blasts are English-only — translate ONCE per blast via
+  // Claude (Greg 2026-09-03) so ES workers get Spanish SMS/push/inbox.
+  // Fail-open: null keeps the original for everyone.
+  const customBodyEs = customBody ? await translateWorkerTextToSpanish(customBody) : null;
 
   let smsDelivered = 0;
   let pushDelivered = 0;
@@ -698,16 +703,21 @@ export async function runJobOrderAutoMessagingForShift(
       }
 
       const es = preferredLangEs(userData);
-      const { sms, pushTitle, pushBody } = customBody
+      const firstName = String(userData.firstName || '').trim() || null;
+      // Build BOTH languages: the worker's language drives push/SMS at send
+      // time; the inbox doc stores both so a later language switch re-renders
+      // history (title_i18n/body_i18n, Greg 2026-09-03).
+      const msgEn = customBody
+        ? { sms: customBody, pushTitle: "You're invited to a shift", pushBody: customBody }
+        : buildMessages({ ...inviteBase, firstName }, false);
+      const msgEs = customBody
         ? {
-            sms: customBody,
-            pushTitle: es ? 'Te invitamos a un turno' : "You're invited to a shift",
-            pushBody: customBody,
+            sms: customBodyEs ?? customBody,
+            pushTitle: 'Te invitamos a un turno',
+            pushBody: customBodyEs ?? customBody,
           }
-        : buildMessages(
-            { ...inviteBase, firstName: String(userData.firstName || '').trim() || null },
-            es,
-          );
+        : buildMessages({ ...inviteBase, firstName }, true);
+      const { sms, pushTitle, pushBody } = es ? msgEs : msgEn;
 
       try {
         await sendNotificationAndPush({
@@ -715,6 +725,8 @@ export async function runJobOrderAutoMessagingForShift(
           tenantId,
           title: pushTitle,
           body: pushBody,
+          titleI18n: { en: msgEn.pushTitle, es: msgEs.pushTitle },
+          bodyI18n: { en: msgEn.pushBody, es: msgEs.pushBody },
           type: 'opportunity',
           category: 'opportunities',
           deepLink: jobPostId ? `/c1/jobs-board/${jobPostId}` : '/c1/jobs-board',
