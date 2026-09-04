@@ -129,3 +129,38 @@ screenshot that verifies the typed text also verifies you are messaging the
 right person with a current title. That caught two #OPENTOWORK contacts
 (Clifford O'Rear, John Elstro) and three stale CRM titles on 2026-08-31 without
 any extra profile loads.
+
+## The overlay composer's x-position is NOT fixed — screenshot before typing
+
+Profile "Message" opens the composer in whichever overlay slot is free, and the
+slot changes as overlays accumulate or are closed:
+
+- with minimized overlay pills already parked at the bottom right, the new
+  composer opens on the **left** (box ~(300, 705), Send ~(475, 788));
+- with no other overlays open (the steady state if you close each one after
+  sending), it opens **center-right** (box ~(950, 705), Send ~(1125, 788),
+  close X ~(1180, 183));
+- occasionally LinkedIn skips the overlay entirely and routes to the **full-page**
+  composer at `/messaging/thread/new/?recipient=…` (box ~(722, 660),
+  Send ~(874, 749)).
+
+Typing into the wrong coordinate is *silent* — the text goes nowhere, the box
+still reads "Write a message…", and nothing is sent to the wrong person, but the
+contact is quietly skipped if you don't check. On 2026-09-03 this cost four
+retypes in 30 sends. Mitigation that worked: **close each overlay (X) right after
+the send**, which keeps the next composer in the center-right slot, and always
+read the post-type screenshot before clicking Send.
+
+Related: clicking "Message" in the *same* batch as the `navigate` that loaded the
+profile does not register (the page is still painting) — and worse, the click can
+land on whatever renders at that coordinate a moment later (on 2026-09-03 it hit
+an activity link and navigated away). Let the profile load in one call, click
+Message in the next.
+
+## Manifest data bug: company field holding a title
+
+`send-2026-09-03.json` row for Ben Palmer had `company: "Director Of Facilities"`,
+producing "If coverage ever gets tight at Director Of Facilities". The builder
+copies whatever `companyName` holds without sanity-checking it against `title`.
+Until that's fixed, skim the manifest for company values that read like job
+titles and either drop the company clause or fix the CRM row before sending.
