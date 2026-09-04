@@ -4,6 +4,16 @@
 Written 2026-09-03 from Greg's flow description + the current codebase.
 Nothing here is built except where marked EXISTS.
 
+**⚠️ Read [[project_tiered_shift_access]] FIRST — its "✅ AGREED SPEC"
+(Greg + Danny + Rosa + Mark, 2026-08-31) already settles the tier model:
+everyone starts Tier 3; manual promotion + AI Tier Score (to Tier 2
+only); automatic ±1 tier (40 clean hours up / penalized no-show down);
+notification + visibility windows T+0 (T1) / +10h (T2) / +24h (T3);
+open shifts keep Apply with NO tier gating; no-show penalties marked on
+the timesheet layout with the import-scoped Friday sweep. THIS doc is
+the UI/build layer on top of those decisions — buttons, sheet, states,
+endpoint, messaging — and defers to that doc wherever they overlap.**
+
 ## Goal
 
 Tier 1/2/3 reliability system where gig shifts are **claimed** (instant
@@ -16,7 +26,7 @@ standing controls who sees claimable shifts first.
 | Track | Jobs-board / posting button | After action |
 |---|---|---|
 | Gig (non-open) | **Claim Shift** | → acknowledgement sheet → confirmed instantly → button becomes **View Assignment** |
-| Open shift | **Apply** (a.k.a. "Request to Join Crew") | recruiter accepts — standing crews stay curated, no instant claim |
+| Open shift | **Apply** (unchanged, AGREED 8/31: no tier gating, visible to all until filled) | recruiter accepts — standing crews stay curated, no instant claim |
 | Career | **Apply** | unchanged (prescreen/interview path) |
 
 ## The Claim flow (gigs)
@@ -84,19 +94,19 @@ a new server path. Must be:
   worker-initiated mode with its own auth path (worker can only create
   for self + claimable shift). Decide Friday.
 
-## Tier model (to define Friday)
+## Tier model — ALREADY AGREED (2026-08-31, see [[project_tiered_shift_access]])
 
-- `users/{uid}.tier` (1|2|3) + the inputs that move it: attendance %,
-  late cancels (<24h), no-shows, completed shifts. Where computed (cron?)
-  and how disputes/resets work.
-- **Release windows** per JO/shift: e.g. Tier 1 sees claimable at
-  release, Tier 2 at +N hours, Tier 3 at +M hours or apply-only. Stored
-  on the shift/JO (`claimReleaseAt` per tier?), enforced server-side and
-  reflected as the Tier-locked button state. THIS IS THE PAYOFF of the
-  tier system — decide the windows Friday.
-- Cancellation teeth: cancel sheet shows what the cancel costs
-  (">24h out: no impact · inside 24h: counts against your reliability").
-  Late-cancel/no-show writes feed the tier inputs.
+Not re-opened here. The parts this build consumes:
+
+- Visibility/notification windows from PUBLISH: Tier 1 at T+0, Tier 2 at
+  +10h, Tier 3 at +24h (jobs-board visibility follows the same clock) →
+  drives the **Tier-locked** button state ("Opens to you {time}").
+- Tier movement: 40 clean hours up / one penalized no-show down; no-show
+  marking lives on the timesheet layout with the import-scoped Friday
+  sweep + human completion marker.
+- Cancellation teeth (NEW here, feeds that model): the cancel sheet
+  shows what a cancel costs (">24h out: no impact · inside 24h: counts
+  against your reliability"); late cancels feed the tier inputs.
 
 ## Messaging tie-in (already decided 2026-09-03, see
 [project_worker_messaging_tracks.md](project_worker_messaging_tracks.md))
@@ -133,16 +143,18 @@ a new server path. Must be:
    recruiters see the readiness gap (JO card) — logistics push degrades
    gracefully
 
-## Open questions for Friday
+## Open questions for Friday (windows/tier-movement are NOT open — agreed 8/31)
 
-1. Tier window durations + whether Tier 3 can claim at all or apply-only.
-2. Inline assignment details on posting page vs route to Assignment
-   Details (spec recommends route).
-3. Claim endpoint routing (which existing callable carries it).
-4. Tier computation: inputs, cadence, where surfaced to workers
-   (Profile? per messaging decision 4, app-first).
-5. Do claims cap per worker per day/week (over-commitment guard)?
-6. Cancel-policy thresholds (24h? per-account overrides?).
+1. Inline assignment details on posting page vs route to Assignment
+   Details (this spec recommends route; Greg's original ask was inline).
+2. Claim endpoint routing (which existing callable carries it, given the
+   function cap).
+3. Claim caps for Tier 3 (agreed spec says "limited concurrent claims
+   until first few shifts completed" — pick the number).
+4. Cancel-policy threshold (24h?) + whether late cancels count like
+   penalized no-shows or a lighter weight.
+5. Where the worker sees their tier (Profile, per messaging decision 4).
+6. Multi-day gigs: claim per day (existing day-by-day unit) or whole run?
 
 ## Suggested build order
 
