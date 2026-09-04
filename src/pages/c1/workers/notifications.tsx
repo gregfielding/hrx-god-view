@@ -34,12 +34,9 @@ const C1WorkerNotifications: React.FC = () => {
   const { notifications, unreadCount, loading } = useWorkerNotifications(uid);
   const [filter, setFilter] = useState<WorkerNotificationFilterKey>('all');
   const [markingId, setMarkingId] = useState<string | null>(null);
-  const filterLabels: Record<Exclude<WorkerNotificationFilterKey, 'all' | 'unread'>, string> = {
-    applications: t('notifications.filterApplications'),
-    assignments: t('notifications.filterAssignments'),
-    reminders: t('notifications.filterReminders'),
-    documents: t('notifications.filterDocuments'),
-    system: t('notifications.filterSystem'),
+  const filterLabels: Partial<Record<Exclude<WorkerNotificationFilterKey, 'all' | 'unread'>, string>> = {
+    shifts: t('notifications.filterShifts'),
+    jobs: t('notifications.filterJobs'),
   };
 
   const filtered = notifications.filter((n) => {
@@ -104,7 +101,7 @@ const C1WorkerNotifications: React.FC = () => {
           variant={filter === 'unread' ? 'filled' : 'outlined'}
           size="small"
         />
-        {(['applications', 'assignments', 'reminders', 'documents', 'system'] as const).map((cat) => (
+        {(['shifts', 'jobs'] as const).map((cat) => (
           <Chip
             key={cat}
             label={filterLabels[cat]}

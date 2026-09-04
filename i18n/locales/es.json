@@ -1603,7 +1603,9 @@
     "markAllRead": "Marcar todo como leído",
     "markRead": "Marcar como leído",
     "emptyTitle": "Aún no hay notificaciones.",
-    "emptySubtitle": "Te avisaremos aquí sobre solicitudes, documentos y turnos."
+    "emptySubtitle": "Te avisaremos aquí sobre solicitudes, documentos y turnos.",
+    "filterShifts": "Turnos",
+    "filterJobs": "Empleos"
   },
   "inbox": {
     "title": "Bandeja de entrada",
