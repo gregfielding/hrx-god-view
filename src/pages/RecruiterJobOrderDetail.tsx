@@ -3135,6 +3135,14 @@ const JobOrderJobsBoardTab: React.FC<{
         companyName: jobOrder?.companyName || (existingPostForForm as any).companyName || '',
         worksiteId: jobOrder?.worksiteId || (existingPostForForm as any).worksiteId || '',
         worksiteName: jobOrder?.worksiteName || (existingPostForForm as any).worksiteName || '',
+        // E-Verify is ENTITY truth, not post state (Greg 2026-09-04):
+        // C1 Select always requires it, and post docs saved before the
+        // entity read existed carry a stale `false` forever. Same
+        // authoritative-override treatment as company/worksite above —
+        // the stored doc self-heals on the next save.
+        eVerifyRequired: jobOrderEntity
+          ? jobOrderEntity.everifyRequired
+          : ((existingPostForForm as any).eVerifyRequired ?? false),
       };
     }
 
