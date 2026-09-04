@@ -1,6 +1,53 @@
 import { google } from 'googleapis';
+import * as crypto from 'crypto';
+import * as admin from 'firebase-admin';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+
+import { translateJobTextToSpanish } from './messaging/translateWorkerText';
+
+if (!admin.apps.length) admin.initializeApp();
+
+/**
+ * Auto-translate posting descriptions EN→ES at write time (Greg
+ * 2026-09-04: workers in ES mode saw English descriptions). Stored as
+ * `description_i18n: { en, es, sourceHash }` on the posting doc — the
+ * app/web pick the viewer's language with EN fallback. Rides this
+ * existing job_postings trigger (function cap: no new functions).
+ * sourceHash guards the write-loop: the trigger's own i18n write
+ * re-fires it, but the hash matches and it no-ops.
+ */
+async function maybeTranslatePostingDescription(
+  event: { data?: { after: { exists: boolean; ref: admin.firestore.DocumentReference; data(): Record<string, unknown> | undefined } } },
+): Promise<void> {
+  const after = event.data?.after;
+  if (!after?.exists) return;
+  const data = after.data() ?? {};
+  // Field names match what the worker app ALREADY parses
+  // (JobPostingModel: jobDescription_i18n / jobTitle_i18n).
+  const description = String(data.description ?? '').trim();
+  const title = String(data.jobTitle ?? data.title ?? '').trim();
+  const source = `${title}\n${description}`.trim();
+  if (!source) return;
+  const sourceHash = crypto.createHash('sha256').update(source).digest('hex').slice(0, 16);
+  const existingHash =
+    (data.jobDescription_i18n as { sourceHash?: string } | undefined)?.sourceHash ??
+    (data.jobTitle_i18n as { sourceHash?: string } | undefined)?.sourceHash;
+  if (existingHash === sourceHash) return;
+
+  const patch: Record<string, unknown> = {};
+  if (description) {
+    const es = await translateJobTextToSpanish(description);
+    if (es) patch.jobDescription_i18n = { en: description, es, sourceHash };
+  }
+  if (title) {
+    const esTitle = await translateJobTextToSpanish(title);
+    if (esTitle) patch.jobTitle_i18n = { en: title, es: esTitle, sourceHash };
+  }
+  if (Object.keys(patch).length === 0) return;
+  await after.ref.set(patch, { merge: true });
+  console.log(`Translated posting → es (${description.length} chars desc, title: ${Boolean(title)})`);
+}
 
 /**
  * Notify Google Indexing API when a job posting is created or updated
@@ -18,7 +65,15 @@ export const notifyGoogleJobsIndexing = onDocumentWritten(
     }
 
     const postData = event.data.after.data();
-    
+
+    // ES translation first — it applies to every active posting, public
+    // or not (workers see tenant-visible postings too). Fail-open.
+    try {
+      await maybeTranslatePostingDescription(event as never);
+    } catch (e) {
+      console.warn('posting translation failed', (e as Error)?.message);
+    }
+
     // Only notify Google for active, public jobs
     if (postData.status !== 'active' || postData.visibility !== 'public') {
       console.log(`Job ${postId} is not active/public, skipping indexing notification`);
