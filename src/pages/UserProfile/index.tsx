@@ -268,6 +268,15 @@ const UserProfilePage = () => {
   const [taskSubmitting, setTaskSubmitting] = useState(false);
   const [headerUserGroups, setHeaderUserGroups] = useState<Array<{ id: string; title: string }>>([]);
   const [recordHeaderAssignmentLines, setRecordHeaderAssignmentLines] = useState<RecordHeaderAssignmentLine[]>([]);
+  /** C1 Select onboarding checklist for the record header (Greg 2026-09-04):
+   *  ONE point of truth = everee_workers/c1_select_llc__{uid} (readiness
+   *  mirror + everifyCaseStatus). SSN joins in via the user doc's last-4. */
+  const [selectHeaderMirror, setSelectHeaderMirror] = useState<{
+    taxComplete: boolean;
+    directDepositComplete: boolean;
+    onboardingComplete: boolean;
+    everify: 'authorized' | 'pending' | 'error' | 'none';
+  } | null>(null);
   const [recordHeaderAvatarHover, setRecordHeaderAvatarHover] = useState(false);
   const [recordHeaderCropOpen, setRecordHeaderCropOpen] = useState(false);
   const [pendingRecordAvatarSrc, setPendingRecordAvatarSrc] = useState<string | null>(null);
@@ -2040,6 +2049,71 @@ const UserProfilePage = () => {
   ]);
 
   useEffect(() => {
+    if (!uid || !effectiveTenantId || !showRecordHeaderEntityStatus) {
+      setSelectHeaderMirror(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await getDoc(
+          doc(db, 'tenants', effectiveTenantId, 'everee_workers', `c1_select_llc__${uid}`),
+        );
+        if (cancelled) return;
+        if (!snap.exists()) {
+          setSelectHeaderMirror(null);
+          return;
+        }
+        const data = snap.data() as {
+          readinessMirror?: Record<string, unknown>;
+          everifyCaseStatus?: string;
+        };
+        const m = data.readinessMirror ?? {};
+        const cs = String(data.everifyCaseStatus || '').toLowerCase();
+        const everify = /authorized/.test(cs)
+          ? ('authorized' as const)
+          : /submission_error|final|fnc/.test(cs)
+            ? ('error' as const)
+            : cs
+              ? ('pending' as const)
+              : ('none' as const);
+        setSelectHeaderMirror({
+          taxComplete: Boolean(m.w4SignedAt || m.w9SignedAt),
+          directDepositComplete:
+            Boolean(m.directDepositVerifiedAt) || m.directDepositReady === true,
+          onboardingComplete: Boolean(m.completedOnboardingAt),
+          everify,
+        });
+      } catch {
+        if (!cancelled) setSelectHeaderMirror(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, effectiveTenantId, showRecordHeaderEntityStatus]);
+
+  /** Header checklist — tax, direct deposit, SSN, E-Verify (Greg 2026-09-04). */
+  const selectOnboardingHeader = useMemo(() => {
+    if (!selectHeaderMirror) return null;
+    const ssnComplete =
+      Boolean(normalizeLast4SsnDigits(skillsData?.last4SSN ?? '')) ||
+      selectHeaderMirror.onboardingComplete;
+    const allComplete =
+      selectHeaderMirror.taxComplete &&
+      selectHeaderMirror.directDepositComplete &&
+      ssnComplete &&
+      selectHeaderMirror.everify === 'authorized';
+    return {
+      taxComplete: selectHeaderMirror.taxComplete,
+      directDepositComplete: selectHeaderMirror.directDepositComplete,
+      ssnComplete,
+      everify: selectHeaderMirror.everify,
+      allComplete,
+    };
+  }, [selectHeaderMirror, skillsData?.last4SSN]);
+
+  useEffect(() => {
     if (!uid || !effectiveTenantId || !showRecruiterUsersTableHeaderHook) {
       setRecordHeaderAssignmentLines([]);
       return;
@@ -2626,6 +2700,7 @@ const UserProfilePage = () => {
                   viewerSecurityLevel={viewerSecurityLevel}
                   userDocForTableIcons={userDocForRecruiterTableIcons}
                   entitySlots={recordHeaderEntitySlots}
+                  selectOnboarding={selectOnboardingHeader}
                   evereeLinkByEntityKey={evereeLinkByEntityKey}
                   readinessRowsEntityKey={readinessRowsEntityKey}
                   employerI9EntityId={employerI9EntityId}

@@ -120,6 +120,16 @@ export type RecruiterUserProfileTableHeaderProps = {
   screeningLines: AccusourceScreeningLineItem[];
   screeningPackageHint: string | null;
   entitySlots: RecordHeaderEntitySlot[];
+  /** C1 Select onboarding checklist (Greg 2026-09-04): tax, direct deposit,
+   *  SSN, E-Verify from the Everee mirror — drives the Select chip color
+   *  (warning until all four complete) and the checkmark list under it. */
+  selectOnboarding?: {
+    taxComplete: boolean;
+    directDepositComplete: boolean;
+    ssnComplete: boolean;
+    everify: 'authorized' | 'pending' | 'error' | 'none';
+    allComplete: boolean;
+  } | null;
   /** entityKey → Everee deep link — when present the entity chip renders as
    *  a link that opens the worker's Everee record in a new tab. */
   evereeLinkByEntityKey?: Record<string, string>;
@@ -210,6 +220,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   screeningLines,
   screeningPackageHint,
   entitySlots,
+  selectOnboarding = null,
   evereeLinkByEntityKey = {},
   readinessRowsEntityKey = null,
   employerI9EntityId = null,
@@ -911,6 +922,24 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                       <Stack spacing={0.5} sx={{ mt: 0.35 }}>
                         {entitySlots.map((slot) => {
                           const v = entityChipVisuals(slot);
+                          // C1 Select chip color follows the FOUR onboarding
+                          // items (tax, direct deposit, SSN, E-Verify) from
+                          // the Everee mirror — yellow until all complete
+                          // (Greg 2026-09-04). Terminated/DNR stays red.
+                          const selectChecklist =
+                            slot.entityKey === 'select' &&
+                            selectOnboarding &&
+                            slot.displayState !== 'terminated_or_dnr'
+                              ? selectOnboarding
+                              : null;
+                          const chipColor = selectChecklist
+                            ? selectChecklist.allComplete
+                              ? 'success'
+                              : 'warning'
+                            : v.color;
+                          const chipLabel = selectChecklist
+                            ? `${slot.title}: ${selectChecklist.allComplete ? 'Active' : 'Onboarding'}`
+                            : `${slot.title}: ${slot.statusLabel}`;
                           const evereeUrl = evereeLinkByEntityKey[slot.entityKey];
                           const chipSx = {
                             height: 24,
@@ -918,6 +947,29 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                             alignSelf: 'flex-start',
                             '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem', fontWeight: 400 },
                           } as const;
+                          const checklistItems: Array<[string, 'done' | 'open' | 'error']> =
+                            selectChecklist
+                              ? [
+                                  ['Tax forms', selectChecklist.taxComplete ? 'done' : 'open'],
+                                  [
+                                    'Direct deposit',
+                                    selectChecklist.directDepositComplete ? 'done' : 'open',
+                                  ],
+                                  ['SSN', selectChecklist.ssnComplete ? 'done' : 'open'],
+                                  [
+                                    selectChecklist.everify === 'pending'
+                                      ? 'E-Verify (in progress)'
+                                      : selectChecklist.everify === 'error'
+                                        ? 'E-Verify (needs attention)'
+                                        : 'E-Verify',
+                                    selectChecklist.everify === 'authorized'
+                                      ? 'done'
+                                      : selectChecklist.everify === 'error'
+                                        ? 'error'
+                                        : 'open',
+                                  ],
+                                ]
+                              : [];
                           return (
                             <Box key={slot.entityKey}>
                               {evereeUrl ? (
@@ -933,23 +985,55 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                                   rel="noopener noreferrer"
                                   title={`Open in Everee (new tab) — ${slot.title}`}
                                   size="small"
-                                  label={`${slot.title}: ${slot.statusLabel}`}
-                                  color={v.color}
+                                  label={chipLabel}
+                                  color={chipColor}
                                   variant={v.variant}
                                   sx={chipSx}
                                 />
                               ) : (
                                 <Chip
                                   size="small"
-                                  label={`${slot.title}: ${slot.statusLabel}`}
-                                  color={v.color}
+                                  label={chipLabel}
+                                  color={chipColor}
                                   variant={v.variant}
                                   sx={chipSx}
                                 />
                               )}
+                              {selectChecklist && (
+                                <Stack spacing={0.2} sx={{ mt: 0.35, pl: 1 }}>
+                                  {checklistItems.map(([label, state]) => (
+                                    <Stack
+                                      key={label}
+                                      direction="row"
+                                      spacing={0.5}
+                                      alignItems="center"
+                                    >
+                                      {state === 'done' ? (
+                                        <CheckCircleIcon
+                                          sx={{ fontSize: 14, color: 'success.main' }}
+                                        />
+                                      ) : state === 'error' ? (
+                                        <WarningAmberIcon
+                                          sx={{ fontSize: 14, color: 'error.main' }}
+                                        />
+                                      ) : (
+                                        <HourglassEmptyIcon
+                                          sx={{ fontSize: 14, color: 'warning.main' }}
+                                        />
+                                      )}
+                                      <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                                        {label}
+                                      </Typography>
+                                    </Stack>
+                                  ))}
+                                </Stack>
+                              )}
                               {slot.entityKey === nestKey && (
                                 <Stack spacing={0.2} sx={{ mt: 0.35, pl: 1 }}>
-                                  {pendingRows.map(renderReadinessRow)}
+                                  {(selectChecklist
+                                    ? pendingRows.filter((r) => r.key !== 'direct_deposit')
+                                    : pendingRows
+                                  ).map(renderReadinessRow)}
                                 </Stack>
                               )}
                             </Box>
