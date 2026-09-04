@@ -373,14 +373,22 @@ export async function generateFieldglassPostingCopy(
         {
           role: 'system',
           content: `You write job-board posting descriptions for C1, a staffing agency.
+
+OUTPUT FORMAT — ABSOLUTE RULE, read first: PLAIN TEXT ONLY. Never use
+markdown of any kind — no "#" or "##" headings, no "**bold**", no
+underscores, no emojis, no title line. The text renders verbatim in a
+plain-text field, so markdown characters appear literally and look
+broken. Structure = short paragraphs plus simple hyphen bullets, with
+section lead-ins written as plain sentences like "What you will do:".
+
 HARD RULES:
 - NEVER mention the client company or worksite name. Say "C1 is hiring" — the role is with one of C1's clients.
 - City/state/zip are fine to mention. No street addresses.
 - Professional, engaging, clear — Indeed/Craigslist style. 120-200 words.
-- Plain text only: short paragraphs and simple hyphen bullets. No markdown headers, no bold, no emojis.
 - Include the pay rate when provided. Weave in schedule, weekly hours, assignment window, openings count, and uniform naturally when provided.
 - Use the client's requirement notes as the backbone of the duties/requirements bullets — keep every concrete requirement (certifications, screenings, physical demands, dress code), rewritten in C1's voice with client-identifying names stripped.
-- End with one short apply call-to-action sentence.`,
+- End with one short apply call-to-action sentence.
+- Reminder: if your draft contains "#", "*", or "_" formatting characters, rewrite it without them before answering.`,
         },
         {
           role: 'user',
@@ -416,11 +424,35 @@ HARD RULES:
       // NO temperature — gpt-5 rejects non-default values.
       max_completion_tokens: 4000,
     });
-    const text = (completion.choices?.[0]?.message?.content ?? '').trim();
+    const text = stripPostingMarkdown(
+      (completion.choices?.[0]?.message?.content ?? '').trim(),
+    );
     return text.length >= 60 ? text : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Belt-and-suspenders for the plain-text posting rule: claude-opus-5
+ * sometimes emits markdown anyway (Greg 2026-09-04 — "# Title — $/Hour"
+ * headers and **bold** on auto-created postings). Strip heading markers,
+ * bold/italic wrappers, and normalize bullet glyphs so the stored copy is
+ * always render-safe plain text.
+ */
+export function stripPostingMarkdown(raw: string): string {
+  return raw
+    .split('\n')
+    .map((line) => {
+      let l = line.replace(/^\s{0,3}#{1,6}\s+/, '');
+      l = l.replace(/\*\*([^*]+)\*\*/g, '$1');
+      l = l.replace(/__([^_]+)__/g, '$1');
+      l = l.replace(/^\s*[*•]\s+/, '- ');
+      return l;
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /** Same tolerant parse as indeedFlex/parser/llmFallback.ts. */

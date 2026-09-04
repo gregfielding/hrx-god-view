@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https'; // v2 for callable functions
 import { formatTime12h } from './utils/formatShiftTime';
+import { stripPostingMarkdown } from './integrations/fieldglass/enrichment';
 import { onSchedule } from 'firebase-functions/v2/scheduler'; // v2 for scheduler
 import { setGlobalOptions } from 'firebase-functions/v2';
 
@@ -1147,6 +1148,7 @@ export const generateJobDescription = onCall({
     prompt += `- You can mention the zip code if provided\n`;
     prompt += `- Uses clear, professional language\n`;
     prompt += `- Is approximately 200-400 words\n`;
+    prompt += `- PLAIN TEXT ONLY: no markdown of any kind — no "#" headings, no "**bold**", no emojis. The text renders verbatim in a plain-text field, so markdown characters appear literally and look broken. Use short paragraphs and simple hyphen bullets, with section lead-ins as plain sentences like "What you will do:".\n`;
 
     // Call OpenAI
     const completion = await openai.chat.completions.create({
@@ -1165,7 +1167,11 @@ export const generateJobDescription = onCall({
       max_tokens: 800
     });
 
-    const generatedDescription = completion.choices[0]?.message?.content || '';
+    // Belt-and-suspenders plain-text pass — the Claude-backed adapter
+    // sometimes emits markdown despite instructions (Greg 2026-09-04).
+    const generatedDescription = stripPostingMarkdown(
+      completion.choices[0]?.message?.content || '',
+    );
 
     if (!generatedDescription) {
       throw new HttpsError('internal', 'Failed to generate job description');
