@@ -684,7 +684,10 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
       deferred: false,
       ...(welcomeStale ? { forceCancelReason: 'skipped_preexisting_assignment' } : {}),
     });
-    const digestMs = nextWeeklyDigestMs(nowMs, resolvedTimezone);
+    // First check-in lands the SECOND Sunday out (10-16 days) — a check-in
+    // three days after the welcome reads as nagging (on-call model, Greg
+    // 2026-09-03 v2: check-ins, not schedule digests).
+    const digestMs = nextWeeklyDigestMs(nowMs + 10 * 24 * 60 * 60 * 1000, resolvedTimezone);
     const endMs = end ? end.toMillis() : null;
     plan.set('openshift_weekly_digest', {
       offsetHours: 0,
@@ -1833,13 +1836,14 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
         lock: admin.firestore.FieldValue.delete(),
       });
 
-      // Weekly digest self-perpetuates: re-arm the same doc for next Sunday
-      // unless the assignment window ends before then (the pre-send guard
-      // also cancels an already-ended chain). One doc per type keeps the
-      // reminder subcollection's id convention intact.
+      // Check-in self-perpetuates: re-arm the same doc for the Sunday after
+      // next (bi-weekly cadence, on-call model) unless the assignment
+      // window ends before then (the pre-send guard also cancels an
+      // already-ended chain). One doc per type keeps the reminder
+      // subcollection's id convention intact.
       if (canonicalReminderType === 'openshift_weekly_digest') {
         const nextMs = nextWeeklyDigestMs(
-          Date.now() + 60 * 60 * 1000,
+          Date.now() + 8 * 24 * 60 * 60 * 1000,
           reminder.resolvedTimezone || 'America/Los_Angeles',
         );
         const endRaw = assignmentData.endDate as unknown;

@@ -89,18 +89,20 @@ describe('buildOpenShiftMessage', () => {
     weeklySchedule: { 1: '09:00–17:00', 2: '09:00–17:00', 3: '09:00–17:00', 4: '09:00–17:00', 5: '09:00–17:00' },
   });
 
-  it('welcome carries schedule + address + details URL', () => {
+  it('welcome says hours are managed on-site — never states a schedule', () => {
     const msg = buildOpenShiftMessage('openshift_welcome', payload, 'en', 'C1 Staffing', 'https://hrxone.com/a/1');
     expect(msg.sms).to.contain("You're on the crew at Oracle Park!");
-    expect(msg.sms).to.contain('Schedule: Mon–Fri 09:00–17:00.');
+    expect(msg.sms).to.contain('Your shift hours are managed on-site.');
+    expect(msg.sms).to.not.contain('Mon–Fri');
     expect(msg.sms).to.contain('Details: https://hrxone.com/a/1');
   });
 
-  it('digest summarizes the week and falls back to the app pointer', () => {
+  it('check-in uses the on-call voice (EN + ES)', () => {
     const msg = buildOpenShiftMessage('openshift_weekly_digest', payload, 'en', 'C1 Staffing', '');
-    expect(msg.sms).to.contain('Your week at Oracle Park: Mon–Fri 09:00–17:00.');
-    const bare = buildOpenShiftMessage('openshift_weekly_digest', basePayload(), 'es', 'C1 Staffing', '');
-    expect(bare.sms).to.contain('está en la app');
+    expect(msg.sms).to.contain("You're still on our on-call crew at Oracle Park.");
+    expect(msg.sms).to.not.contain('Mon–Fri');
+    const esMsg = buildOpenShiftMessage('openshift_weekly_digest', basePayload(), 'es', 'C1 Staffing', '');
+    expect(esMsg.sms).to.contain('equipo de guardia');
   });
 });
 

@@ -97,8 +97,12 @@ export function renderWeeklyScheduleSummary(
 }
 
 /**
- * Open-shift track bodies (Greg 2026-09-03: welcome at creation + Sunday
- * weekly digest, replacing per-day reminder pairs for standing crews).
+ * Open-shift track bodies. On-call model (Greg 2026-09-03 v2): open shifts
+ * mean the CLIENT manages the schedule on-site — HRX never states hours.
+ * Welcome at creation says exactly that; the recurring message is a light
+ * bi-weekly CHECK-IN (career-adjacent voice), not a schedule digest. The
+ * reminder doc keeps its `openshift_weekly_digest` type/id for continuity;
+ * only copy + interval changed.
  */
 export function buildOpenShiftMessage(
   reminderType: OpenShiftReminderType,
@@ -110,7 +114,6 @@ export function buildOpenShiftMessage(
   const es = lang === 'es';
   const location = payload.locationName || (es ? 'tu lugar de trabajo' : 'your worksite');
   const address = truncate(payload.locationAddress || '', 120);
-  const summary = renderWeeklyScheduleSummary(payload.weeklySchedule, lang);
   const details = assignmentUrl
     ? (es ? ` Detalles: ${assignmentUrl}` : ` Details: ${assignmentUrl}`)
     : '';
@@ -120,27 +123,29 @@ export function buildOpenShiftMessage(
       es
         ? `${brand}: ¡Estás en el equipo de ${location}!`
         : `${brand}: You're on the crew at ${location}!`,
+      es
+        ? 'Tus horas de turno se coordinan en el sitio.'
+        : 'Your shift hours are managed on-site.',
     ];
-    if (summary) parts.push(es ? `Horario: ${summary}.` : `Schedule: ${summary}.`);
     if (address) parts.push(es ? `Dirección: ${address}.` : `Address: ${address}.`);
     if (details) parts.push(details.trim());
     parts.push(es ? 'Responde HELP si necesitas algo.' : 'Reply HELP if you need anything.');
     return {
       title: es ? '¡Estás en el equipo!' : "You're on the crew!",
       body: es
-        ? `${location}.${summary ? ` Horario: ${summary}.` : ''}${address ? ` ${address}.` : ''}`
-        : `${location}.${summary ? ` Schedule: ${summary}.` : ''}${address ? ` ${address}.` : ''}`,
+        ? `${location} — tus horas se coordinan en el sitio.${address ? ` ${address}.` : ''}`
+        : `${location} — your hours are managed on-site.${address ? ` ${address}.` : ''}`,
       sms: parts.join(' ').trim(),
     };
   }
 
-  // openshift_weekly_digest
-  const scheduleLine = summary
-    ? (es ? `Tu semana en ${location}: ${summary}.` : `Your week at ${location}: ${summary}.`)
-    : (es
-        ? `Tu horario de la semana en ${location} está en la app.`
-        : `Your schedule this week at ${location} is in the app.`);
-  const parts = [`${brand}: ${scheduleLine}`];
+  // Bi-weekly check-in (doc type still 'openshift_weekly_digest'). Doubles
+  // as roster hygiene: a reply from someone who quietly stopped working
+  // surfaces through the normal reply desk.
+  const checkInLine = es
+    ? `Sigues en nuestro equipo de guardia en ${location}. ¿Todo bien?`
+    : `You're still on our on-call crew at ${location}. Everything going OK?`;
+  const parts = [`${brand}: ${checkInLine}`];
   if (details) parts.push(details.trim());
   parts.push(
     es
@@ -148,8 +153,8 @@ export function buildOpenShiftMessage(
       : 'Reply HELP if anything has changed.',
   );
   return {
-    title: es ? `Tu semana en ${location}` : `Your week at ${location}`,
-    body: scheduleLine,
+    title: es ? `¿Todo bien en ${location}?` : `Checking in — ${location}`,
+    body: checkInLine,
     sms: parts.join(' ').trim(),
   };
 }
