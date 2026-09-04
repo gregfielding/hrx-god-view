@@ -109,6 +109,15 @@ export interface EvereeReadinessMirror {
   tinVerificationStatusChangedAt: Timestamp | null;
   taxpayerIdentifierLast4: string | null;
 
+  // ── Onboarding-status timeline (added 2026-09-03, live-confirmed) ──
+  /** When the worker completed the direct-deposit step in onboarding. */
+  directDepositVerifiedAt: Timestamp | null;
+  /** Everee's own completion stamp — for WorkBright W-2s this lands at
+   *  Section-2 countersign, not at the worker's last step. */
+  completedOnboardingAt: Timestamp | null;
+  /** Everee's "worker can be paid" flag from /onboarding-status. */
+  payable: boolean;
+
   // ── Worker lifecycle (Everee's state machine) ──
   lifecycleStatus: EvereeLifecycleStatus | null;
   onboardingComplete: boolean;
@@ -230,6 +239,18 @@ export interface EvereeOnboardingStatusApiResponse {
    *  WorkBright I-9 pipeline — stays false forever for workers on Everee's
    *  native Documents-tab flow (confirmed 2026-07-11: Gizelle, Ricardo). */
   documentsVerifiedByCompany?: boolean;
+  /** Live-confirmed 2026-09-03: Everee DOES return per-step timestamps on
+   *  this endpoint — these beat the boolean+updatedAt guesswork above. */
+  documentsVerifiedByCompanyAt?: string;
+  documentsVerifiedAt?: string;
+  /** W-4 (employee) / W-9 (contractor) step completion — the
+   *  `/w-4-tax-withholding-settings` endpoint 404s in prod (2026-09-03),
+   *  so this is the authoritative tax-form signal. */
+  withholdingsVerifiedAt?: string;
+  directDepositVerifiedAt?: string;
+  completedOnboardingAt?: string;
+  /** Everee's "worker can be paid" flag. */
+  payable?: boolean;
   /** True when the worker's I-9 documents live in the embedded WorkBright
    *  pipeline (C1 cutover in progress, 2026-07-11). */
   hasWorkbrightDocs?: boolean;
@@ -451,30 +472,31 @@ export function computeEvereeReadinessMirror(
   // I-9 — only meaningful for W-2; we still scan onboarding files for
   // contractors (cheap + harmless) so that if Everee ever returns one
   // for a contractor (unexpected) we can spot it in the mirror snapshot.
-  const i9File = onboardingFiles.find((f) =>
-    typeof f.fileName === 'string' && I9_FILENAME_REGEX.test(f.fileName),
-  );
-  const i9SignedAt = i9File ? isoToTimestampOrNull(i9File.publishedAt) : null;
-
-  // Section 2 (employer countersign) — read from the onboarding-status
-  // response when present. `documentsVerifiedByCompany` is the boolean
-  // signal Everee exposes; the response doesn't carry a per-flag stamp,
-  // so we use the response's own `updatedAt` (which Everee touches on
-  // any change to onboarding state — close enough for "when did this
-  // change to true" given we re-fetch on a cron + webhook). Only set
-  // for W-2 workers; contractors don't have an I-9 Section 2 step.
   const onboardingStatusData = input.onboardingStatus?.applicable
     ? input.onboardingStatus.data
     : undefined;
-  const employerI9SignedAt =
-    isEmployee && onboardingStatusData?.documentsVerifiedByCompany === true
-      ? isoToTimestampOrNull(onboardingStatusData.updatedAt) ??
-        // Fall back to the snapshot's "now" timestamp when Everee
-        // didn't include an updatedAt — better to have *some* stamp
-        // than to leave the field null and confuse downstream
-        // consumers that gate on truthiness.
-        (input.now ?? Timestamp.now())
-      : null;
+
+  const i9File = onboardingFiles.find((f) =>
+    typeof f.fileName === 'string' && I9_FILENAME_REGEX.test(f.fileName),
+  );
+  // Worker-side I-9: file detection first (carries the true publish date),
+  // else the onboarding-status `documentsVerifiedAt` step stamp — the
+  // WorkBright-pipeline workers keep their files in WorkBright, so Everee's
+  // files list never shows an I-9 for them (live-confirmed 2026-09-03).
+  const i9SignedAt =
+    (i9File ? isoToTimestampOrNull(i9File.publishedAt) : null) ??
+    (isEmployee ? isoToTimestampOrNull(onboardingStatusData?.documentsVerifiedAt) : null);
+
+  // Section 2 (employer countersign): `documentsVerifiedByCompanyAt` is a
+  // real per-step timestamp (live-confirmed 2026-09-03 — the previous
+  // boolean+updatedAt guess left this null for nearly everyone). Boolean
+  // + updatedAt kept as fallback for any older response shape.
+  const employerI9SignedAt = isEmployee
+    ? isoToTimestampOrNull(onboardingStatusData?.documentsVerifiedByCompanyAt) ??
+      (onboardingStatusData?.documentsVerifiedByCompany === true
+        ? isoToTimestampOrNull(onboardingStatusData.updatedAt) ?? (input.now ?? Timestamp.now())
+        : null)
+    : null;
 
   // Handbook + remaining policies.
   const handbookFile = policyFiles.find((f) =>
@@ -484,14 +506,22 @@ export function computeEvereeReadinessMirror(
   const policiesSignedCount = policyFiles.length - (handbookFile ? 1 : 0);
 
   // ── Tax forms ──
+  // The dedicated W-4/W-9 endpoints 404 in prod (2026-09-03 — this left
+  // w4SignedAt/w9SignedAt null on ALL 674 mirrored Select workers), so the
+  // onboarding-status `withholdingsVerifiedAt` step stamp is the
+  // authoritative signal; the endpoint aliases stay as a first preference
+  // in case Everee revives them with richer data.
+  const withholdingsVerifiedAt = isoToTimestampOrNull(
+    onboardingStatusData?.withholdingsVerifiedAt,
+  );
   const w4SignedAt =
-    input.w4.applicable && input.w4.data
+    (input.w4.applicable && input.w4.data
       ? pickFirstDateAlias(input.w4.data as Record<string, unknown>, W4_DATE_ALIASES)
-      : null;
+      : null) ?? (isEmployee ? withholdingsVerifiedAt : null);
   const w9SignedAt =
-    input.w9.applicable && input.w9.data
+    (input.w9.applicable && input.w9.data
       ? pickFirstDateAlias(input.w9.data as Record<string, unknown>, W9_DATE_ALIASES)
-      : null;
+      : null) ?? (isContractor ? withholdingsVerifiedAt : null);
 
   // ── Pay period cadence (W-2 only — contractors are AD_HOC) ──
   const payPeriodCadence = isEmployee ? derivePayPeriodCadence(w.payPeriodConfig) : null;
@@ -526,6 +556,10 @@ export function computeEvereeReadinessMirror(
     tinVerificationStatusChangedAt,
     taxpayerIdentifierLast4:
       typeof w.taxpayerIdentifierLast4 === 'string' ? w.taxpayerIdentifierLast4 : null,
+
+    directDepositVerifiedAt: isoToTimestampOrNull(onboardingStatusData?.directDepositVerifiedAt),
+    completedOnboardingAt: isoToTimestampOrNull(onboardingStatusData?.completedOnboardingAt),
+    payable: onboardingStatusData?.payable === true,
 
     lifecycleStatus,
     onboardingComplete: w.onboardingComplete === true,
