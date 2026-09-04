@@ -1,6 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Box, Button, Snackbar, Alert, Stack, Typography } from '@mui/material';
+import {
+  Box,
+  Button,
+  Snackbar,
+  Alert,
+  Stack,
+  Typography,
+  Chip,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+} from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { useNavigate } from 'react-router-dom';
 import {
   collection,
   query,
@@ -15,14 +31,17 @@ import {
 import { db } from '../../../firebase';
 import { p } from '../../../data/firestorePaths';
 import type { BackgroundCheckRecord } from '../../../types/backgroundCheck';
-import { buildAssignmentReadinessPanelRows } from '../../../utils/assignmentReadinessPanelModel';
+import {
+  buildAssignmentReadinessPanelRows,
+  assignmentReadinessRecruiterChipColor,
+} from '../../../utils/assignmentReadinessPanelModel';
 import { enrichUserAssignmentRow } from '../../../utils/enrichAssignmentRowForDisplay';
-import AssignmentReadinessPanel from './AssignmentReadinessPanel';
 
 const UserAssignmentsTab: React.FC<{ userId: string; tenantId?: string | null }> = ({
   userId,
   tenantId,
 }) => {
+  const navigate = useNavigate();
   const [assignments, setAssignments] = useState<Record<string, unknown>[]>([]);
   const [backgroundChecks, setBackgroundChecks] = useState<BackgroundCheckRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -111,19 +130,87 @@ const UserAssignmentsTab: React.FC<{ userId: string; tenantId?: string | null }>
         <Typography variant="body2" color="text.secondary">
           Loading assignments…
         </Typography>
+      ) : panelRows.length === 0 ? (
+        <Alert severity="info">This user has no assignments yet.</Alert>
       ) : (
-        <AssignmentReadinessPanel
-          rows={panelRows}
-          tenantId={tenantId ?? null}
-          workerId={userId}
-          workerName={(() => {
-            const a = assignments[0] as Record<string, unknown> | undefined;
-            return (
-              String(a?.workerName ?? '') ||
-              [a?.firstName, a?.lastName].filter(Boolean).join(' ')
-            );
-          })()}
-        />
+        // Table layout matching the Applications tab (Greg 2026-09-04:
+        // "make Assignments look like the Applications tab"). Row click
+        // opens the assignment; readiness detail lives there.
+        <TableContainer component={Paper} elevation={0} sx={{ borderRadius: 0 }}>
+          <Table>
+            <TableHead>
+              <TableRow sx={{ backgroundColor: 'grey.100' }}>
+                <TableCell sx={{ fontWeight: 600 }}>Job Title</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Worksite</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Start</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>End</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Readiness</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {panelRows.map((row) => (
+                <TableRow
+                  key={row.assignmentId}
+                  hover
+                  sx={{ cursor: 'pointer', '&:hover': { backgroundColor: 'action.hover' } }}
+                  onClick={() =>
+                    navigate(`/assignments/${encodeURIComponent(row.assignmentId)}`)
+                  }
+                >
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {row.title || 'Untitled assignment'}
+                    </Typography>
+                    {row.companyDisplay ? (
+                      <Typography variant="caption" color="text.secondary">
+                        {row.companyDisplay}
+                      </Typography>
+                    ) : null}
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.secondary">
+                      {row.worksiteDisplay || '—'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.secondary">
+                      {row.startDate || '—'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.secondary">
+                      {row.endDate || '—'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.secondary">
+                      {row.assignmentStatus || '—'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap>
+                      <Chip
+                        size="small"
+                        label={row.readinessLabel}
+                        color={assignmentReadinessRecruiterChipColor(row)}
+                      />
+                      {row.startDateContext.label &&
+                      row.startDateContext.tone !== 'default' ? (
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          label={row.startDateContext.label}
+                          color={row.startDateContext.tone}
+                        />
+                      ) : null}
+                    </Stack>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
         <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>

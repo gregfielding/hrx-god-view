@@ -32,11 +32,17 @@ import {
   Button,
   Chip,
   CircularProgress,
+  IconButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   Snackbar,
   Stack,
   Tooltip,
   Typography,
 } from '@mui/material';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
 import SyncIcon from '@mui/icons-material/Sync';
 import RestoreIcon from '@mui/icons-material/Restore';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
@@ -165,6 +171,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
   const [restarting, setRestarting] = useState(false);
   const [pushingAddress, setPushingAddress] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   const [toast, setToast] = useState<{ severity: 'success' | 'error'; message: string } | null>(
     null,
   );
@@ -713,48 +720,12 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
           and the disabled-state below mirrors that gate so a recruiter
           gets a tooltip instead of a wasted callable round-trip.
         */}
-        {/* "Push address to Everee" — pairs with the chip on the User
-            Details header. evereeEnsureWorker is a no-op for already-
-            linked workers (returns the existing id), so a recruiter
-            who just fixed an address has no first-class way to push
-            it. This button calls evereeUpdateWorkerAddress directly.
-            Disabled (with explanatory tooltip) when the worker isn't
-            yet linked — provision via the main Sync button first. */}
-        <Tooltip
-          title={
-            evereeWorkerId
-              ? "Push this worker's current HRX home address AND date of birth to Everee. Use to fix a stale address or backfill the DOB identity signal that Everee's anti-fraud lock needs. (SSN must be entered by the worker in the Everee onboarding flow.)"
-              : 'Worker is not yet linked to Everee. Use the Sync button first.'
-          }
-        >
-          <span>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={
-                pushingAddress ? <CircularProgress size={14} color="inherit" /> : <SyncIcon />
-              }
-              onClick={handlePushAddress}
-              disabled={
-                !evereeWorkerId ||
-                pushingAddress ||
-                syncing ||
-                recovering ||
-                resending ||
-                restarting ||
-                Boolean(disabledReason)
-              }
-            >
-              Push data to Everee
-            </Button>
-          </span>
-        </Tooltip>
         <Tooltip title={restartTooltip}>
           <span>
             <Button
               size="small"
-              variant="outlined"
-              color="warning"
+              variant="contained"
+              color={evereeWorkerId ? 'warning' : 'primary'}
               startIcon={
                 restarting ? <CircularProgress size={14} color="inherit" /> : <RestartAltIcon />
               }
@@ -768,7 +739,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
                 Boolean(disabledReason)
               }
             >
-              Restart onboarding
+              {evereeWorkerId ? 'Restart onboarding' : 'Start onboarding'}
             </Button>
           </span>
         </Tooltip>
@@ -790,20 +761,7 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
               onClick={handleResendPayrollLink}
               disabled={resending || syncing || recovering || restarting || pushingAddress || Boolean(disabledReason)}
             >
-              Resend payroll link
-            </Button>
-          </span>
-        </Tooltip>
-        <Tooltip title={buttonTooltip}>
-          <span>
-            <Button
-              size="small"
-              variant="contained"
-              startIcon={syncing ? <CircularProgress size={14} color="inherit" /> : <SyncIcon />}
-              onClick={handleClick}
-              disabled={syncing || recovering || resending || restarting || pushingAddress || Boolean(disabledReason)}
-            >
-              {buttonLabel}
+              Send worker link
             </Button>
           </span>
         </Tooltip>
@@ -833,6 +791,76 @@ const EvereeAdminSyncCard: React.FC<EvereeAdminSyncCardProps> = ({
             </Button>
           </Tooltip>
         ) : null}
+        {/* Rare/sharp tools live behind the overflow (Greg 2026-09-04,
+            80% reduction pass): Push data + Re-sync are occasional repair
+            actions, not everyday verbs. */}
+        <Tooltip title="More Everee tools">
+          <IconButton size="small" onClick={(e) => setMenuAnchor(e.currentTarget)}>
+            <MoreVertIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+        <Menu
+          anchorEl={menuAnchor}
+          open={Boolean(menuAnchor)}
+          onClose={() => setMenuAnchor(null)}
+        >
+          <Tooltip
+            title={
+              evereeWorkerId
+                ? "Push this worker's current HRX home address AND date of birth to Everee. Use to fix a stale address or backfill the DOB identity signal that Everee's anti-fraud lock needs. (SSN must be entered by the worker in the Everee onboarding flow.)"
+                : 'Worker is not yet linked to Everee. Start onboarding first.'
+            }
+            placement="left"
+          >
+            <span>
+              <MenuItem
+                disabled={
+                  !evereeWorkerId ||
+                  pushingAddress ||
+                  syncing ||
+                  recovering ||
+                  resending ||
+                  restarting ||
+                  Boolean(disabledReason)
+                }
+                onClick={() => {
+                  setMenuAnchor(null);
+                  void handlePushAddress();
+                }}
+              >
+                <ListItemIcon>
+                  {pushingAddress ? <CircularProgress size={16} /> : <SyncIcon fontSize="small" />}
+                </ListItemIcon>
+                <ListItemText>Push data to Everee</ListItemText>
+              </MenuItem>
+            </span>
+          </Tooltip>
+          <Tooltip title={buttonTooltip} placement="left">
+            <span>
+              <MenuItem
+                disabled={
+                  syncing ||
+                  recovering ||
+                  resending ||
+                  restarting ||
+                  pushingAddress ||
+                  Boolean(disabledReason)
+                }
+                onClick={() => {
+                  setMenuAnchor(null);
+                  handleClick();
+                }}
+              >
+                <ListItemIcon>
+                  {syncing ? <CircularProgress size={16} /> : <SyncIcon fontSize="small" />}
+                </ListItemIcon>
+                <ListItemText>
+                  {evereeWorkerId ? 'Re-sync to Everee' : 'Provision in Everee (no SMS)'}
+                </ListItemText>
+              </MenuItem>
+            </span>
+          </Tooltip>
+        </Menu>
       </Stack>
       {error ? (
         <Alert severity="error" sx={{ mt: 1.5 }}>

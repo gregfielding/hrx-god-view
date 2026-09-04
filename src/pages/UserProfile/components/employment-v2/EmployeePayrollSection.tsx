@@ -20,6 +20,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   AlertTitle,
+  Tooltip,
   Box,
   Button,
   Card,
@@ -38,7 +39,11 @@ import {
   TableHead,
   TableRow,
   Typography,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
@@ -442,8 +447,23 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
   // src/components/everee/ReplaceBankAccountDialog.tsx for the PII handling.
   const [bankDialogOpen, setBankDialogOpen] = useState<boolean>(false);
   const [bankSavedSnackOpen, setBankSavedSnackOpen] = useState<boolean>(false);
+  /** First accordion expand arms the (deferred) Everee fetches. */
+  const [detailsArmed, setDetailsArmed] = useState<boolean>(false);
+  const armDetails = (_: unknown, expanded: boolean) => {
+    if (expanded) setDetailsArmed(true);
+  };
 
   useEffect(() => {
+    // Lazy fetch (Greg 2026-09-04, 80% reduction pass): the four Everee
+    // pulls only fire once a recruiter opens one of the accordions — the
+    // mirror-driven status card above answers the everyday question free.
+    if (!detailsArmed) {
+      setWorkerLoading(false);
+      setDocumentsLoading(false);
+      setW9Loading(false);
+      setW4Loading(false);
+      return;
+    }
     let cancelled = false;
     setWorker(null);
     setWorkerError(null);
@@ -612,7 +632,7 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [tenantId, entityId, userId, evereeTenantId, evereeWorkerId]);
+  }, [tenantId, entityId, userId, evereeTenantId, evereeWorkerId, detailsArmed]);
 
   const onboardingChip = useMemo(
     () => onboardingChipColor(worker?.onboardingStatus ?? null),
@@ -760,19 +780,10 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
   return (
     <Card variant="outlined" sx={{ mt: 2 }}>
       <CardHeader
-        title="Everee data"
-        subheader="Live from Everee — not stored in HRX"
+        title="Everee record"
+        subheader="Identity, pay, and documents — pulled live from Everee when you expand a section"
         titleTypographyProps={{ variant: 'subtitle1', fontWeight: 700 }}
         subheaderTypographyProps={{ variant: 'caption' }}
-        action={
-          <Chip
-            size="small"
-            color={onboardingChip.color}
-            icon={onboardingChip.icon as React.ReactElement}
-            label={onboardingChip.label}
-            sx={{ mt: 0.5, mr: 0.5 }}
-          />
-        }
       />
       <CardContent sx={{ pt: 0 }}>
         {workerError ? (
@@ -782,29 +793,32 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
         ) : null}
         {evereeLoginNotSetUp ? (
           <Alert severity="info" sx={{ mb: 2 }}>
-            <AlertTitle>Everee login not set up yet</AlertTitle>
-            <Typography variant="body2" sx={{ mb: 1.25 }}>
-              <code>accountAccessPermitted</code> is <code>false</code>, which just
-              means this worker hasn&apos;t created their Everee login password yet —
-              that happens about halfway through onboarding, so it&apos;s normal for
-              anyone who hasn&apos;t reached that step. Per Everee (Piers, 2026-06-09),
-              this flag does <strong>not</strong> mean the account is locked.
-            </Typography>
-            <Typography variant="body2" sx={{ mb: 1.5 }}>
-              A real onboarding <em>lock</em> is a separate thing — Everee locks an
-              onboarding for a possible security risk (e.g. too many failed password
-              attempts on an existing account), and we can&apos;t see that from this
-              flag. If the worker reports the &quot;onboarding has been locked due to a
-              possible security risk&quot; screen, send them the Everee-hosted
-              account-setup link below (different signing context). If that screen
-              still appears, escalate to{' '}
-              <MuiLink href="mailto:support@everee.com">support@everee.com</MuiLink>{' '}
-              with worker id <code>{evereeWorkerId}</code>.
-            </Typography>
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            <Stack
+              direction="row"
+              spacing={1}
+              alignItems="center"
+              flexWrap="wrap"
+              useFlexGap
+            >
+              <Tooltip
+                title={
+                  <>
+                    accountAccessPermitted=false only means the worker hasn't created
+                    their Everee password yet — normal until about halfway through
+                    onboarding, NOT a lock (per Everee, Piers 2026-06-09). If the worker
+                    reports an "onboarding locked for a possible security risk" screen,
+                    send the hosted link (different signing context); if it persists,
+                    escalate to support@everee.com with worker id {evereeWorkerId}.
+                  </>
+                }
+              >
+                <Typography variant="body2" sx={{ cursor: 'help' }}>
+                  Hasn&apos;t set an Everee password yet — normal mid-onboarding. ⓘ
+                </Typography>
+              </Tooltip>
               <Button
-                variant="contained"
-                color="warning"
+                variant="outlined"
+                color="inherit"
                 size="small"
                 startIcon={
                   hostedLinkSending ? (
@@ -868,7 +882,19 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
             setBankSavedSnackOpen(true);
           }}
         />
-        {workerLoading ? (
+        <Accordion
+          disableGutters
+          elevation={0}
+          variant="outlined"
+          onChange={armDetails}
+        >
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+              Identity &amp; pay
+            </Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+        {workerLoading && detailsArmed ? (
           <Stack spacing={1}>
             <Skeleton variant="text" width="40%" />
             <Skeleton variant="rounded" height={28} />
@@ -1029,11 +1055,26 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
                 </Box>
               )}
             </Box>
+          </Stack>
+        )}
+          </AccordionDetails>
+        </Accordion>
 
+        <Accordion
+          disableGutters
+          elevation={0}
+          variant="outlined"
+          onChange={armDetails}
+        >
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+              Documents
+            </Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+          <Stack spacing={2.5}>
             {showTaxFormsSection ? (
               <>
-                <Divider flexItem />
-
                 {/* Tax Forms (W-9 / W-4) — only the form matching the worker's
                     classification comes back applicable; the other 404s and the
                     card hides itself. */}
@@ -1231,17 +1272,9 @@ const EmployeePayrollSection: React.FC<EmployeePayrollSectionProps> = ({
               )}
             </Box>
 
-            <Box sx={{ pt: 1 }}>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ fontFamily: 'Menlo, Monaco, "Courier New", monospace' }}
-              >
-                Everee Worker ID: {evereeWorkerId}
-              </Typography>
-            </Box>
           </Stack>
-        )}
+          </AccordionDetails>
+        </Accordion>
       </CardContent>
     </Card>
   );
