@@ -27,7 +27,28 @@
 > `tenants/{t}/tier_promotion_proposals` (new rules block: staff read/update,
 > create/delete server-only). Dismissed = never re-proposed; approved = promoted
 > under the approver's name; Automatic mode promotes as "HRX Tier Engine".
-> Demotion/earn-back NOT wired yet — blocked on the no-show penalty marking.
+>
+> **Phase 3 shipped same day — penalty, earn-back, and the auto-onboard toggle.**
+> Penalty: `setAssignmentOutcome` accepts `noShowPenalty` (AssignmentOutcomeMenu:
+> "No-show — with penalty", on the account Workforce tab's ⋮); the outcome +
+> assignment `noShowPenalty` stamp land in the transaction, then
+> `tierPenaltyAdmin.applyNoShowPenaltyAdmin` demotes one tier and stamps
+> `workerTiers.penalty {demotedAt, restoreTo, hoursRequired:40}`. Undo reverts
+> the assignment only — the tier badge fixes mistakes (any manual change
+> deletes the penalty counter). Earn-back: the nightly sweep sums
+> `timesheet_entries` (workerId, workDate ≥ demotedAt; reg+OT+DT, never the
+> FLSA subdivisions) and restores `restoreTo` at 40h — forward-only, so
+> Danny's Tuesday keying lag just delays restores, never falsely demotes.
+> Auto-onboard: `accounts/{id}.tierAutomation.autoOnboardTier2` (Automations
+> card, national page; children inherit the national's flag) — a Tier 1/2
+> applicant triggers `runStartOnCallEmploymentFlow` (trigger source
+> `auto_tier2_account`, actor `system:tier2_account_auto_onboard`) + the
+> cascade screening package, riding
+> `onApplicationHiringSignalsChangedAutoOnboard`; the application is stamped
+> `tierAutoOnboard` pre-run (re-fire/no-retry gate) and a live prior
+> backgroundChecks order suppresses the package (Dempsey-class duplicates).
+> **Shipped OFF everywhere** — flip it on the OnTrac national to start the
+> pilot. Penalty path deployed but not yet exercised on a real no-show.
 
 > Greg + Claude design discussion 2026-08-29, written for Mark + his Claude. Status:
 > **design brief, nothing built.** Emerged from the signup-flow review
