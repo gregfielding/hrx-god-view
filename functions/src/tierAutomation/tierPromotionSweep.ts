@@ -58,7 +58,9 @@ async function hasAppPushToken(db: admin.firestore.Firestore, uid: string): Prom
     .collection('users')
     .doc(uid)
     .collection('pushTokens')
-    .where('platform', 'in', ['ios', 'android'])
+    // platform is stored capitalized ('iOS'/'Android') by the app's token
+    // registration — verified live 2026-09-05; keep lowercase for safety.
+    .where('platform', 'in', ['iOS', 'Android', 'ios', 'android'])
     .limit(1)
     .get();
   return !snap.empty;
