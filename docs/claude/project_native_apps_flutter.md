@@ -108,4 +108,60 @@ routes (`/privacy`, `/terms`) so workers get the language-aware version; same
 i18n source, so the content is identical.
 
 Still open: `c1staffing.com/support` 404s and both stores require a working
-support URL.
+support URL. (Both listings currently use `https://hrxone.com` as the support
+URL — 2026-09-05.)
+
+## Store console state (2026-09-05, Claude drove both consoles in Greg's Chrome)
+
+**App Store Connect** (app id 6808699956 "C1 Staffing Workforce", iOS 1.0
+"Prepare for Submission"): screenshots (6.5" set), promo text, description,
+keywords, support URL, App Review sign-in (demo phone `+1 555 555 0100` /
+code `246810`, review notes), App Information (subtitle "Gig and Career
+Opportunities", category Business, content rights = no third-party content,
+age rating questionnaire → 4+), App Privacy label (14 data types, published;
+policy URL `/legal/privacy.html`), price Free, availability **United States
+only** (sidesteps the EU DSA trader-status block), auto-release after
+approval. `ITSAppUsesNonExemptEncryption=false` is in Info.plist so no export
+prompt. **Left for Greg:** upload `build/ios/archive/Runner.xcarchive` via
+Xcode Organizer, pick the build on the version page, then "Add for Review".
+
+**Google Play Console** (developer account "C1 Staffing" 7277616738972403924,
+app 4971983647122091628, package `com.c1staffing.worker`): privacy policy,
+sign-in details (same demo creds), Ads=No, Target audience 18+, Data safety
+(13 types, no sharing, delete-account URL `https://hrxone.com/delete-account`),
+Advertising ID=Yes/Analytics (Firebase Analytics merges `AD_ID` into the
+manifest — verified in the merged manifest), Government/Financial/Health =
+none, category Business, contact `support@c1staffing.com` + hrxone.com,
+store listing (EN copy, 512 icon, feature graphic, 7 phone screenshots),
+Production countries = US. **Left for Greg:** (1) Content rating — the IARC
+questionnaire starts with an "I agree to the IARC Terms of Use" checkbox
+(all answers are "No" → Everyone); (2) upload
+`build/app/outputs/bundle/release/app-release.aab` (71 MB — over the browser
+tool's 10 MB upload cap) to Production → Create new release, then Send for
+review from Publishing overview.
+
+**`/delete-account` page** (`src/pages/DeleteAccount.tsx`, deployed
+1c468e1c): Google requires a public URL naming the app, the request steps and
+what is deleted vs retained. It documents the app's Profile → Delete account
+request flow (`account_deletion_requests/{uid}`) plus the support@ path, EN/ES
+inline (not i18n — legal copy outside the app shell). Keep it in sync with
+DeletionRequestsPage.tsx retention rules.
+
+### Play Console browser-automation footguns
+- "Start declaration"/"Start" buttons ignore accessibility-ref clicks —
+  click by screenshot coordinate. Checkboxes/radios/textboxes inside dialogs
+  DO accept ref clicks (use `find` after the dialog opens).
+- Data-safety per-type dialogs open 4–10 s after the click and their sticky
+  header collapses on the first click after a scroll (swallowing it) — wait,
+  then use refs, never blind coordinate chains (one mis-timed chain saved
+  Email address with the wrong purposes and needed a fix).
+- Text fields need real key events (`click` + `type`); `form_input` fills the
+  box but the framework doesn't register the change (contact details).
+- Asset uploads: no `<input type=file>` exists until "Add assets" is clicked;
+  hook `HTMLInputElement.prototype.click` to suppress the native picker,
+  then `file_upload` into the captured input and click "Add" in the library
+  panel. Phone screenshots must be 16:9 or 9:16 — the 1320×2868 captures
+  were padded to 1613×2868 with `sips --padToHeightWidth 2868 1613`
+  (`store/screenshots/play/`).
+- App Store Connect: age-rating and privacy questionnaires are ref-driven
+  and reliable; the privacy "linked/tracking" pages repeat per data type.
