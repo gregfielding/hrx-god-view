@@ -152,3 +152,27 @@ first auto-send ~09-19. Emails go from Greg's connected mailbox
 request for <Entity>". Manual sends: "Submit to Eddie" button on
 /reports/wc-coverage (books-gated callable emailMassPn mode; file
 byte-identical to Export).
+
+**Nightly WC hygiene SHIPPED 2026-09-05 PM (Greg "build it all"):**
+`runNightlyWcHygieneForTenant` (functions/src/workersComp/nightlyWcHygiene.ts)
+rides scheduledScoringDistribution: (1) ADDITIONS-ONLY Everee sync per W-2
+entity — new (state,code) matrix rows reach Everee overnight so payroll never
+blocks on an unsynced code; rate UPDATES/conflicts are logged, never
+auto-applied; contractor + sandbox entities skipped (Everee WC is W-2-only).
+(2) 8040 replace-now auto-reclassify: 45d of 8040-stamped entries + all
+8040-stamped assignments restamp to the matrix's real (state,title) code —
+first run cleared the whole replace-now bucket (1 entry + 1 assignment).
+☠️ TWO Everee API traps found doing this: (a) WC class POST now REQUIRES
+`workersCompPolicyPeriodId` (resolveWcPolicyPeriodId picks the latest;
+Select = period 84; Events has NONE — correct, contractors);
+(b) `/api/v2/workers-comp/list` paging param is `page` (NOT pageNumber) and
+the server hard-caps 20 rows/page ignoring pageSize — the old unpaginated
+read made the manual Sync button misclassify pages 2+ as creates
+(duplicate-key 500s on Apply). Both fixed in syncWorkersCompRates.ts
+(buildWcSyncPlan/applyWcSyncEntries now shared by callable + nightly).
+Verified read-only post-fix: Select 96 inSync / 0 creates / 0 updates /
+0 conflicts / 12 evereeOnly (audit-deleted rows, informational).
+**Inbox:** insourcees.com mail now force-labels NEEDS REPLY pre-AI
+(inboxChiefOfStaff triage) + morning brief carries a WC-filing reminder on
+days 1-4 of each month pointing at /reports/workers-comp (Claude drives the
+portal entry, Greg clicks Submit).

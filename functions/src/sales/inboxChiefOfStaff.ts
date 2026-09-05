@@ -230,6 +230,18 @@ export async function triageInboxCore(tenantId: string): Promise<TriageResult> {
         continue;
       }
 
+      // Carrier mail is never junk and never waits (Greg 2026-09-05):
+      // anything from InSource (insourcees.com) is a workers' comp action
+      // item — force it into NEEDS YOUR REPLY ahead of the AI classifier and
+      // process per the docs/claude/project_wc_classification.md playbook
+      // (Mass PN format tweaks → both builders; coverage grants → matrix
+      // upsert + Everee sync, then the nightly hygiene clears the 8040s).
+      if (header(full.data, 'From').toLowerCase().includes('insourcees.com')) {
+        await apply(LABELS.needsReply, false);
+        result.needsReply += 1;
+        continue;
+      }
+
       const ai = await classifyInboxMessage({ from: header(full.data, 'From'), subject, body: plainText(full.data) });
 
       if (ai.category === 'junk_pitch' && !isKnown) {
@@ -414,6 +426,26 @@ export async function morningBriefCore(tenantId: string): Promise<{ sent: boolea
   if (!client) return { sent: false };
   const { gmail, fromEmail } = client;
   const sections: string[] = [];
+
+  // Monthly WC filing ritual (Greg 2026-09-05): InSource payroll reports are
+  // due by the 4th-ish — remind on days 1-4, pointing at the HRX report that
+  // reads straight across into the portal. Claude drives the portal entry on
+  // request; Greg clicks Submit.
+  {
+    const dayPT = Number(
+      new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', day: 'numeric' }).format(new Date()),
+    );
+    if (dayPT >= 1 && dayPT <= 4) {
+      const lastMonth = new Date();
+      lastMonth.setUTCDate(1);
+      lastMonth.setUTCMonth(lastMonth.getUTCMonth() - 1);
+      const label = lastMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+      sections.push(
+        `WC FILING DUE (by the 4th): file ${label} payroll reports for C1 Select + C1 Events at client.insourcees.com.\n` +
+          `Numbers read straight across from https://hrxone.com/reports/workers-comp — ask Claude to drive the portal entry; you click Submit.`,
+      );
+    }
+  }
 
   // 1. Needs your reply (still in inbox with our label)
   try {

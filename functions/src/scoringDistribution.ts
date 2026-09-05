@@ -19,6 +19,7 @@ import { logger } from 'firebase-functions/v2';
 
 import { runTierPromotionSweepForTenant } from './tierAutomation/tierPromotionSweep';
 import { runMassPnAutoSubmitForTenant } from './workersComp/massPnAutoSubmit';
+import { runNightlyWcHygieneForTenant } from './workersComp/nightlyWcHygiene';
 
 const db = admin.firestore();
 
@@ -197,6 +198,11 @@ export const scheduledScoringDistribution = onSchedule(
       if (massPn.sent.length > 0) {
         logger.info('scheduledScoringDistribution: massPn sent', { tenantId: t.id, sent: massPn.sent });
       }
+      // Nightly WC hygiene (Greg 2026-09-05): additions-only Everee sync +
+      // 8040 replace-now auto-reclassify. No-op for tenants without a rate
+      // matrix; never throws.
+      const wc = await runNightlyWcHygieneForTenant(db, t.id);
+      if (!wc.success) fail++;
     }
     logger.info('scheduledScoringDistribution: done', {
       tenants: tenantsSnap.size,
