@@ -17,6 +17,8 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 
+import { runTierPromotionSweepForTenant } from './tierAutomation/tierPromotionSweep';
+
 const db = admin.firestore();
 
 /** Percentiles stored per metric (0–100). */
@@ -164,18 +166,34 @@ export const scheduledScoringDistribution = onSchedule(
     schedule: '0 3 * * *', // 3 AM daily
     timeZone: 'America/New_York',
     maxInstances: 1,
-    memory: '512MiB',
+    memory: '1GiB',
+    timeoutSeconds: 540,
   },
   async () => {
     const tenantsSnap = await db.collection('tenants').get();
     let ok = 0;
     let fail = 0;
+    let tierProposed = 0;
+    let tierAutoApplied = 0;
     for (const t of tenantsSnap.docs) {
       const result = await computeDistributionForTenant(t.id);
       if (result.success) ok++;
       else fail++;
+      // Tier 3 -> 2 promotion sweep rides this nightly loop (Cloud Run cap:
+      // no new function). No-op for tenants without a tierAutomation config;
+      // never throws.
+      const tier = await runTierPromotionSweepForTenant(db, t.id);
+      tierProposed += tier.proposed;
+      tierAutoApplied += tier.autoApplied;
+      if (!tier.success) fail++;
     }
-    logger.info('scheduledScoringDistribution: done', { tenants: tenantsSnap.size, ok, fail });
+    logger.info('scheduledScoringDistribution: done', {
+      tenants: tenantsSnap.size,
+      ok,
+      fail,
+      tierProposed,
+      tierAutoApplied,
+    });
   }
 );
 

@@ -37,11 +37,22 @@ export const WORKER_TIER_LABELS: Record<WorkerTier, string> = {
   3: 'Tier 3',
 };
 
+/**
+ * Worker-facing status names (Greg 2026-09-04). NOT shown to workers yet —
+ * they ship with the Claim Shift activation at app-store launch. Internal
+ * surfaces keep the Tier numbers.
+ */
+export const WORKER_TIER_PUBLIC_NAMES: Record<WorkerTier, string> = {
+  1: 'Top Pro',
+  2: 'Pro',
+  3: 'Member',
+};
+
 /** Menu subtitles — the internal meaning, kept short. Workers never see tiers. */
 export const WORKER_TIER_DESCRIPTIONS: Record<WorkerTier, string> = {
-  1: 'Trusted crew — recruiter-promoted only',
-  2: 'Proven — earned or promoted',
-  3: 'General population (default)',
+  1: '"Top Pro" — trusted crew, recruiter-promoted only',
+  2: '"Pro" — proven, earned or promoted',
+  3: '"Member" — general population (default)',
 };
 
 /**

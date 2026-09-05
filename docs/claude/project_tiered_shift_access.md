@@ -368,7 +368,10 @@ overbook margins per venue, waitlist SMS ("a spot opened for Saturday").
    short-notice fills need a compressed schedule (0/2/4h)?
 2. Where does claiming live vs Indeed Flex-sourced work? (Flex books on their side —
    tiering applies only to HRX-posted gig shifts; keep the boundary explicit.)
-3. Worker-facing status names — "Crew / Pro / Member"? Avoid exposing "Tier 3".
+3. ~~Worker-facing status names~~ **DECIDED (Greg 2026-09-04): Tier 1 = "Top
+   Pro", Tier 2 = "Pro", Tier 3 = "Member"** (`WORKER_TIER_PUBLIC_NAMES` in
+   `src/utils/workerTier.ts`). Workers see these only from the Claim Shift
+   activation at app-store launch; internal surfaces keep Tier numbers.
 4. Does Tier-1 auto-book need per-worker opt-in (Greg's parked designation implies
    recruiter-designated, worker-consented)?
 6. **Channel split for tier waves** — push-only for Tier 1/2 with SMS reserved for the

@@ -1339,6 +1339,15 @@ service cloud.firestore {
         allow read: if isAssignedToTenant(tenantId);
         allow write: if false;
       }
+
+      // --- TIER PROMOTION PROPOSALS (Tenants) - created by the nightly engine
+      // (Admin SDK); staff review them in Settings -> Tier automation and may
+      // only update status/decision fields (approve/dismiss). ---
+      match /tier_promotion_proposals/{userId} {
+        allow read: if isHRX() || hasSecurityLevel(tenantId, 5);
+        allow update: if isHRX() || hasSecurityLevel(tenantId, 5);
+        allow create, delete: if false;
+      }
       
       // --- SLACK CHANNEL MEMBERSHIPS (Tenants) ---
       match /slackChannelMembers/{membershipId} {

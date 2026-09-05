@@ -800,11 +800,15 @@ function assignmentReadinessEmploymentFromPipeline(args) {
   });
   const directDeposit = buildDirectDepositItem(overviewLike);
   const payOne = aggregatePayrollFromAccounts(args.workerPayrollAccount ? [args.workerPayrollAccount] : []);
+  const mirror = args.evereeMirror ?? null;
+  const mirrorI9Complete = Boolean(mirror?.i9SignedAt && mirror?.employerI9SignedAt);
+  const mirrorTaxComplete = Boolean(mirror?.w4SignedAt || mirror?.w9SignedAt);
+  const mirrorDirectDeposit = mirror?.directDepositReady === true;
   return {
-    i9Complete: i9.completed,
-    taxFormComplete: w4OrW9.completed || payOne.taxFormComplete,
-    payrollInviteSent: payOne.payrollInviteSent,
-    directDepositComplete: directDeposit.completed || payOne.directDepositComplete,
+    i9Complete: i9.completed || mirrorI9Complete,
+    taxFormComplete: w4OrW9.completed || payOne.taxFormComplete || mirrorTaxComplete,
+    payrollInviteSent: payOne.payrollInviteSent || mirror != null,
+    directDepositComplete: directDeposit.completed || payOne.directDepositComplete || mirrorDirectDeposit,
     handbookSigned: handbook.completed,
     policiesSigned: policies.completed
   };
