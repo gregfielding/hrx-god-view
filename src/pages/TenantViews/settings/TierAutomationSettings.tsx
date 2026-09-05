@@ -240,7 +240,12 @@ const TierAutomationSettings: React.FC = () => {
             helperText={`of ${maxPossible} possible points`}
           />
           <Box sx={{ flex: 1 }} />
-          <Button variant="contained" size="small" disabled={!dirty || saving} onClick={() => void handleSave()}>
+          <Button
+            variant="contained"
+            size="small"
+            disabled={(docExists && !dirty) || saving}
+            onClick={() => void handleSave()}
+          >
             {saving ? 'Saving…' : docExists ? 'Save changes' : 'Save & activate'}
           </Button>
         </Stack>
