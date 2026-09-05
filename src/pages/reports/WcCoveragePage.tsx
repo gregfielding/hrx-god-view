@@ -229,9 +229,19 @@ const WcCoveragePage: React.FC = () => {
       'Airborne/Bloodborn Exposure (Yes or No)',
       'Notes \n(COI or Endorsement Needs, Wording Specifics, etc...) ',
     ];
-    const rows: (string | number)[][] = [HEADERS];
-    data.massPn.forEach((r, i) => {
-      rows.push([
+    // One FILE per entity (Greg 2026-09-05): each entity is its own InSource
+    // client with its own policy — the carrier gets a separate request per
+    // entity, so a combined sheet would just need manual splitting.
+    const byEntity = new Map<string, typeof data.massPn>();
+    for (const r of data.massPn) {
+      if (!byEntity.has(r.entityId)) byEntity.set(r.entityId, []);
+      byEntity.get(r.entityId)!.push(r);
+    }
+    for (const entityRows of byEntity.values()) {
+      const entityName = entityRows[0].entityName;
+      const rows: (string | number)[][] = [HEADERS];
+      entityRows.forEach((r, i) => {
+        rows.push([
         // A-D fill once (their sample pattern).
         i === 0 ? 'C1 Staffing LLC' : '',
         i === 0 ? 'Greg Fielding' : '',
@@ -269,15 +279,19 @@ const WcCoveragePage: React.FC = () => {
         ]
           .filter(Boolean)
           .join('. '),
-      ]);
-    });
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = HEADERS.map((h, i) => ({
-      wch: Math.max(h.split('\n')[0].length, ...rows.slice(1).map((r2) => String(r2[i] ?? '').length), 6) + 2,
-    }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Mass PN');
-    XLSX.writeFile(wb, `Mass-Prospect-Notification_C1_${data.startDate}_to_${data.endDate}.xlsx`);
+        ]);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = HEADERS.map((h, i) => ({
+        wch: Math.max(h.split('\n')[0].length, ...rows.slice(1).map((r2) => String(r2[i] ?? '').length), 6) + 2,
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Mass PN');
+      XLSX.writeFile(
+        wb,
+        `Mass-Prospect-Notification_${entityName.replace(/\s+/g, '-')}_${data.startDate}_to_${data.endDate}.xlsx`,
+      );
+    }
   };
 
   const s = data?.summary ?? {};
@@ -318,7 +332,7 @@ const WcCoveragePage: React.FC = () => {
         <Tooltip
           title={
             data && data.massPn.length > 0
-              ? `${data.massPn.length} worksite rows needing carrier coverage — InSource's exact intake format`
+              ? `${data.massPn.length} worksite rows needing carrier coverage — one file per entity, InSource's exact intake format`
               : 'No carrier-ask rows in this window'
           }
         >
