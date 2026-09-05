@@ -86,6 +86,27 @@ interface MassPnRow {
   periodGross: number;
   workers: number;
   annualEstimate: number;
+  /** The REAL class code to request (dominant code the same titles carry in
+   *  the entity's other rated states) — never 8040. Null = novel titles. */
+  suggestedCode?: string | null;
+  suggestedBasis?: string[];
+  comparableRateMin?: number | null;
+  comparableRateMax?: number | null;
+}
+
+/** One line of the add-coverage "order form": entity + state + the code to
+ *  ask the carrier for, with dollars and comparable rates attached. */
+interface CoverageAsk {
+  entityId: string;
+  entityName: string;
+  state: string;
+  suggestedCode: string | null;
+  jobTitles: string[];
+  periodGross: number;
+  annualEstimate: number;
+  workers: number;
+  comparableRateMin: number | null;
+  comparableRateMax: number | null;
 }
 
 interface CoverageData {
@@ -95,6 +116,7 @@ interface CoverageData {
   summary: Record<string, number>;
   unverifiedCodes: Array<{ code: string; title: string; statesInUse: string[] }>;
   massPn: MassPnRow[];
+  coverageAsks?: CoverageAsk[];
 }
 
 const GAP_SECTIONS: Array<{
@@ -225,7 +247,9 @@ const WcCoveragePage: React.FC = () => {
         '', // client business description — fill in
         r.jobTitles.length ? r.jobTitles.join(', ') : '',
         r.state,
-        r.code,
+        // Ask for the REAL code — 8040 is our placeholder, not a requestable
+        // classification (Greg 2026-09-05).
+        r.suggestedCode || (r.code && r.code !== '8040' ? r.code : '(needs classification)'),
         r.annualEstimate,
         'No',
         'No',
@@ -234,7 +258,17 @@ const WcCoveragePage: React.FC = () => {
         'No',
         'No',
         'No',
-        `Est. annualized from ${usd(r.periodGross)} over ${data.startDate}→${data.endDate} (${r.workers} workers, ${r.entityName})`,
+        [
+          `Est. annualized from ${usd(r.periodGross)} over ${data.startDate}→${data.endDate} (${r.workers} workers, ${r.entityName})`,
+          r.suggestedCode && (r.suggestedBasis?.length ?? 0) > 0
+            ? `Code ${r.suggestedCode} suggested from titles rated elsewhere on our policy: ${(r.suggestedBasis ?? []).join(', ')}`
+            : '',
+          r.comparableRateMin != null
+            ? `Comparable rate on existing policy states: ${r.comparableRateMin}${r.comparableRateMax != null && r.comparableRateMax !== r.comparableRateMin ? `–${r.comparableRateMax}` : ''}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('. '),
       ]);
     });
     const ws = XLSX.utils.aoa_to_sheet(rows);
@@ -364,6 +398,69 @@ const WcCoveragePage: React.FC = () => {
               </CardContent>
             </Card>
           </Stack>
+
+          {/* The add-coverage order form (Greg 2026-09-05): what to ASK the
+              carrier for — real class codes suggested from the same titles
+              rated elsewhere on the entity's own policy, never 8040. */}
+          {(data.coverageAsks?.length ?? 0) > 0 && (
+            <Card variant="outlined" sx={{ mb: 3, borderColor: 'warning.main' }}>
+              <CardContent>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5 }}>
+                  What to ask the carrier for
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                  Carrier-ask payroll grouped by entity + state + the class code to request. Codes are
+                  suggested from the same job titles already rated on the entity&apos;s policy in other
+                  states; the rate range shows what that code costs where it&apos;s already covered. The
+                  Mass PN export uses these codes.
+                </Typography>
+                <TableContainer sx={{ overflowX: 'auto' }}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Entity</TableCell>
+                        <TableCell>State</TableCell>
+                        <TableCell>Ask for code</TableCell>
+                        <TableCell>Job titles</TableCell>
+                        <TableCell align="right">Period gross</TableCell>
+                        <TableCell align="right">Annual est.</TableCell>
+                        <TableCell align="right">Workers</TableCell>
+                        <TableCell align="right">Comparable rate</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {(data.coverageAsks ?? []).map((a) => (
+                        <TableRow key={`${a.entityId}_${a.state}_${a.suggestedCode ?? 'none'}`}>
+                          <TableCell>{a.entityName}</TableCell>
+                          <TableCell>{a.state}</TableCell>
+                          <TableCell>
+                            {a.suggestedCode ? (
+                              <Chip size="small" color="warning" variant="outlined" label={a.suggestedCode} sx={{ fontWeight: 700 }} />
+                            ) : (
+                              <Chip size="small" variant="outlined" label="needs classification" />
+                            )}
+                          </TableCell>
+                          <TableCell sx={{ maxWidth: 320 }}>
+                            <Typography variant="caption">{a.jobTitles.join(', ') || '—'}</Typography>
+                          </TableCell>
+                          <TableCell align="right">{usd(a.periodGross)}</TableCell>
+                          <TableCell align="right">{usd(a.annualEstimate)}</TableCell>
+                          <TableCell align="right">{a.workers}</TableCell>
+                          <TableCell align="right">
+                            {a.comparableRateMin != null
+                              ? a.comparableRateMax != null && a.comparableRateMax !== a.comparableRateMin
+                                ? `${a.comparableRateMin}–${a.comparableRateMax}`
+                                : String(a.comparableRateMin)
+                              : '—'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </CardContent>
+            </Card>
+          )}
 
           {data.entities.map((ent) => {
             const gapSections = GAP_SECTIONS.map((sec) => ({

@@ -43,6 +43,13 @@ interface MatrixMaps {
   rateByStateCode: Map<string, number>;
   byStateTitle: Map<string, { code: string; rate: number }>;
   byStateDefault: Map<string, { code: string; rate: number }>;
+  /** title(lower) → code → number of states where that title carries that
+   *  code on this entity's matrix (8040 excluded) — powers the "what code to
+   *  ask the carrier for" suggestion (Greg 2026-09-05). */
+  titleCodes: Map<string, Map<string, number>>;
+  /** code → rates across this entity's rated states (8040 excluded) — the
+   *  comparable-rate range shown next to each ask. */
+  codeRates: Map<string, number[]>;
 }
 
 interface MoneyAgg {
@@ -133,6 +140,8 @@ export async function buildWcCoverageReport(input: {
       rateByStateCode: new Map(),
       byStateTitle: new Map(),
       byStateDefault: new Map(),
+      titleCodes: new Map(),
+      codeRates: new Map(),
     };
     const apply = (x: Record<string, unknown>): void => {
       const st = trim(x.state).toUpperCase();
@@ -140,11 +149,23 @@ export async function buildWcCoverageReport(input: {
       const rate = num(x.rate);
       if (!st || !code) return;
       m.rateByStateCode.set(`${st}_${code}`, rate);
+      if (code !== '8040') {
+        if (!m.codeRates.has(code)) m.codeRates.set(code, []);
+        if (rate > 0) m.codeRates.get(code)!.push(rate);
+      }
       const titles = Array.isArray(x.jobTitles) ? (x.jobTitles as unknown[]) : [];
       for (const t of titles) {
         const title = trim(t);
         if (title === '*') m.byStateDefault.set(st, { code, rate });
-        else if (title) m.byStateTitle.set(`${st}_${title.toLowerCase()}`, { code, rate });
+        else if (title) {
+          m.byStateTitle.set(`${st}_${title.toLowerCase()}`, { code, rate });
+          if (code !== '8040') {
+            const key = title.toLowerCase();
+            if (!m.titleCodes.has(key)) m.titleCodes.set(key, new Map());
+            const tc = m.titleCodes.get(key)!;
+            tc.set(code, (tc.get(code) ?? 0) + 1);
+          }
+        }
       }
     };
     genericRates.forEach(apply);
@@ -416,21 +437,115 @@ export async function buildWcCoverageReport(input: {
       if (s.exists) accountNames.set(s.id, trim(s.data()?.name));
     });
   }
+  // "What to ask the carrier for" (Greg 2026-09-05): a gap riding 8040 (or
+  // nothing) gets a suggested REAL class code — the dominant code the same
+  // job titles carry in the entity's OTHER rated states — plus that code's
+  // rate range on the existing policy, so each ask row is actionable.
+  const suggestAsk = (
+    entityId: string,
+    currentCode: string,
+    titles: Set<string>,
+  ): { code: string; basis: string[]; rateMin: number | null; rateMax: number | null } | null => {
+    const matrix = matrixFor(entityId);
+    let code = currentCode && currentCode !== '8040' ? currentCode : '';
+    let basis: string[] = [];
+    if (!code) {
+      const tally = new Map<string, { hits: number; titles: string[] }>();
+      for (const raw of titles) {
+        const tc = matrix.titleCodes.get(raw.toLowerCase());
+        if (!tc) continue;
+        for (const [c, hits] of tc) {
+          if (!tally.has(c)) tally.set(c, { hits: 0, titles: [] });
+          const t = tally.get(c)!;
+          t.hits += hits;
+          t.titles.push(raw);
+        }
+      }
+      const best = Array.from(tally.entries()).sort((a, b) => b[1].hits - a[1].hits)[0];
+      if (!best) return null;
+      code = best[0];
+      basis = Array.from(new Set(best[1].titles)).slice(0, 4);
+    }
+    const rates = matrix.codeRates.get(code) ?? [];
+    return {
+      code,
+      basis,
+      rateMin: rates.length ? Math.min(...rates) : null,
+      rateMax: rates.length ? Math.max(...rates) : null,
+    };
+  };
+
   const massPn = Array.from(massAgg.values())
-    .map((m) => ({
-      entityId: m.entityId,
-      entityName: entityMeta.get(m.entityId)?.name ?? m.entityId,
-      accountName: accountNames.get(m.accountId) || '',
-      worksiteName: m.worksiteName,
-      worksiteAddress: m.worksiteAddress,
-      state: m.state,
-      code: m.code,
-      jobTitles: Array.from(m.jobTitles).slice(0, 4),
-      periodGross: m.gross,
-      workers: m.workers.size,
-      annualEstimate: Math.max(10000, Math.ceil(((m.gross / periodDays) * 365) / 10000) * 10000),
-    }))
+    .map((m) => {
+      const ask = suggestAsk(m.entityId, m.code, m.jobTitles);
+      return {
+        entityId: m.entityId,
+        entityName: entityMeta.get(m.entityId)?.name ?? m.entityId,
+        accountName: accountNames.get(m.accountId) || '',
+        worksiteName: m.worksiteName,
+        worksiteAddress: m.worksiteAddress,
+        state: m.state,
+        code: m.code,
+        jobTitles: Array.from(m.jobTitles).slice(0, 4),
+        periodGross: m.gross,
+        workers: m.workers.size,
+        annualEstimate: Math.max(10000, Math.ceil(((m.gross / periodDays) * 365) / 10000) * 10000),
+        suggestedCode: ask?.code ?? null,
+        suggestedBasis: ask?.basis ?? [],
+        comparableRateMin: ask?.rateMin ?? null,
+        comparableRateMax: ask?.rateMax ?? null,
+      };
+    })
     .sort((a, b) => b.periodGross - a.periodGross);
+
+  // The add-coverage order form: carrier-ask dollars grouped by
+  // (entity, state, suggested code).
+  interface AskAgg {
+    entityId: string;
+    state: string;
+    code: string | null;
+    gross: number;
+    workers: Set<string>;
+    titles: Set<string>;
+    rateMin: number | null;
+    rateMax: number | null;
+  }
+  const askAgg = new Map<string, AskAgg>();
+  for (const m of Array.from(massAgg.values())) {
+    const ask = suggestAsk(m.entityId, m.code, m.jobTitles);
+    const codeKey = ask?.code ?? '(needs classification)';
+    const key = `${m.entityId}|${m.state}|${codeKey}`;
+    if (!askAgg.has(key)) {
+      askAgg.set(key, {
+        entityId: m.entityId,
+        state: m.state,
+        code: ask?.code ?? null,
+        gross: 0,
+        workers: new Set(),
+        titles: new Set(),
+        rateMin: ask?.rateMin ?? null,
+        rateMax: ask?.rateMax ?? null,
+      });
+    }
+    const a = askAgg.get(key)!;
+    a.gross = round2(a.gross + m.gross);
+    m.workers.forEach((w) => a.workers.add(w));
+    m.jobTitles.forEach((t) => a.titles.add(t));
+  }
+  const coverageAsks = Array.from(askAgg.values())
+    .map((a) => ({
+      entityId: a.entityId,
+      entityName: entityMeta.get(a.entityId)?.name ?? a.entityId,
+      state: a.state,
+      suggestedCode: a.code,
+      jobTitles: Array.from(a.titles).slice(0, 6),
+      periodGross: a.gross,
+      annualEstimate: Math.max(10000, Math.ceil(((a.gross / periodDays) * 365) / 10000) * 10000),
+      workers: a.workers.size,
+      comparableRateMin: a.rateMin,
+      comparableRateMax: a.rateMax,
+    }))
+    .sort((a, b) => a.entityName.localeCompare(b.entityName) || b.periodGross - a.periodGross);
 
   // ---- Forward-looking: LIVE assignments with no code ---------------------
   // Mirrors getWcPlaceholderUsage's live set + recency cutoff. status-in is a
@@ -525,5 +640,6 @@ export async function buildWcCoverageReport(input: {
     },
     unverifiedCodes,
     massPn,
+    coverageAsks,
   };
 }
