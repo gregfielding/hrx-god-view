@@ -89,3 +89,17 @@ columns in the portal's entry order; Export Excel = 'Filing lines' sheet
 (portal column order) + 'Worker detail' sheet (the post-submit "actual
 data" upload). Entities filed from HRX: Select + Events; Resources files
 from Gusto.
+
+**Coverage-ask "order form" SHIPPED 2026-09-05 PM:** /reports/wc-coverage
+now answers "what do we ASK the carrier for": each carrier-ask cohort gets
+a suggested REAL class code — the dominant code the same job titles carry
+in the entity's OTHER rated states (matrixFor gained titleCodes/codeRates;
+8040 never suggested) — plus that code's rate range on the existing
+policy. New "What to ask the carrier for" table (entity + state + code +
+titles + gross + annual est. + comparable rate; novel titles show a
+"needs classification" chip), and the Mass PN export's Class Code column
+now carries the suggested code with basis + comparable range in Notes.
+First live run (90d): Events TN/NY/CA/CT -> 9014 @1.34-3.25; Select
+KY/MN/TX/MO/WI -> 8044 @1.38-3.45, MD -> 8018 (Forklift) @4.34. Headline:
+8040-needs-carrier $171k/90d, coverage exposure $135.8k (Events no-policy
+states).
