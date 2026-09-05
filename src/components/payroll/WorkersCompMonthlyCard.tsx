@@ -59,6 +59,25 @@ interface WcRow {
   entries: number;
   workers: number;
   premium: number | null;
+  /** InSource portal entry columns (Greg 2026-09-05): the filing form takes
+   *  Reg / OT / Double-Time gross per line and does its own discounting. */
+  regGross?: number;
+  otGross?: number;
+  dtGross?: number;
+}
+
+/** Per-worker backup behind each filing line — the portal's post-submit
+ *  "upload an excel file with the actual data". */
+interface WcWorkerDetail {
+  state: string;
+  code: string;
+  workerName: string;
+  hours: number;
+  regGross: number;
+  otGross: number;
+  dtGross: number;
+  total: number;
+  entries: number;
 }
 
 interface WcUnresolved {
@@ -116,6 +135,7 @@ interface WcReport {
   offCycle: Array<{ workDate: string; workerName: string; reasonLabel: string; total: number }>;
   offCycleTotal: number;
   grandTotal: number;
+  workerDetail?: WcWorkerDetail[];
 }
 
 function previousMonth(): string {
@@ -167,7 +187,7 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
     setError(null);
     try {
       const call = httpsCallable(functions, 'getWorkersCompMonthlyReport');
-      const res = await call({ tenantId, hiringEntityId: entityId, month });
+      const res = await call({ tenantId, hiringEntityId: entityId, month, includeWorkerDetail: true });
       setReport(res.data as WcReport);
     } catch (e: any) {
       setError(e?.message || 'Failed to generate report');
@@ -300,19 +320,55 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
       ['GRAND TOTAL', Number(report.grandTotal.toFixed(2))],
     ]);
 
-    sheet('Rates', [
-      ['State', 'Class code', 'Rate', 'Hours', 'Gross payroll', 'Premium', 'Workers'],
+    // Column order mirrors the InSource portal's filing form — read each row
+    // straight across into "Reg Gross Payroll / OT Gross Payroll / Double
+    // Time"; the portal computes its own discounts and premium.
+    sheet('Filing lines', [
+      ['State', 'Class code', 'Reg Gross Payroll', 'OT Gross Payroll', 'Double Time', 'Total', 'Rate', 'Est. premium', 'Hours', 'Workers'],
       ...report.rows.map((r) => [
         r.state,
         r.code,
-        r.rate ?? '',
-        r.hours,
+        Number((r.regGross ?? r.gross).toFixed(2)),
+        Number((r.otGross ?? 0).toFixed(2)),
+        Number((r.dtGross ?? 0).toFixed(2)),
         Number(r.gross.toFixed(2)),
+        r.rate ?? '',
         r.premium != null ? Number(r.premium.toFixed(2)) : '',
+        r.hours,
         r.workers,
       ]),
-      ['TOTAL', '', '', '', Number(report.totalGross.toFixed(2)), Number(report.totalPremium.toFixed(2)), ''],
+      [
+        'TOTAL',
+        '',
+        Number(report.rows.reduce((s, r) => s + (r.regGross ?? r.gross), 0).toFixed(2)),
+        Number(report.rows.reduce((s, r) => s + (r.otGross ?? 0), 0).toFixed(2)),
+        Number(report.rows.reduce((s, r) => s + (r.dtGross ?? 0), 0).toFixed(2)),
+        Number(report.totalGross.toFixed(2)),
+        '',
+        Number(report.totalPremium.toFixed(2)),
+        '',
+        '',
+      ],
     ]);
+
+    // "The actual data" — the per-worker backup the portal asks for after
+    // submitting the line totals.
+    if ((report.workerDetail?.length ?? 0) > 0) {
+      sheet('Worker detail', [
+        ['State', 'Class code', 'Worker', 'Hours', 'Reg gross', 'OT gross', 'Double time', 'Total', 'Entries'],
+        ...(report.workerDetail ?? []).map((w) => [
+          w.state,
+          w.code,
+          w.workerName,
+          w.hours,
+          Number(w.regGross.toFixed(2)),
+          Number(w.otGross.toFixed(2)),
+          Number(w.dtGross.toFixed(2)),
+          Number(w.total.toFixed(2)),
+          w.entries,
+        ]),
+      ]);
+    }
 
     if (report.unresolved.length > 0) {
       sheet('Unresolved', [
@@ -500,6 +556,11 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
                     <TableCell>Class code</TableCell>
                     <TableCell align="right">Rate</TableCell>
                     <TableCell align="right">Hours</TableCell>
+                    {/* The three InSource portal entry columns, in the
+                        portal's order — read straight across into the form. */}
+                    <TableCell align="right">Reg gross</TableCell>
+                    <TableCell align="right">OT gross</TableCell>
+                    <TableCell align="right">Double time</TableCell>
                     <TableCell align="right">Gross payroll</TableCell>
                     <TableCell align="right">Premium</TableCell>
                     <TableCell align="right">Workers</TableCell>
@@ -535,6 +596,9 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
                       </TableCell>
                       <TableCell align="right">{r.rate ?? '—'}</TableCell>
                       <TableCell align="right">{r.hours.toFixed(2)}</TableCell>
+                      <TableCell align="right">{usd(r.regGross ?? r.gross)}</TableCell>
+                      <TableCell align="right">{usd(r.otGross ?? 0)}</TableCell>
+                      <TableCell align="right">{usd(r.dtGross ?? 0)}</TableCell>
                       <TableCell align="right">{usd(r.gross)}</TableCell>
                       <TableCell align="right">{r.premium != null ? usd(r.premium) : '—'}</TableCell>
                       <TableCell align="right">{r.workers}</TableCell>
@@ -543,6 +607,15 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
                   <TableRow>
                     <TableCell colSpan={4} sx={{ fontWeight: 700 }}>
                       Total
+                    </TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                      {usd(report.rows.reduce((s, r) => s + (r.regGross ?? r.gross), 0))}
+                    </TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                      {usd(report.rows.reduce((s, r) => s + (r.otGross ?? 0), 0))}
+                    </TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                      {usd(report.rows.reduce((s, r) => s + (r.dtGross ?? 0), 0))}
                     </TableCell>
                     <TableCell align="right" sx={{ fontWeight: 700 }}>
                       {usd(report.totalGross)}
@@ -554,7 +627,7 @@ const WorkersCompMonthlyCard: React.FC<Props> = ({ tenantId, entityId, entityNam
                   </TableRow>
                   {report.offCycle.length > 0 && (
                     <TableRow>
-                      <TableCell colSpan={4}>
+                      <TableCell colSpan={7}>
                         Off-cycle payments ({report.offCycle.length}, not classified)
                       </TableCell>
                       <TableCell align="right">{usd(report.offCycleTotal)}</TableCell>

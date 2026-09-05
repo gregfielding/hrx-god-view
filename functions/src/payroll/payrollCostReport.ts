@@ -4349,6 +4349,15 @@ export const getWorkersCompMonthlyReport = onCall(
        *  (never part of gross); reported so the auditor sees them. */
       reimbursements: number;
       month: string;
+      /** InSource portal entry columns (Greg 2026-09-05): the filing form
+       *  wants Reg / OT / Double-Time gross typed separately per line and
+       *  does its own discounting. regGross absorbs premiums/tips/bonus and
+       *  any rounding so the three always sum to `total`. Contractor
+       *  entities are flat → everything in regGross. */
+      regGross: number;
+      otGross: number;
+      dtGross: number;
+      workerId: string;
     }
     const pickedEntries: PickedEntry[] = [];
     const assignmentIds = new Set<string>();
@@ -4385,6 +4394,8 @@ export const getWorkersCompMonthlyReport = onCall(
         trim((e.worksiteAddress as Record<string, unknown> | undefined)?.state).toUpperCase() ||
         trim(sidecarAddr?.state).toUpperCase() ||
         '';
+      const otGross = isContractor ? 0 : round2(ot * rate * 1.5);
+      const dtGross = isContractor || isImport ? 0 : round2(dt * rate * 2);
       pickedEntries.push({
         e,
         total,
@@ -4394,6 +4405,10 @@ export const getWorkersCompMonthlyReport = onCall(
         tips: entryTips,
         reimbursements: entryReimb,
         month: trim(e.workDate).slice(0, 7),
+        regGross: round2(total - otGross - dtGross),
+        otGross,
+        dtGross,
+        workerId: trim(e.workerId),
       });
       // ALL assignments (2026-08-09) — the coverage report needs venue names
       // even when the entry already carries a code; the code-resolution chain
@@ -4440,8 +4455,26 @@ export const getWorkersCompMonthlyReport = onCall(
       otExcess: number;
       tips: number;
       reimbursements: number;
+      regGross: number;
+      otGross: number;
+      dtGross: number;
     }
     const buckets = new Map<string, Bucket>();
+    // Per-worker detail for the InSource upload workbook ("the actual data"
+    // behind each filing line). Opt-in — only the monthly card requests it.
+    const includeWorkerDetail = request.data?.includeWorkerDetail === true;
+    interface WorkerLine {
+      state: string;
+      code: string;
+      workerId: string;
+      hours: number;
+      regGross: number;
+      otGross: number;
+      dtGross: number;
+      total: number;
+      entries: number;
+    }
+    const workerLines = new Map<string, WorkerLine>();
     /** Audit package: by-month rollup across the period. */
     const monthTotals = new Map<string, { gross: number; otExcess: number; tips: number; reimbursements: number; hours: number }>();
     interface UnresolvedGroup {
@@ -4601,7 +4634,7 @@ export const getWorkersCompMonthlyReport = onCall(
 
       const key = `${state}_${code}`;
       if (!buckets.has(key)) {
-        buckets.set(key, { state, code, gross: 0, hours: 0, entries: 0, workers: new Set(), otExcess: 0, tips: 0, reimbursements: 0 });
+        buckets.set(key, { state, code, gross: 0, hours: 0, entries: 0, workers: new Set(), otExcess: 0, tips: 0, reimbursements: 0, regGross: 0, otGross: 0, dtGross: 0 });
       }
       const b = buckets.get(key)!;
       b.gross = round2(b.gross + p.total);
@@ -4610,7 +4643,24 @@ export const getWorkersCompMonthlyReport = onCall(
       b.otExcess = round2(b.otExcess + p.otExcess);
       b.tips = round2(b.tips + p.tips);
       b.reimbursements = round2(b.reimbursements + p.reimbursements);
+      b.regGross = round2(b.regGross + p.regGross);
+      b.otGross = round2(b.otGross + p.otGross);
+      b.dtGross = round2(b.dtGross + p.dtGross);
       if (workerId) b.workers.add(workerId);
+
+      if (includeWorkerDetail) {
+        const wKey = `${state}|${code}|${workerId}`;
+        if (!workerLines.has(wKey)) {
+          workerLines.set(wKey, { state, code, workerId, hours: 0, regGross: 0, otGross: 0, dtGross: 0, total: 0, entries: 0 });
+        }
+        const w = workerLines.get(wKey)!;
+        w.hours = round2(w.hours + p.hours);
+        w.regGross = round2(w.regGross + p.regGross);
+        w.otGross = round2(w.otGross + p.otGross);
+        w.dtGross = round2(w.dtGross + p.dtGross);
+        w.total = round2(w.total + p.total);
+        w.entries += 1;
+      }
     }
 
     // Off-cycle payments (no WC classification) — separate visible section.
@@ -4662,6 +4712,9 @@ export const getWorkersCompMonthlyReport = onCall(
           reimbursements: b.reimbursements,
           auditable,
           premiumAuditable,
+          regGross: b.regGross,
+          otGross: b.otGross,
+          dtGross: b.dtGross,
         };
       })
       .sort((a, b) => a.state.localeCompare(b.state) || a.code.localeCompare(b.code));
@@ -4757,6 +4810,42 @@ export const getWorkersCompMonthlyReport = onCall(
       stateCodeOptions[st].sort((a, b) => a.code.localeCompare(b.code));
     }
 
+    // Resolve worker names for the upload workbook's detail sheet.
+    let workerDetail: Array<Record<string, unknown>> | undefined;
+    if (includeWorkerDetail) {
+      const detailIds = Array.from(new Set(Array.from(workerLines.values()).map((w) => w.workerId).filter(Boolean)));
+      const nameById = new Map<string, string>();
+      for (let i = 0; i < detailIds.length; i += 100) {
+        const chunk = detailIds.slice(i, i + 100);
+        const snaps = await db.getAll(...chunk.map((id) => db.doc(`users/${id}`)));
+        snaps.forEach((s) => {
+          if (!s.exists) return;
+          const u = s.data() as Record<string, unknown>;
+          const name =
+            `${trim(u.firstName)} ${trim(u.lastName)}`.trim() || trim(u.displayName) || s.id;
+          nameById.set(s.id, name);
+        });
+      }
+      workerDetail = Array.from(workerLines.values())
+        .map((w) => ({
+          state: w.state,
+          code: w.code,
+          workerName: w.workerId ? (nameById.get(w.workerId) ?? w.workerId) : '(unmatched import row)',
+          hours: w.hours,
+          regGross: w.regGross,
+          otGross: w.otGross,
+          dtGross: w.dtGross,
+          total: w.total,
+          entries: w.entries,
+        }))
+        .sort(
+          (a, b) =>
+            String(a.state).localeCompare(String(b.state)) ||
+            String(a.code).localeCompare(String(b.code)) ||
+            String(a.workerName).localeCompare(String(b.workerName)),
+        );
+    }
+
     const byMonth = Array.from(monthTotals.entries())
       .map(([m, t]) => ({ month: m, ...t, auditable: round2(t.gross - t.otExcess - t.tips) }))
       .sort((a, b) => a.month.localeCompare(b.month));
@@ -4791,6 +4880,7 @@ export const getWorkersCompMonthlyReport = onCall(
       offCycle,
       offCycleTotal,
       grandTotal: round2(totalGross + offCycleTotal),
+      ...(workerDetail ? { workerDetail } : {}),
     };
   },
 );
