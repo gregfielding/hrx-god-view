@@ -25,6 +25,7 @@ import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quic
 import { evereeRequest } from '../integrations/everee/evereeHttp';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { buildWcCoverageReport } from '../workersComp/coverageGaps';
+import { gmailClientFor } from '../sales/sodexoReplies';
 import { buildDataHealthReport } from './dataHealthReport';
 
 if (!admin.apps.length) {
@@ -4271,11 +4272,74 @@ async function loadWcMatrixForEntity(tenantId: string, hiringEntityId: string): 
  * Gross math mirrors getPayrollCostReport; contractor entities pay all hours
  * flat (no auto-OT). Premium = gross × rate / 100 per bucket.
  */
+/**
+ * InSource bulk-coverage contact (Greg 2026-09-05, "Submit to Eddie"): the
+ * account manager who receives Mass PN coverage requests. Confirmed from
+ * Greg's mailbox — he manually sent the first one to this address today.
+ */
+const INSOURCE_COVERAGE_CONTACT = { name: 'Eddie', email: 'eddiem@insourcees.com' };
+
 export const getWorkersCompMonthlyReport = onCall(
   { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
   async (request) => {
     const tenantId = trim(request.data?.tenantId);
     const hiringEntityId = trim(request.data?.hiringEntityId);
+
+    // "Submit to Eddie" mode: mail one client-built Mass PN workbook to the
+    // carrier contact via the connected Gmail mailbox. The file arrives
+    // base64 from the same builder as the Export button, so what Eddie gets
+    // is byte-identical to what Greg would download. Books-gated below like
+    // every other mode.
+    const emailMassPn = request.data?.emailMassPn as
+      | { entityName?: unknown; filename?: unknown; xlsxBase64?: unknown }
+      | undefined;
+    if (emailMassPn && typeof emailMassPn === 'object') {
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+      const entityName = trim(emailMassPn.entityName);
+      const filename = trim(emailMassPn.filename).replace(/[^\w.\-]+/g, '-') || 'Mass-PN.xlsx';
+      const xlsxBase64 = typeof emailMassPn.xlsxBase64 === 'string' ? emailMassPn.xlsxBase64 : '';
+      if (!entityName || !xlsxBase64) {
+        throw new HttpsError('invalid-argument', 'entityName and xlsxBase64 are required.');
+      }
+      if (xlsxBase64.length > 2_000_000) {
+        throw new HttpsError('invalid-argument', 'Attachment too large.');
+      }
+      const client = await gmailClientFor(tenantId);
+      if (!client) {
+        throw new HttpsError('failed-precondition', 'No connected Gmail mailbox for this tenant.');
+      }
+      const boundary = `masspn_${Date.now()}`;
+      const body =
+        'Eddie, please see the attached spreadsheet for new coverage requests. ' +
+        'Let me know if you have any questions or need more information. Thanks!';
+      const mime = [
+        `From: Greg Fielding <${client.fromEmail}>`,
+        `To: ${INSOURCE_COVERAGE_CONTACT.email}`,
+        `Subject: New bulk coverage request for ${entityName}`,
+        'MIME-Version: 1.0',
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        '',
+        body,
+        '',
+        `--${boundary}`,
+        `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet; name="${filename}"`,
+        'Content-Transfer-Encoding: base64',
+        `Content-Disposition: attachment; filename="${filename}"`,
+        '',
+        xlsxBase64.replace(/(.{76})/g, '$1\r\n'),
+        `--${boundary}--`,
+      ].join('\r\n');
+      await client.gmail.users.messages.send({
+        userId: 'me',
+        requestBody: {
+          raw: Buffer.from(mime).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+        },
+      });
+      return { ok: true, sentTo: INSOURCE_COVERAGE_CONTACT.email, entityName, filename };
+    }
     const month = trim(request.data?.month); // YYYY-MM
     // Audit-package range mode (Greg 2026-08-19): startDate/endDate span a
     // POLICY PERIOD (multi-month) instead of one month. Same math, plus

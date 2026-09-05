@@ -171,6 +171,8 @@ const WcCoveragePage: React.FC = () => {
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitResult, setSubmitResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -200,8 +202,17 @@ const WcCoveragePage: React.FC = () => {
    * VERBATIM from their template, line breaks included. Exposure flags
    * default "No" per past submissions; review before sending.
    */
-  const exportMassPn = async (): Promise<void> => {
-    if (!data || data.massPn.length === 0) return;
+  /** Per-entity Mass PN workbooks — shared by the Export download and the
+   *  "Submit to Eddie" email so both produce byte-identical files. */
+  const buildMassPnWorkbooks = async (): Promise<
+    Array<{
+      entityName: string;
+      filename: string;
+      wb: ReturnType<(typeof import('xlsx'))['utils']['book_new']>;
+      xlsx: typeof import('xlsx');
+    }>
+  > => {
+    if (!data || data.massPn.length === 0) return [];
     const XLSX = await import('xlsx');
     const HEADERS = [
       'Your Staffing Company Name  ',
@@ -237,6 +248,7 @@ const WcCoveragePage: React.FC = () => {
       if (!byEntity.has(r.entityId)) byEntity.set(r.entityId, []);
       byEntity.get(r.entityId)!.push(r);
     }
+    const out: Array<{ entityName: string; filename: string; wb: ReturnType<typeof XLSX.utils.book_new>; xlsx: typeof XLSX }> = [];
     for (const entityRows of byEntity.values()) {
       const entityName = entityRows[0].entityName;
       const rows: (string | number)[][] = [HEADERS];
@@ -287,10 +299,52 @@ const WcCoveragePage: React.FC = () => {
       }));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Mass PN');
-      XLSX.writeFile(
+      out.push({
+        entityName,
+        filename: `Mass-Prospect-Notification_${entityName.replace(/\s+/g, '-')}_${data.startDate}_to_${data.endDate}.xlsx`,
         wb,
-        `Mass-Prospect-Notification_${entityName.replace(/\s+/g, '-')}_${data.startDate}_to_${data.endDate}.xlsx`,
-      );
+        xlsx: XLSX,
+      });
+    }
+    return out;
+  };
+
+  const exportMassPn = async (): Promise<void> => {
+    for (const f of await buildMassPnWorkbooks()) {
+      f.xlsx.writeFile(f.wb, f.filename);
+    }
+  };
+
+  /** One email per entity to the InSource coverage contact, same file as the
+   *  export (Greg 2026-09-05). The send happens server-side via the connected
+   *  Gmail mailbox, books-gated. */
+  const submitToEddie = async (): Promise<void> => {
+    if (!data || submitting) return;
+    const files = await buildMassPnWorkbooks();
+    if (files.length === 0) return;
+    const ok = window.confirm(
+      `Email ${files.length} coverage request${files.length > 1 ? 's' : ''} to Eddie (eddiem@insourcees.com)?\n\n` +
+        files.map((f) => `• ${f.entityName} — ${f.filename}`).join('\n'),
+    );
+    if (!ok) return;
+    setSubmitting(true);
+    setSubmitResult(null);
+    try {
+      const fn = httpsCallable(functions, 'getWorkersCompMonthlyReport');
+      const sent: string[] = [];
+      for (const f of files) {
+        const xlsxBase64 = f.xlsx.write(f.wb, { type: 'base64', bookType: 'xlsx' }) as string;
+        await fn({
+          tenantId,
+          emailMassPn: { entityName: f.entityName, filename: f.filename, xlsxBase64 },
+        });
+        sent.push(f.entityName);
+      }
+      setSubmitResult(`Sent to Eddie: ${sent.join(', ')}`);
+    } catch (e) {
+      setSubmitResult(`Send failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -347,6 +401,24 @@ const WcCoveragePage: React.FC = () => {
             </Button>
           </span>
         </Tooltip>
+        <Tooltip title="Email one Mass PN file per entity to Eddie at InSource (eddiem@insourcees.com), from your connected mailbox — same files as the export.">
+          <span>
+            <Button
+              variant="contained"
+              color="warning"
+              size="small"
+              disabled={loading || submitting || !data || data.massPn.length === 0}
+              onClick={() => void submitToEddie()}
+            >
+              {submitting ? 'Sending…' : 'Submit to Eddie'}
+            </Button>
+          </span>
+        </Tooltip>
+        {submitResult && (
+          <Typography variant="caption" color={submitResult.startsWith('Send failed') ? 'error' : 'success.main'}>
+            {submitResult}
+          </Typography>
+        )}
         {data && (
           <Typography variant="caption" color="text.secondary">
             {data.startDate} → {data.endDate}

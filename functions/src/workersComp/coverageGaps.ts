@@ -390,6 +390,9 @@ export async function buildWcCoverageReport(input: {
   interface MassPnAgg {
     entityId: string;
     accountId: string;
+    /** Worksite-search candidates for rows with no direct linkage — resolved
+     *  to a client only when all existing candidates share one top-level. */
+    clueCandidates: Set<string>;
     worksiteName: string;
     worksiteAddress: string;
     state: string;
@@ -420,6 +423,54 @@ export async function buildWcCoverageReport(input: {
       if (acct) joAccounts.set(s.id, acct);
     });
   }
+
+  // Worksite search fallback (Greg 2026-09-05: "search accounts for
+  // 'Distribution Center Kentucky' — only Domino's shows; compare street
+  // addresses as well"): every job order carries worksiteName + street +
+  // account, so an unlinked entry's site clues can be searched against that
+  // index. Street+state match is strong; name+state match only counts when
+  // it lands on exactly ONE account — never guess on a carrier form.
+  const normSite = (s: string): string =>
+    s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const joSiteIndex: Array<{ nameKey: string; streetKey: string; state: string; accountId: string }> = [];
+  {
+    const joAll = await db
+      .collection(`tenants/${tenantId}/job_orders`)
+      .select('worksiteName', 'worksiteAddress', 'accountId', 'recruiterAccountId')
+      .get();
+    joAll.forEach((s) => {
+      const x = s.data() as Record<string, unknown>;
+      const acct = trim(x.accountId) || trim(x.recruiterAccountId);
+      if (!acct) return;
+      const wa = (x.worksiteAddress ?? {}) as Record<string, unknown>;
+      const nameKey = normSite(trim(x.worksiteName));
+      const streetKey = normSite(trim(wa.street) || trim(wa.line1));
+      if (!nameKey && !streetKey) return;
+      joSiteIndex.push({ nameKey, streetKey, state: trim(wa.state).toUpperCase(), accountId: acct });
+    });
+  }
+  // Returns CANDIDATE account ids (street matches win over name matches).
+  // Uniqueness is judged later at the TOP-LEVEL account — two sibling child
+  // venues of the same national are one client, not an ambiguity, and JO
+  // account ids can point at deleted/legacy docs that must not count.
+  const matchAccountBySiteClues = (siteName: string, streetLine: string, state: string): string[] => {
+    const nk = normSite(siteName);
+    const sk = normSite(streetLine);
+    const streetHits = new Set<string>();
+    const nameHits = new Set<string>();
+    for (const s of joSiteIndex) {
+      if (state && s.state && s.state !== state) continue;
+      if (sk && s.streetKey && sk === s.streetKey) streetHits.add(s.accountId);
+      if (
+        nk.length >= 8 &&
+        s.nameKey.length >= 8 &&
+        (nk === s.nameKey || nk.includes(s.nameKey) || s.nameKey.includes(nk))
+      ) {
+        nameHits.add(s.accountId);
+      }
+    }
+    return streetHits.size > 0 ? Array.from(streetHits) : Array.from(nameHits);
+  };
   for (const p of picked) {
     if (!p.carrierAsk) continue;
     const a = p.assignmentId ? assignments.get(p.assignmentId) : undefined;
@@ -434,12 +485,21 @@ export async function buildWcCoverageReport(input: {
         : '') || p.sidecarAddress;
     const accountId =
       trim(a?.recruiterAccountId) || p.entryAccountId || joAccounts.get(p.jobOrderId) || '';
+    const clueCandidates = accountId
+      ? []
+      : matchAccountBySiteClues(
+          worksiteName,
+          trim(wa?.street) || worksiteAddress.split(',')[0] || '',
+          p.state,
+        );
     if (accountId) accountIds.add(accountId);
+    clueCandidates.forEach((id) => accountIds.add(id));
     const key = `${p.entityId}|${accountId}|${worksiteName}|${p.state}|${p.resolvedCode ?? ''}`;
     if (!massAgg.has(key)) {
       massAgg.set(key, {
         entityId: p.entityId,
         accountId,
+        clueCandidates: new Set(clueCandidates),
         worksiteName,
         worksiteAddress,
         state: p.state,
@@ -450,6 +510,7 @@ export async function buildWcCoverageReport(input: {
       });
     }
     const m = massAgg.get(key)!;
+    clueCandidates.forEach((id) => m.clueCandidates.add(id));
     if (p.jobTitle && p.jobTitle !== '(no title)') m.jobTitles.add(p.jobTitle);
     m.gross = round2(m.gross + p.total);
     if (p.workerId) m.workers.add(p.workerId);
@@ -473,16 +534,31 @@ export async function buildWcCoverageReport(input: {
   };
   await fetchAccounts(Array.from(accountIds));
   await fetchAccounts(Array.from(accountDocs.values()).map((a) => a.parentAccountId).filter(Boolean));
-  const accountNames = new Map<string, string>();
-  for (const id of accountIds) {
+  const topLevelId = (id: string): string => {
     let cur = id;
     for (let hop = 0; hop < 3; hop++) {
       const doc = accountDocs.get(cur);
       if (!doc?.parentAccountId || !accountDocs.get(doc.parentAccountId)) break;
       cur = doc.parentAccountId;
     }
-    accountNames.set(id, accountDocs.get(cur)?.name ?? accountDocs.get(id)?.name ?? '');
+    return cur;
+  };
+  const accountNames = new Map<string, string>();
+  for (const id of accountIds) {
+    const top = topLevelId(id);
+    accountNames.set(id, accountDocs.get(top)?.name ?? accountDocs.get(id)?.name ?? '');
   }
+  /** Client from worksite-search candidates: drop ids with no real account
+   *  doc, collapse the rest to top level — unique winner or nothing. */
+  const clientFromClues = (candidates: Set<string>): string => {
+    const tops = new Set<string>();
+    for (const id of candidates) {
+      if (!accountDocs.has(id)) continue;
+      tops.add(topLevelId(id));
+    }
+    if (tops.size !== 1) return '';
+    return accountDocs.get(Array.from(tops)[0])?.name ?? '';
+  };
 
   // Last resort for rows with NO account linkage anywhere (traveler import
   // rows): conservative name-match of the worksite string against TOP-LEVEL
@@ -560,7 +636,11 @@ export async function buildWcCoverageReport(input: {
       return {
         entityId: m.entityId,
         entityName: entityMeta.get(m.entityId)?.name ?? m.entityId,
-        accountName: accountNames.get(m.accountId) || matchClientBySiteName(m.worksiteName) || '',
+        accountName:
+          accountNames.get(m.accountId) ||
+          clientFromClues(m.clueCandidates) ||
+          matchClientBySiteName(m.worksiteName) ||
+          '',
         worksiteName: m.worksiteName,
         worksiteAddress: m.worksiteAddress,
         state: m.state,
