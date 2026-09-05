@@ -60,3 +60,32 @@ Workers' comp classification build-out. Two collections: `tenants/{t}/workers_co
   /$7.2k unresolvable; 4 skipped (bill < pay suspicious). Accrual
   coverage 45% → **99%**; window truth: pay $1.019M, bill $1.315M,
   ~22.5% gross margin.
+
+## 2026-09-05 — Select matrix audited vs the LIVE portal schedule (Greg's screenshots)
+
+Greg produced screenshots of the InSource portal's C1 Select August filing
+form — the authoritative 59-line active schedule (AL 9014 … VA 8046, incl.
+CA(3) block + IL 8810 clerical). Audit result: **all 59 lines present in
+HRX, all rates match to the penny, zero missing.** But 15 rows were VISIBLE
+to Select off its policy: 11 were the C1 Events schedule still living as
+GENERIC docs (AZ/FL/IL/MD/MN/MO/TX/WI 9014, CA 9008/9016, MI 9015) — titles
+merged into the existing Events-scoped twins, generics DELETED (Select no
+longer sees them; Events unaffected, scoped rows win). 4 were on NEITHER
+schedule (NJ 9014, NV 9014, NV 9083, TX 8810) — titles merged into the
+generic STATE_8040 placeholders, orphans deleted, per Greg ("changed to
+8040 placeholders until we fix"). 41 Aug Select entries riding WI/MO 9014
+($6,928.56 WI + $1,787.45 MO) restamped 8040 @2.35 — they surface on the
+8040 Placeholders tab + the InSource letter's MO/WI coverage asks; the
+portal has no 8040 line so they are NOT filed. ⚠️ Lesson: generic matrix
+rows leak across entities — when a carrier line belongs to ONE entity,
+scope it (`STATE_CODE__e__ENTITY`); the audit script pattern lives in this
+session's history (compare Select-visible rows vs the portal table).
+
+**InSource portal filing view SHIPPED same day:** getWorkersCompMonthlyReport
+rows carry regGross/otGross/dtGross (reg absorbs premiums/tips/bonus +
+rounding; contractor entities flat in reg) + `includeWorkerDetail` returns
+per-(state,code,worker) rows. /reports/workers-comp table shows the three
+columns in the portal's entry order; Export Excel = 'Filing lines' sheet
+(portal column order) + 'Worker detail' sheet (the post-submit "actual
+data" upload). Entities filed from HRX: Select + Events; Resources files
+from Gusto.
