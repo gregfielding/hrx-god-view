@@ -200,6 +200,9 @@ export async function buildWcCoverageReport(input: {
     jobTitle: string; // filled after assignment fetch when needed
     assignmentId: string;
     jobOrderId: string;
+    /** Denormalized on timesheet entries — often the ONLY account linkage on
+     *  import rows (no assignment, no job order). */
+    entryAccountId: string;
     entryCode: string;
     workerId: string;
     total: number;
@@ -269,6 +272,7 @@ export async function buildWcCoverageReport(input: {
       jobTitle: '',
       assignmentId,
       jobOrderId: trim(e.jobOrderId),
+      entryAccountId: trim(e.accountId),
       entryCode,
       workerId: trim(e.workerId),
       total,
@@ -402,7 +406,7 @@ export async function buildWcCoverageReport(input: {
   for (const p of picked) {
     if (!p.carrierAsk) continue;
     const a = p.assignmentId ? assignments.get(p.assignmentId) : undefined;
-    if (!trim(a?.recruiterAccountId) && p.jobOrderId) askJoIds.add(p.jobOrderId);
+    if (!trim(a?.recruiterAccountId) && !p.entryAccountId && p.jobOrderId) askJoIds.add(p.jobOrderId);
   }
   const joAccounts = new Map<string, string>();
   const joIdList = Array.from(askJoIds);
@@ -428,7 +432,8 @@ export async function buildWcCoverageReport(input: {
             .filter(Boolean)
             .join(', ')
         : '') || p.sidecarAddress;
-    const accountId = trim(a?.recruiterAccountId) || joAccounts.get(p.jobOrderId) || '';
+    const accountId =
+      trim(a?.recruiterAccountId) || p.entryAccountId || joAccounts.get(p.jobOrderId) || '';
     if (accountId) accountIds.add(accountId);
     const key = `${p.entityId}|${accountId}|${worksiteName}|${p.state}|${p.resolvedCode ?? ''}`;
     if (!massAgg.has(key)) {
@@ -478,6 +483,39 @@ export async function buildWcCoverageReport(input: {
     }
     accountNames.set(id, accountDocs.get(cur)?.name ?? accountDocs.get(id)?.name ?? '');
   }
+
+  // Last resort for rows with NO account linkage anywhere (traveler import
+  // rows): conservative name-match of the worksite string against TOP-LEVEL
+  // account names ("Venuesmart" sidecar → "Venuesmart LLC National"). Only
+  // fires when the account's base name (≥5 chars, suffixes stripped) appears
+  // in the site name — never fuzzy.
+  const topLevelNamesByToken: Array<{ token: string; name: string }> = [];
+  {
+    const allAccounts = await db
+      .collection(`tenants/${tenantId}/accounts`)
+      .select('name', 'parentAccountId')
+      .get();
+    allAccounts.forEach((s) => {
+      const x = s.data() as Record<string, unknown>;
+      if (trim(x.parentAccountId)) return; // children never match
+      const name = trim(x.name);
+      const token = name
+        .toLowerCase()
+        .replace(/\b(llc|inc|national|account|accounts|corp|co)\b/g, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+      if (token.length >= 5) topLevelNamesByToken.push({ token, name });
+    });
+    // Longest tokens first so "venuesmart events" beats "venuesmart".
+    topLevelNamesByToken.sort((a, b) => b.token.length - a.token.length);
+  }
+  const matchClientBySiteName = (siteName: string): string => {
+    const hay = siteName.toLowerCase();
+    for (const t of topLevelNamesByToken) {
+      if (hay.includes(t.token)) return t.name;
+    }
+    return '';
+  };
   // "What to ask the carrier for" (Greg 2026-09-05): a gap riding 8040 (or
   // nothing) gets a suggested REAL class code — the dominant code the same
   // job titles carry in the entity's OTHER rated states — plus that code's
@@ -522,7 +560,7 @@ export async function buildWcCoverageReport(input: {
       return {
         entityId: m.entityId,
         entityName: entityMeta.get(m.entityId)?.name ?? m.entityId,
-        accountName: accountNames.get(m.accountId) || '',
+        accountName: accountNames.get(m.accountId) || matchClientBySiteName(m.worksiteName) || '',
         worksiteName: m.worksiteName,
         worksiteAddress: m.worksiteAddress,
         state: m.state,
