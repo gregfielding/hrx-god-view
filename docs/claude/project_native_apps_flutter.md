@@ -107,9 +107,30 @@ In-app links (About & Legal, signup consent) intentionally point at the SPA
 routes (`/privacy`, `/terms`) so workers get the language-aware version; same
 i18n source, so the content is identical.
 
-Still open: `c1staffing.com/support` 404s and both stores require a working
-support URL. (Both listings currently use `https://hrxone.com` as the support
-URL — 2026-09-05.)
+**Support URL = `https://www.c1staffing.com/support`** (built 2026-09-05 in
+Squarespace, Greg's session; both store listings point at it — ASC version
+"Support URL", Play store-settings "Website"). It is a Not-Linked page with one
+Code Block holding self-contained HTML/CSS (EN + ES: sign-in by SMS code,
+applying, schedule, pay, account/deletion, contact `support@c1staffing.com` +
+`(424) 500-4692`); source kept in this repo at
+`docs/claude/assets/c1staffing-support-page.html` — edit there, then paste into
+the block (Pages → Not Linked → Support → Edit → pencil on the block).
+The site footer links Terms / Privacy / Support.
+
+**`c1staffing.com/privacy` now 301s to `hrxone.com/legal/privacy.html`** via
+Settings → Developer Tools → URL Mappings (`/privacy -> https://hrxone.com/legal/privacy.html 301`);
+the old 2024 Squarespace policy page was re-slugged to `/privacy-2024` (still
+enabled, unlinked) so the mapping isn't shadowed. One policy, one source of
+truth — no more contradiction for store review. `/terms` still serves the
+Squarespace Terms of Use page (not flagged as conflicting).
+
+Squarespace automation notes: c1staffing.com is site
+`lilac-smilodon-jj54.squarespace.com` (7.1, Fluid Engine). Code Blocks use
+CodeMirror 6 — load HTML by dispatching a synthetic `paste` ClipboardEvent on
+`[role=dialog] .cm-content` (typing triggers auto-close tags); the block
+starts 3 columns wide — drag the top-right handle to the right edge; page
+settings auto-prefix the URL slug with `/` (type `privacy-2024`, not
+`/privacy-2024`).
 
 ## Store console state (2026-09-05, Claude drove both consoles in Greg's Chrome)
 
