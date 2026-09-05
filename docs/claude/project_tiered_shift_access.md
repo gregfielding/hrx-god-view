@@ -12,6 +12,22 @@
 > Claim Shift release windows around the app-store launch (~2026-09-11). Workers
 > see nothing until then; worker-facing NAMED statuses (never "Tier 3") ship with
 > claim windows.
+>
+> **Phase 2 shipped same day — threshold engine LIVE in PROPOSE mode for C1.**
+> Config `tenants/{t}/settings/tierAutomation` (Settings → Tier Automation, in
+> Hiring & AI); shared scorer `shared/workerTierScoring.ts` (mirrored; functions
+> reaches it via the `functions/src/shared` symlink); sweep
+> `functions/src/tierAutomation/tierPromotionSweep.ts` rides
+> scheduledScoringDistribution (3 AM ET; bumped to 1GiB/540s). Screening points
+> score COMPLETION (Greg's seriousness signal, not clearance) from AccuSource
+> `backgroundChecks` mapped by candidateId — the user-doc order arrays are
+> near-empty legacy (1 hit in 14k). Profile completion falls back to a port of
+> calculateProfileScore (only ~10% have a stored score). First sweep:
+> **148/14,059 qualified at threshold 70**; queue at
+> `tenants/{t}/tier_promotion_proposals` (new rules block: staff read/update,
+> create/delete server-only). Dismissed = never re-proposed; approved = promoted
+> under the approver's name; Automatic mode promotes as "HRX Tier Engine".
+> Demotion/earn-back NOT wired yet — blocked on the no-show penalty marking.
 
 > Greg + Claude design discussion 2026-08-29, written for Mark + his Claude. Status:
 > **design brief, nothing built.** Emerged from the signup-flow review
