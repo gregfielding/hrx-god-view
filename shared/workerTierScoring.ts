@@ -63,8 +63,8 @@ export const TIER_FACTOR_LABELS: Record<keyof TierAutomationPoints, string> = {
   skills: 'Job skills',
   profilePhoto: 'Profile photo',
   appInstalled: 'App installed',
-  backgroundCheck: 'Background check clear',
-  drugScreen: 'Drug screen clear',
+  backgroundCheck: 'Background check completed',
+  drugScreen: 'Drug screen completed',
 };
 
 /** Normalized inputs the scorer runs on — extraction lives separately. */
@@ -81,8 +81,15 @@ export interface TierScoreSignals {
    * subcollection is worker-readable only); null = not checked, scores 0.
    */
   appInstalled: boolean | null;
-  backgroundCheckClear: boolean;
-  drugScreenClear: boolean;
+  /**
+   * COMPLETED, not necessarily clear (Greg 2026-09-04: completing a screening
+   * is the seriousness signal; clearance is enforced by the hiring gates, and
+   * propose mode keeps a human on every promotion). True when a legacy
+   * user-doc order reads clear/complete OR the sweep found a completed
+   * AccuSource report for this candidate.
+   */
+  backgroundCheckCompleted: boolean;
+  drugScreenCompleted: boolean;
 }
 
 export interface TierScoreFactor {
@@ -131,23 +138,74 @@ function complianceIsClear(entry: unknown): boolean {
 }
 
 /**
- * Pull scorecard signals off a raw `users/{uid}` doc. `appInstalled` cannot be
- * derived from the doc (pushTokens is a subcollection) — the sweep passes it
- * when checked; the web review UI shows whatever the proposal recorded.
- *
- * v1 reads user-doc screening fields only (backgroundCheckOrders /
- * drugScreeningOrders / workerCompliance). AccuSource `backgroundChecks` docs
- * are not consulted yet — TODO fold the CLEARED band in server-side.
+ * Same rules as calculateProfileScore (src/utils/applicantScoring.ts) — the
+ * fallback the god-view mapper computes at read time. Ported here because only
+ * ~10% of workers have a STORED completeness/aiProfileScore, and the sweep
+ * must see the same profile score the UI shows.
+ */
+export function computeProfileCompletenessFallback(userData: Record<string, unknown>): number {
+  let score = 0;
+  const hasBasicInfo = Boolean(
+    nonEmpty(userData.firstName) &&
+      nonEmpty(userData.lastName) &&
+      nonEmpty(userData.email) &&
+      (nonEmpty(userData.phone) || nonEmpty(userData.phoneE164)) &&
+      userData.dob &&
+      (userData.address || userData.addressInfo),
+  );
+  if (hasBasicInfo) score += 20;
+  if (userData.phoneVerified === true) score += 10;
+  if (userData.workEligibility) score += 10;
+  const skills = Array.isArray(userData.skills) ? userData.skills.length : 0;
+  if (skills >= 3) score += 15;
+  else if (skills > 0) score += (skills / 3) * 15;
+  if (Array.isArray(userData.workHistory) && userData.workHistory.length > 0) score += 15;
+  if (Array.isArray(userData.certifications) && userData.certifications.length > 0) score += 10;
+  if (Array.isArray(userData.education) && userData.education.length > 0) score += 5;
+  const loginCount = Number(userData.loginCount);
+  if (Number.isFinite(loginCount) && loginCount > 3) score += 5;
+  const updatedAt = userData.updatedAt as { toDate?: () => Date } | string | number | null;
+  if (updatedAt) {
+    const d =
+      typeof updatedAt === 'object' && typeof updatedAt?.toDate === 'function'
+        ? updatedAt.toDate()
+        : new Date(updatedAt as string | number);
+    if (!Number.isNaN(d.getTime()) && (Date.now() - d.getTime()) / 86400000 <= 30) score += 5;
+  }
+  if (
+    userData.applicationData &&
+    typeof userData.applicationData === 'object' &&
+    Object.keys(userData.applicationData as object).length > 1
+  ) {
+    score += 3;
+  }
+  if (Array.isArray(userData.languages) && userData.languages.length > 0) score += 2;
+  return Math.min(Math.round(score), 100);
+}
+
+/**
+ * Pull scorecard signals off a raw `users/{uid}` doc. Three signals cannot be
+ * derived from the doc alone and arrive via opts when the caller knows them:
+ * appInstalled (pushTokens subcollection, worker-readable only) and the two
+ * screening completions (AccuSource `backgroundChecks` docs — the sweep maps
+ * completed reports by candidateId; the legacy user-doc order arrays are
+ * still honored as an OR).
  */
 export function extractTierScoreSignals(
   userData: Record<string, unknown>,
-  opts: { appInstalled?: boolean | null } = {},
+  opts: {
+    appInstalled?: boolean | null;
+    backgroundCheckCompleted?: boolean;
+    drugScreenCompleted?: boolean;
+  } = {},
 ): TierScoreSignals {
   const scoreSummary = (userData.scoreSummary ?? {}) as Record<string, unknown>;
   const snapshot = (userData.recruiterScoreSnapshot ?? {}) as Record<string, unknown>;
 
   const profileScore100 =
-    clamp100(scoreSummary.completenessScore) ?? clamp100(userData.aiProfileScore);
+    clamp100(scoreSummary.completenessScore) ??
+    clamp100(userData.aiProfileScore) ??
+    computeProfileCompletenessFallback(userData);
 
   // recruiterScoreSnapshot is the canonical interview read; scoreSummary
   // fallbacks match src/shared/recruiterMasterScore.ts precedence. NOTE
@@ -175,9 +233,14 @@ export function extractTierScoreSignals(
     skillsCount: skills.filter((s) => nonEmpty(s)).length,
     hasProfilePhoto: nonEmpty(userData.avatar),
     appInstalled: opts.appInstalled ?? null,
-    backgroundCheckClear:
-      bgOrders.some(orderIsClear) || complianceIsClear(compliance.backgroundCheck),
-    drugScreenClear: drugOrders.some(orderIsClear) || complianceIsClear(compliance.drugScreen),
+    backgroundCheckCompleted:
+      opts.backgroundCheckCompleted === true ||
+      bgOrders.some(orderIsClear) ||
+      complianceIsClear(compliance.backgroundCheck),
+    drugScreenCompleted:
+      opts.drugScreenCompleted === true ||
+      drugOrders.some(orderIsClear) ||
+      complianceIsClear(compliance.drugScreen),
   };
 }
 
@@ -251,17 +314,17 @@ export function scoreTierPromotion(
   factors.push({
     key: 'backgroundCheck',
     label: TIER_FACTOR_LABELS.backgroundCheck,
-    earned: signals.backgroundCheckClear ? p.backgroundCheck : 0,
+    earned: signals.backgroundCheckCompleted ? p.backgroundCheck : 0,
     max: p.backgroundCheck,
-    detail: signals.backgroundCheckClear ? 'clear' : 'none/not clear',
+    detail: signals.backgroundCheckCompleted ? 'completed' : 'not completed',
   });
 
   factors.push({
     key: 'drugScreen',
     label: TIER_FACTOR_LABELS.drugScreen,
-    earned: signals.drugScreenClear ? p.drugScreen : 0,
+    earned: signals.drugScreenCompleted ? p.drugScreen : 0,
     max: p.drugScreen,
-    detail: signals.drugScreenClear ? 'clear' : 'none/not clear',
+    detail: signals.drugScreenCompleted ? 'completed' : 'not completed',
   });
 
   const total = factors.reduce((s, f) => s + f.earned, 0);

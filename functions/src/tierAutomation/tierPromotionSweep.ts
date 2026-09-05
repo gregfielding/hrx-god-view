@@ -102,6 +102,30 @@ export async function runTierPromotionSweepForTenant(
     const existingSnap = await proposalsCol.get();
     const existingByUid = new Map(existingSnap.docs.map((d) => [d.id, d.data()]));
 
+    // AccuSource screening completions by candidate uid — the real screening
+    // pipeline (user-doc order arrays are the near-empty legacy path). One
+    // query per configured tenant. Verdict lines live in the vendor payload;
+    // COMPLETION is the scored signal (Greg 2026-09-04), clearance stays a
+    // hiring-gate concern.
+    const bgCompletedUids = new Set<string>();
+    const drugCompletedUids = new Set<string>();
+    const bgcSnap = await db
+      .collection('backgroundChecks')
+      .where('tenantId', '==', tenantId)
+      .get();
+    for (const d of bgcSnap.docs) {
+      const b = d.data() as Record<string, unknown>;
+      const uid = String(b.candidateId ?? '');
+      if (!uid) continue;
+      const hrxStatus = String(b.hrxStatus ?? '');
+      if (b.finalReportReady === true || b.orderCompleted === true || hrxStatus === 'report_ready' || hrxStatus === 'completed') {
+        bgCompletedUids.add(uid);
+      }
+      if (b.drugReportReady === true || hrxStatus === 'drug_report_ready') {
+        drugCompletedUids.add(uid);
+      }
+    }
+
     const usersSnap = await db
       .collection('users')
       .where(`tenantIds.${tenantId}.securityLevel`, 'in', ['0', '1', '2', '3', '4'])
@@ -147,7 +171,15 @@ export async function runTierPromotionSweepForTenant(
 
       result.evaluated++;
 
-      let card = scoreTierPromotion(extractTierScoreSignals(data, { appInstalled: null }), config, now);
+      const baseOpts = {
+        backgroundCheckCompleted: bgCompletedUids.has(uid),
+        drugScreenCompleted: drugCompletedUids.has(uid),
+      };
+      let card = scoreTierPromotion(
+        extractTierScoreSignals(data, { ...baseOpts, appInstalled: null }),
+        config,
+        now,
+      );
       // Lazy app-token check: only when the factor is live AND it could flip
       // the outcome (score within [threshold - points, threshold)).
       if (
@@ -156,7 +188,11 @@ export async function runTierPromotionSweepForTenant(
         card.total + config.points.appInstalled >= config.threshold
       ) {
         const installed = await hasAppPushToken(db, uid);
-        card = scoreTierPromotion(extractTierScoreSignals(data, { appInstalled: installed }), config, now);
+        card = scoreTierPromotion(
+          extractTierScoreSignals(data, { ...baseOpts, appInstalled: installed }),
+          config,
+          now,
+        );
       }
       if (!card.qualifies) continue;
 

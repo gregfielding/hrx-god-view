@@ -68,8 +68,8 @@ const FACTOR_HINTS: Partial<Record<keyof TierAutomationPoints, string>> = {
   interviewScore: 'Scaled by the 0–100 AI interview score; no interview = 0',
   skills: 'Full points at 3+ skills, half at 1–2',
   appInstalled: 'iOS/Android app install; inactive until Oct 1, 2026',
-  backgroundCheck: 'Completed and clear — strong "shows up" signal',
-  drugScreen: 'Completed and negative',
+  backgroundCheck: 'Completed report on file — strong "shows up" signal',
+  drugScreen: 'Completed drug panel on file',
 };
 
 function toDateMaybe(v: unknown): Date | null {
