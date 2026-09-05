@@ -113,3 +113,42 @@ Purolator (ZQIA66WQkAhPwRDzekdj), "Houston Distribution Center" = ORS Nasco
 (TVzTtGoeuvd69MskPZF7) — 21 Indeed Flex import entries had no accountId and
 were stamped; future imports for these sites should carry the account or
 they'll blank again ("fill in client" is the honest fallback, never guess).
+
+## ⚡ STANDING WATCH + PLAYBOOK — InSource/Eddie replies (Greg 2026-09-05)
+
+Eddie Mas… = **eddiem@insourcees.com**, InSource account manager for bulk
+coverage requests (OOO until 2026-09-08). Greg manually sent the first
+auto-built Mass PN 2026-09-05 ("Coverate Request C1 Select" thread) asking
+"does this spreadsheet work?".
+
+**WATCH every InSource email (the inbox brief surfaces them). On reply:**
+1. **Format feedback on the Mass PN** → adjust BOTH builders to his spec:
+   client `src/pages/reports/WcCoveragePage.tsx` (buildMassPnWorkbooks) and
+   server `functions/src/workersComp/massPnAutoSubmit.ts`
+   (buildMassPnXlsxBase64) — they must stay in lockstep.
+2. **New coverage granted (codes/rates)** → close the loop the same session:
+   (a) upsert `tenants/{t}/workers_comp_rates` rows — net effective rates,
+   generic vs entity-scoped per WHICH policy granted them; move the affected
+   jobTitles off the STATE_8040 row onto the new row; (b) run the **Everee WC
+   sync** (Settings → Onboarding Library → WC Class Codes → Sync to Everee,
+   per entity, Preview then Apply — Everee validates (code,state) on every
+   worked shift, so unsynced new codes BLOCK payroll); (c) **reclassify the
+   8040 payroll** onto the new codes via the WC monthly report's clickable
+   code → reclassifyFromCode (moves entries+assignments, relearns titles);
+   (d) verify on the 8040 Placeholders tab + /reports/wc-coverage that the
+   cleared states dropped out. This is the regular 8040-clearing motion.
+3. **Policy/schedule changes** → update `workers_comp` policy records and
+   `workers_comp_policy_locations`.
+
+**Automated 14-day Mass PN send LIVE:** `runMassPnAutoSubmitForTenant`
+(functions/src/workersComp/massPnAutoSubmit.ts) rides
+scheduledScoringDistribution nightly; config
+`tenants/{t}/settings/wcMassPnAutoSubmit` {enabled, entityIds
+[c1_select_llc, c1_events_llc], cadenceDays 14, windowDays 21, lastSentAt}.
+Window 21d on 14d cadence ON PURPOSE (timesheet keying lag — strict 14/14
+would permanently miss late-keyed hours). Seeded lastSentAt 2026-09-05 →
+first auto-send ~09-19. Emails go from Greg's connected mailbox
+(gmailClientFor), one per entity with ask rows, subject "New bulk coverage
+request for <Entity>". Manual sends: "Submit to Eddie" button on
+/reports/wc-coverage (books-gated callable emailMassPn mode; file
+byte-identical to Export).

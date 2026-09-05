@@ -18,6 +18,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 
 import { runTierPromotionSweepForTenant } from './tierAutomation/tierPromotionSweep';
+import { runMassPnAutoSubmitForTenant } from './workersComp/massPnAutoSubmit';
 
 const db = admin.firestore();
 
@@ -188,6 +189,14 @@ export const scheduledScoringDistribution = onSchedule(
       tierAutoApplied += tier.autoApplied;
       tierEarnBack += tier.earnBackRestored;
       if (!tier.success) fail++;
+      // 14-day Mass PN coverage-request email to InSource (Greg 2026-09-05)
+      // also rides this loop — no-op unless the tenant's
+      // settings/wcMassPnAutoSubmit doc is enabled AND the cadence elapsed.
+      const massPn = await runMassPnAutoSubmitForTenant(db, t.id);
+      if (!massPn.success) fail++;
+      if (massPn.sent.length > 0) {
+        logger.info('scheduledScoringDistribution: massPn sent', { tenantId: t.id, sent: massPn.sent });
+      }
     }
     logger.info('scheduledScoringDistribution: done', {
       tenants: tenantsSnap.size,
