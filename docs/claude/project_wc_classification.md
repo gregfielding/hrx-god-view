@@ -103,3 +103,13 @@ First live run (90d): Events TN/NY/CA/CT -> 9014 @1.34-3.25; Select
 KY/MN/TX/MO/WI -> 8044 @1.38-3.45, MD -> 8018 (Forklift) @4.34. Headline:
 8040-needs-carrier $171k/90d, coverage exposure $135.8k (Events no-policy
 states).
+
+**Mass PN client resolution (2026-09-05 PM):** chain = assignment account →
+entry.accountId (only linkage on most import rows) → job order →
+parentAccountId walk to the TOP-LEVEL account (never a child venue), plus a
+conservative site-name match against top-level account names (≥5-char base
+token). Site→account facts from Greg: "Minneapolis St. Paul Office" =
+Purolator (ZQIA66WQkAhPwRDzekdj), "Houston Distribution Center" = ORS Nasco
+(TVzTtGoeuvd69MskPZF7) — 21 Indeed Flex import entries had no accountId and
+were stamped; future imports for these sites should carry the account or
+they'll blank again ("fill in client" is the honest fallback, never guess).
