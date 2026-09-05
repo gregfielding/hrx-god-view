@@ -13,7 +13,7 @@
  * collections. The one-doc `lastChange` summary lets the badge show
  * "Changed to Tier 2 on Sep 4, 2026 by Greg" without a subcollection query.
  */
-import { doc, collection, serverTimestamp, writeBatch, Timestamp } from 'firebase/firestore';
+import { doc, collection, deleteField, serverTimestamp, writeBatch, Timestamp } from 'firebase/firestore';
 
 import { db } from '../firebase';
 
@@ -93,6 +93,77 @@ export interface SetWorkerTierOptions {
  * staff-write clause — the same idiom as security-level changes
  * (onboardingHelpers.ts).
  */
+export interface ApplyNoShowPenaltyOptions {
+  userId: string;
+  /** Resolved current tier. */
+  currentTier: WorkerTier;
+  changedById: string;
+  changedByName: string;
+  /** Assignment the no-show happened on, for the audit trail. */
+  assignmentId?: string;
+  assignmentLabel?: string;
+}
+
+/**
+ * Hardcoded policy (8/31 agreed spec + Greg 2026-09-04): a penalized no-show
+ * drops the worker one tier; 40 clean timesheet hours restore the ORIGINAL
+ * tier (the nightly sweep checks `workerTiers.penalty`), and the counter
+ * resets on each demotion. A Tier 3 worker has nowhere to drop — the penalty
+ * is audit-logged but the tier and penalty state stay untouched.
+ */
+export async function applyNoShowPenalty(opts: ApplyNoShowPenaltyOptions): Promise<void> {
+  const { userId, currentTier, changedById, changedByName, assignmentId, assignmentLabel } = opts;
+  const demoted = currentTier < 3;
+  const newTier = (demoted ? currentTier + 1 : 3) as WorkerTier;
+  const where = assignmentLabel ? ` (${assignmentLabel})` : '';
+
+  const batch = writeBatch(db);
+  if (demoted) {
+    batch.update(doc(db, 'users', userId), {
+      'workerTiers.global': newTier,
+      'workerTiers.updatedAt': serverTimestamp(),
+      'workerTiers.lastChange': {
+        from: currentTier,
+        to: newTier,
+        at: serverTimestamp(),
+        byId: changedById,
+        byName: changedByName,
+        source: 'no_show_penalty',
+        ...(assignmentId ? { reason: `No-show penalty on assignment ${assignmentId}` } : {}),
+      },
+      // Earn-back state the nightly sweep watches. Re-penalizing overwrites
+      // demotedAt — that IS the counter reset.
+      'workerTiers.penalty': {
+        demotedAt: serverTimestamp(),
+        restoreTo: currentTier,
+        hoursRequired: 40,
+        ...(assignmentId ? { assignmentId } : {}),
+      },
+    });
+  }
+  batch.set(doc(collection(db, 'users', userId, 'activityLogs')), {
+    action: 'Tier Change',
+    actionType: 'security_change',
+    description: demoted
+      ? `Tier changed from Tier ${currentTier} to Tier ${newTier} by ${changedByName} (no-show penalty)${where} — 40 clean hours restore Tier ${currentTier}`
+      : `No-show penalty recorded by ${changedByName}${where} — already Tier 3, no demotion`,
+    severity: 'medium',
+    source: 'web',
+    metadata: {
+      targetType: 'workerTier',
+      from: currentTier,
+      to: newTier,
+      changeSource: 'no_show_penalty',
+      changedById,
+      changedByName,
+      ...(assignmentId ? { assignmentId } : {}),
+    },
+    timestamp: serverTimestamp(),
+    createdAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
 export async function setWorkerTierGlobal(opts: SetWorkerTierOptions): Promise<void> {
   const { userId, tier, previousTier, changedById, changedByName, reason } = opts;
   const source = opts.source ?? 'manual';
@@ -113,6 +184,9 @@ export async function setWorkerTierGlobal(opts: SetWorkerTierOptions): Promise<v
     'workerTiers.global': tier,
     'workerTiers.updatedAt': serverTimestamp(),
     'workerTiers.lastChange': lastChange,
+    // A manual/approved change overrides any pending earn-back counter —
+    // recruiter judgment wins over the hardcoded penalty machinery.
+    'workerTiers.penalty': deleteField(),
   });
 
   const sourceText =

@@ -175,16 +175,18 @@ export const scheduledScoringDistribution = onSchedule(
     let fail = 0;
     let tierProposed = 0;
     let tierAutoApplied = 0;
+    let tierEarnBack = 0;
     for (const t of tenantsSnap.docs) {
       const result = await computeDistributionForTenant(t.id);
       if (result.success) ok++;
       else fail++;
-      // Tier 3 -> 2 promotion sweep rides this nightly loop (Cloud Run cap:
-      // no new function). No-op for tenants without a tierAutomation config;
-      // never throws.
+      // Tier sweep (3 -> 2 promotions + penalty earn-back) rides this nightly
+      // loop (Cloud Run cap: no new function). No-op for tenants without a
+      // tierAutomation config; never throws.
       const tier = await runTierPromotionSweepForTenant(db, t.id);
       tierProposed += tier.proposed;
       tierAutoApplied += tier.autoApplied;
+      tierEarnBack += tier.earnBackRestored;
       if (!tier.success) fail++;
     }
     logger.info('scheduledScoringDistribution: done', {
@@ -193,6 +195,7 @@ export const scheduledScoringDistribution = onSchedule(
       fail,
       tierProposed,
       tierAutoApplied,
+      tierEarnBack,
     });
   }
 );

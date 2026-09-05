@@ -43,6 +43,7 @@ import {
 } from '../messaging/twilioSecrets';
 import { extractOrchestratorDecision } from './userGroupHirePassedCandidates';
 import { autoOnboardForGroupIfEligible } from './userGroupHiringAutoOnboardCore';
+import { maybeAutoOnboardTierTwoApplicant } from '../tierAutomation/tier2AutoOnboard';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -89,10 +90,29 @@ export const onApplicationHiringSignalsChangedAutoOnboard = onDocumentWritten(
     const prescreenJustCompleted = hasPrescreenJustCompleted(before, after);
     const orchestratorDecisionChanged = hasOrchestratorDecisionChanged(before, after);
     const statusLeftInProgress = hasStatusLeftInProgress(before, after);
+    // Quick-apply creates land already-submitted (no in_progress transition
+    // ever happens) — without this signal the tier-2 branch would miss them.
+    const createdPastInProgress =
+      !before && String(after.status ?? '').trim().toLowerCase() !== 'in_progress';
 
-    if (!prescreenJustCompleted && !orchestratorDecisionChanged && !statusLeftInProgress) {
+    if (
+      !prescreenJustCompleted &&
+      !orchestratorDecisionChanged &&
+      !statusLeftInProgress &&
+      !createdPastInProgress
+    ) {
       return;
     }
+
+    // Tier 1/2 account auto-onboard (Greg 2026-09-04) — parallel branch,
+    // deliberately BEFORE the groupId gate: it keys off the account's
+    // tierAutomation opt-in, not group hiring config. Self-gating (tier,
+    // opt-in, tierAutoOnboard stamp) and never throws.
+    await maybeAutoOnboardTierTwoApplicant(admin.firestore(), {
+      tenantId,
+      applicationId,
+      application: after,
+    });
 
     const groupIdRaw = after.groupId;
     const groupId = typeof groupIdRaw === 'string' ? groupIdRaw.trim() : '';

@@ -41,6 +41,8 @@ export interface TierSweepResult {
   refreshed: number;
   autoApplied: number;
   superseded: number;
+  /** Penalized workers whose 40 clean hours restored their original tier. */
+  earnBackRestored: number;
   success: boolean;
   error?: string;
 }
@@ -60,6 +62,34 @@ async function hasAppPushToken(db: admin.firestore.Firestore, uid: string): Prom
     .limit(1)
     .get();
   return !snap.empty;
+}
+
+/**
+ * Clean hours since the demotion date. `workDate` is a 'YYYY-MM-DD' string
+ * (worksite-local), so the range is a lexicographic compare; the composite
+ * index (workerId, workDate) already exists. `totalFlsaOTHours`/`totalNonFlsa*`
+ * are subdivisions of totalOTHours — never add them (double-count).
+ */
+async function sumTimesheetHoursSince(
+  db: admin.firestore.Firestore,
+  tenantId: string,
+  uid: string,
+  sinceDate: string,
+): Promise<number> {
+  const snap = await db
+    .collection(`tenants/${tenantId}/timesheet_entries`)
+    .where('workerId', '==', uid)
+    .where('workDate', '>=', sinceDate)
+    .get();
+  let hours = 0;
+  for (const d of snap.docs) {
+    const t = d.data() as Record<string, unknown>;
+    hours +=
+      (Number(t.totalRegularHours) || 0) +
+      (Number(t.totalOTHours) || 0) +
+      (Number(t.totalDoubleTimeHours) || 0);
+  }
+  return hours;
 }
 
 function scorecardForStorage(card: TierScorecard): Record<string, unknown> {
@@ -88,6 +118,7 @@ export async function runTierPromotionSweepForTenant(
     refreshed: 0,
     autoApplied: 0,
     superseded: 0,
+    earnBackRestored: 0,
     success: true,
   };
   try {
@@ -150,6 +181,65 @@ export async function runTierPromotionSweepForTenant(
       const uid = userDoc.id;
       const tier = resolveGlobalTier(data);
       const existing = existingByUid.get(uid);
+
+      // Earn-back (forward-only, so nightly is safe despite timesheet entry
+      // lag — a late-keyed week merely delays the restore, never falsely
+      // demotes): 40 clean hours since the penalty restore the original tier.
+      const penalty = ((data.workerTiers ?? {}) as Record<string, unknown>).penalty as
+        | Record<string, unknown>
+        | undefined;
+      if (penalty) {
+        const demotedAtTs = penalty.demotedAt as admin.firestore.Timestamp | undefined;
+        const demotedAt = typeof demotedAtTs?.toDate === 'function' ? demotedAtTs.toDate() : null;
+        const restoreTo = Number(penalty.restoreTo);
+        const hoursRequired = Number(penalty.hoursRequired) || 40;
+        if (demotedAt && (restoreTo === 1 || restoreTo === 2)) {
+          const hours = await sumTimesheetHoursSince(
+            db,
+            tenantId,
+            uid,
+            demotedAt.toISOString().slice(0, 10),
+          );
+          if (hours >= hoursRequired) {
+            batch.update(db.doc(`users/${uid}`), {
+              'workerTiers.global': restoreTo,
+              'workerTiers.updatedAt': admin.firestore.FieldValue.serverTimestamp(),
+              'workerTiers.lastChange': {
+                from: tier,
+                to: restoreTo,
+                at: admin.firestore.Timestamp.now(),
+                byId: ENGINE_ACTOR.id,
+                byName: ENGINE_ACTOR.name,
+                source: 'earn_back',
+                reason: `${Math.round(hours)} clean hours since the no-show penalty (required ${hoursRequired})`,
+              },
+              'workerTiers.penalty': admin.firestore.FieldValue.delete(),
+            });
+            batch.set(db.collection(`users/${uid}/activityLogs`).doc(), {
+              action: 'Tier Change',
+              actionType: 'security_change',
+              description: `Tier restored to Tier ${restoreTo} by ${ENGINE_ACTOR.name} — ${Math.round(hours)} clean hours worked since the no-show penalty (40 required)`,
+              severity: 'low',
+              source: 'system',
+              metadata: {
+                targetType: 'workerTier',
+                from: tier,
+                to: restoreTo,
+                changeSource: 'earn_back',
+                changedById: ENGINE_ACTOR.id,
+                changedByName: ENGINE_ACTOR.name,
+                hoursWorked: Math.round(hours),
+              },
+              timestamp: admin.firestore.FieldValue.serverTimestamp(),
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            batchSize += 2;
+            result.earnBackRestored++;
+            await commitIfFull();
+            continue; // restored this run — promotion logic can wait a night
+          }
+        }
+      }
 
       if (tier !== 3) {
         // Promoted some other way — retire any still-pending proposal.

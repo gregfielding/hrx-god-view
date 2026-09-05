@@ -34,6 +34,7 @@ import {
   type SetAssignmentOutcomeInput,
   type SetAssignmentOutcomeResult,
 } from '../shared/assignmentOutcome';
+import { applyNoShowPenaltyAdmin } from '../tierAutomation/tierPenaltyAdmin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -115,11 +116,16 @@ function normalizeInput(raw: unknown): SetAssignmentOutcomeInput {
   }
 
   const notes = typeof d.notes === 'string' ? d.notes.trim() : '';
+  const noShowPenalty = d.noShowPenalty === true;
+  if (noShowPenalty && outcomeStatus !== 'no_show') {
+    throw new HttpsError('invalid-argument', 'noShowPenalty is only valid with outcomeStatus no_show.');
+  }
   return {
     tenantId,
     assignmentId,
     outcomeStatus,
     notes: notes || undefined,
+    noShowPenalty,
   };
 }
 
@@ -140,6 +146,9 @@ export const setAssignmentOutcome = onCall(
     const ref = db.doc(`tenants/${input.tenantId}/assignments/${input.assignmentId}`);
     const now = admin.firestore.Timestamp.now();
     const nowIso = now.toDate().toISOString();
+
+    let workerUidForPenalty = '';
+    let assignmentLabelForPenalty = '';
 
     const finalStatus = await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
@@ -212,6 +221,14 @@ export const setAssignmentOutcome = onCall(
         ...(input.notes ? { notes: input.notes } : {}),
       };
 
+      if (input.noShowPenalty) {
+        workerUidForPenalty = String(current.userId ?? current.candidateId ?? '').trim();
+        assignmentLabelForPenalty = [current.jobTitle, current.startDate]
+          .map((v) => String(v ?? '').trim())
+          .filter(Boolean)
+          .join(' · ');
+      }
+
       tx.set(
         ref,
         {
@@ -223,17 +240,53 @@ export const setAssignmentOutcome = onCall(
           outcomeHistory: admin.firestore.FieldValue.arrayUnion(historyEntry),
           updatedAt: now,
           updatedBy: actorUid,
+          // Penalty stamp rides the same transaction; the tier demotion
+          // itself lands right after commit (separate doc).
+          ...(input.noShowPenalty
+            ? { noShowPenalty: { at: now, byId: actorUid } }
+            : {}),
         },
         { merge: true },
       );
       return input.outcomeStatus;
     });
 
+    // Tier demotion for a penalized no-show (Greg 2026-09-04: drop one tier,
+    // 40 clean hours earn it back — nightly sweep watches workerTiers.penalty).
+    let tierPenalty: { demoted: boolean; fromTier: number; toTier: number } | undefined;
+    if (input.noShowPenalty && workerUidForPenalty) {
+      const actorSnap = await db.doc(`users/${actorUid}`).get();
+      const a = (actorSnap.data() ?? {}) as Record<string, unknown>;
+      const actorName =
+        `${String(a.firstName ?? '').trim()} ${String(a.lastName ?? '').trim()}`.trim() ||
+        String(a.displayName ?? '').trim() ||
+        String(a.email ?? '').trim() ||
+        'HRX staff';
+      try {
+        tierPenalty = await applyNoShowPenaltyAdmin(db, {
+          userId: workerUidForPenalty,
+          byId: actorUid,
+          byName: actorName,
+          assignmentId: input.assignmentId,
+          assignmentLabel: assignmentLabelForPenalty || undefined,
+        });
+      } catch (err: unknown) {
+        // The outcome landed; surface the tier failure without undoing it.
+        logger.error('setAssignmentOutcome: tier penalty failed', {
+          tenantId: input.tenantId,
+          assignmentId: input.assignmentId,
+          workerUid: workerUidForPenalty,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     logger.info('setAssignmentOutcome: applied', {
       tenantId: input.tenantId,
       assignmentId: input.assignmentId,
       actorUid,
       finalStatus,
+      ...(tierPenalty ? { tierPenalty } : {}),
     });
 
     return {

@@ -2817,6 +2817,10 @@ const RecruiterAccountDetails: React.FC = () => {
          */
         autoCreateUserGroups:
           typeof data?.autoCreateUserGroups === 'boolean' ? data.autoCreateUserGroups : undefined,
+        tierAutomation:
+          data?.tierAutomation && typeof data.tierAutomation === 'object'
+            ? data.tierAutomation
+            : undefined,
         /** F.4 national gig seed — must match Firestore top-level fields or Cascading Data reload drops them. */
         defaultGigJobTitle: data?.defaultGigJobTitle ?? null,
         defaultGigJobDescription: data?.defaultGigJobDescription ?? null,
@@ -5733,6 +5737,35 @@ const RecruiterAccountDetails: React.FC = () => {
                   account.autoCreateUserGroups === undefined)
                   ? 'On'
                   : 'Off'}
+              </Box>
+            </Box>
+          </Box>
+        </Tooltip>
+        <Tooltip title="When a Tier 1 or Tier 2 worker applies to this account or any of its children, automatically start their onboarding (payroll invite + Everee) and order the account's default screening package. The hire itself stays a recruiter decision — this pre-onboards applicants so they're ready to work the moment you place them.">
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 2,
+              flexWrap: 'wrap',
+            }}
+          >
+            <Box component="span" sx={{ ...recordHeaderBodyTextSx }}>
+              Auto-Onboard Tier 2 Applicants:
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+              <Switch
+                size="small"
+                checked={account.tierAutomation?.autoOnboardTier2 === true}
+                disabled={saving}
+                onChange={(e) => updateAccountField('tierAutomation.autoOnboardTier2', e.target.checked)}
+                inputProps={{
+                  'aria-label': 'Toggle auto-onboarding for Tier 1 and Tier 2 applicants',
+                }}
+              />
+              <Box component="span" sx={{ color: 'text.primary', fontWeight: 500, fontSize: '0.875rem' }}>
+                {account.tierAutomation?.autoOnboardTier2 === true ? 'On' : 'Off'}
               </Box>
             </Box>
           </Box>
