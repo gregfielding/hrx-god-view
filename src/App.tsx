@@ -69,6 +69,7 @@ const AssignmentDetails = lazy(() => import('./pages/AssignmentDetails'));
 const Communications = lazy(() => import('./pages/Communications'));
 const Terms = lazy(() => import('./pages/Terms'));
 const Privacy = lazy(() => import('./pages/Privacy'));
+const DeleteAccount = lazy(() => import('./pages/DeleteAccount'));
 const SMSPrivacy = lazy(() => import('./pages/SMSPrivacy'));
 const Apply = lazy(() => import('./pages/Apply'));
 const TenantCRM = lazy(() => import('./pages/TenantViews/TenantCRM'));
@@ -605,6 +606,7 @@ function App() {
       <Route path="/consent" element={<Communications />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
+      <Route path="/delete-account" element={<DeleteAccount />} />
       <Route path="/sms-privacy" element={<SMSPrivacy />} />
       {/* HRX Signatures /sign/s/:sessionId route + SignerPage removed 2026-06-05.
           The Phase 1C signature scaffold was never activated; production I-9
