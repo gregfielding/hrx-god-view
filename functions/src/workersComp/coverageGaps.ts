@@ -199,6 +199,7 @@ export async function buildWcCoverageReport(input: {
     workDate: string;
     jobTitle: string; // filled after assignment fetch when needed
     assignmentId: string;
+    jobOrderId: string;
     entryCode: string;
     workerId: string;
     total: number;
@@ -267,6 +268,7 @@ export async function buildWcCoverageReport(input: {
       workDate: trim(e.workDate),
       jobTitle: '',
       assignmentId,
+      jobOrderId: trim(e.jobOrderId),
       entryCode,
       workerId: trim(e.workerId),
       total,
@@ -394,6 +396,26 @@ export async function buildWcCoverageReport(input: {
   }
   const massAgg = new Map<string, MassPnAgg>();
   const accountIds = new Set<string>();
+  // Client resolution fallback (Greg 2026-09-05): import rows rarely carry an
+  // assignment account — hop through the entry's job order instead.
+  const askJoIds = new Set<string>();
+  for (const p of picked) {
+    if (!p.carrierAsk) continue;
+    const a = p.assignmentId ? assignments.get(p.assignmentId) : undefined;
+    if (!trim(a?.recruiterAccountId) && p.jobOrderId) askJoIds.add(p.jobOrderId);
+  }
+  const joAccounts = new Map<string, string>();
+  const joIdList = Array.from(askJoIds);
+  for (let i = 0; i < joIdList.length; i += 100) {
+    const chunk = joIdList.slice(i, i + 100);
+    const snaps = await db.getAll(...chunk.map((id) => db.doc(`tenants/${tenantId}/job_orders/${id}`)));
+    snaps.forEach((s) => {
+      if (!s.exists) return;
+      const x = s.data() as Record<string, unknown>;
+      const acct = trim(x.accountId) || trim(x.recruiterAccountId);
+      if (acct) joAccounts.set(s.id, acct);
+    });
+  }
   for (const p of picked) {
     if (!p.carrierAsk) continue;
     const a = p.assignmentId ? assignments.get(p.assignmentId) : undefined;
@@ -406,7 +428,7 @@ export async function buildWcCoverageReport(input: {
             .filter(Boolean)
             .join(', ')
         : '') || p.sidecarAddress;
-    const accountId = trim(a?.recruiterAccountId);
+    const accountId = trim(a?.recruiterAccountId) || joAccounts.get(p.jobOrderId) || '';
     if (accountId) accountIds.add(accountId);
     const key = `${p.entityId}|${accountId}|${worksiteName}|${p.state}|${p.resolvedCode ?? ''}`;
     if (!massAgg.has(key)) {
@@ -428,14 +450,33 @@ export async function buildWcCoverageReport(input: {
     if (p.workerId) m.workers.add(p.workerId);
     if (!m.worksiteAddress && worksiteAddress) m.worksiteAddress = worksiteAddress;
   }
+  // Resolve names at the TOP-LEVEL account (Greg 2026-09-05): the carrier's
+  // "Client/Prospect Name" is the standalone or national account, never a
+  // child venue — walk parentAccountId up (one hop in practice, capped at 3).
+  const accountDocs = new Map<string, { name: string; parentAccountId: string }>();
+  const fetchAccounts = async (ids: string[]): Promise<void> => {
+    const missing = ids.filter((id) => id && !accountDocs.has(id));
+    for (let i = 0; i < missing.length; i += 100) {
+      const chunk = missing.slice(i, i + 100);
+      const snaps = await db.getAll(...chunk.map((id) => db.doc(`tenants/${tenantId}/accounts/${id}`)));
+      snaps.forEach((s) => {
+        if (!s.exists) return;
+        const x = s.data() as Record<string, unknown>;
+        accountDocs.set(s.id, { name: trim(x.name), parentAccountId: trim(x.parentAccountId) });
+      });
+    }
+  };
+  await fetchAccounts(Array.from(accountIds));
+  await fetchAccounts(Array.from(accountDocs.values()).map((a) => a.parentAccountId).filter(Boolean));
   const accountNames = new Map<string, string>();
-  const acctList = Array.from(accountIds);
-  for (let i = 0; i < acctList.length; i += 100) {
-    const chunk = acctList.slice(i, i + 100);
-    const snaps = await db.getAll(...chunk.map((id) => db.doc(`tenants/${tenantId}/accounts/${id}`)));
-    snaps.forEach((s) => {
-      if (s.exists) accountNames.set(s.id, trim(s.data()?.name));
-    });
+  for (const id of accountIds) {
+    let cur = id;
+    for (let hop = 0; hop < 3; hop++) {
+      const doc = accountDocs.get(cur);
+      if (!doc?.parentAccountId || !accountDocs.get(doc.parentAccountId)) break;
+      cur = doc.parentAccountId;
+    }
+    accountNames.set(id, accountDocs.get(cur)?.name ?? accountDocs.get(id)?.name ?? '');
   }
   // "What to ask the carrier for" (Greg 2026-09-05): a gap riding 8040 (or
   // nothing) gets a suggested REAL class code — the dominant code the same
