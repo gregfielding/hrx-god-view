@@ -81,6 +81,41 @@ Counting uploads: `gcloud storage ls --json 'gs://hrx1-d3beb.firebasestorage.app
    `FirebaseException` first and show `(code)` in the message + `debugPrint`.
    Ships in 1.0.1 (1.0.0 is in store review).
 
+## Accept-shift headshot gate — re-armed 2026-09-06 (Greg: "make the headshot gate real")
+
+History: Phase 4 required `avatarVerification.status === 'approved'`; Vision
+false positives stranded legit workers → relaxed 2026-04-24 (`c6ea0fb4`, any
+avatar passes) → pulled from `respondToAssignment` entirely 2026-06-07 because
+the SMS one-click accept link surfaced a bare error with no way to add a photo.
+
+Policy now (`functions/src/avatar/headshotAcceptGate.ts#evaluateHeadshotGate`,
+pure + tested):
+
+| worker doc | result |
+|---|---|
+| no photo in any of the 4 fields | BLOCK `HEADSHOT_MISSING` |
+| current photo rejected for `no_face` / `multiple_faces` / `inappropriate` / `manual_override` | BLOCK `HEADSHOT_REJECTED` (+reason) |
+| rejected for `face_too_small` / `too_blurry` / `too_dark` | allow (Home nudge + profile pill carry the retake ask) |
+| approved / pending / error / no record / record for an older photo | allow |
+
+It never blocks on our own pipeline — only on "no photo" or "plainly not a
+headshot". Data at re-arm: 5,246 C1 photos, 92% approved, 8% rejected (185
+face_too_small, 126 no_face, 16 multiple_faces, 11 too_dark, 1 too_blurry);
+the 924 never-verified photos were backfilled with
+`functions/.scratch/backfill_avatar_verification.ts` (local Vision via ADC,
+~$1.40). Recruiter-on-behalf `confirmAssignmentForWorker` stays ungated; Phase
+5 recruiter approve (`avatarVerification.status='approved'`) is the override.
+
+Client UX that makes it safe to re-arm: web `AssignmentDetails` (the SMS
+`?intent=accept` landing) renders `src/components/worker/HeadshotGateCard.tsx`
+— take/upload inline, writes `avatars/{uid}.jpg` + `avatar` +
+`workerProfile.photoUrl`, then re-fires the accept. `JobPostingDetail` still
+uses the older confirm-dialog → profile-page path. Flutter:
+`headshot_gate_bottom_sheet.dart` → `HeadshotCaptureScreen` (unchanged, parity
+holds). ☠️ Any new surface that calls `respondToAssignment(accept)` must handle
+the `failed-precondition` + `details.code = HEADSHOT_*` error with a photo
+CTA, or we recreate the June dead end.
+
 ## Footguns
 
 - ☠️ A Home-feed rule change needs the `sourceVersion` bump or existing

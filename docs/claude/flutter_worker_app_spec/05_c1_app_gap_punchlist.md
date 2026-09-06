@@ -403,3 +403,13 @@ path was permission-denied for five months behind a bare catch). Ships in
 1.0.1 (1.0.0 is in review). Web wizard job-apply flow got its headshot step
 back with Take Photo primary + Skip as a text link — the app's apply flow
 already had that hierarchy. See docs/claude/project_worker_profile_photo.md.
+
+**Headshot gate re-armed 2026-09-06 (server):** `respondToAssignment(accept)`
+throws `failed-precondition` + `details.code` `HEADSHOT_MISSING` /
+`HEADSHOT_REJECTED` again (no photo, or Vision/recruiter says not a headshot:
+no_face / multiple_faces / inappropriate / manual_override). Pending, error,
+unverified, and quality rejections pass. App side needs NO change: the
+`runAcceptAssignmentOfferFlow` → `HeadshotGateBlock.tryParse` →
+`showHeadshotGateBottomSheet` → `HeadshotCaptureScreen` path already exists
+and matches web's new inline `HeadshotGateCard`. Policy table in
+docs/claude/project_worker_profile_photo.md.
