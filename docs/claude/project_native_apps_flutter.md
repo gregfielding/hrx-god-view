@@ -151,14 +151,19 @@ Sep-4 Organizer uploads (builds 1–8) were distributed with that option — the
 ASC API shows `buildAudienceType: "INTERNAL_ONLY"` and the version page's
 "Add Build" dialog lists them greyed out with no explanation. Diagnose with
 `fetch('/iris/v1/builds?filter[app]=6808699956&fields[builds]=version,buildAudienceType,processingState')`
-from the ASC page. Fix: Organizer → Distribute App → App Store Connect →
-choose **"TestFlight & App Store"** (audience `APP_STORE_ELIGIBLE`); let
-Xcode's "Manage Version and Build Number" bump to the next unused build
-number (8 is taken). Today's archive (`build/ios/archive/Runner.xcarchive`,
-1.0.0 (8), code identical to build 8) was copied to
+from the ASC page. Fix: Organizer → Distribute App → choose the
+**"App Store Connect"** tile (Xcode 15's name for the TestFlight & App Store
+audience — there is no tile literally called "TestFlight & App Store"; the
+"TestFlight Internal Only" tile is the trap) → audience `APP_STORE_ELIGIBLE`;
+let Xcode's "Manage Version and Build Number" bump to the next unused build
+number. Today's archive (`build/ios/archive/Runner.xcarchive`, 1.0.0 (8),
+code identical to build 8) was copied to
 `~/Library/Developer/Xcode/Archives/2026-09-05/` so Organizer lists it.
-**Left for Greg:** that upload as build 9, then Claude attaches it on the
-version page → "Add for Review".
+**Done 2026-09-05 5:55 PM:** Greg uploaded it as build 9 (processed VALID,
+`APP_STORE_ELIGIBLE`; the "Upload Symbols Failed" dSYM warnings for the
+Firebase frameworks are harmless). Claude attached build 9 to version 1.0.0
+and saved — "Add for Review" is now enabled. **Left for Greg:** press
+"Add for Review" → "Submit to App Review".
 
 **Google Play Console** (developer account "C1 Staffing" 7277616738972403924,
 app 4971983647122091628, package `com.c1staffing.worker`): privacy policy,
@@ -168,12 +173,16 @@ Advertising ID=Yes/Analytics (Firebase Analytics merges `AD_ID` into the
 manifest — verified in the merged manifest), Government/Financial/Health =
 none, category Business, contact `hello@c1staffing.com` + hrxone.com,
 store listing (EN copy, 512 icon, feature graphic, 7 phone screenshots),
-Production countries = US. **Left for Greg:** (1) Content rating — the IARC
-questionnaire starts with an "I agree to the IARC Terms of Use" checkbox
-(all answers are "No" → Everyone); (2) upload
+Production countries = US, Content rating (IARC questionnaire submitted
+2026-09-05 6:04 PM on Greg's "do it for me" — category "All Other App Types",
+Online Content = Yes because job postings are fetched content, everything
+else No → ESRB Everyone / PEGI 3 / USK 0 / IARC 3+ / ClassInd L; the Terms
+tick was done on his explicit instruction), and a Production release draft
+"1.0.0 (8)" with en-US release notes. **Left for Greg:** drag
 `build/app/outputs/bundle/release/app-release.aab` (71 MB — over the browser
-tool's 10 MB upload cap) to Production → Create new release, then Send for
-review from Publishing overview.
+tool's 10 MB upload cap) into the draft's drop zone (Test and release →
+Production → the draft), Next → Save, then Publishing overview → Send for
+review (Play holds every change until that button is pressed).
 
 **`/delete-account` page** (`src/pages/DeleteAccount.tsx`, deployed
 1c468e1c): Google requires a public URL naming the app, the request steps and
