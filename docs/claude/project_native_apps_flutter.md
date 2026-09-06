@@ -124,13 +124,38 @@ enabled, unlinked) so the mapping isn't shadowed. One policy, one source of
 truth — no more contradiction for store review. `/terms` still serves the
 Squarespace Terms of Use page (not flagged as conflicting).
 
+**`https://www.c1staffing.com/app` — app landing page (built 2026-09-05, Not
+Linked / footer-only until the stores approve).** Duplicate of the Support
+page's full-width Code Block, source in this repo at
+`docs/claude/assets/c1staffing-app-page.html` (hero + two phone screenshots
+embedded as base64 JPEG from `c1_app/store/screenshots/`, feature cards, "how
+it works", EN + ES, contact strip). The two "coming soon" pills under the
+buttons are placeholders — **swap them for the real App Store / Google Play
+badge links when Apple and Google approve** (search the file for
+`APP STORE BADGES`). "Browse open shifts" points at
+`https://hrxone.com/c1/jobs-board`; change to app.c1staffing.com at the domain
+flip ([[project_app_domain_migration]]). Also fixed the same session: About
+page had the "How quickly can C1 Staffing provide workers?" FAQ twice
+(removed one), and "banquet servers, etc.." on Home + Services → "and more."
+
 Squarespace automation notes: c1staffing.com is site
 `lilac-smilodon-jj54.squarespace.com` (7.1, Fluid Engine). Code Blocks use
 CodeMirror 6 — load HTML by dispatching a synthetic `paste` ClipboardEvent on
 `[role=dialog] .cm-content` (typing triggers auto-close tags); the block
 starts 3 columns wide — drag the top-right handle to the right edge; page
 settings auto-prefix the URL slug with `/` (type `privacy-2024`, not
-`/privacy-2024`).
+`/privacy-2024`). Big HTML (100 KB+) is too large for a tool parameter and
+`fetch('http://127.0.0.1…')` from the editor hangs (private-network block) —
+instead inject `<input type=file id=claude-upload>` into the editor document
+with JS, `file_upload` the .html into it, then `await input.files[0].text()`
+and dispatch the paste. Editing a text block: double-click the paragraph,
+set a DOM Range on the exact text node with JS, then `type` the replacement
+(keyboard selection with End/Home is document-wide on macOS). The editor
+iframe only scrolls after a real `hover` + wheel `scroll`; JS scrollTo lands
+late. Site-wide text animations hide h1/p (`opacity:0`) until they enter the
+viewport, so headless screenshots show "empty" sections — real visitors see
+them. Page-list drag-and-drop into Main Navigation does not work via
+`left_click_drag`; use the page's settings or leave it Not Linked.
 
 ## Store console state (2026-09-05, Claude drove both consoles in Greg's Chrome)
 
