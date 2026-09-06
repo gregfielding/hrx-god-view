@@ -71,11 +71,12 @@ export { embedText };
 
 // HTTP variant for simple CI/client ingestion
 import { onRequest } from 'firebase-functions/v2/https';
+import { corsOriginFor } from './config/appOrigin';
 
 export const upsertCodeChunksHttp = onRequest(async (req, res): Promise<void> => {
   try {
     if (req.method === 'OPTIONS') {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
       res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.status(204).send('');
@@ -83,7 +84,7 @@ export const upsertCodeChunksHttp = onRequest(async (req, res): Promise<void> =>
     }
     const { chunks } = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
     if (!Array.isArray(chunks) || chunks.length === 0) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.status(400).json({ error: 'No chunks provided' });
       return;
     }
@@ -99,12 +100,12 @@ export const upsertCodeChunksHttp = onRequest(async (req, res): Promise<void> =>
         createdAt: admin.firestore.FieldValue.serverTimestamp()
       });
     }
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
     res.status(200).json({ success: true, count: chunks.length });
     return;
   } catch (err: any) {
     console.error('upsertCodeChunksHttp error:', err);
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
     res.status(500).json({ error: err?.message || 'Internal error' });
     return;
   }

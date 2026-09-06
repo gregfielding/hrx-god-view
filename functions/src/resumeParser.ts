@@ -10,6 +10,7 @@ import { maybeEmitResumeUploadedCategoryScore } from './categoryScoreEvolution/a
 import nlp from 'compromise';
 import { getClaudeChat, type ChatClientLike } from './utils/claudeChat';
 import { z } from 'zod';
+import { isAllowedBrowserOrigin, PUBLIC_APP_ORIGIN } from './config/appOrigin';
 
 // Ensure default app exists (emulators + cold starts)
 if (!admin.apps.length) {
@@ -670,9 +671,8 @@ function pickCorsOrigin(requestOrigin: string | undefined): string {
     .filter(Boolean);
   extra.forEach((e) => defaults.add(e));
   if (o && defaults.has(o)) return o;
-  if (o && /^https:\/\/([a-z0-9-]+\.)*hrxone\.com$/i.test(o)) return o;
-  if (o && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/i.test(o)) return o;
-  return 'https://hrxone.com';
+  if (o && isAllowedBrowserOrigin(o)) return o; // hrxone.com + c1staffing.com subdomains, dev ports, preview channels
+  return PUBLIC_APP_ORIGIN;
 }
 
 /**

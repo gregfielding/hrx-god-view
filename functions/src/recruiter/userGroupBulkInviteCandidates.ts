@@ -126,7 +126,8 @@ export interface BulkInviteResponse {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────
 
-const ALLOWED_APPLY_HOST_SUFFIXES = ['.hrxone.com', 'hrxone.com'];
+// Every host the web app is served from (hrxone.com today, app.c1staffing.com next — see config/appOrigin.ts).
+const ALLOWED_APPLY_HOST_SUFFIXES = ['.hrxone.com', 'hrxone.com', '.c1staffing.com', 'c1staffing.com'];
 
 function validateApplyUrl(rawUrl: string, groupId: string): string {
   const trimmed = (rawUrl ?? '').trim();

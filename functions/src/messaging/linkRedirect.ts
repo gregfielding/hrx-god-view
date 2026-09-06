@@ -18,12 +18,13 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 
 import { SHORT_LINKS_COLLECTION } from './linkShortener';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 
-const FALLBACK_URL = 'https://hrxone.com';
+const FALLBACK_URL = PUBLIC_APP_ORIGIN;
 
 export const linkRedirect = onRequest(
   { memory: '512MiB', timeoutSeconds: 30, invoker: 'public' },

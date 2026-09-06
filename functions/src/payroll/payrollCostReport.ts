@@ -28,6 +28,7 @@ import { buildWcCoverageReport } from '../workersComp/coverageGaps';
 import { gmailClientFor } from '../sales/sodexoReplies';
 import { INSOURCE_COVERAGE_CONTACT, sendMassPnEmail } from '../workersComp/massPnAutoSubmit';
 import { buildDataHealthReport } from './dataHealthReport';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -1652,7 +1653,7 @@ export async function maybeRunWeeklyClassificationHealth(
           `Flagged payroll: ${payrollFlags.length} lines / $${Math.round(flaggedAmt).toLocaleString()} · invoice flags: ${invoiceFlags.length}\n` +
           (unhealthyJos.length ? `\n⚠️ Job orders clocking past billing (crew rolled or weeks unbilled):\n${joLines}\n` : '') +
           (badRatios.length ? `\n⚠️ Class health (rev÷labor outside the staffing band):\n${ratioLines}\n` : '') +
-          `\nReview + fix inline: https://hrxone.com/reports/classification-audit`,
+          `\nReview + fix inline: ${PUBLIC_APP_ORIGIN}/reports/classification-audit`,
       );
     }
     // Posted-JE true-up rides the weekly run: verification-page fixes

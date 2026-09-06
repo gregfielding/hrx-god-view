@@ -15,6 +15,7 @@ import { logger } from 'firebase-functions/v2';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { isStaff } from './payroll/payrollTicketsCore';
 import { sendWorkerMessageInternal } from './twilio';
+import { PUBLIC_APP_HOST } from './config/appOrigin';
 
 const db = admin.firestore();
 const TENANT_C1 = 'BCiP2bQ9CgVOCTfV6MhD';
@@ -111,8 +112,8 @@ export async function approvePhoneChange(input: {
   const lang = String(u.preferredLanguage || 'en') === 'es' ? 'es' : 'en';
   const body =
     lang === 'es'
-      ? 'C1 Staffing: tu número fue actualizado. Ya puedes iniciar sesión con este teléfono en hrxone.com/login.'
-      : 'C1 Staffing: your sign-in number was updated. You can now sign in with this phone at hrxone.com/login.';
+      ? `C1 Staffing: tu número fue actualizado. Ya puedes iniciar sesión con este teléfono en ${PUBLIC_APP_HOST}/login.`
+      : `C1 Staffing: your sign-in number was updated. You can now sign in with this phone at ${PUBLIC_APP_HOST}/login.`;
   await sendWorkerMessageInternal(newPhoneE164, body, {
     systemContext: true,
     source: 'phone_change_approved',

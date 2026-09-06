@@ -84,6 +84,7 @@ import { formatHourlyPayAmountForI18n } from '../utils/hourlyPayDisplay';
 import AuthDialog from '../components/AuthDialog';
 import { langToggleStyle } from './authMinimalStyles';
 import WorkerBottomSheet from '../components/worker/WorkerBottomSheet';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 const JobPostingDetail: React.FC = () => {
   const { postId, tenantSlug } = useParams<{ postId: string; tenantSlug?: string }>();
@@ -2440,7 +2441,7 @@ const JobPostingDetail: React.FC = () => {
         }
         const jobsBoardUrl = typeof window !== 'undefined' && window.location.origin
           ? `${window.location.origin}/c1/jobs-board`
-          : 'https://hrxone.com/c1/jobs-board';
+          : `${PUBLIC_APP_ORIGIN}/c1/jobs-board`;
         window.location.href = jobsBoardUrl;
         return;
       }
@@ -2707,7 +2708,7 @@ const JobPostingDetail: React.FC = () => {
     urlAssignmentId ||
     (applicationData?.assignmentId ? String(applicationData.assignmentId) : null);
   const assignmentDetailsUrl = assignmentDetailsId
-    ? `${typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://hrxone.com'}/c1/workers/assignments/${assignmentDetailsId}`
+    ? `${typeof window !== 'undefined' && window.location.origin ? window.location.origin : PUBLIC_APP_ORIGIN}/c1/workers/assignments/${assignmentDetailsId}`
     : null;
   const offerSnapshot = getOfferSnapshotForShift(offerConfirmationShiftId);
   const offerConfirmReady = ackOnTimeArrival && ackUniformAndRequirements && ackNoShowConsequence;

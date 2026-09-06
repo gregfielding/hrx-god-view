@@ -4,6 +4,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { google } from 'googleapis';
 import * as admin from 'firebase-admin';
 import { defineString } from 'firebase-functions/params';
+import { PUBLIC_APP_ORIGIN } from './config/appOrigin';
 
 const db = getFirestore();
 
@@ -48,7 +49,7 @@ export const initiateBulkGmailImport = onCall({
         totalUsers: 0,
         tasksCreated: 0,
         headers: {
-          'Access-Control-Allow-Origin': 'https://hrxone.com',
+          'Access-Control-Allow-Origin': PUBLIC_APP_ORIGIN,
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization'
         }
@@ -124,7 +125,7 @@ export const initiateBulkGmailImport = onCall({
       totalUsers: tenantUsers.length,
       tasksCreated: tasks.length,
       headers: {
-        'Access-Control-Allow-Origin': 'https://hrxone.com',
+        'Access-Control-Allow-Origin': PUBLIC_APP_ORIGIN,
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization'
       }
@@ -136,7 +137,7 @@ export const initiateBulkGmailImport = onCall({
       success: false,
       message: `Failed to initiate bulk import: ${error instanceof Error ? error.message : 'Unknown error'}`,
       headers: {
-        'Access-Control-Allow-Origin': 'https://hrxone.com',
+        'Access-Control-Allow-Origin': PUBLIC_APP_ORIGIN,
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization'
       }
@@ -640,7 +641,7 @@ export const getBulkImportStatus = onCall({
         success: false,
         message: 'Job not found',
         headers: {
-          'Access-Control-Allow-Origin': 'https://hrxone.com',
+          'Access-Control-Allow-Origin': PUBLIC_APP_ORIGIN,
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization'
         }
@@ -653,7 +654,7 @@ export const getBulkImportStatus = onCall({
       success: true,
       job: jobData,
       headers: {
-        'Access-Control-Allow-Origin': 'https://hrxone.com',
+        'Access-Control-Allow-Origin': PUBLIC_APP_ORIGIN,
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization'
       }
@@ -665,7 +666,7 @@ export const getBulkImportStatus = onCall({
       success: false,
       message: `Failed to get status: ${error instanceof Error ? error.message : 'Unknown error'}`,
       headers: {
-        'Access-Control-Allow-Origin': 'https://hrxone.com',
+        'Access-Control-Allow-Origin': PUBLIC_APP_ORIGIN,
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization'
       }

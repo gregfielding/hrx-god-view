@@ -56,6 +56,7 @@ import WorkAuthorizedChip from '../../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../../components/EVerifyComfortChip';
 import JobBoardPostStatusChip from '../../components/JobBoardPostStatusChip';
 import { formatWorksiteCityStateZip } from '../../utils/formatWorksiteAddress';
+import { PUBLIC_APP_ORIGIN } from '../../config/appOrigin';
 
 const EditJobPost: React.FC = () => {
   const { tenantId, activeTenant } = useAuth();
@@ -93,7 +94,7 @@ const EditJobPost: React.FC = () => {
   const publicJobPostingUrl = useMemo(() => {
     if (!postId) return '';
     const origin =
-      typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://hrxone.com';
+      typeof window !== 'undefined' && window.location.origin ? window.location.origin : PUBLIC_APP_ORIGIN;
     return `${origin}/${jobsBoardUrlSlug}/jobs-board/${postId}`;
   }, [postId, jobsBoardUrlSlug]);
 

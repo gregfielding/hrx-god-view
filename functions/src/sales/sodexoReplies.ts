@@ -27,6 +27,7 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { google, gmail_v1 } from 'googleapis';
 import { GENERIC_EMAIL_DOMAINS, normCompany } from './outreachSuppressions';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -50,7 +51,7 @@ const DNC_RE =
 // "…me or anyone at X" extends the opt-out to the whole company.
 const COMPANY_WIDE_RE =
   /\b(?:anyone|any one|everyone|nobody|no one|all of us|our (?:company|team|organi[sz]ation|firm)|entire (?:company|team|organi[sz]ation)|colleagues?|affiliated with|associated with)\b/i;
-const PANEL_URL = 'https://hrxone.com/crm?tab=sodexo-campuses';
+const PANEL_URL = `${PUBLIC_APP_ORIGIN}/crm?tab=sodexo-campuses`;
 
 const trim = (v: unknown): string => String(v ?? '').trim();
 

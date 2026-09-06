@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineString } from 'firebase-functions/params';
 import { onRequest } from 'firebase-functions/v2/https';
+import { corsOriginFor } from './config/appOrigin';
 
 // Define config parameters
 const serpApiKey = defineString('SERP_API_KEY');
@@ -270,7 +271,7 @@ export const findDecisionMakersHttp = onRequest({
   try {
     // Handle preflight requests
     if (req.method === 'OPTIONS') {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
       res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.status(204).send('');
@@ -281,7 +282,7 @@ export const findDecisionMakersHttp = onRequest({
     const { companyName } = payload || {};
 
     if (!companyName) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.status(400).json({
         success: false,
         decisionMakers: [],
@@ -293,7 +294,7 @@ export const findDecisionMakersHttp = onRequest({
 
     const apiKey = serpApiKey.value();
     if (!apiKey) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.status(500).json({
         success: false,
         decisionMakers: [],
@@ -437,12 +438,12 @@ export const findDecisionMakersHttp = onRequest({
       message: `Found ${uniqueDecisionMakers.length} decision-makers for ${companyName}`
     };
 
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
     res.status(200).json(result);
 
   } catch (error) {
     console.error('Error in findDecisionMakersHttp:', error);
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
     res.status(500).json({
       success: false,
       decisionMakers: [],

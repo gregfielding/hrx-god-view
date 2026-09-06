@@ -2,18 +2,12 @@ import { createChatCompletion } from './utils/claudeChat';
 import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from './utils/logger';
+import { corsOriginFor } from './config/appOrigin';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
-const ALLOWED_ORIGINS = new Set([
-  'http://localhost:3000',
-  'https://hrxone.com',
-  'https://www.hrxone.com',
-]);
-
 function resolveCorsOrigin(originHeader: string | undefined): string {
-  const origin = originHeader ?? '';
-  return ALLOWED_ORIGINS.has(origin) ? origin : 'https://hrxone.com';
+  return corsOriginFor(originHeader);
 }
 
 // Deal detection patterns

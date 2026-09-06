@@ -28,6 +28,7 @@ import type { gmail_v1 } from 'googleapis';
 
 import { gmailClientFor, ensureInternalStaff } from './sodexoReplies';
 import { sweepVenueSmartPoEmails } from '../integrations/quickbooks/venuesmartPoClasses';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -390,7 +391,7 @@ export async function buildDeletionRequestsSection(): Promise<string | null> {
   );
   return (
     `ACCOUNT DELETION REQUESTS (${snap.size} pending):\n${lines.join('\n')}\n` +
-    `Review: https://hrxone.com/users/deletion-requests`
+    `Review: ${PUBLIC_APP_ORIGIN}/users/deletion-requests`
   );
 }
 
@@ -417,7 +418,7 @@ export async function buildPayrollTicketsSection(): Promise<string | null> {
   });
   return (
     `PAYROLL TICKETS WAITING ON US (${snap.size}):\n${lines.join('\n')}\n` +
-    `Work the queue: https://hrxone.com/payroll-tickets`
+    `Work the queue: ${PUBLIC_APP_ORIGIN}/payroll-tickets`
   );
 }
 
@@ -442,7 +443,7 @@ export async function morningBriefCore(tenantId: string): Promise<{ sent: boolea
       const label = lastMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
       sections.push(
         `WC FILING DUE (by the 4th): file ${label} payroll reports for C1 Select + C1 Events at client.insourcees.com.\n` +
-          `Numbers read straight across from https://hrxone.com/reports/workers-comp — ask Claude to drive the portal entry; you click Submit.`,
+          `Numbers read straight across from ${PUBLIC_APP_ORIGIN}/reports/workers-comp — ask Claude to drive the portal entry; you click Submit.`,
       );
     }
   }

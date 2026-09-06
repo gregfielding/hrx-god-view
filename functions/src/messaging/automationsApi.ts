@@ -11,6 +11,7 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { sendMessage, MessageContext } from './routingOrchestrator';
 import { verifyRequestAuthHrx } from './httpAuth';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -107,7 +108,7 @@ export const profileIncompleteAutomation = onRequest(
             variables: {
               firstName: userData.firstName || 'there',
               missingFields: missingFields.join(', '),
-              profileUrl: `https://app.hrxone.com/profile`, // TODO: Generate actual URL
+              profileUrl: `${PUBLIC_APP_ORIGIN}/profile`, // TODO: Generate actual URL
             },
             source: 'automation',
             sourceId: 'profile_incomplete',

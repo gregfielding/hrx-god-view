@@ -33,6 +33,7 @@ import { reconcileWorkerInternal } from '../integrations/everee/evereeReconcileW
 import { getPayHistory } from '../integrations/everee/evereeService';
 import { createOffCyclePaymentInternal } from './offCyclePayments';
 import { ensureBooksAccess } from './payrollCostReport';
+import { PUBLIC_APP_ORIGIN, PUBLIC_APP_HOST } from '../config/appOrigin';
 
 /** Typed errors so the callable can map to proper HttpsError codes. */
 export class TicketNotFoundError extends Error {}
@@ -598,7 +599,7 @@ export async function createPayrollTicket(input: {
     `:ticket: New payroll ticket — *${workerName}* · ${laneForCategory(diagnosis?.category)} lane · ` +
       `${diagnosis?.category ?? 'uncategorized'}/${diagnosis?.severity ?? '—'}\n` +
       `>${input.text.slice(0, 180)}\n` +
-      `https://hrxone.com/payroll-tickets`,
+      `${PUBLIC_APP_ORIGIN}/payroll-tickets`,
   );
   return { ticketId: ref.id, diagnosis };
 }
@@ -731,7 +732,7 @@ async function sendUrgentTicketAlert(input: {
     const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
     const body =
       `URGENT payroll ticket (${input.category}) from ${input.workerName}: ` +
-      `"${input.subject}" — review at hrxone.com/payroll-tickets`;
+      `"${input.subject}" — review at ${PUBLIC_APP_HOST}/payroll-tickets`;
     await Promise.all(
       targets.map((to) =>
         client.messages.create({ to: to.startsWith('+') ? to : `+1${to}`, from, body }),
@@ -893,7 +894,7 @@ async function executeSendPayrollLink(
       ? linkages.find((l) => !l.complete) ?? linkages[0]
       : linkages.find((l) => l.complete) ?? linkages[0];
   const path = `/c1/workers/earnings/${encodeURIComponent(target.evereeTenantId)}`;
-  const url = `https://hrxone.com${path}`;
+  const url = `${PUBLIC_APP_ORIGIN}${path}`;
 
   let sentSms = false;
   const phone = trim(ctx.ticket.workerPhone);

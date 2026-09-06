@@ -1,6 +1,7 @@
 import { onCall } from 'firebase-functions/v2/https';
 import { onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { corsOriginFor } from './config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -31,7 +32,7 @@ export const startAIThread = onCall({
 export const chatWithAI = onRequest(async (req, res) => {
   try {
     if (req.method === 'OPTIONS') {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
       res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.status(204).send('');
@@ -39,7 +40,7 @@ export const chatWithAI = onRequest(async (req, res) => {
     }
     const { tenantId, userId, threadId, messages } = req.body || {};
     if (!tenantId || !userId || !threadId) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.status(400).json({ error: 'Missing tenantId, userId, or threadId' });
       return;
     }
@@ -106,12 +107,12 @@ export const chatWithAI = onRequest(async (req, res) => {
         userId
       });
 
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
     res.status(200).json({ reply });
   } catch (err: any) {
     // eslint-disable-next-line no-console
     console.error('chatWithAI error:', err);
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
     res.status(500).json({ error: err?.message || 'Internal error' });
   }
 });

@@ -5,6 +5,7 @@ import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
 import { translateJobTextToSpanish } from './messaging/translateWorkerText';
+import { PUBLIC_APP_ORIGIN } from './config/appOrigin';
 
 if (!admin.apps.length) admin.initializeApp();
 
@@ -93,7 +94,7 @@ export const notifyGoogleJobsIndexing = onDocumentWritten(
       const indexing = google.indexing({ version: 'v3', auth });
 
       // Construct the URL for this job posting
-      const jobUrl = `https://hrxone.com/c1/jobs/${postId}`;
+      const jobUrl = `${PUBLIC_APP_ORIGIN}/c1/jobs/${postId}`;
 
       // Notify Google that this URL should be indexed/updated
       const response = await indexing.urlNotifications.publish({
@@ -140,7 +141,7 @@ export const requestJobIndexing = onCall(async (request) => {
     });
 
     const indexing = google.indexing({ version: 'v3', auth });
-    const jobUrl = `https://hrxone.com/c1/jobs/${postId}`;
+    const jobUrl = `${PUBLIC_APP_ORIGIN}/c1/jobs/${postId}`;
 
     const response = await indexing.urlNotifications.publish({
       requestBody: {
@@ -198,7 +199,7 @@ export const batchSubmitJobsToGoogle = onCall(async (request) => {
     // Submit each job to Google (with rate limiting)
     for (const doc of jobsSnapshot.docs) {
       const postId = doc.id;
-      const jobUrl = `https://hrxone.com/c1/jobs/${postId}`;
+      const jobUrl = `${PUBLIC_APP_ORIGIN}/c1/jobs/${postId}`;
 
       try {
         const response = await indexing.urlNotifications.publish({

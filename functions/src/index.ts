@@ -153,6 +153,7 @@ import { getCalendarWebhookStatus } from './calendarWebhookStatus';
 // 🔄 HTTP WORKERS AND ORCHESTRATOR IMPORTS
 import { logTaskUpdate, logUserUpdate, updateActiveSalespeople } from './httpWorkers';
 import { scheduledOrchestrator } from './scheduledOrchestrator';
+import { PUBLIC_APP_ORIGIN, PUBLIC_APP_HOST } from './config/appOrigin';
 
 // Export Deal Coach endpoints for deployment
 export {
@@ -6095,7 +6096,7 @@ export const createInviteToken = onCall(async (request) => {
     return {
       success: true,
       token,
-      inviteUrl: `https://app.hrxone.com/invite/${token}`,
+      inviteUrl: `${PUBLIC_APP_ORIGIN}/invite/${token}`,
       expiresAt
     };
   } catch (error: any) {
@@ -8326,10 +8327,10 @@ export const inviteUserV2 = onCall(
   // Staff keep the password-setup link. (hrxone.com, not app.hrxone.com:
   // the latter is not an authorized Firebase Auth domain and
   // generatePasswordResetLink threw on it — staff invites were broken.)
-  let link = 'https://hrxone.com/login';
+  let link = `${PUBLIC_APP_ORIGIN}/login`;
   if (!workerInvite) {
     const actionCodeSettings = {
-      url: 'https://hrxone.com/setup-password',
+      url: `${PUBLIC_APP_ORIGIN}/setup-password`,
       handleCodeInApp: true,
     };
     link = await auth.generatePasswordResetLink(email, actionCodeSettings);
@@ -8469,7 +8470,7 @@ export const inviteUserV2 = onCall(
     try {
       const smsBody =
         `${templateData.tenant_name || 'C1 Staffing'}: you've been invited to join. ` +
-        `Sign in with this phone number at https://hrxone.com/login — ` +
+        `Sign in with this phone number at ${PUBLIC_APP_ORIGIN}/login — ` +
         `we'll text you a code, no password needed.`;
       await sendWorkerMessageInternal(invitePhoneE164, smsBody, {
         systemContext: true,
@@ -8535,8 +8536,8 @@ export const inviteUserV2 = onCall(
           <p style="margin-bottom: 15px;">Powered by <strong>HRX</strong> - The Future of Workforce Management</p>
           <div style="margin-bottom: 20px;">
             ${templateData.tenant_hr_email ? `<a href="mailto:${templateData.tenant_hr_email}" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Contact HR</a>` : ''}
-            <a href="https://app.hrxone.com/support" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Support</a>
-            <a href="https://app.hrxone.com/privacy" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Privacy Policy</a>
+            <a href="https://www.c1staffing.com/support" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Support</a>
+            <a href="${PUBLIC_APP_ORIGIN}/privacy" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Privacy Policy</a>
           </div>
           <div style="font-size: 12px; color: rgba(255,255,255,0.6); line-height: 1.5;">
             ${templateData.tenant_legal_footer || `This email was sent by ${templateData.tenant_sender_name} on behalf of ${templateData.tenant_name}. 
@@ -8622,11 +8623,11 @@ export const resendInviteV2 = onCall(
   const inviteDoc = (inviteDocSnap.data() || {}) as Record<string, any>;
   const workerInvite = isWorkerUserDoc(inviteDoc);
   const invitePhoneE164 = normalizePhoneE164(String(inviteDoc.phoneE164 || inviteDoc.phone || ''));
-  let link = 'https://hrxone.com/login';
+  let link = `${PUBLIC_APP_ORIGIN}/login`;
   if (!workerInvite) {
     const actionCodeSettings = {
       // hrxone.com — app.hrxone.com is not an authorized Auth domain.
-      url: 'https://hrxone.com/setup-password',
+      url: `${PUBLIC_APP_ORIGIN}/setup-password`,
       handleCodeInApp: true,
     };
     link = await auth.generatePasswordResetLink(email, actionCodeSettings);
@@ -8708,7 +8709,7 @@ export const resendInviteV2 = onCall(
     try {
       await sendWorkerMessageInternal(
         invitePhoneE164,
-        `${templateData.tenant_name || 'C1 Staffing'}: reminder — sign in with this phone number at https://hrxone.com/login. We'll text you a code, no password needed.`,
+        `${templateData.tenant_name || 'C1 Staffing'}: reminder — sign in with this phone number at ${PUBLIC_APP_ORIGIN}/login. We'll text you a code, no password needed.`,
         {
           systemContext: true,
           source: 'system',
@@ -8773,8 +8774,8 @@ export const resendInviteV2 = onCall(
           <p style="margin-bottom: 15px;">Powered by <strong>HRX</strong> - The Future of Workforce Management</p>
           <div style="margin-bottom: 20px;">
             ${templateData.tenant_hr_email ? `<a href="mailto:${templateData.tenant_hr_email}" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Contact HR</a>` : ''}
-            <a href="https://app.hrxone.com/support" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Support</a>
-            <a href="https://app.hrxone.com/privacy" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Privacy Policy</a>
+            <a href="https://www.c1staffing.com/support" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Support</a>
+            <a href="${PUBLIC_APP_ORIGIN}/privacy" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Privacy Policy</a>
           </div>
           <div style="font-size: 12px; color: rgba(255,255,255,0.6); line-height: 1.5;">
             ${templateData.tenant_legal_footer || `This email was sent by ${templateData.tenant_sender_name} on behalf of ${templateData.tenant_name}. 
@@ -8928,7 +8929,7 @@ export const sendPasswordResetV2 = onCall(
         try {
           await sendWorkerMessageInternal(
             workerPhone,
-            "C1 Staffing: no password needed — sign in with this phone number at https://hrxone.com/login and we'll text you a code.",
+            `C1 Staffing: no password needed — sign in with this phone number at ${PUBLIC_APP_ORIGIN}/login and we'll text you a code.`,
             {
               systemContext: true,
               source: 'system',
@@ -8956,7 +8957,7 @@ export const sendPasswordResetV2 = onCall(
     // create the email action link" for it, which broke EVERY reset attempt
     // (worker report 2026-07-31).
     url:
-      'https://hrxone.com/setup-password' +
+      `${PUBLIC_APP_ORIGIN}/setup-password` +
       (continueUrl ? `?continueUrl=${encodeURIComponent(continueUrl)}` : ''),
     handleCodeInApp: true,
   };
@@ -9020,7 +9021,7 @@ export const sendPasswordResetV2 = onCall(
           </div>
           <p style="font-size:13px; color:#555; line-height:1.6;">
             This link works for a limited time and only once. If it has expired by the time you click it, just go to
-            <a href="https://hrxone.com/setup-password" style="color:#0057B8;">hrxone.com</a> and request a new one.
+            <a href="${PUBLIC_APP_ORIGIN}/setup-password" style="color:#0057B8;">${PUBLIC_APP_HOST}</a> and request a new one.
           </p>
           <p style="font-size:13px; color:#555; line-height:1.6;">
             If you didn't request this, you can safely ignore this email — your password won't change.
@@ -9038,7 +9039,7 @@ We received a request to reset the password for your HRX account. Open this link
 
 ${link}
 
-This link works for a limited time and only once. If it has expired, go to https://hrxone.com/setup-password and request a new one.
+This link works for a limited time and only once. If it has expired, go to ${PUBLIC_APP_ORIGIN}/setup-password and request a new one.
 
 If you didn't request this, you can safely ignore this email — your password won't change.`,
   };
@@ -9604,7 +9605,7 @@ export const logAssignmentCreated = onDocumentCreated(
         const postingPath = assignment.jobPostId
           ? `/c1/jobs-board/${assignment.jobPostId}?assignmentId=${assignmentId}&shiftId=${assignment.shiftId || ''}&intent=assignment_response`
           : '/c1/jobs-board';
-        const jobUrl = `https://hrxone.com${postingPath}`;
+        const jobUrl = `${PUBLIC_APP_ORIGIN}${postingPath}`;
         const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
 
         // OFFER SMS — this trigger (`logAssignmentCreated`) is the UNIVERSAL
@@ -10176,7 +10177,9 @@ export const updateUserLoginInfo = onCall({
     'https://hrx1-d3beb.web.app',
     'https://hrx1-d3beb.firebaseapp.com',
     'https://hrxone.com',
-    'https://www.hrxone.com'
+    'https://www.hrxone.com',
+    'https://app.hrxone.com',
+    'https://app.c1staffing.com'
   ]
 }, async (request) => {
   const { userId, loginData, initializeIfMissing, tenantId, source } = request.data || {};
@@ -10310,7 +10313,9 @@ export const updateUserActivity = onCall({
     'https://hrx1-d3beb.web.app',
     'https://hrx1-d3beb.firebaseapp.com',
     'https://hrxone.com',
-    'https://www.hrxone.com'
+    'https://www.hrxone.com',
+    'https://app.hrxone.com',
+    'https://app.c1staffing.com'
   ]
 }, async (request) => {
   const { userId, activity } = request.data || {};
@@ -10918,7 +10923,9 @@ export const addUsersToGroups = onCall({
     'https://hrx1-d3beb.web.app',
     'https://hrx1-d3beb.firebaseapp.com',
     'https://hrxone.com',
-    'https://www.hrxone.com'
+    'https://www.hrxone.com',
+    'https://app.hrxone.com',
+    'https://app.c1staffing.com'
   ]
 }, async (request) => {
   const { userId, groupIds, tenantId } = request.data;
@@ -11009,7 +11016,9 @@ export const validateUserGroupSignup = onCall({
     'https://hrx1-d3beb.web.app',
     'https://hrx1-d3beb.firebaseapp.com',
     'https://hrxone.com',
-    'https://www.hrxone.com'
+    'https://www.hrxone.com',
+    'https://app.hrxone.com',
+    'https://app.c1staffing.com'
   ]
 }, async (request) => {
   const { tenantId, groupId } = request.data || {};

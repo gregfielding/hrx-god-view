@@ -4,6 +4,7 @@ import { onCall, onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { getApolloKey } from './utils/secrets';
 import { apolloCompanyByDomain, apolloPeopleSearch } from './utils/apollo';
+import { corsOriginFor } from './config/appOrigin';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -495,7 +496,7 @@ export const apolloPingHttp = onRequest({ cors: true, secrets: [APOLLO_API_KEY] 
   try {
     // Handle preflight requests
     if (req.method === 'OPTIONS') {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.status(204).send('');
@@ -506,14 +507,14 @@ export const apolloPingHttp = onRequest({ cors: true, secrets: [APOLLO_API_KEY] 
     const tenantId = (req.query.tenantId as string) || (req.body?.tenantId as string);
     console.log('apolloPingHttp:start', { domain, tenantId, hasBody: !!req.body, debug: !!req.query.debug });
     if (!domain) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.status(400).json({ ok: false, error: 'domain required' });
       return;
     }
     const apiKey = envWantsApollo() ? await getApolloKey(tenantId) : undefined;
     if (!apiKey) {
       console.warn('apolloPingHttp:no_api_key', { tenantId });
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.status(200).json({ ok: false, error: 'Apollo key not configured' });
       return;
     }
@@ -522,7 +523,7 @@ export const apolloPingHttp = onRequest({ cors: true, secrets: [APOLLO_API_KEY] 
     const info = await apolloCompanyByDomain(domain, apiKey);
     if (info) {
       console.log('apolloPingHttp:normalized_ok', { id: info.id, name: info.name, domain: info.domain });
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.status(200).json({ ok: true, info });
       return;
     }
@@ -562,10 +563,10 @@ export const apolloPingHttp = onRequest({ cors: true, secrets: [APOLLO_API_KEY] 
       }
     } catch {}
     console.log('apolloPingHttp:minimal_result', { ok: !!minimal, id: minimal?.id, name: minimal?.name });
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
     res.status(200).json({ ok: !!minimal, info: minimal });
   } catch (e:any) {
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
     res.status(500).json({ ok: false, error: e?.message || 'internal' });
   }
 });

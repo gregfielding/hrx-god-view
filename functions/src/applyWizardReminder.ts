@@ -30,6 +30,7 @@ import {
   APPLY_WIZARD_SUPPRESSION_REASON,
   MIGRATION_SUPPRESSION_LOG_TAG,
 } from './messaging/migrationSuppress';
+import { PUBLIC_APP_ORIGIN } from './config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -484,7 +485,7 @@ export const processApplyAbandonNudges = onSchedule(
 
       // applyResumeSnapshot never carried a resumeUrl (writers store {path,
       // tenantId, jobId, …}) — the nudge always used the apply landing page.
-      const url = 'https://hrxone.com/c1/apply';
+      const url = `${PUBLIC_APP_ORIGIN}/c1/apply`;
 
       const firstName =
         String(data.firstName || (String(data.displayName || '').trim().split(/\s+/)[0] || '') || 'there').trim() ||

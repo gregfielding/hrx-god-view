@@ -3,6 +3,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getApps, getApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
+import { corsOriginFor } from './config/appOrigin';
 
 // Initialize Firebase Admin
 const app = getApps().length ? getApp() : getApps()[0];
@@ -216,7 +217,7 @@ export const cleanupContactCompanyAssociationsHttp = onRequest({
   region: 'us-central1'
 }, async (req, res) => {
   // Set CORS headers
-  res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+  res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
   res.set('Access-Control-Allow-Methods', 'GET, POST');
   res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 

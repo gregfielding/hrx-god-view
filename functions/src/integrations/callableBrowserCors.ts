@@ -8,8 +8,12 @@
  */
 export const CALLABLE_BROWSER_CORS: Array<string | RegExp> = [
   // Explicit production origins (string match avoids any RegExp edge cases in the cors middleware / bundling).
+  // Keep in sync with config/appOrigin.ts BROWSER_ORIGINS.
   'https://hrxone.com',
   'https://www.hrxone.com',
+  'https://app.hrxone.com',
+  // 2026-09: the app is moving to app.c1staffing.com (hrxone.com stays until retired).
+  'https://app.c1staffing.com',
   // CRA / Vite / common dev ports — explicit strings avoid Gen2 callable CORS regressions with RegExp (firebase-functions 6.4+).
   'http://localhost:3000',
   'http://127.0.0.1:3000',
@@ -21,4 +25,5 @@ export const CALLABLE_BROWSER_CORS: Array<string | RegExp> = [
   /^https:\/\/.+\.web\.app$/,
   // Apex + any subdomain (app.hrxone.com, tenant paths, etc.)
   /^https:\/\/([a-z0-9-]+\.)*hrxone\.com$/,
+  /^https:\/\/([a-z0-9-]+\.)*c1staffing\.com$/,
 ];

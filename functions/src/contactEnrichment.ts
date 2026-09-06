@@ -5,6 +5,7 @@ import { logEnrichmentEvent } from './utils/logging';
 import { logger } from './utils/logger';
 import { getApolloKey } from './utils/secrets';
 import { apolloContactEnrichment, apolloCompanyByDomain, ApolloContactEnrichment } from './utils/apollo';
+import { PUBLIC_APP_ORIGIN } from './config/appOrigin';
 
 // Utility function to remove undefined values from objects (Firestore doesn't allow undefined)
 function removeUndefinedValues(obj: any): any {
@@ -443,7 +444,7 @@ export const enrichContactOnDemand = onCall({
     return { 
       status: 'ok',
       headers: {
-        'Access-Control-Allow-Origin': 'https://hrxone.com',
+        'Access-Control-Allow-Origin': PUBLIC_APP_ORIGIN,
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization'
       }
