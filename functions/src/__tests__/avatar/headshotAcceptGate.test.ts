@@ -5,7 +5,9 @@
 import { expect } from 'chai';
 import {
   HEADSHOT_BLOCKING_REJECTION_REASONS,
+  HEADSHOT_GATE_GRACE_ENDS_AT_MS,
   evaluateHeadshotGate,
+  isHeadshotGateGraceActive,
   readWorkerPhotoUrl,
   type UserDocHeadshotFields,
 } from '../../avatar/headshotAcceptGate';
@@ -66,6 +68,42 @@ describe('headshotAcceptGate — evaluateHeadshotGate', () => {
     it('a rejection recorded against an OLDER photo does not block the current one', () => {
       const d = evaluateHeadshotGate({ avatar: URL_B, avatarVerification: rejected('no_face', URL_A) });
       expect(d).to.deep.equal({ allow: true, reason: 'stale_record' });
+    });
+  });
+
+  describe('grace period (workers who already worked, until 2026-09-21)', () => {
+    const during = Date.UTC(2026, 8, 10);
+    const after = Date.UTC(2026, 8, 22);
+
+    it('missing photo + worked before + inside the window → allow (grace_period)', () => {
+      const d = evaluateHeadshotGate({}, { hasWorkedBefore: true, nowMs: during });
+      expect(d).to.deep.equal({ allow: true, reason: 'grace_period' });
+    });
+
+    it('missing photo + never worked → still blocked inside the window', () => {
+      const d = evaluateHeadshotGate({}, { hasWorkedBefore: false, nowMs: during });
+      expect(d.allow).to.equal(false);
+      if (d.allow === false) expect(d.details.code).to.equal('HEADSHOT_MISSING');
+    });
+
+    it('missing photo + worked before → blocked once the window has closed', () => {
+      const d = evaluateHeadshotGate({}, { hasWorkedBefore: true, nowMs: after });
+      expect(d.allow).to.equal(false);
+    });
+
+    it('grace never covers a not-a-headshot rejection', () => {
+      const d = evaluateHeadshotGate(
+        { avatar: URL_A, avatarVerification: rejected('no_face') },
+        { hasWorkedBefore: true, nowMs: during },
+      );
+      expect(d.allow).to.equal(false);
+      if (d.allow === false) expect(d.details.code).to.equal('HEADSHOT_REJECTED');
+    });
+
+    it('window helper', () => {
+      expect(isHeadshotGateGraceActive(during)).to.equal(true);
+      expect(isHeadshotGateGraceActive(after)).to.equal(false);
+      expect(HEADSHOT_GATE_GRACE_ENDS_AT_MS).to.equal(Date.UTC(2026, 8, 21));
     });
   });
 

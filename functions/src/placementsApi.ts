@@ -1732,7 +1732,9 @@ export const respondToAssignment = onCall(
     // See functions/src/avatar/headshotAcceptGate.ts for the policy table.
     // The recruiter-on-behalf path (`confirmAssignmentForWorker`) stays
     // ungated — the recruiter is the human override.
-    await assertWorkerHeadshotApproved(uid);
+    // tenantId enables the grace clause (workers with a prior worked
+    // assignment pass without a photo until 2026-09-21).
+    await assertWorkerHeadshotApproved(uid, undefined, { tenantId });
 
     await assignmentRef.set(
       {

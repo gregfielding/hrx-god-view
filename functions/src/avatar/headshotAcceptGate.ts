@@ -102,11 +102,34 @@ export type HeadshotGateAllowReason =
   | 'error'
   | 'unverified'
   | 'stale_record'
-  | 'quality_rejection';
+  | 'quality_rejection'
+  | 'grace_period';
 
 export type HeadshotGateDecision =
   | { allow: true; reason: HeadshotGateAllowReason }
   | { allow: false; details: HeadshotGateBlockedDetails };
+
+/**
+ * Grace period (Greg 2026-09-06): workers who have ALREADY WORKED for us
+ * (any prior confirmed / active / ended assignment) keep self-accepting
+ * without a photo until this date, so re-arming the gate doesn't stall the
+ * 54 of 121 active-crew members who had no photo the day it went live. The
+ * Home nudge and the accept-page uploader still ask them for one. Brand-new
+ * workers and not-a-headshot rejections get no grace. After this date the
+ * clause is dead code — delete it.
+ */
+export const HEADSHOT_GATE_GRACE_ENDS_AT_MS = Date.UTC(2026, 8, 21); // 2026-09-21T00:00:00Z
+
+export interface HeadshotGateContext {
+  /** Worker has at least one prior confirmed/active/ended assignment. */
+  hasWorkedBefore?: boolean;
+  /** Injectable clock for tests. */
+  nowMs?: number;
+}
+
+export function isHeadshotGateGraceActive(nowMs: number = Date.now()): boolean {
+  return nowMs < HEADSHOT_GATE_GRACE_ENDS_AT_MS;
+}
 
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
 
@@ -124,9 +147,15 @@ export function readWorkerPhotoUrl(data: UserDocHeadshotFields | null | undefine
 }
 
 /** Pure policy — no I/O. Exported for tests and for surfaces that want to pre-check. */
-export function evaluateHeadshotGate(data: UserDocHeadshotFields | null | undefined): HeadshotGateDecision {
+export function evaluateHeadshotGate(
+  data: UserDocHeadshotFields | null | undefined,
+  ctx: HeadshotGateContext = {},
+): HeadshotGateDecision {
   const photo = readWorkerPhotoUrl(data);
   if (!photo) {
+    if (ctx.hasWorkedBefore === true && isHeadshotGateGraceActive(ctx.nowMs)) {
+      return { allow: true, reason: 'grace_period' };
+    }
     return {
       allow: false,
       details: { code: 'HEADSHOT_MISSING', status: 'missing', rejectionReason: null },
@@ -175,9 +204,23 @@ export function evaluateHeadshotGate(data: UserDocHeadshotFields | null | undefi
 export async function assertWorkerHeadshotApproved(
   workerUid: string,
   userDocData?: UserDocHeadshotFields | null,
+  opts: { tenantId?: string } = {},
 ): Promise<void> {
   const data = userDocData !== undefined ? userDocData : await loadUserDoc(workerUid);
-  const decision = evaluateHeadshotGate(data);
+  let decision = evaluateHeadshotGate(data);
+
+  // Grace lookup only when it can change the answer: the photo is missing,
+  // the grace window is open, and we know which tenant's assignments to
+  // check. One indexed query, limit 1.
+  if (
+    decision.allow === false &&
+    decision.details.code === 'HEADSHOT_MISSING' &&
+    isHeadshotGateGraceActive() &&
+    opts.tenantId
+  ) {
+    const hasWorkedBefore = await workerHasWorkedBefore(opts.tenantId, workerUid);
+    decision = evaluateHeadshotGate(data, { hasWorkedBefore });
+  }
 
   if (decision.allow === true) {
     if (decision.reason !== 'approved') {
@@ -201,6 +244,28 @@ export async function assertWorkerHeadshotApproved(
   // copy (see `public/i18n/locales/{en,es}.json > avatarVerification.*`). Keep the server
   // message short; it's only seen when the client can't / doesn't translate.
   throw new HttpsError('failed-precondition', englishFallbackMessage(details.code), details);
+}
+
+/** True when the worker has any prior assignment that reached confirmed / active / ended. */
+export async function workerHasWorkedBefore(tenantId: string, workerUid: string): Promise<boolean> {
+  try {
+    const db = admin.firestore();
+    const snap = await db
+      .collection(`tenants/${tenantId}/assignments`)
+      .where('userId', '==', workerUid)
+      .where('status', 'in', ['confirmed', 'active', 'ended', 'completed'])
+      .limit(1)
+      .get();
+    return !snap.empty;
+  } catch (err) {
+    // A failed lookup must not turn into a false block during the grace window.
+    logger.warn('headshot gate: prior-assignment lookup failed — treating as worked before', {
+      workerUid,
+      tenantId,
+      error: (err as Error)?.message || String(err),
+    });
+    return true;
+  }
 }
 
 async function loadUserDoc(workerUid: string): Promise<UserDocHeadshotFields | null> {

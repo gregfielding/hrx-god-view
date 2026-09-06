@@ -97,6 +97,7 @@ pure + tested):
 | current photo rejected for `no_face` / `multiple_faces` / `inappropriate` / `manual_override` | BLOCK `HEADSHOT_REJECTED` (+reason) |
 | rejected for `face_too_small` / `too_blurry` / `too_dark` | allow (Home nudge + profile pill carry the retake ask) |
 | approved / pending / error / no record / record for an older photo | allow |
+| no photo BUT a prior confirmed/active/ended assignment, before **2026-09-21** | allow (`grace_period`) — Greg 2026-09-06, because 54 of the 121 active-crew workers had no photo when the gate went live; `HEADSHOT_GATE_GRACE_ENDS_AT_MS`, one indexed `assignments` query only when the answer would otherwise be MISSING. Delete the clause after the date. |
 
 It never blocks on our own pipeline — only on "no photo" or "plainly not a
 headshot". Data at re-arm: 5,246 C1 photos, 92% approved, 8% rejected (185

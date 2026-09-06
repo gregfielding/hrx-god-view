@@ -3208,6 +3208,18 @@ const JobPostingDetail: React.FC = () => {
                   borderRadius: '999px',
                   px: 2,
                   fontWeight: 700,
+                  // Greg 2026-09-06: two identical Apply buttons in one
+                  // desktop viewport read as a mistake. The sticky sidebar
+                  // card already carries Apply on md+, so the header button
+                  // only shows where that card stacks far below the fold
+                  // (phones) or is hidden entirely (gig postings).
+                  display: {
+                    xs: 'inline-flex',
+                    md:
+                      posting.jobType !== 'gig' || isExpressInterest || isAssignmentResponseMode
+                        ? 'none'
+                        : 'inline-flex',
+                  },
                 }}
               >
                 {t('jobs.applyForJob')}
