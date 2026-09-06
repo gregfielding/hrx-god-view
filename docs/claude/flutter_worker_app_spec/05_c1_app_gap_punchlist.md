@@ -413,3 +413,20 @@ unverified, and quality rejections pass. App side needs NO change: the
 `showHeadshotGateBottomSheet` → `HeadshotCaptureScreen` path already exists
 and matches web's new inline `HeadshotGateCard`. Policy table in
 docs/claude/project_worker_profile_photo.md.
+
+**Claim Shift SHIPPED both sides 2026-09-06 (hrx-god-view + c1_app same
+session):** per-posting opt-in `job_postings.claimShiftEnabled` (recruiter
+toggle "Instant Claim"; default off — nothing changes on live postings until
+flipped). With it on, an available gig row shows a black **Claim Shift**
+(web `ShiftSelector` / app `_GigRowActionButton`), the 4-checkbox
+acknowledgement sheet (uniform / transportation / arrival / no-show, green
+confirm) calls `respondToAssignment` `decision:'claim'`, and the worker lands
+on Assignment Details with a CONFIRMED assignment (`acquisition:'claimed'` →
+`gig_claimed` messaging track). Typed refusals: web `formatClaimShiftError`,
+app `ClaimShiftBlock.tryParse` (+ the existing headshot gate sheet). Spec +
+server details: docs/claude/project_tier_system_claim_shift_spec.md.
+**APP GAP:** `gigShiftRowsProvider` renders ONE row per shift doc, so on a
+multi-day gig the app can only claim (and apply to) the START day — web
+renders one row per `dateSchedule` day. Fix = expand multi-day shifts into
+per-day rows in the provider (row.dayKey per day) and pass `date` to the
+claim; `GigShiftRow.multiDay` already marks those shifts.

@@ -50,6 +50,15 @@ interface ShiftSelectorProps {
    */
   onReapplyToShift?: (shiftId: string, date?: string) => void;
   /**
+   * Claim Shift (2026-09-06): when the posting has `claimShiftEnabled`, an
+   * available row renders a black "Claim Shift" CTA instead of the green
+   * Apply — the worker books the shift-day instantly (assignment born
+   * confirmed) after the acknowledgement sheet. Re-apply rows also claim.
+   * Confirmed / offered / requested states are unchanged.
+   */
+  claimEnabled?: boolean;
+  onClaimShift?: (shiftId: string, date?: string) => void;
+  /**
    * Map of `${shiftId}__${YYYY-MM-DD}` (day-scoped) or `${shiftId}`
    * (legacy) → assignmentId. Populated by `loadAppliedShifts` in
    * `JobPostingDetail` from the worker's active assignment docs.
@@ -84,6 +93,8 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   onDeclineShift,
   onCancelApplication,
   onReapplyToShift,
+  claimEnabled = false,
+  onClaimShift,
   assignmentIdsByShiftKey = {},
   disabled = false,
   jobPostId,
@@ -566,6 +577,25 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
               ) : isPast ? (
                 <Button variant="outlined" disabled sx={{ minWidth: 140, color: 'text.secondary' }}>
                   Past
+                </Button>
+              ) : claimEnabled && onClaimShift ? (
+                // Claim Shift — black (the standard primary CTA; green is
+                // reserved for the commitment moment inside the sheet).
+                // Covers both a fresh row and a re-apply row: the server
+                // overwrites a worker-cancelled day doc on re-claim.
+                <Button
+                  variant="contained"
+                  disabled={disabled || isFull}
+                  onClick={() => onClaimShift(shift.shiftId, item.type === 'day' ? item.date : undefined)}
+                  sx={{
+                    minWidth: 160,
+                    fontWeight: 700,
+                    backgroundColor: '#111',
+                    color: '#fff',
+                    '&:hover': { backgroundColor: '#000' },
+                  }}
+                >
+                  {isFull ? t('jobs.shiftFull') : t('jobs.claimShift')}
                 </Button>
               ) : isReapply ? (
                 // Worker pulled out of this shift earlier → goldenrod

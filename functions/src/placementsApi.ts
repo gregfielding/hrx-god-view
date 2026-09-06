@@ -96,7 +96,15 @@ const ONBOARDING_LIFECYCLE_CORE: HiringLifecycleCore = {
 //                   cancelled their application on the jobs board) →
 //                   distinct status 'worker-cancelled' so the jobs board
 //                   can offer "Re-apply to Shift".
-type AssignmentDecision = 'accept' | 'decline' | 'worker_cancel' | 'cadence_confirm' | 'cadence_cancel' | 'running_late';
+type AssignmentDecision =
+  | 'accept'
+  | 'decline'
+  | 'worker_cancel'
+  | 'cadence_confirm'
+  | 'cadence_cancel'
+  | 'running_late'
+  /** Worker-initiated Claim Shift — creates the assignment (no assignmentId in). */
+  | 'claim';
 
 export function toDateOnly(value: any): string {
   if (!value) return '';
@@ -109,7 +117,7 @@ export function toDateOnly(value: any): string {
 }
 
 /** Firestore rejects NaN; location/job data sometimes has non-numeric strings. */
-function safeFiniteNumber(value: unknown, fallback = 0): number {
+export function safeFiniteNumber(value: unknown, fallback = 0): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -134,7 +142,7 @@ function overlapsSameDay(aStart: number | null, aEnd: number | null, bStart: num
  * `end` is normalized to advance one day when the wall-clock end time
  * falls at or before the start (overnight shifts like 5 PM → 3 AM).
  */
-interface ShiftWindow {
+export interface ShiftWindow {
   startMs: number;
   endMs: number;
 }
@@ -154,7 +162,7 @@ interface ShiftWindow {
  * Comparing full ranges in epoch ms makes overnight + same-day +
  * cross-day all collapse to a single, correct interval-intersect.
  */
-function computeShiftWindow(
+export function computeShiftWindow(
   startDate: string | undefined,
   startTime: string | undefined,
   endTime: string | undefined,
@@ -193,16 +201,55 @@ function computeShiftWindow(
  * starts at 5:00 PM) is NOT an overlap — that's a hand-off, not a
  * conflict.
  */
-function shiftWindowsOverlap(a: ShiftWindow, b: ShiftWindow): boolean {
+export function shiftWindowsOverlap(a: ShiftWindow, b: ShiftWindow): boolean {
   return a.startMs < b.endMs && b.startMs < a.endMs;
 }
 
-function buildAssignmentDocId(args: { shiftId: string; userId: string; dayKey: string }): string {
+export function buildAssignmentDocId(args: { shiftId: string; userId: string; dayKey: string }): string {
   return `${args.shiftId}__${args.userId}__${args.dayKey}`;
 }
 
-function buildLegacyAssignmentDocId(args: { shiftId: string; userId: string }): string {
+export function buildLegacyAssignmentDocId(args: { shiftId: string; userId: string }): string {
   return `${args.shiftId}__${args.userId}`;
+}
+
+/**
+ * Position-aware pay/bill resolution (Greg, 2026-04-30 cascade audit).
+ * Priority: shift snapshot → JO position matching `shift.defaultJobTitle`
+ * (case-insensitive; handles multi-position JOs) → JO top-level rate.
+ * Shared by the recruiter create path and the worker Claim Shift path.
+ */
+export function resolveShiftRates(
+  jobOrder: Record<string, any>,
+  shift: Record<string, any>,
+): { payRate: number; billRate: number } {
+  const title = String(shift?.defaultJobTitle ?? '').trim().toLowerCase();
+  const candidates: Array<Record<string, unknown>> =
+    Array.isArray(jobOrder?.positions) && jobOrder.positions.length > 0
+      ? jobOrder.positions
+      : Array.isArray(jobOrder?.gigPositions)
+        ? jobOrder.gigPositions
+        : [];
+  const position = title
+    ? candidates.find(
+        (p) => String((p?.jobTitle as string | undefined) ?? '').trim().toLowerCase() === title,
+      ) ?? null
+    : null;
+  const positionPayRate = safeFiniteNumber((position?.payRate as number | string | undefined) ?? undefined, NaN);
+  const positionBillRate = safeFiniteNumber((position?.billRate as number | string | undefined) ?? undefined, NaN);
+  const payRate = (() => {
+    const fromShift = safeFiniteNumber(shift?.payRate, NaN);
+    if (Number.isFinite(fromShift) && fromShift > 0) return fromShift;
+    if (Number.isFinite(positionPayRate) && positionPayRate > 0) return positionPayRate;
+    return safeFiniteNumber(jobOrder?.payRate, 0);
+  })();
+  const billRate = (() => {
+    const fromShift = safeFiniteNumber(shift?.billRate, NaN);
+    if (Number.isFinite(fromShift) && fromShift > 0) return fromShift;
+    if (Number.isFinite(positionBillRate) && positionBillRate > 0) return positionBillRate;
+    return safeFiniteNumber(jobOrder?.billRate, 0);
+  })();
+  return { payRate, billRate };
 }
 
 function isAssignmentActiveStatus(status: string): boolean {
@@ -260,7 +307,7 @@ export function getApplicationApplyDays(applicationData: Record<string, any>): s
  * likewise left untouched. Never throws — a release failure must not
  * affect the assignment that triggered it.
  */
-async function releaseOverlappingApplications(args: {
+export async function releaseOverlappingApplications(args: {
   tenantId: string;
   userId: string;
   assignedJobOrderId: string;
@@ -440,7 +487,7 @@ type OnboardingConfig = {
   blockedReason?: string;
 };
 
-async function resolveOnboardingConfigForJobOrder(params: {
+export async function resolveOnboardingConfigForJobOrder(params: {
   tenantId: string;
   jobOrderId: string;
   jobOrder: any;
@@ -502,7 +549,7 @@ async function resolveOnboardingConfigForJobOrder(params: {
   };
 }
 
-async function ensureOnboardingInstance(params: {
+export async function ensureOnboardingInstance(params: {
   tenantId: string;
   assignmentId: string;
   userId: string;
@@ -572,7 +619,7 @@ async function ensureOnboardingInstance(params: {
 
 // --- End Onboarding ---
 
-async function resolveApplicationForAssignment(args: {
+export async function resolveApplicationForAssignment(args: {
   tenantId: string;
   jobOrderId: string;
   shiftId: string;
@@ -737,52 +784,10 @@ export const placementsCreateAssignments = onCall(
     }
   }
 
-  // Position-aware rate resolution (Greg, 2026-04-30 cascade audit).
-  // Priority order for assignment payRate / billRate:
-  //   1. `shift.payRate` / `shift.billRate` — snapshot stamped by
-  //      `EditShiftForm` at save time (every new shift carries this).
-  //   2. The position on the JO matching `shift.defaultJobTitle`
-  //      (case-insensitive). Catches legacy shifts that pre-date the
-  //      shift-form snapshot fix and JOs with multi-position pricing
-  //      where each position has a different rate.
-  //   3. JO top-level `payRate` / `billRate`.
-  // Without this lookup, a multi-position JO would always assign at
-  // position[0]'s rate regardless of which position the shift was for.
-  const findShiftPosition = (): Record<string, unknown> | null => {
-    const title = String(shift.defaultJobTitle ?? '').trim().toLowerCase();
-    if (!title) return null;
-    const candidates = Array.isArray(jobOrder.positions) && jobOrder.positions.length > 0
-      ? jobOrder.positions
-      : Array.isArray(jobOrder.gigPositions)
-        ? jobOrder.gigPositions
-        : [];
-    return (
-      (candidates as Array<Record<string, unknown>>).find(
-        (p) => String((p?.jobTitle as string | undefined) ?? '').trim().toLowerCase() === title,
-      ) ?? null
-    );
-  };
-  const positionForShift = findShiftPosition();
-  const positionPayRate = safeFiniteNumber(
-    (positionForShift?.payRate as number | string | undefined) ?? undefined,
-    NaN,
-  );
-  const positionBillRate = safeFiniteNumber(
-    (positionForShift?.billRate as number | string | undefined) ?? undefined,
-    NaN,
-  );
-  const resolvedPayRate = (() => {
-    const fromShift = safeFiniteNumber(shift.payRate, NaN);
-    if (Number.isFinite(fromShift) && fromShift > 0) return fromShift;
-    if (Number.isFinite(positionPayRate) && positionPayRate > 0) return positionPayRate;
-    return safeFiniteNumber(jobOrder.payRate, 0);
-  })();
-  const resolvedBillRate = (() => {
-    const fromShift = safeFiniteNumber(shift.billRate, NaN);
-    if (Number.isFinite(fromShift) && fromShift > 0) return fromShift;
-    if (Number.isFinite(positionBillRate) && positionBillRate > 0) return positionBillRate;
-    return safeFiniteNumber(jobOrder.billRate, 0);
-  })();
+  // Position-aware rate resolution — see `resolveShiftRates` (shift snapshot
+  // → matching JO position → JO top-level). Extracted 2026-09-06 so the
+  // worker Claim Shift path stamps identical rates.
+  const { payRate: resolvedPayRate, billRate: resolvedBillRate } = resolveShiftRates(jobOrder, shift);
   const onboardingConfig = await resolveOnboardingConfigForJobOrder({
     tenantId,
     jobOrderId,
@@ -1661,6 +1666,36 @@ export const respondToAssignment = onCall(
     decision?: AssignmentDecision;
     etaMinutes?: number;
   };
+
+  // Claim Shift (2026-09-06): the worker creates their own CONFIRMED
+  // assignment on a claim-enabled gig posting — no offer, no accept. Rides
+  // this callable because we're at the Cloud Run service cap. Everything
+  // (capacity transaction, gates, provenance stamps) lives in
+  // claims/claimShift.ts; lazy import keeps module init acyclic.
+  if (decision === 'claim') {
+    const claimData = (request.data || {}) as {
+      jobOrderId?: string;
+      shiftId?: string;
+      date?: string | null;
+      jobPostId?: string | null;
+      channel?: string | null;
+      acknowledgements?: unknown;
+    };
+    if (!tenantId || !claimData.jobOrderId || !claimData.shiftId) {
+      throw new HttpsError('invalid-argument', 'tenantId, jobOrderId, and shiftId are required to claim a shift');
+    }
+    const { claimShiftForWorker } = await import('./claims/claimShift');
+    return claimShiftForWorker({
+      tenantId,
+      uid: request.auth.uid,
+      jobOrderId: String(claimData.jobOrderId),
+      shiftId: String(claimData.shiftId),
+      date: claimData.date ?? null,
+      jobPostId: claimData.jobPostId ?? null,
+      channel: claimData.channel ?? null,
+      acknowledgements: claimData.acknowledgements,
+    });
+  }
 
   if (
     !tenantId ||

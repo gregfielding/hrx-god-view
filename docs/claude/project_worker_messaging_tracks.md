@@ -111,7 +111,14 @@ notification settings; bodies localize EN/ES off `users/{uid}.preferredLanguage`
    (`confirmedVia: 'claim'`) so the reply handler treats CANCEL correctly.
    Careers / open shifts are fenced before the claim fence and never
    re-route. Tests: `__tests__/cadence/shiftReminderProfile.test.ts` +
-   cadenceMessages. Nothing fires until the claim endpoint ships.
+   cadenceMessages. **Claim endpoint SHIPPED later the same day**
+   (`functions/src/claims/claimShift.ts` via `respondToAssignment`
+   `decision:'claim'`): it stamps `acquisition:'claimed'`, `claimedAt`, and
+   `cortConfirmation {state:'confirmed', profileId:'gig_claimed',
+   confirmedVia:'claim'}` at birth, and sets `suppressInitialNotification`
+   so the legacy ACCEPT/DECLINE offer SMS never goes out — the track above
+   is the only message. Live only on postings a recruiter opts in with
+   `claimShiftEnabled` (see project_tier_system_claim_shift_spec.md).
 2. **Open shifts**: SHIPPED — welcome once at assignment creation
    (`openshift_welcome`, skipped for assignments older than 7 days so the
    rollout can't greet long-standing crews) + Sunday-17:00-local weekly

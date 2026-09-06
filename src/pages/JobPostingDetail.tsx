@@ -58,7 +58,12 @@ import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useGuestLanguage } from '../hooks/useGuestLanguage';
 import { useT, setLanguage, useLanguage } from '../i18n';
-import { formatHeadshotGateError } from '../utils/avatarVerification/formatHeadshotGateError';
+import {
+  formatHeadshotGateError,
+  type FormattedHeadshotGateError,
+} from '../utils/avatarVerification/formatHeadshotGateError';
+import { formatClaimShiftError } from '../utils/claimShift/formatClaimShiftError';
+import HeadshotGateCard from '../components/worker/HeadshotGateCard';
 import { formatDistanceToNow, format } from 'date-fns';
 import { enUS, es as esLocale } from 'date-fns/locale';
 import ShiftSelector from '../components/ShiftSelector';
@@ -179,6 +184,18 @@ const JobPostingDetail: React.FC = () => {
   const [ackOnTimeArrival, setAckOnTimeArrival] = useState(false);
   const [ackUniformAndRequirements, setAckUniformAndRequirements] = useState(false);
   const [ackNoShowConsequence, setAckNoShowConsequence] = useState(false);
+  // Claim Shift sheet (2026-09-06) — worker books a shift-day instantly.
+  // Four acknowledgements (uniform / transportation / arrival / no-show),
+  // green confirm, then straight to Assignment Details. Server: the
+  // `respondToAssignment` callable with `decision: 'claim'`.
+  const [claimSheet, setClaimSheet] = useState<{ shiftId: string; date?: string } | null>(null);
+  const [claimAckUniform, setClaimAckUniform] = useState(false);
+  const [claimAckTransport, setClaimAckTransport] = useState(false);
+  const [claimAckArrival, setClaimAckArrival] = useState(false);
+  const [claimAckNoShow, setClaimAckNoShow] = useState(false);
+  const [claimSubmitting, setClaimSubmitting] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [claimGate, setClaimGate] = useState<FormattedHeadshotGateError | null>(null);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [applicationData, setApplicationData] = useState<any>(null);
@@ -2553,6 +2570,110 @@ const JobPostingDetail: React.FC = () => {
     await handleAssignmentDecision('worker_cancel', shiftId, { entryPoint: 'decline_button', date });
   };
 
+  // ---- Claim Shift -------------------------------------------------------
+  const openClaimSheet = (shiftId: string, date?: string) => {
+    // Guests take the normal apply/sign-in path; the claim sheet needs a
+    // signed-in worker (the server keys everything on auth.uid).
+    if (!user?.uid) {
+      void handleApplyToShift(shiftId, date);
+      return;
+    }
+    setClaimAckUniform(false);
+    setClaimAckTransport(false);
+    setClaimAckArrival(false);
+    setClaimAckNoShow(false);
+    setClaimError(null);
+    setClaimGate(null);
+    setClaimSheet({ shiftId, date });
+  };
+
+  const closeClaimSheet = () => {
+    if (claimSubmitting) return;
+    setClaimSheet(null);
+    setClaimError(null);
+    setClaimGate(null);
+  };
+
+  /** First row a claim CTA outside the list (header / sticky) should target. */
+  const pickFirstClaimTarget = (): { shiftId: string; date?: string } | null => {
+    for (const s of dynamicShifts as any[]) {
+      const sid = String(s.shiftId || '');
+      if (!sid) continue;
+      const multi = s.dateSchedule && s.endDate && s.endDate !== s.shiftDate;
+      if (multi) {
+        const days = getDateScheduleEntriesWithHours(s.dateSchedule, s.shiftDate, s.endDate).map((d) => d.date);
+        const free = days.find((d) => !shiftStatuses[`${sid}__${d}`] && !appliedShifts.includes(`${sid}__${d}`));
+        if (free) return { shiftId: sid, date: free };
+        continue;
+      }
+      if (shiftStatuses[sid] || appliedShifts.includes(sid)) continue;
+      if ((s.spotsRemaining ?? 1) <= 0) continue;
+      return { shiftId: sid };
+    }
+    return null;
+  };
+
+  const handleSubmitClaim = async () => {
+    if (!claimSheet || !resolvedTenantId || !user?.uid || !posting?.jobOrderId) return;
+    if (!(claimAckUniform && claimAckTransport && claimAckArrival && claimAckNoShow)) {
+      setClaimError(t('jobs.claimAllAcksRequired'));
+      return;
+    }
+    setClaimSubmitting(true);
+    setClaimError(null);
+    setClaimGate(null);
+    const { shiftId, date } = claimSheet;
+    const statusKey = date ? `${shiftId}__${date}` : shiftId;
+    try {
+      const respondFn = httpsCallable(functions, 'respondToAssignment');
+      const res = await respondFn({
+        tenantId: resolvedTenantId,
+        decision: 'claim',
+        jobOrderId: posting.jobOrderId,
+        shiftId,
+        date: date ?? null,
+        jobPostId: postId,
+        channel: 'web',
+        acknowledgements: { uniform: true, transportation: true, arrival: true, attendancePolicy: true },
+      });
+      const data = (res.data || {}) as { assignmentId?: string };
+      const assignmentId = data.assignmentId ? String(data.assignmentId) : '';
+      setShiftStatuses((prev) => ({ ...prev, [statusKey]: 'confirmed' }));
+      setAppliedShifts((prev) => (prev.includes(statusKey) ? prev : [...prev, statusKey]));
+      if (assignmentId) {
+        setAssignmentIdsByShiftKey((prev) => ({ ...prev, [statusKey]: assignmentId }));
+        setAcceptedAssignmentId(assignmentId);
+        logAssignmentUpdateActivity(user.uid, assignmentId, 'confirmed').catch((e) =>
+          console.warn('Failed to log claim activity:', e),
+        );
+      }
+      setClaimSheet(null);
+      if (assignmentId) {
+        // One surface for the booked shift (schedule, directions, on-site
+        // contact, cancel) — spec decision: route, don't inline.
+        navigate(`/c1/workers/assignments/${assignmentId}`);
+      } else {
+        setAppliedShiftsRefresh((n) => n + 1);
+      }
+    } catch (err) {
+      console.error('Claim shift failed:', err);
+      const gate = formatHeadshotGateError(err);
+      if (gate) {
+        setClaimGate(gate);
+        return;
+      }
+      const claimErr = formatClaimShiftError(err);
+      if (claimErr) {
+        setClaimError(claimErr.message);
+        if (claimErr.shiftFilled) setAppliedShiftsRefresh((n) => n + 1);
+        return;
+      }
+      setClaimError(t('jobs.claimErrorGeneric'));
+    } finally {
+      setClaimSubmitting(false);
+    }
+  };
+
   const handleSubmitOfferConfirmation = async () => {
     if (!resolvedTenantId || !applicationDocId) {
       setOfferConfirmError('We could not find your application record. Please refresh and try again.');
@@ -2714,6 +2835,20 @@ const JobPostingDetail: React.FC = () => {
   const offerConfirmReady = ackOnTimeArrival && ackUniformAndRequirements && ackNoShowConsequence;
   const arrivalLocationText = offerSnapshot.locationName || offerSnapshot.address || 'the worksite';
   const arrivalStartTimeText = offerSnapshot.startTimeText || 'the scheduled start time';
+
+  // Claim Shift: per-posting recruiter opt-in, gigs with bookable shifts only.
+  const claimEnabled = posting?.claimShiftEnabled === true && posting?.jobType === 'gig' && !isExpressInterest;
+  const claimShiftObj = claimSheet
+    ? (dynamicShifts as any[]).find((s) => String(s.shiftId) === claimSheet.shiftId) || null
+    : null;
+  const claimDayCfg =
+    claimSheet?.date && claimShiftObj?.dateSchedule ? claimShiftObj.dateSchedule[claimSheet.date] || null : null;
+  const claimSnapshot = getOfferSnapshotForShift(claimSheet?.shiftId);
+  const claimStartText = claimDayCfg?.startTime ? formatTime(claimDayCfg.startTime) : claimSnapshot.startTimeText;
+  const claimEndText = claimDayCfg?.endTime ? formatTime(claimDayCfg.endTime) : claimSnapshot.endTimeText;
+  const claimDateText = claimSheet?.date ? formatDate(claimSheet.date) : claimSnapshot.shiftDateText;
+  const claimLocationText = claimSnapshot.locationName || claimSnapshot.address || '';
+  const claimAcksReady = claimAckUniform && claimAckTransport && claimAckArrival && claimAckNoShow;
 
   // Generate Google Jobs structured data
   const generateJobPostingSchema = () => {
@@ -3203,11 +3338,21 @@ const JobPostingDetail: React.FC = () => {
                 variant="contained"
                 size="small"
                 color="success"
-                onClick={handleApply}
+                onClick={
+                  claimEnabled
+                    ? () => {
+                        const target = pickFirstClaimTarget();
+                        if (target) openClaimSheet(target.shiftId, target.date);
+                      }
+                    : handleApply
+                }
                 sx={{
                   borderRadius: '999px',
                   px: 2,
                   fontWeight: 700,
+                  ...(claimEnabled
+                    ? { backgroundColor: '#111', color: '#fff', '&:hover': { backgroundColor: '#000' } }
+                    : {}),
                   // Greg 2026-09-06: two identical Apply buttons in one
                   // desktop viewport read as a mistake. The sticky sidebar
                   // card already carries Apply on md+, so the header button
@@ -3222,7 +3367,7 @@ const JobPostingDetail: React.FC = () => {
                   },
                 }}
               >
-                {t('jobs.applyForJob')}
+                {claimEnabled ? t('jobs.claimShift') : t('jobs.applyForJob')}
               </Button>
             ))}
         </Box>
@@ -3648,6 +3793,8 @@ const JobPostingDetail: React.FC = () => {
                     onDeclineShift={handleDeclineAssignmentForShift}
                     onCancelApplication={handleCancelApplicationForDay}
                     onReapplyToShift={handleReapplyToShift}
+                    claimEnabled={claimEnabled}
+                    onClaimShift={openClaimSheet}
                     jobPostId={postId}
                     tenantId={resolvedTenantId}
                     language={displayLanguage}
@@ -4071,10 +4218,27 @@ const JobPostingDetail: React.FC = () => {
               <Button
                 variant="contained"
                 size="medium"
-                onClick={isGigWithShifts ? () => { const s = dynamicShifts.find((x: any) => !appliedShifts.includes(x.shiftId) && ((x.spotsRemaining ?? 1) > 0)); if (s) handleApplyToShift(s.shiftId); } : handleApply}
-                sx={{ flexShrink: 0, fontWeight: 600, borderRadius: '999px', px: 2.5 }}
+                onClick={
+                  claimEnabled
+                    ? () => {
+                        const target = pickFirstClaimTarget();
+                        if (target) openClaimSheet(target.shiftId, target.date);
+                      }
+                    : isGigWithShifts
+                      ? () => { const s = dynamicShifts.find((x: any) => !appliedShifts.includes(x.shiftId) && ((x.spotsRemaining ?? 1) > 0)); if (s) handleApplyToShift(s.shiftId); }
+                      : handleApply
+                }
+                sx={{
+                  flexShrink: 0,
+                  fontWeight: 600,
+                  borderRadius: '999px',
+                  px: 2.5,
+                  ...(claimEnabled
+                    ? { backgroundColor: '#111', color: '#fff', '&:hover': { backgroundColor: '#000' } }
+                    : {}),
+                }}
               >
-                {t('jobs.applyForJob')}
+                {claimEnabled ? t('jobs.claimShift') : t('jobs.applyForJob')}
               </Button>
             </Box>
           );
@@ -4192,6 +4356,169 @@ const JobPostingDetail: React.FC = () => {
         {offerConfirmError ? (
           <Alert severity="error" sx={{ mt: 2 }}>
             {offerConfirmError}
+          </Alert>
+        ) : null}
+      </WorkerBottomSheet>
+
+      {/* Claim Shift acknowledgement sheet — the commitment moment. Green
+          confirm is reserved for here (the board CTA stays black). */}
+      <WorkerBottomSheet
+        open={Boolean(claimSheet)}
+        onClose={closeClaimSheet}
+        title={t('jobs.claimSheetTitle')}
+        footer={
+          <Stack
+            direction={{ xs: 'column-reverse', sm: 'row' }}
+            spacing={1.25}
+            sx={{ width: '100%', minWidth: 0 }}
+          >
+            <Button
+              variant="outlined"
+              fullWidth
+              onClick={closeClaimSheet}
+              disabled={claimSubmitting}
+              sx={{ minWidth: 0 }}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="contained"
+              fullWidth
+              onClick={handleSubmitClaim}
+              disabled={!claimAcksReady || claimSubmitting || Boolean(claimGate)}
+              startIcon={claimSubmitting ? <CircularProgress size={18} color="inherit" /> : null}
+              sx={{
+                minWidth: 0,
+                fontWeight: 700,
+                backgroundColor: '#4CAF50',
+                color: '#fff',
+                '&:hover': { backgroundColor: '#45a049' },
+              }}
+            >
+              {claimSubmitting ? t('jobs.claimingShift') : t('jobs.claimShift')}
+            </Button>
+          </Stack>
+        }
+      >
+        <Box
+          sx={{
+            mt: 1,
+            p: 1.5,
+            borderRadius: 2,
+            border: 1,
+            borderColor: 'divider',
+            bgcolor: 'grey.50',
+          }}
+        >
+          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+            {claimSnapshot.jobTitle || t('jobs.shift')}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {claimSnapshot.companyName || t('applications.company')}
+          </Typography>
+          {claimDateText && (
+            <Typography variant="body2" sx={{ mt: 0.75 }}>
+              {t('assignment.date')}: {claimDateText}
+            </Typography>
+          )}
+          {claimStartText && (
+            <Typography variant="body2">
+              {t('jobs.startDate')}: {claimStartText}
+              {claimEndText ? `  |  ${t('assignment.endDate')}: ${claimEndText}` : ''}
+            </Typography>
+          )}
+          {claimLocationText && (
+            <Typography variant="body2" sx={{ mt: 0.75 }}>
+              {t('jobs.location')}: {[claimSnapshot.locationName, claimSnapshot.address].filter(Boolean).join(' - ')}
+            </Typography>
+          )}
+          {claimSnapshot.uniformSummary && (
+            <Typography variant="body2" sx={{ mt: 0.75 }}>
+              {t('assignment.requiredUniform')}: {claimSnapshot.uniformSummary}
+            </Typography>
+          )}
+          {claimSnapshot.keyRequirementsSummary && (
+            <Typography variant="body2" sx={{ mt: 0.75 }}>
+              {t('jobs.keyRequirements')}: {claimSnapshot.keyRequirementsSummary}
+            </Typography>
+          )}
+        </Box>
+
+        <Typography variant="body2" sx={{ mt: 2 }}>
+          {t('jobs.claimSheetIntro')}
+        </Typography>
+
+        <Stack spacing={1.25} sx={{ mt: 1.5 }}>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={claimAckUniform}
+                onChange={(e) => setClaimAckUniform(e.target.checked)}
+                disabled={claimSubmitting}
+              />
+            }
+            label={t('jobs.claimAckUniform')}
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={claimAckTransport}
+                onChange={(e) => setClaimAckTransport(e.target.checked)}
+                disabled={claimSubmitting}
+              />
+            }
+            label={t('jobs.claimAckTransport')}
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={claimAckArrival}
+                onChange={(e) => setClaimAckArrival(e.target.checked)}
+                disabled={claimSubmitting}
+              />
+            }
+            label={
+              claimLocationText && claimStartText
+                ? t('jobs.claimAckArrival', { location: claimLocationText, time: claimStartText })
+                : t('jobs.claimAckArrivalGeneric')
+            }
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={claimAckNoShow}
+                onChange={(e) => setClaimAckNoShow(e.target.checked)}
+                disabled={claimSubmitting}
+              />
+            }
+            label={t('jobs.claimAckNoShow')}
+          />
+        </Stack>
+
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
+          {t('jobs.claimCancelHint')}
+        </Typography>
+
+        {claimGate && user?.uid ? (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              {t('jobs.claimHeadshotHint')}
+            </Typography>
+            <HeadshotGateCard
+              uid={user.uid}
+              gate={claimGate}
+              onUploaded={() => {
+                setClaimGate(null);
+                void handleSubmitClaim();
+              }}
+              onDismiss={() => setClaimGate(null)}
+            />
+          </Box>
+        ) : null}
+
+        {claimError ? (
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {claimError}
           </Alert>
         ) : null}
       </WorkerBottomSheet>

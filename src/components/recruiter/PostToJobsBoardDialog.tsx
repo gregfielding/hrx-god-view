@@ -339,6 +339,20 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
               label="Show Pay Rate"
             />
           </Grid>
+
+          {formData.jobType === 'gig' && (
+            <Grid item xs={12} md={4}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formData.claimShiftEnabled === true}
+                    onChange={(e) => handleInputChange('claimShiftEnabled', e.target.checked)}
+                  />
+                }
+                label="Instant Claim (workers book without an offer)"
+              />
+            </Grid>
+          )}
           
           <Grid item xs={12} md={4}>
             <FormControlLabel

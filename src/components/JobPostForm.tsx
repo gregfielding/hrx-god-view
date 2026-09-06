@@ -244,6 +244,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       showPayRate: true,
       workersNeeded: 1,
       showWorkersNeeded: false,
+      claimShiftEnabled: false,
       eVerifyRequired: false,
       screeningPackageId: '',
       screeningPackageName: '',
@@ -1598,6 +1599,42 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                     checked={formData.showWorkersNeeded}
                     onChange={(e) => {
                       setFormData({ ...formData, showWorkersNeeded: e.target.checked });
+                      maybeTickPersist();
+                    }}
+                  />
+                </Box>
+              </Grid>
+            )}
+            {/*
+              Claim Shift (2026-09-06): per-posting opt-in for the worker
+              "Claim Shift" CTA — workers book a shift-day instantly
+              (assignment born confirmed, claim messaging track) instead of
+              applying and waiting for an offer. Persists to
+              `post.claimShiftEnabled`; the server refuses claims on
+              postings without it. Default off.
+            */}
+            {formData.jobType === 'gig' && (
+              <Grid item xs={12} sm={6}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    height: '100%',
+                  }}
+                >
+                  <Box>
+                    <Typography variant="body1">
+                      Instant Claim (workers book without an offer)
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Shows a &quot;Claim Shift&quot; button. Claims are confirmed on the spot, capacity-checked per day.
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={formData.claimShiftEnabled === true}
+                    onChange={(e) => {
+                      setFormData({ ...formData, claimShiftEnabled: e.target.checked });
                       maybeTickPersist();
                     }}
                   />

@@ -294,6 +294,13 @@ export interface JobsBoardPost {
   showPayRate: boolean;
   workersNeeded?: number; // Optional for Gig jobs
   showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
+  /**
+   * Claim Shift opt-in (2026-09-06): when true, gig shift rows on this
+   * posting show a black "Claim Shift" CTA that books the worker instantly
+   * (server: respondToAssignment decision 'claim'). Default off — recruiters
+   * flip it per posting. Ignored for career postings.
+   */
+  claimShiftEnabled?: boolean;
   eVerifyRequired: boolean;
   /**
    * AccuSource screening package for this posting. Used when hiring / auto-hire so onboarding can resolve
@@ -414,6 +421,8 @@ export interface CreatePostData {
   showPayRate: boolean;
   workersNeeded?: number; // Optional for Gig jobs
   showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
+  /** Claim Shift opt-in — see `JobPosting.claimShiftEnabled`. */
+  claimShiftEnabled?: boolean;
   eVerifyRequired: boolean;
   screeningPackageId?: string | null;
   screeningPackageName?: string | null;
@@ -869,6 +878,7 @@ export class JobsBoardService {
         showPayRate: customData?.showPayRate !== undefined ? customData.showPayRate : jobOrder.showPayRate,
         workersNeeded: customData?.workersNeeded ?? (isGigJob ? 1 : (jobOrder.workersNeeded ?? 1)),
         showWorkersNeeded: customData?.showWorkersNeeded !== undefined ? customData.showWorkersNeeded : false, // Default to false so workers needed is hidden on job board unless explicitly enabled
+        claimShiftEnabled: customData?.claimShiftEnabled === true, // Claim Shift opt-in, default off
         eVerifyRequired: customData?.eVerifyRequired !== undefined ? customData.eVerifyRequired : jobOrder.eVerifyRequired,
         screeningPackageId:
           customData?.screeningPackageId !== undefined
@@ -1100,6 +1110,7 @@ export class JobsBoardService {
         showPayRate: postData.showPayRate,
         ...(postData.workersNeeded !== undefined && { workersNeeded: postData.workersNeeded }),
         ...(postData.showWorkersNeeded !== undefined && { showWorkersNeeded: postData.showWorkersNeeded }),
+        ...(postData.claimShiftEnabled !== undefined && { claimShiftEnabled: postData.claimShiftEnabled === true }),
         eVerifyRequired: postData.eVerifyRequired,
         ...(postData.screeningPackageId !== undefined
           ? {

@@ -1,8 +1,75 @@
 # Tier system / Claim Shift — planning spec (for Friday planning)
 
-**Status:** DRAFT for the tier-system planning session (~2026-09-11).
-Written 2026-09-03 from Greg's flow description + the current codebase.
-Nothing here is built except where marked EXISTS.
+**Status:** Claim Shift v1 BUILT + DEPLOYED 2026-09-06 (endpoint, web +
+app buttons/sheets, messaging track). Tier release windows are wired but
+OFF; tier movement cron + worker-visible tier UI + cancel teeth remain
+for the ~2026-09-11 planning session. Written 2026-09-03 from Greg's flow
+description + the current codebase.
+
+## ✅ BUILT 2026-09-06 — what shipped and how to turn it on
+
+**Nothing changes on a live posting until a recruiter flips it on.** The
+opt-in is per posting: `job_postings/{postId}.claimShiftEnabled` (toggle
+"Instant Claim (workers book without an offer)" in the JO Jobs Board tab
+editor `JobPostForm` and in `PostToJobsBoardDialog`; gig postings only;
+default off). With it on, every available gig shift row shows a black
+**Claim Shift** instead of the green Apply (web `ShiftSelector`, app
+`_GigRowActionButton`), the header/sticky CTA reads Claim Shift and opens
+the first free row, and the acknowledgement sheet (uniform / transportation
+/ arrival / no-show, green confirm) books the day on the spot and routes to
+Assignment Details.
+
+- **Endpoint**: `respondToAssignment` with `decision: 'claim'` +
+  `{ tenantId, jobOrderId, shiftId, date?, jobPostId?, channel, acknowledgements }`
+  (no new Cloud Function — service cap). Code:
+  `functions/src/claims/claimShift.ts` (Firestore glue) +
+  `claims/claimShiftPolicy.ts` (pure rules, 18 mocha tests). Returns
+  `{ success, status:'confirmed', assignmentId, alreadyClaimed, remaining, dayKey }`.
+- **Unit of claim = one shift-day.** Doc id `${shiftId}__${uid}__${day}`
+  doubles as the idempotency key (a retry / double tap returns the same
+  assignment with `alreadyClaimed: true`). Multi-day gigs: web claims any
+  day row; the APP renders one row per shift doc and claims the START day
+  only (tracked gap in the punch list).
+- **Capacity is transactional**: the transaction reads + writes the SHIFT
+  doc (`claimStats[day]`), so two claims for the last spot serialize; the
+  loser recounts and gets `shift_filled`. Per-day capacity =
+  `dateSchedule[day].workersNeeded (+overstaff)`, else
+  `totalStaffRequested` + overstaff (same math as shiftFillAutomation).
+- **Gates (typed `failed-precondition` errors, `details.code`)**:
+  `not_claimable` (posting not opted in / not active, JO not gig or
+  on-hold/closed/cancelled, shift cancelled or open-type, bad day, no
+  hours, already started), `ineligible` (DNR, no user doc), the headshot
+  gate's `HEADSHOT_*` codes (web renders the inline `HeadshotGateCard` in
+  the sheet, app opens the headshot sheet), `tier_locked` (wired, OFF —
+  `CLAIM_TIER_WINDOWS_ENABLED=false`; T+0/+10h/+24h from `postedAt`),
+  `conflict` (overlaps any live assignment; details carry the other
+  shift), `claim_cap` (no completed shift yet AND ≥2 live claimed future
+  shifts — `CLAIM_UNPROVEN_CONCURRENT_CAP`, Greg to tune Friday).
+- **Assignment shape**: the recruiter-create shape plus `status:'confirmed'`,
+  `confirmedAt/By`, `acquisition:'claimed'`, `claimedAt`, `claimChannel`
+  ('web'|'app'), `acknowledgements {uniform, transportation, arrival,
+  attendancePolicy}`, `cortConfirmation {state:'confirmed', profileId:
+  'gig_claimed', confirmedVia:'claim'}`, `assignmentSource:'worker_claim'`,
+  `placementMode:'claim'`, `suppressInitialNotification:true` (no legacy
+  ACCEPT/DECLINE SMS — the cadence engine's `gig_claim_confirmation` is the
+  confirmation). Rates via the shared `resolveShiftRates` (shift snapshot →
+  JO position → JO).
+- **Side effects mirrored from the recruiter path**: onboarding instance,
+  application → `accepted` (+ `workerClaimConfirmation` /
+  `lastAssignmentDecision` stamped on the application), overlapping open
+  applications released, onboarding pipeline, and the confirmed-transition
+  screening auto-order — called DIRECTLY (`runScreeningAutomationForConfirmedAssignment`,
+  extracted from the onUpdate trigger) because a born-confirmed doc never
+  produces a pending→confirmed edge.
+- **Clients**: web `formatClaimShiftError` + i18n `jobs.claim*` (EN/ES);
+  app `ClaimShiftBlock.tryParse`, `runClaimShiftFlow` /
+  `ClaimShiftBottomSheet`, `AppStrings.claim*`, repository `claimShift`,
+  `JobPostingModel.claimShiftEnabled`.
+- **Not yet built**: tier windows ON, tier cron / earn-back, worker-visible
+  tier, cancel-sheet tier-consequence copy (the sheet shows the >24h/<24h
+  hint text only), client-side `spotsRemaining` (still the stub — the
+  server is the capacity truth; a filled row surfaces as the
+  `shift_filled` message until refresh).
 
 **⚠️ Read [[project_tiered_shift_access]] FIRST — its "✅ AGREED SPEC"
 (Greg + Danny + Rosa + Mark, 2026-08-31) already settles the tier model:
@@ -148,16 +215,22 @@ Not re-opened here. The parts this build consumes:
 
 ## Open questions for Friday (windows/tier-movement are NOT open — agreed 8/31)
 
-1. Inline assignment details on posting page vs route to Assignment
-   Details (this spec recommends route; Greg's original ask was inline).
-2. Claim endpoint routing (which existing callable carries it, given the
-   function cap).
-3. Claim caps for Tier 3 (agreed spec says "limited concurrent claims
-   until first few shifts completed" — pick the number).
+1. ~~Inline assignment details on posting page vs route~~ → BUILT as
+   route (claimed row = "View Details" → Assignment Details).
+2. ~~Claim endpoint routing~~ → BUILT on `respondToAssignment`
+   `decision:'claim'`.
+3. Claim caps for Tier 3 → BUILT with a default of 2 live claimed shifts
+   until the first completed one (`CLAIM_UNPROVEN_CONCURRENT_CAP`);
+   confirm the number.
 4. Cancel-policy threshold (24h?) + whether late cancels count like
-   penalized no-shows or a lighter weight.
+   penalized no-shows or a lighter weight. (Sheet copy says "inside 24
+   hours counts against your reliability" — nothing enforces it yet.)
 5. Where the worker sees their tier (Profile, per messaging decision 4).
-6. Multi-day gigs: claim per day (existing day-by-day unit) or whole run?
+6. ~~Multi-day gigs: claim per day or whole run?~~ → BUILT per day
+   (web); app claims the start day only until it renders per-day rows.
+7. NEW: when to flip `CLAIM_TIER_WINDOWS_ENABLED` (needs the publish clock
+   — `postedAt` is stamped when a post goes active — and the notification
+   waves from the agreed spec).
 
 ## Suggested build order
 

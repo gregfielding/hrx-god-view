@@ -3111,6 +3111,7 @@ const JobOrderJobsBoardTab: React.FC<{
         expDate: formatDateForInput(existingPostForForm.expDate),
         payRate: existingPostForForm.payRate?.toString() || '',
         showWorkersNeeded: existingPostForForm.showWorkersNeeded !== undefined ? existingPostForForm.showWorkersNeeded : false,
+        claimShiftEnabled: (existingPostForForm as any).claimShiftEnabled === true,
         uniformRequirements: Array.isArray(existingPostForForm.uniformRequirements) ? existingPostForForm.uniformRequirements : (existingPostForForm.uniformRequirements ? [existingPostForForm.uniformRequirements] : []),
         // CC.B (2026-05-05): client-provided / position-level JD belongs in
         // the prompt, NOT the public-facing `jobDescription`. The public
@@ -3401,6 +3402,8 @@ const JobOrderJobsBoardTab: React.FC<{
       showStart: (jobOrder as any).showStartDate ?? (jobOrder as any).showStart ?? false,
       showEnd: (jobOrder as any).showEnd ?? false,
       showWorkersNeeded: (jobOrder as any).showWorkersNeeded !== undefined ? (jobOrder as any).showWorkersNeeded : false,
+      // Claim Shift is a per-posting opt-in; a fresh post starts off.
+      claimShiftEnabled: false,
       expDate: formatDateForInput((jobOrder as any).expDate) || '',
       // Show toggles: use compliance (Overview) and top-level so Jobs Board post defaults match what was set on the job order
       showBackgroundChecks: (Array.isArray(compliance.backgroundCheckPackages) ? compliance.backgroundCheckPackages.length : 0) > 0 || ((jobOrder as any).backgroundCheckPackages || []).length > 0,

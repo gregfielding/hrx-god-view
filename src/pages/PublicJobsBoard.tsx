@@ -109,6 +109,8 @@ interface PublicJobPosting {
   showPayRate: boolean;
   workersNeeded?: number;
   showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
+  /** Claim Shift opt-in — worker rows show "Claim Shift" instead of Apply. */
+  claimShiftEnabled?: boolean;
   eVerifyRequired?: boolean;
   screeningPackageName?: string;
   showScreeningPackageOnPost?: boolean;
@@ -813,6 +815,7 @@ const PublicJobsBoard: React.FC = () => {
             showPayRate: post.showPayRate,
             workersNeeded: post.workersNeeded,
             showWorkersNeeded: post.showWorkersNeeded === true, // Default to false so workers needed is hidden unless explicitly enabled
+            claimShiftEnabled: post.claimShiftEnabled === true,
             eVerifyRequired: post.eVerifyRequired,
             screeningPackageName: post.screeningPackageName ?? undefined,
             showScreeningPackageOnPost: post.showScreeningPackageOnPost,
@@ -1051,6 +1054,7 @@ const PublicJobsBoard: React.FC = () => {
               showPayRate: post.showPayRate,
               workersNeeded: post.workersNeeded,
             showWorkersNeeded: post.showWorkersNeeded === true, // Default to false so workers needed is hidden unless explicitly enabled
+            claimShiftEnabled: post.claimShiftEnabled === true,
               eVerifyRequired: post.eVerifyRequired,
               screeningPackageName: post.screeningPackageName ?? undefined,
               showScreeningPackageOnPost: post.showScreeningPackageOnPost,
