@@ -43,12 +43,13 @@
 /* Home hero buttons: Fluid Engine scales the desktop grid down below ~1300px,
    so the two pills (cols 2-5 and 6-10 on rows 7-8) collide. Tablets stack
    them; small laptops get wider blocks on one row. Desktop and phone layouts
-   untouched. */
+   untouched. Longhand on purpose: Squarespace compiles Custom CSS as LESS,
+   and `grid-area: 7 / 2 / 9 / 8` gets evaluated as division. */
 @media (min-width: 768px) and (max-width: 1023px) {
-  .fe-block-ecabf8e029924c832947 { grid-area: 7 / 2 / 9 / 12 !important; }
-  .fe-block-0404db6139baa74e90b7 { grid-area: 9 / 2 / 11 / 12 !important; }
+  .fe-block-ecabf8e029924c832947 { grid-row-start: 7 !important; grid-row-end: 9 !important; grid-column-start: 2 !important; grid-column-end: 12 !important; }
+  .fe-block-0404db6139baa74e90b7 { grid-row-start: 9 !important; grid-row-end: 11 !important; grid-column-start: 2 !important; grid-column-end: 12 !important; }
 }
 @media (min-width: 1024px) and (max-width: 1299px) {
-  .fe-block-ecabf8e029924c832947 { grid-area: 7 / 2 / 9 / 8 !important; }
-  .fe-block-0404db6139baa74e90b7 { grid-area: 7 / 8 / 9 / 14 !important; }
+  .fe-block-ecabf8e029924c832947 { grid-row-start: 7 !important; grid-row-end: 9 !important; grid-column-start: 2 !important; grid-column-end: 8 !important; }
+  .fe-block-0404db6139baa74e90b7 { grid-row-start: 7 !important; grid-row-end: 9 !important; grid-column-start: 8 !important; grid-column-end: 14 !important; }
 }
