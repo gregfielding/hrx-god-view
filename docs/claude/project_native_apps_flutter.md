@@ -196,6 +196,21 @@ dialog: `form_input` on the Text field reverts (controlled input) — click the
 field, `cmd+a`, `type`. Button style Primary/Secondary lives in the block
 toolbar's "Primary" dropdown.
 
+☠️ **Fluid Engine desktop layouts scale proportionally from ~1300px down to
+768px** (the phone layout only kicks in below 768). Pills keep their pixel
+width while their grid cells shrink, so the two hero buttons collided on
+iPads and small laptops. Fixed in Custom CSS with two media queries that
+re-place `.fe-block-<id>` (stack on 768–1023, wider one-row cells on
+1024–1299). ☠️ **Squarespace Custom CSS is compiled as LESS**: `grid-area:
+7 / 2 / 9 / 8` was published as `grid-area: .0486` (division). Use the
+longhands `grid-row-start/end`, `grid-column-start/end` (or `~"7 / 2 / 9 / 8"`)
+— and always curl the published `static1.squarespace.com/static/custom-css/…/custom.css`
+after saving, because the editor's live preview applies the raw text and
+looks right even when the compiled output is garbage. The Custom CSS panel
+is CodeMirror 5: `document.querySelector('.CodeMirror').CodeMirror.setValue()`
+edits it, SAVE is the small text button at the top-left (a real coordinate
+click; `find`-ref clicks and `el.click()` were ignored).
+
 Squarespace automation notes: c1staffing.com is site
 `lilac-smilodon-jj54.squarespace.com` (7.1, Fluid Engine). Code Blocks use
 CodeMirror 6 — load HTML by dispatching a synthetic `paste` ClipboardEvent on
