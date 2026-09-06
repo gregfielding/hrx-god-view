@@ -1721,16 +1721,18 @@ export const respondToAssignment = onCall(
   const applicationRef = applicationId ? db.doc(`tenants/${tenantId}/applications/${applicationId}`) : null;
 
   if (decision === 'accept') {
-    // Headshot gate removed 2026-06-07 per ops decision — recruiters reported
-    // the gate was silently blocking too many self-confirmations (workers
-    // tapped the SMS link, got a confusing error, and gave up). The
-    // `assertWorkerHeadshotApproved` helper is kept in the codebase for
-    // potential reuse on other surfaces (e.g., first-shift check-in) but is
-    // no longer called from the Accept path.
-    // Audit signal preserved: the placement tile still shows "Headshot
-    // Missing/Rejected" chips so recruiters know which workers have
-    // incomplete profiles, and the HeadshotBypassesSection on
-    // /readiness/employee-readiness still lists historical bypasses.
+    // Headshot gate — re-armed 2026-09-06 (Greg). It was pulled 2026-06-07
+    // because the SMS one-click link surfaced a bare error with no way to
+    // add a photo, so workers gave up. Two things changed: the policy now
+    // blocks ONLY on "no photo" and "not a headshot" (no_face /
+    // multiple_faces / recruiter reject) — never on our own pipeline
+    // (pending / error / unverified / quality rejections pass with the Home
+    // nudge) — and the web accept page renders an inline photo uploader
+    // (`HeadshotGateCard`) while the app shows the headshot bottom sheet.
+    // See functions/src/avatar/headshotAcceptGate.ts for the policy table.
+    // The recruiter-on-behalf path (`confirmAssignmentForWorker`) stays
+    // ungated — the recruiter is the human override.
+    await assertWorkerHeadshotApproved(uid);
 
     await assignmentRef.set(
       {

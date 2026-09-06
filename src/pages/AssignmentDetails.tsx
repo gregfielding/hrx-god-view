@@ -41,6 +41,11 @@ import type { ClaimsRole } from '../contexts/AuthContext';
 import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage';
 import { useT } from '../i18n';
 import SmsWarningBanner from '../components/worker/SmsWarningBanner';
+import HeadshotGateCard from '../components/worker/HeadshotGateCard';
+import {
+  formatHeadshotGateError,
+  type FormattedHeadshotGateError,
+} from '../utils/avatarVerification/formatHeadshotGateError';
 import WorkerPageHeader from '../components/worker/WorkerPageHeader';
 import { getShiftDisplayText } from '../utils/shiftI18n';
 import { normalizeClockInUrl } from '../utils/urlUtils';
@@ -247,6 +252,11 @@ const AssignmentDetails: React.FC = () => {
     'idle' | 'firing' | 'success' | 'error' | 'skipped'
   >('idle');
   const [acceptIntentError, setAcceptIntentError] = useState<string | null>(null);
+  // Accept-shift headshot gate (re-armed 2026-09-06): when the server blocks
+  // the one-click accept for a missing / rejected photo, render an inline
+  // uploader instead of the generic error; a successful upload re-fires the
+  // accept by resetting the intent state (the `?intent=accept` param is kept).
+  const [acceptGate, setAcceptGate] = useState<FormattedHeadshotGateError | null>(null);
   const preferredLanguage = useWorkerPreferredLanguage();
   const t = useT();
   const [assignment, setAssignment] = useState<AssignmentDetails | null>(null);
@@ -444,8 +454,10 @@ const AssignmentDetails: React.FC = () => {
       })
       .catch((err: any) => {
         console.error('[AssignmentDetails] one-click accept failed', err);
+        const gate = formatHeadshotGateError(err);
+        setAcceptGate(gate);
         setAcceptIntentState('error');
-        setAcceptIntentError(err?.message || 'Could not accept this assignment.');
+        setAcceptIntentError(gate ? gate.message : err?.message || 'Could not accept this assignment.');
       });
   }, [
     location.search,
@@ -1379,7 +1391,23 @@ const AssignmentDetails: React.FC = () => {
           start time, location, and what to bring.
         </Alert>
       )}
-      {acceptIntentState === 'error' && (
+      {acceptIntentState === 'error' && acceptGate && user?.uid && (
+        <HeadshotGateCard
+          uid={user.uid}
+          gate={acceptGate}
+          onUploaded={() => {
+            // Photo is on the user doc; re-run the one-click accept.
+            setAcceptGate(null);
+            setAcceptIntentError(null);
+            setAcceptIntentState('idle');
+          }}
+          onDismiss={() => {
+            setAcceptGate(null);
+            setAcceptIntentState('idle');
+          }}
+        />
+      )}
+      {acceptIntentState === 'error' && !acceptGate && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setAcceptIntentState('idle')}>
           We couldn&apos;t accept this assignment automatically: {acceptIntentError || 'unknown error'}.
           Scroll down and tap Accept manually, or contact your recruiter.
