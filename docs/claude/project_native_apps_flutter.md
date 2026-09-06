@@ -111,7 +111,7 @@ i18n source, so the content is identical.
 Squarespace, Greg's session; both store listings point at it — ASC version
 "Support URL", Play store-settings "Website"). It is a Not-Linked page with one
 Code Block holding self-contained HTML/CSS (EN + ES: sign-in by SMS code,
-applying, schedule, pay, account/deletion, contact `support@c1staffing.com` +
+applying, schedule, pay, account/deletion, contact `hello@c1staffing.com` +
 `(424) 500-4692`); source kept in this repo at
 `docs/claude/assets/c1staffing-support-page.html` — edit there, then paste into
 the block (Pages → Not Linked → Support → Edit → pencil on the block).
@@ -152,7 +152,7 @@ sign-in details (same demo creds), Ads=No, Target audience 18+, Data safety
 (13 types, no sharing, delete-account URL `https://hrxone.com/delete-account`),
 Advertising ID=Yes/Analytics (Firebase Analytics merges `AD_ID` into the
 manifest — verified in the merged manifest), Government/Financial/Health =
-none, category Business, contact `support@c1staffing.com` + hrxone.com,
+none, category Business, contact `hello@c1staffing.com` + hrxone.com,
 store listing (EN copy, 512 icon, feature graphic, 7 phone screenshots),
 Production countries = US. **Left for Greg:** (1) Content rating — the IARC
 questionnaire starts with an "I agree to the IARC Terms of Use" checkbox

@@ -24,7 +24,7 @@ const COPY = {
     howApp:
       'In the C1 Staffing app: open the Profile tab, tap "Delete account", then tap "Request deletion".',
     howEmail:
-      'By email: send a message to support@c1staffing.com from the email address on your account with the subject "Delete my account". Include the mobile number you use to sign in so we can find your profile.',
+      'By email: send a message to hello@c1staffing.com from the email address on your account with the subject "Delete my account". Include the mobile number you use to sign in so we can find your profile.',
     whatTitle: 'What happens next',
     whatP1:
       'Our support team reviews every request. Your account is deactivated and your request is completed within 30 days. You will receive a confirmation at the email address on file.',
@@ -44,9 +44,9 @@ const COPY = {
       'These records are kept only for the required period, are not used for marketing, and are destroyed when the retention period ends. They are no longer linked to an active app account.',
     partialTitle: 'Deleting some data without closing your account',
     partialP1:
-      'If you want to remove specific information (for example a document you uploaded) but keep your account, email support@c1staffing.com and tell us what to remove.',
+      'If you want to remove specific information (for example a document you uploaded) but keep your account, email hello@c1staffing.com and tell us what to remove.',
     contactTitle: 'Questions',
-    contactP1: 'Email support@c1staffing.com or see our ',
+    contactP1: 'Email hello@c1staffing.com or see our ',
     contactLink: 'Privacy Policy',
     contactP2: '.',
   },
@@ -59,7 +59,7 @@ const COPY = {
     howApp:
       'En la app de C1 Staffing: abre la pestaña Perfil, toca “Eliminar cuenta” y luego “Solicitar eliminación”.',
     howEmail:
-      'Por correo: envía un mensaje a support@c1staffing.com desde el correo de tu cuenta con el asunto “Eliminar mi cuenta”. Incluye el número de celular con el que inicias sesión para que podamos encontrar tu perfil.',
+      'Por correo: envía un mensaje a hello@c1staffing.com desde el correo de tu cuenta con el asunto “Eliminar mi cuenta”. Incluye el número de celular con el que inicias sesión para que podamos encontrar tu perfil.',
     whatTitle: 'Qué sucede después',
     whatP1:
       'Nuestro equipo de soporte revisa cada solicitud. Tu cuenta se desactiva y la solicitud se completa en un plazo de 30 días. Recibirás una confirmación en el correo registrado.',
@@ -79,9 +79,9 @@ const COPY = {
       'Estos registros se conservan solo durante el periodo requerido, no se usan para marketing y se destruyen al terminar el plazo. Ya no están vinculados a una cuenta activa de la app.',
     partialTitle: 'Eliminar algunos datos sin cerrar tu cuenta',
     partialP1:
-      'Si quieres eliminar información específica (por ejemplo un documento que subiste) pero conservar tu cuenta, escribe a support@c1staffing.com e indícanos qué eliminar.',
+      'Si quieres eliminar información específica (por ejemplo un documento que subiste) pero conservar tu cuenta, escribe a hello@c1staffing.com e indícanos qué eliminar.',
     contactTitle: 'Preguntas',
-    contactP1: 'Escribe a support@c1staffing.com o consulta nuestra ',
+    contactP1: 'Escribe a hello@c1staffing.com o consulta nuestra ',
     contactLink: 'Política de Privacidad',
     contactP2: '.',
   },
