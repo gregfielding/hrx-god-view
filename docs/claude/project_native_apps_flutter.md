@@ -148,6 +148,54 @@ job_orders / job_postings / assignments (probe: `functions/.scratch/probe_market
 — 34 states, top: CA, MO, IL, TX, TN, NY, PA, MN). "30+ states" and
 "24–48 hrs" are the defensible claims; no branch addresses were invented.
 
+**Site-wide "C1 Black" pass + homepage restructure (2026-09-06, Greg: "add
+more black replacing the blue… make the site wide change").** Site Styles →
+Colors palette is now white `#FFFFFF`, light `#F5F5F5`, accent `#FFC700`, dark
+accent `#1C1E22`, black `#111214` (the old navy is gone); Fonts = Inter Tight
+700 headings, Inter paragraphs + buttons (Greg asked about San Francisco —
+not licensable for web, Inter is the closest Google face). Website → Custom
+CSS holds `docs/claude/assets/c1staffing-custom.css` (source of truth; it
+re-skins the three Code Block pages `.c1s/.c1a/.c1l` to the palette and
+forces Inter on buttons). Homepage now: hero "Staffing that shows up." +
+Paragraph-1 subline + two buttons side by side ("Request staff" → /contact,
+Primary; "Find work" → jobs board, Secondary/outlined; blocks
+`block-ecabf8e029924c832947` / `block-0404db6139baa74e90b7`), then a new
+numbers strip section (Code Block, `c1staffing-home-numbers.html`: 30+ states
+/ 24–48h / 100s of events / W-2), quote band, services, worker section whose
+button now reads "Browse open shifts" (`block-49bac39f9af76f85494c`), then a
+new charcoal app-promo section (Code Block, `c1staffing-home-app.html`, 80 KB
+with two base64 phone shots; "coming soon" pills → real badges after store
+approval, same as /app), contact, footer. Mobile layout was hand-tuned only
+in the hero (Request-staff block widened so the pill stays on one line, Find
+work moved below it). ☠️ Editing the mobile layout is NOT isolated: after the
+mobile hero tweak the desktop hero came back with the text block stretched
+to ~350 px, both buttons ~120 px lower, and the section 6 rows taller (row
+count went 10 → 16). Fix was: desktop view → shrink the text block's bottom
+handle, drag both buttons back up, Edit Section → Row Count 10. After ANY
+mobile-view edit, re-open desktop view, reload the live page, and check block
+rects before calling it done.
+
+Fluid Engine drag notes (2026-09-06): `left_click_drag` on a block's resize
+handle starts the drag but the editor never sees the mouseup — the grid stays
+in `drag-is-active-over-grid`, every later click is ignored, and only Save +
+reload the editor recovers. What works is synthetic mouse events from JS in
+the editor iframe: `mousedown` on the handle (the `div` with a React
+`onMouseDown`, found via `elementsFromPoint`), ~12 `mousemove` steps
+30 ms apart on whatever is under the pointer, then `mouseup` at the target —
+same recipe moves a block when started on its body (the `.fe-block` wrapper;
+avoid the bottom/side handles of the *selected* block, which resize instead).
+Fire-and-forget the drag (store the promise result on `window`) and poll
+10–20 s later: a `Runtime.evaluate` that awaits the drag times out because
+the editor renderer stalls for seconds per mousemove, especially with the
+80 KB app block on the page. Handles and drop targets can be off-screen
+(negative clientY works), but the `mousedown` target must be on-screen, and
+JS `scrollTo` on the iframe only lands after a real wheel tick. New sections
+come in with Fill Screen ON + 22 rows: Edit Section → Fill Screen off, Row
+Count = content rows (numbers strip 8, app promo 18, hero 10). Button block
+dialog: `form_input` on the Text field reverts (controlled input) — click the
+field, `cmd+a`, `type`. Button style Primary/Secondary lives in the block
+toolbar's "Primary" dropdown.
+
 Squarespace automation notes: c1staffing.com is site
 `lilac-smilodon-jj54.squarespace.com` (7.1, Fluid Engine). Code Blocks use
 CodeMirror 6 — load HTML by dispatching a synthetic `paste` ClipboardEvent on
