@@ -165,6 +165,20 @@ Firebase frameworks are harmless). Claude attached build 9 to version 1.0.0
 and saved — "Add for Review" is now enabled. **Left for Greg:** press
 "Add for Review" → "Submit to App Review".
 
+☠️ **"Add for Review" has hidden prerequisites** that only surface when it's
+pressed (Greg hit both 2026-09-05): (1) the **Copyright** field on the
+version page is required (`2026 C1 Staffing LLC`); (2) because the Runner
+target has `TARGETED_DEVICE_FAMILY = "1,2"`, Apple requires a **13-inch iPad
+screenshot set** even for an iPhone-first app. Fixed without a new build:
+the existing simulator build (`build/ios/iphonesimulator/Runner.app`) was
+installed on the "iPad Pro 13-inch (M5)" simulator via `xcrun simctl
+install/launch`, status bar overridden (`simctl status_bar … override --time
+9:41`), signed in with the demo account, and captured with `xcrun simctl io
+<udid> screenshot` → 2064×2752 PNGs in `c1_app/store/screenshots/ipad13/`
+(4 uploaded via the hidden `input[type=file]` under "Choose File"). If we
+ever want to drop iPad, change the device family to `1` — but that needs a
+new build number and re-upload, so do it for 1.0.1, not now.
+
 **Google Play Console** (developer account "C1 Staffing" 7277616738972403924,
 app 4971983647122091628, package `com.c1staffing.worker`): privacy policy,
 sign-in details (same demo creds), Ads=No, Target audience 18+, Data safety
@@ -178,11 +192,14 @@ Production countries = US, Content rating (IARC questionnaire submitted
 Online Content = Yes because job postings are fetched content, everything
 else No → ESRB Everyone / PEGI 3 / USK 0 / IARC 3+ / ClassInd L; the Terms
 tick was done on his explicit instruction), and a Production release draft
-"1.0.0 (8)" with en-US release notes. **Left for Greg:** drag
-`build/app/outputs/bundle/release/app-release.aab` (71 MB — over the browser
-tool's 10 MB upload cap) into the draft's drop zone (Test and release →
-Production → the draft), Next → Save, then Publishing overview → Send for
-review (Play holds every change until that button is pressed).
+"1.0.0 (8)" with en-US release notes. **Greg dragged
+`build/app/outputs/bundle/release/app-release.aab` in (71 MB — over the
+browser tool's 10 MB upload cap) and pressed Send for review 2026-09-05
+~7:10 PM** — Publishing overview shows "Changes in review" (Production
+1.0.0 (8) full rollout, US, en-US listing, content rating). Play holds every
+change until that button is pressed; first-submission review is typically
+1–7 days. Watch `hello@c1staffing.com` / the Play Console inbox for policy
+questions (the sign-in-details demo creds are what the reviewer uses).
 
 **`/delete-account` page** (`src/pages/DeleteAccount.tsx`, deployed
 1c468e1c): Google requires a public URL naming the app, the request steps and
