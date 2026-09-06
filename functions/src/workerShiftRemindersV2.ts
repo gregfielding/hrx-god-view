@@ -38,6 +38,7 @@ import {
 import {
   buildCadenceMessage,
   buildOpenShiftMessage,
+  buildClaimConfirmationMessage,
   isCadenceReminderType,
   type CadenceMessagePayload,
 } from './cadence/cadenceMessages';
@@ -94,6 +95,8 @@ const HOURS_BY_TYPE: Record<ReminderType, number> = {
   // Open-shift lifecycle — synthesized fire times, not offsets from start.
   openshift_welcome: 0,
   openshift_weekly_digest: 0,
+  // Claim Shift track — synthesized ~1 min after the claim, not an offset.
+  gig_claim_confirmation: 0,
   shift_reminder_24h: 24,
   shift_reminder_4h: 4,
 };
@@ -112,6 +115,7 @@ const DOC_ID_BY_TYPE: Record<ReminderType, string> = {
   assignment_noshow_check: 'assignment_noshow_check',
   openshift_welcome: 'openshift_welcome',
   openshift_weekly_digest: 'openshift_weekly_digest',
+  gig_claim_confirmation: 'gig_claim_confirmation',
   shift_reminder_24h: 'shift_reminder_24h',
   shift_reminder_4h: 'shift_reminder_4h',
 };
@@ -698,6 +702,27 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
     });
   }
 
+  // Claim Shift track (Greg 2026-09-03 decision 1, built 2026-09-06): the
+  // immediate "you're on the crew" confirmation is synthesized to fire ~1 min
+  // after the claim; the rest of the claimed plan (reconfirm_4h, T-2h
+  // logistics, check-in, no-show probe) stays as the planner laid it out —
+  // the ask ladder was already stripped by the profile. Only a FRESH claim
+  // gets the message: a resync days later (recruiter edit) must not re-greet.
+  if (profile.id === 'gig_claimed') {
+    const claimedAtRaw = (assignment.claimedAt ?? assignment.createdAt) as
+      | { toMillis?: () => number }
+      | undefined;
+    const claimedAtMs = typeof claimedAtRaw?.toMillis === 'function' ? claimedAtRaw.toMillis() : null;
+    const claimStale = claimedAtMs == null || nowMs - claimedAtMs > 24 * 60 * 60 * 1000;
+    plan.set('gig_claim_confirmation', {
+      offsetHours: 0,
+      rawScheduledForMs: nowMs + 60 * 1000,
+      scheduledForMs: nowMs + 60 * 1000,
+      deferred: false,
+      ...(claimStale ? { forceCancelReason: 'skipped_stale_claim' } : {}),
+    });
+  }
+
   // Cancel any non-terminal reminder doc whose type is NOT in the active
   // profile. Guards against duplicate sends when a tenant switches profile
   // from `default` to `cort_gig` (or vice versa) between reminder sync runs.
@@ -840,7 +865,7 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
   // `cancelled` from the worker's own reply. This lets the inbound reply
   // handler (see cadence/cadenceReplyHandler.ts) flip state and the
   // dispatcher suppress escalations accordingly.
-  if (profile.id === 'cort_gig' || profile.id === 'gig_standard') {
+  if (profile.id === 'cort_gig' || profile.id === 'gig_standard' || profile.id === 'gig_claimed') {
     const cort = (assignment.cortConfirmation as Record<string, unknown> | undefined) || {};
     const currentState = normalizeStatus(cort.state);
     // checked_in / no_show added 2026-08-29: a resync (material edit) was
@@ -848,13 +873,17 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
     // clearing the no-show flag recruiters act on.
     const PRESERVED_STATES = ['confirmed', 'cancelled', 'checked_in', 'no_show'];
     if (!PRESERVED_STATES.includes(currentState)) {
+      // A claimed shift is born confirmed (the claim IS the confirmation) —
+      // the claim writer should stamp this too; this is the belt to its braces.
+      const claimed = profile.id === 'gig_claimed';
       writes.push(
         db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
           {
             cortConfirmation: {
-              state: 'pending',
+              state: claimed ? 'confirmed' : 'pending',
               profileId: profile.id,
               updatedAt: now,
+              ...(claimed ? { confirmedAt: now, confirmedVia: 'claim' } : {}),
             },
           },
           { merge: true },
@@ -893,8 +922,28 @@ function buildReminderMessage(
   const assignmentUrl = buildWorkerAssignmentUrl(assignmentId);
   // Both gig confirm tracks use the YES/CANCEL ask bodies; the variable name
   // predates gig_standard.
-  const isCortProfile = reminderProfile === 'cort_gig' || reminderProfile === 'gig_standard';
+  const isCortProfile =
+    reminderProfile === 'cort_gig' || reminderProfile === 'gig_standard' || reminderProfile === 'gig_claimed';
   const es = lang === 'es';
+
+  // Claim Shift confirmation — immediate artifact of the commitment.
+  if (reminderType === 'gig_claim_confirmation') {
+    return buildClaimConfirmationMessage(
+      {
+        jobTitle: payload.jobTitle,
+        companyName: payload.companyName,
+        locationName: payload.locationName,
+        locationAddress: payload.locationAddress,
+        startTime: payload.startTime,
+        endTime: payload.endTime,
+        timezone: payload.timezone,
+        shiftTitle: (payload as { shiftTitle?: string }).shiftTitle,
+      },
+      lang,
+      brand,
+      assignmentUrl,
+    );
+  }
 
   // Open-shift lifecycle bodies live in cadenceMessages for testability.
   if (reminderType === 'openshift_welcome' || reminderType === 'openshift_weekly_digest') {
@@ -1103,7 +1152,9 @@ function toCanonicalReminderType(
   | 'assignment_confirm_now'
   | 'career_first_day'
   | 'openshift_welcome'
-  | 'openshift_weekly_digest' {
+  | 'openshift_weekly_digest'
+  | 'gig_claim_confirmation' {
+  if (reminderType === 'gig_claim_confirmation') return 'gig_claim_confirmation';
   if (reminderType === 'assignment_reminder_24h' || reminderType === 'shift_reminder_24h') {
     return 'assignment_reminder_24h';
   }

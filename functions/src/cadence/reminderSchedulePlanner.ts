@@ -146,7 +146,8 @@ export function planReminderSchedule(args: {
     });
   }
 
-  const isConfirmTrack = profileId === 'cort_gig' || profileId === 'gig_standard';
+  // gig_claimed = a gig track minus the ask ladder; same deferral rules.
+  const isConfirmTrack = profileId === 'cort_gig' || profileId === 'gig_standard' || profileId === 'gig_claimed';
   const askPlan = plan.get('assignment_reminder_24h');
   const latestEscalationMs = startMs - 60 * 60 * 1000;
   const LADDER: ReadonlyArray<readonly [ShiftReminderType, number]> = [

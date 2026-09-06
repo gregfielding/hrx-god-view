@@ -96,7 +96,22 @@ notification settings; bodies localize EN/ES off `users/{uid}.preferredLanguage`
 
 1. **Claim Shift**: agreed — a claim IS the confirmation; skip the
    24h/23h/22h ask ladder, keep reconfirm_4h + T-2h logistics + check-in.
-   Build with the tier-system claim flow (no field exists to fence on yet).
+   **Messaging side BUILT 2026-09-06** (deployed
+   onAssignmentConfirmedScheduleReminders + dispatchScheduledWorkerReminders):
+   profile `gig_claimed` (`cadence/shiftReminderProfile.ts`) = the resolved
+   gig track (cort_gig keeps its T-15m clock-in) minus
+   `ASK_LADDER_REMINDER_TYPES` (24h / 23h / 22h / confirm_now), plus the new
+   `gig_claim_confirmation` step synthesized ~1 min after the claim ("You're
+   on the crew! {shift}, {when} at {site}. Address… Reply CANCEL if your
+   plans change." — `cadenceMessages.buildClaimConfirmationMessage`, EN/ES,
+   skipped when claimedAt/createdAt is >24h old so resyncs never re-greet).
+   The fence is `assignment.acquisition === 'claimed'` (`isClaimedAssignment`)
+   — the claim writer MUST stamp `acquisition: 'claimed'` + `claimedAt`; the
+   scheduler also seeds `cortConfirmation.state = 'confirmed'`
+   (`confirmedVia: 'claim'`) so the reply handler treats CANCEL correctly.
+   Careers / open shifts are fenced before the claim fence and never
+   re-route. Tests: `__tests__/cadence/shiftReminderProfile.test.ts` +
+   cadenceMessages. Nothing fires until the claim endpoint ships.
 2. **Open shifts**: SHIPPED — welcome once at assignment creation
    (`openshift_welcome`, skipped for assignments older than 7 days so the
    rollout can't greet long-standing crews) + Sunday-17:00-local weekly

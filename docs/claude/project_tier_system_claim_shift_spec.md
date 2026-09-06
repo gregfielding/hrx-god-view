@@ -116,8 +116,11 @@ Not re-opened here. The parts this build consumes:
   `assignment_reminder_2h_instructions` (day-of logistics),
   `assignment_checkin_0h`, `assignment_noshow_check`.
 - Fence on the claim provenance (`acquisition === 'claimed'`) in
-  `shiftReminderProfile.resolveShiftReminderProfile` — field name must
-  match whatever the claim writer stamps.
+  `shiftReminderProfile.resolveShiftReminderProfile` — **BUILT 2026-09-06,
+  field name is now fixed: the claim writer stamps `acquisition: 'claimed'`
+  and `claimedAt` (Timestamp).** Profile `gig_claimed`, step
+  `gig_claim_confirmation`, seeds `cortConfirmation.state='confirmed'`.
+  See project_worker_messaging_tracks.md decision 1.
 - Claim confirmation message (immediate): "You're on the crew —
   {job} {date} at {site}" (the openshift_welcome pattern, single-shift
   copy) so the worker gets an artifact of the commitment.

@@ -165,6 +165,42 @@ export interface BuiltMessage {
   sms: string;
 }
 
+/**
+ * Claim Shift track — the one immediate message a claimed gig gets. The claim
+ * IS the confirmation (no YES ask), so this is an artifact of the commitment:
+ * what, when, where, and how to back out. Keep it a statement, not a question.
+ */
+export function buildClaimConfirmationMessage(
+  payload: CadenceMessagePayload,
+  lang: 'en' | 'es' = 'en',
+  brand: string = 'C1 Staffing',
+  assignmentUrl: string = '',
+): BuiltMessage {
+  const es = lang === 'es';
+  const job = truncate(payload.shiftTitle || payload.jobTitle || '', 60) || (es ? 'tu turno' : 'your shift');
+  const location = payload.locationName || (es ? 'el lugar de trabajo' : 'the worksite');
+  const when = formatStartInTimezone(payload.startTime, payload.timezone);
+  const address = truncate(payload.locationAddress || '', 120);
+  const headline = es
+    ? `¡Estás en el equipo! ${job}, ${when} en ${location}.`
+    : `You're on the crew! ${job}, ${when} at ${location}.`;
+  const parts = [`${brand}: ${headline}`];
+  if (address) parts.push(es ? `Dirección: ${address}.` : `Address: ${address}.`);
+  if (assignmentUrl) parts.push(es ? `Detalles: ${assignmentUrl}` : `Details: ${assignmentUrl}`);
+  parts.push(
+    es
+      ? 'Te enviaremos los detalles del sitio antes del turno. Responde CANCEL si cambian tus planes.'
+      : "We'll text site details before your shift. Reply CANCEL if your plans change.",
+  );
+  return {
+    title: es ? '¡Turno reservado!' : 'Shift claimed!',
+    body: es
+      ? `${job} — ${when} en ${location}.${address ? ` ${address}.` : ''}`
+      : `${job} — ${when} at ${location}.${address ? ` ${address}.` : ''}`,
+    sms: parts.join(' ').trim(),
+  };
+}
+
 const MAX_DETAIL_CHARS = 180;
 
 function formatStartInTimezone(start: admin.firestore.Timestamp, timezone?: string): string {

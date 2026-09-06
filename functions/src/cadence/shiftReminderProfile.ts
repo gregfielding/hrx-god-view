@@ -58,9 +58,21 @@ export type ShiftReminderType =
   // until the assignment ends. Neither is an offset-from-start step, so the
   // scheduler synthesizes them instead of running the planner.
   | 'openshift_welcome'
-  | 'openshift_weekly_digest';
+  | 'openshift_weekly_digest'
+  // Claim Shift track (Greg 2026-09-03 decision 1, built 2026-09-06): a
+  // claimed gig is an instant commitment, so the worker gets ONE immediate
+  // artifact of it ("You're on the crew — {job} {date} at {site}") and the
+  // 24h/23h/22h YES-ask ladder is skipped. Synthesized at materialization
+  // (fires ~1 min after the claim), like openshift_welcome.
+  | 'gig_claim_confirmation';
 
-export type ShiftReminderProfileId = 'default' | 'cort_gig' | 'gig_standard' | 'career_placement' | 'open_shift';
+export type ShiftReminderProfileId =
+  | 'default'
+  | 'cort_gig'
+  | 'gig_standard'
+  | 'career_placement'
+  | 'open_shift'
+  | 'gig_claimed';
 
 export interface ShiftReminderStep {
   /** Canonical reminder type; used as the Firestore doc id per assignment. */
@@ -157,13 +169,75 @@ const OPEN_SHIFT_PROFILE: ShiftReminderProfile = {
   steps: [],
 };
 
+/**
+ * The steps whose only job is to turn an ASSIGNED worker into a COMMITTED one.
+ * A claimed shift is already committed (the claim IS the confirmation), so the
+ * claim fence strips exactly these. `assignment_reconfirm_4h` deliberately
+ * stays — plans change overnight and the afternoon re-confirm is what makes
+ * people show up (Qwick pattern).
+ */
+export const ASK_LADDER_REMINDER_TYPES: ReadonlyArray<ShiftReminderType> = [
+  'assignment_reminder_24h',
+  'assignment_reminder_23h_escalate',
+  'assignment_reminder_22h_final',
+  'assignment_confirm_now',
+];
+
+/**
+ * Claim Shift track (tier system). Built from the standard gig track minus the
+ * ask ladder, plus the immediate claim confirmation. When the underlying
+ * resolution is `cort_gig`, the claim fence derives from THAT profile instead so
+ * the T-15m clock-in step survives — see `applyClaimedFence`.
+ */
+const GIG_CLAIMED_PROFILE: ShiftReminderProfile = {
+  id: 'gig_claimed',
+  steps: [
+    { type: 'gig_claim_confirmation', offsetHours: 0 },
+    ...GIG_STANDARD_STEPS.filter((s) => !ASK_LADDER_REMINDER_TYPES.includes(s.type)),
+  ],
+};
+
 const PROFILES_BY_ID: Record<ShiftReminderProfileId, ShiftReminderProfile> = {
   default: DEFAULT_PROFILE,
   cort_gig: CORT_GIG_PROFILE,
   gig_standard: GIG_STANDARD_PROFILE,
   career_placement: CAREER_PLACEMENT_PROFILE,
   open_shift: OPEN_SHIFT_PROFILE,
+  gig_claimed: GIG_CLAIMED_PROFILE,
 };
+
+/** True when the worker created this assignment themselves by claiming a shift. */
+export function isClaimedAssignment(assignment: Record<string, unknown> | null | undefined): boolean {
+  return String(assignment?.acquisition ?? '').trim().toLowerCase() === 'claimed';
+}
+
+/**
+ * Claim fence: for `acquisition === 'claimed'` gig assignments, replace the
+ * resolved gig track with its claimed variant — same steps minus the ask
+ * ladder, plus the immediate claim confirmation. Careers and open shifts are
+ * never claimed (their fences run first); a tenant on the plain `default`
+ * track gets the standard claimed set (reconfirm, logistics, check-in,
+ * no-show) rather than a lone 2h reminder.
+ */
+export function applyClaimedFence(
+  assignment: Record<string, unknown>,
+  resolved: ResolvedShiftReminderProfile,
+): ResolvedShiftReminderProfile {
+  if (!isClaimedAssignment(assignment)) return resolved;
+  const base = resolved.profile;
+  if (base.id === 'career_placement' || base.id === 'open_shift' || base.id === 'gig_claimed') return resolved;
+  const baseSteps = base.id === 'cort_gig' || base.id === 'gig_standard' ? base.steps : GIG_STANDARD_STEPS;
+  return {
+    profile: {
+      id: 'gig_claimed',
+      steps: [
+        { type: 'gig_claim_confirmation', offsetHours: 0 },
+        ...baseSteps.filter((s) => !ASK_LADDER_REMINDER_TYPES.includes(s.type)),
+      ],
+    },
+    sequenceId: resolved.sequenceId,
+  };
+}
 
 /**
  * All reminder types this system can possibly write. Used by the cleanup /
@@ -183,6 +257,7 @@ export const ALL_SHIFT_REMINDER_TYPES: ReadonlyArray<ShiftReminderType> = [
   'assignment_noshow_check',
   'openshift_welcome',
   'openshift_weekly_digest',
+  'gig_claim_confirmation',
 ];
 
 /**
@@ -206,6 +281,7 @@ function normalizeProfileId(raw: unknown): ShiftReminderProfileId | null {
   if (s === 'cort_gig' || s === 'cort' || s === 'gig') return 'cort_gig';
   if (s === 'gig_standard' || s === 'standard') return 'gig_standard';
   if (s === 'career_placement' || s === 'career') return 'career_placement';
+  if (s === 'gig_claimed' || s === 'claimed') return 'gig_claimed';
   if (s === 'default' || s === '') return 'default';
   return null;
 }
@@ -304,6 +380,16 @@ export async function resolveShiftReminderProfile(args: {
   tenantId: string;
   assignment: Record<string, unknown>;
 }): Promise<ResolvedShiftReminderProfile> {
+  const base = await resolveShiftReminderProfileBase(args);
+  // Claim fence runs LAST: it needs the resolved gig track (cort vs standard)
+  // to know which steps to keep.
+  return applyClaimedFence(args.assignment, base);
+}
+
+async function resolveShiftReminderProfileBase(args: {
+  tenantId: string;
+  assignment: Record<string, unknown>;
+}): Promise<ResolvedShiftReminderProfile> {
   const { tenantId, assignment } = args;
 
   // Hard product fences (Greg, 2026-08-29): the confirm/check-in cadence is
@@ -382,6 +468,14 @@ export async function resolveShiftReminderProfile(args: {
  * config doc (e.g. during batch backfill). Pure function, easy to unit-test.
  */
 export function resolveShiftReminderProfileSync(args: {
+  tenantProfile: ShiftReminderProfileId | null | undefined;
+  assignment: Record<string, unknown>;
+}): ShiftReminderProfile {
+  const base = resolveShiftReminderProfileSyncBase(args);
+  return applyClaimedFence(args.assignment, { profile: base, sequenceId: null }).profile;
+}
+
+function resolveShiftReminderProfileSyncBase(args: {
   tenantProfile: ShiftReminderProfileId | null | undefined;
   assignment: Record<string, unknown>;
 }): ShiftReminderProfile {
