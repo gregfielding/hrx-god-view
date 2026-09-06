@@ -57,8 +57,8 @@ class Worker {
 
   async run(): Promise<void> {
     log.info('portal worker starting', describeConfig(this.config));
-    this.heartbeat.start();
     this.heartbeat.setIdle();
+    this.heartbeat.start();
     await this.slack.notify(`:large_green_circle: portal worker \`${this.config.workerId}\` started (${this.config.enabledProviders.join(', ')})`);
 
     while (!this.stopping) {
