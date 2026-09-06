@@ -143,8 +143,22 @@ age rating questionnaire → 4+), App Privacy label (14 data types, published;
 policy URL `/legal/privacy.html`), price Free, availability **United States
 only** (sidesteps the EU DSA trader-status block), auto-release after
 approval. `ITSAppUsesNonExemptEncryption=false` is in Info.plist so no export
-prompt. **Left for Greg:** upload `build/ios/archive/Runner.xcarchive` via
-Xcode Organizer, pick the build on the version page, then "Add for Review".
+prompt. The store version string was changed from `1.0` to **`1.0.0`** to
+match the builds' CFBundleShortVersionString (pubspec `1.0.0+N`).
+
+☠️ **"TestFlight Internal Only" uploads can never be submitted.** All seven
+Sep-4 Organizer uploads (builds 1–8) were distributed with that option — the
+ASC API shows `buildAudienceType: "INTERNAL_ONLY"` and the version page's
+"Add Build" dialog lists them greyed out with no explanation. Diagnose with
+`fetch('/iris/v1/builds?filter[app]=6808699956&fields[builds]=version,buildAudienceType,processingState')`
+from the ASC page. Fix: Organizer → Distribute App → App Store Connect →
+choose **"TestFlight & App Store"** (audience `APP_STORE_ELIGIBLE`); let
+Xcode's "Manage Version and Build Number" bump to the next unused build
+number (8 is taken). Today's archive (`build/ios/archive/Runner.xcarchive`,
+1.0.0 (8), code identical to build 8) was copied to
+`~/Library/Developer/Xcode/Archives/2026-09-05/` so Organizer lists it.
+**Left for Greg:** that upload as build 9, then Claude attaches it on the
+version page → "Add for Review".
 
 **Google Play Console** (developer account "C1 Staffing" 7277616738972403924,
 app 4971983647122091628, package `com.c1staffing.worker`): privacy policy,
