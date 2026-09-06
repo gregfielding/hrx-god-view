@@ -138,6 +138,16 @@ flip ([[project_app_domain_migration]]). Also fixed the same session: About
 page had the "How quickly can C1 Staffing provide workers?" FAQ twice
 (removed one), and "banquet servers, etc.." on Home + Services → "and more."
 
+**`/locations` rebuilt 2026-09-06** (Greg: "make us look nationwide and
+legitimate"): the page was a single coverage-map image with no text. It is now
+one full-width Code Block — source `docs/claude/assets/c1staffing-locations-page.html`
+— with the same map (Squarespace CDN URL), a stats strip, four regional
+market columns, services, and a request-staff band. Every market listed comes
+from real worksite states/cities in `tenants/BCiP2bQ9CgVOCTfV6MhD`
+job_orders / job_postings / assignments (probe: `functions/.scratch/probe_markets.ts`
+— 34 states, top: CA, MO, IL, TX, TN, NY, PA, MN). "30+ states" and
+"24–48 hrs" are the defensible claims; no branch addresses were invented.
+
 Squarespace automation notes: c1staffing.com is site
 `lilac-smilodon-jj54.squarespace.com` (7.1, Fluid Engine). Code Blocks use
 CodeMirror 6 — load HTML by dispatching a synthetic `paste` ClipboardEvent on
