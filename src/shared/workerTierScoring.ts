@@ -138,6 +138,23 @@ function complianceIsClear(entry: unknown): boolean {
 }
 
 /**
+ * Every place a worker photo can live. The web profile page and the Flutter
+ * app write `avatar` + `workerProfile.photoUrl` (+ top-level `photoUrl`);
+ * older docs may carry only one of them, or the literal dotted key that
+ * setDoc({merge:true}) once stamped. Reading only `avatar` (pre-2026-09-06)
+ * scored some photographed workers as photo-less.
+ */
+export function hasWorkerProfilePhoto(userData: Record<string, unknown>): boolean {
+  const wp = (userData.workerProfile ?? {}) as Record<string, unknown>;
+  return (
+    nonEmpty(userData.avatar) ||
+    nonEmpty(wp.photoUrl) ||
+    nonEmpty(userData.photoUrl) ||
+    nonEmpty(userData['workerProfile.photoUrl'])
+  );
+}
+
+/**
  * Same rules as calculateProfileScore (src/utils/applicantScoring.ts) — the
  * fallback the god-view mapper computes at read time. Ported here because only
  * ~10% of workers have a STORED completeness/aiProfileScore, and the sweep
@@ -164,14 +181,9 @@ export function computeProfileCompletenessFallback(userData: Record<string, unkn
   if (Array.isArray(userData.education) && userData.education.length > 0) score += 5;
   const loginCount = Number(userData.loginCount);
   if (Number.isFinite(loginCount) && loginCount > 3) score += 5;
-  const updatedAt = userData.updatedAt as { toDate?: () => Date } | string | number | null;
-  if (updatedAt) {
-    const d =
-      typeof updatedAt === 'object' && typeof updatedAt?.toDate === 'function'
-        ? updatedAt.toDate()
-        : new Date(updatedAt as string | number);
-    if (!Number.isNaN(d.getTime()) && (Date.now() - d.getTime()) / 86400000 <= 30) score += 5;
-  }
+  // Profile photo (5) replaced the "updated within 30 days" bonus 2026-09-06
+  // (Greg): a headshot is real completeness; recency made the score drift.
+  if (hasWorkerProfilePhoto(userData)) score += 5;
   if (
     userData.applicationData &&
     typeof userData.applicationData === 'object' &&
@@ -231,7 +243,7 @@ export function extractTierScoreSignals(
     interviewScore100,
     hasResume,
     skillsCount: skills.filter((s) => nonEmpty(s)).length,
-    hasProfilePhoto: nonEmpty(userData.avatar),
+    hasProfilePhoto: hasWorkerProfilePhoto(userData),
     appInstalled: opts.appInstalled ?? null,
     backgroundCheckCompleted:
       opts.backgroundCheckCompleted === true ||

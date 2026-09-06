@@ -108,12 +108,14 @@ function calculateProfileScore(userData: any): number {
 
   // Engagement Bonuses
   if (userData.loginCount && userData.loginCount > 3) score += 5;
-  
-  if (userData.updatedAt) {
-    const updatedDate = userData.updatedAt.toDate();
-    const daysSinceUpdate = (Date.now() - updatedDate.getTime()) / (1000 * 60 * 60 * 24);
-    if (daysSinceUpdate <= 30) score += 5;
-  }
+
+  // Profile photo (5 points) — replaced the "updated within 30 days" bonus
+  // 2026-09-06 (Greg): a headshot is real completeness; recency just made the
+  // score drift daily. Any of the three photo fields counts.
+  const photo = String(
+    userData.avatar || userData.workerProfile?.photoUrl || userData.photoUrl || '',
+  ).trim();
+  if (photo) score += 5;
 
   if (userData.applicationData && Object.keys(userData.applicationData).length > 1) score += 3;
   if (userData.languages && userData.languages.length > 0) score += 2;

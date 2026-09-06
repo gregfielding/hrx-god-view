@@ -565,6 +565,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     const all = accountOnly ? [0, 1] : [0, 1, 4, 6, 7, 8, 9, 13, 12];
     let indices = [...all];
 
+    // Headshot (5) is back for JOB applications (Greg 2026-09-06): removing it
+    // from every flow on 08-29 took wizard photo uploads from ~40/day to zero,
+    // and a photo feeds the tier score + on-site recognition. Generic signup
+    // stays short. Still skippable — but Take Photo is the primary CTA and
+    // Skip is a text link (see the nav bar below).
+    if (Boolean(jobId) && !accountOnly) {
+      const at = indices.indexOf(6);
+      indices.splice(at === -1 ? indices.length : at, 0, 5);
+    }
+
     // Position interests: job applicants already told us the position by
     // applying; workers who answered before are never re-asked (nested +
     // dotted + top-level reads — setDoc dotted-key corruption legacy).
@@ -3993,7 +4003,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 {t('apply.back')}
               </Button>
               <Button
-                variant="contained"
+                // Headshot step without a photo: the loud button is Take Photo
+                // inside the step, so the nav's skip is a quiet text link.
+                variant={actualStep === 5 && !hasProfilePicture && !isLastVisibleStep ? 'text' : 'contained'}
                 onClick={
                   isLastVisibleStep && accountOnly
                     ? async () => {
@@ -4029,7 +4041,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                   ? accountOnly
                     ? t('apply.continueToJob')
                     : t('apply.submitApplication')
-                  : actualStep === 2 || actualStep === 5 || (actualStep === 8 && hasMissingRequiredCerts)
+                  : actualStep === 2 ||
+                      (actualStep === 5 && !hasProfilePicture) ||
+                      (actualStep === 8 && hasMissingRequiredCerts)
                   ? t('apply.skipForNow')
                   : t('apply.next')}
               </Button>

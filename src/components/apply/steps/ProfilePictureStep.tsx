@@ -189,12 +189,13 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId }) => {
 
       {/* Upload Options */}
       <Box>
-        {/* Quieter than the nav CTA on purpose — Submit/Next stays the loudest
-            action on the screen (Greg 2026-08-25). */}
-        <Stack spacing={1} sx={{ maxWidth: 240, mx: 'auto', mt: 1 }}>
+        {/* Take Photo is the loudest action on this step (Greg 2026-09-06 —
+            reversing the 08-25 "quieter than Skip" sizing, which halved
+            uploads). The nav bar's Skip is a text link until a photo exists. */}
+        <Stack spacing={1} sx={{ maxWidth: 320, mx: 'auto', mt: 1 }}>
           <Button
             variant="contained"
-            size="small"
+            size="large"
             startIcon={<PhotoCamera />}
             onClick={handleTakePhoto}
             disabled={uploading}
@@ -204,7 +205,7 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange, userId }) => {
           </Button>
           <Button
             variant="outlined"
-            size="small"
+            size="medium"
             startIcon={<Upload />}
             onClick={handleUploadPhoto}
             disabled={uploading}

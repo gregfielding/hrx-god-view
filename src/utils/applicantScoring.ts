@@ -139,13 +139,15 @@ export const calculateProfileScore = (user: UserProfile): number => {
 
   // Engagement Bonuses (max 15 bonus points)
   if (user.loginCount && user.loginCount > 3) score += 5;
-  
-  // Profile updated recently (within 30 days)
-  if (user.updatedAt) {
-    const updatedDate = user.updatedAt.toDate ? user.updatedAt.toDate() : new Date(user.updatedAt);
-    const daysSinceUpdate = (Date.now() - updatedDate.getTime()) / (1000 * 60 * 60 * 24);
-    if (daysSinceUpdate <= 30) score += 5;
-  }
+
+  // Profile photo (5 points) — replaced the "updated within 30 days" bonus
+  // 2026-09-06 (Greg): a headshot is real completeness; recency just made the
+  // score drift daily. Any of the three photo fields counts. Mirrored in
+  // shared/workerTierScoring.ts (tier sweep) and
+  // functions/src/calculateApplicantFitScore.ts.
+  const u = user as unknown as Record<string, any>;
+  const photo = String(u.avatar || u.workerProfile?.photoUrl || u.photoUrl || '').trim();
+  if (photo) score += 5;
 
   // Multiple applications shows engagement
   if (user.applicationData && Object.keys(user.applicationData).length > 1) score += 3;

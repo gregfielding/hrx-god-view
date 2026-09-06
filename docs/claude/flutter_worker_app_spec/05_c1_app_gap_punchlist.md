@@ -391,3 +391,15 @@ career track) — Greg 2026-09-03: gig/open-shift/career messaging
 treatment needs a deep dive before touching the other tracks. Caveat:
 messagingSequences copy OVERRIDES replace the built-in SMS body — an
 overridden sequence won't show logistics until its template adds them.
+
+**Profile photo parity (2026-09-06, hrx-god-view + c1_app same session):**
+Home action items contract v2 — `add_profile_photo` is back on Home and
+STICKY (rendered below the 3 capped work items instead of being squeezed
+out). App side: `kWorkerDashboardActionItemsHomeStickyIds` in
+`worker_dashboard_action_items_v1_provider.dart` mirrors web's
+`WORKER_DASHBOARD_ACTION_ITEMS_HOME_STICKY_IDS`. Both Flutter upload screens
+now catch `FirebaseException` first and show the code (the nested Storage
+path was permission-denied for five months behind a bare catch). Ships in
+1.0.1 (1.0.0 is in review). Web wizard job-apply flow got its headshot step
+back with Take Photo primary + Skip as a text link — the app's apply flow
+already had that hierarchy. See docs/claude/project_worker_profile_photo.md.

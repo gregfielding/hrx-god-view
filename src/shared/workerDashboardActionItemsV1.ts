@@ -83,7 +83,7 @@ export interface WorkerDashboardActionItemV1 {
  */
 export interface WorkerDashboardActionItemsSnapshotV1 {
   /** Bump if the shape or semantics change. */
-  sourceVersion: 1;
+  sourceVersion: number;
   items: WorkerDashboardActionItemV1[];
   /** Inputs the snapshot was computed from. Used for change detection / debugging. */
   inputsHash: string;
@@ -124,5 +124,13 @@ export const WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES: Readonly<
 /** Cap for the home dashboard. Web/Flutter both slice 3 from `items`. */
 export const WORKER_DASHBOARD_ACTION_ITEMS_HOME_CAP = 3;
 
-/** Bump alongside `sourceVersion`. */
-export const WORKER_DASHBOARD_ACTION_ITEMS_SOURCE_VERSION = 1 as const;
+/**
+ * Items that stay visible on Home even when the 3-cap would drop them.
+ * Clients render the top-N by priority, then append any sticky item that
+ * did not make the cut. v2: the profile-photo nudge (Greg 2026-09-06).
+ */
+export const WORKER_DASHBOARD_ACTION_ITEMS_HOME_STICKY_IDS: ReadonlyArray<WorkerDashboardActionItemId> =
+  Object.freeze(['add_profile_photo']);
+
+/** Bump alongside `sourceVersion`. v2 = photo item returns to Home (sticky). */
+export const WORKER_DASHBOARD_ACTION_ITEMS_SOURCE_VERSION = 2 as const;

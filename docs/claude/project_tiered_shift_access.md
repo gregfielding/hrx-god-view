@@ -424,3 +424,15 @@ overbook margins per venue, waitlist SMS ("a spot opened for Saturday").
 Related: [[project_signup_flow_review]], [[project_recruiter_roster_adoption]],
 [[project_offer_messaging_tiers]], [[project_open_shift_feature]],
 [[project_multiday_shifts]], [[project_ontrac_account]] (the recruiting-scale driver).
+
+## 2026-09-06 — photo in the score (Greg)
+
+`hasProfilePhoto` now reads `avatar` OR `workerProfile.photoUrl` OR `photoUrl`
+(was `avatar` only — workers whose only photo field was
+`workerProfile.photoUrl` scored 0 on the 5-pt photo factor). The 25-pt
+profile-completion fallback (`computeProfileCompletenessFallback`, mirrored
+from `src/utils/applicantScoring.ts#calculateProfileScore` and
+`functions/src/calculateApplicantFitScore.ts`) gives 5 pts for a photo and
+dropped the 5-pt "updated within 30 days" bonus, so the max stays 100 and the
+score no longer drifts daily. Net: a headshot is worth ~6.25 of 100 toward the
+70 threshold. Background in docs/claude/project_worker_profile_photo.md.

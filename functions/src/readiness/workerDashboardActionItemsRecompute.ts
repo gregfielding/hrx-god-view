@@ -117,7 +117,11 @@ export async function recomputeWorkerDashboardActionItemsForUser(
     prescreenSuppressedByFreshness: ctx.diagnostics.prescreenSuppressedByFreshness,
   };
 
-  if (existingHash && existingHash === built.inputsHash) {
+  // Skip only when BOTH the inputs and the model version match: a model
+  // change (e.g. v2 re-adding the photo item) must rewrite even though the
+  // fingerprinted inputs are identical.
+  const existingVersion = readExistingSourceVersion(userDoc);
+  if (existingHash && existingHash === built.inputsHash && existingVersion === built.sourceVersion) {
     logger.debug('workerDashboardActionItemsV1: hash unchanged — skip write', {
       uid,
       tenantId,
@@ -149,6 +153,13 @@ export async function recomputeWorkerDashboardActionItemsForUser(
   });
 
   return { wrote: true, outOfScope: false, snapshot: writePayload, diagnostics };
+}
+
+function readExistingSourceVersion(userDoc: Record<string, unknown>): number | null {
+  const v = userDoc[SNAPSHOT_FIELD];
+  if (!v || typeof v !== 'object') return null;
+  const ver = (v as Record<string, unknown>).sourceVersion;
+  return typeof ver === 'number' && Number.isFinite(ver) ? ver : null;
 }
 
 function readExistingInputsHash(userDoc: Record<string, unknown>): string | null {
