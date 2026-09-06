@@ -39,3 +39,16 @@
 
 /* Header: keep the logo/nav crisp on charcoal */
 #header .header-nav-item a { letter-spacing: 0.01em; }
+
+/* Home hero buttons: Fluid Engine scales the desktop grid down below ~1300px,
+   so the two pills (cols 2-5 and 6-10 on rows 7-8) collide. Tablets stack
+   them; small laptops get wider blocks on one row. Desktop and phone layouts
+   untouched. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .fe-block-ecabf8e029924c832947 { grid-area: 7 / 2 / 9 / 12 !important; }
+  .fe-block-0404db6139baa74e90b7 { grid-area: 9 / 2 / 11 / 12 !important; }
+}
+@media (min-width: 1024px) and (max-width: 1299px) {
+  .fe-block-ecabf8e029924c832947 { grid-area: 7 / 2 / 9 / 8 !important; }
+  .fe-block-0404db6139baa74e90b7 { grid-area: 7 / 8 / 9 / 14 !important; }
+}
