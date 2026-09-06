@@ -162,8 +162,12 @@ code identical to build 8) was copied to
 **Done 2026-09-05 5:55 PM:** Greg uploaded it as build 9 (processed VALID,
 `APP_STORE_ELIGIBLE`; the "Upload Symbols Failed" dSYM warnings for the
 Firebase frameworks are harmless). Claude attached build 9 to version 1.0.0
-and saved — "Add for Review" is now enabled. **Left for Greg:** press
-"Add for Review" → "Submit to App Review".
+and saved. **Greg submitted 2026-09-05 8:40 PM PT** — version 1.0.0 is
+**Waiting for Review** (verify with
+`fetch('/iris/v1/apps/6808699956/reviewSubmissions?fields[reviewSubmissions]=state,submittedDate')`).
+Auto-release after approval is on; rejections land in ASC → App Review and
+at g.fielding@ (the App Review contact). To ship a new build while waiting,
+"remove this version from review" first.
 
 ☠️ **"Add for Review" has hidden prerequisites** that only surface when it's
 pressed (Greg hit both 2026-09-05): (1) the **Copyright** field on the
