@@ -1,0 +1,106 @@
+# portal worker (autonomous recruiter, portal execution layer)
+
+> "Queue + always-on Playwright worker that executes portal actions (Flex bookings, Fieldglass submissions) with bot accounts — scaffold SHIPPED 2026-09-06 (loop verified end-to-end), adapters stubbed; replaces the human-in-Chrome courier model"
+
+## Why this exists (Greg, 2026-09-06)
+
+Greg wants recruiter work done with **no ongoing involvement**: no approvals
+in chat, no laptop that has to be awake, no manual syncs. Driving his Chrome
+via claude-in-chrome can't get there — every send/booking is a per-action
+approval, it runs only while his laptop + a chat session are open, and
+background automation tabs starve the SPAs (see
+[[feedback_chrome_automation_tab_throttling]]). API access for Flex and
+Fieldglass is **not** obtainable (Greg, same day) — "work within the
+confines we have today". So: a queue in HRX + a worker process on an
+always-on box that logs into both portals as dedicated bot users and does
+the clicks itself. Phone calls stay human (all career jobs + first-time
+gig workers) — the agent will produce the call list.
+
+Verified 2026-09-06 (unauthenticated probes): **Fieldglass** sign-in at
+`https://www.us.fieldglass.cloud.sap/` is a plain `username`/`password`
+form (no CAPTCHA, no bot-protection scripts, no iframe; the old
+fieldglass.net hosts redirect with a notice). **Indeed Flex** agency
+sign-in at `agency.indeedflex.com/o/signin` is email-first (single
+`input[name=email]` + Continue), no bot-protection scripts on step 1; the
+second step (password vs emailed code) is still unobserved.
+
+## What shipped (commit on 2026-09-06)
+
+- **Contract** `shared/portalActions.ts` (mirrored `src/shared/`): providers
+  `indeed_flex | fieldglass`; actions `smoke_test | book_worker |
+  unbook_worker | submit_candidate | withdraw_candidate`; statuses
+  `pending → claimed → running → succeeded | failed | needs_human |
+  cancelled`; error codes + `nextStatusAfterError` policy (transient codes
+  retry 5/10/20 min then escalate; LOGIN_FAILED / NOT_IMPLEMENTED →
+  needs_human; INVALID_PAYLOAD / PORTAL_REJECTED → failed);
+  `buildPortalActionId` = doc id = idempotency key
+  (`provider__action__naturalKey`).
+- **Producer** `functions/src/integrations/portalActions/enqueuePortalAction.ts`
+  — library only (NO new Cloud Function: Cloud Run cap). Transactional
+  upsert: open rows returned as-is, succeeded rows re-run only with
+  `force`, terminal rows reset. `cancelPortalAction` too. Not yet wired
+  into any hire flow (pointless until adapters do real work).
+- **Consumer** `portal-worker/` (own npm package, Node 20, tsx + Playwright,
+  firebase-admin 13): index-free claim (`where status == pending` + in-memory
+  notBefore/provider/priority filter, transactional claim with lease +
+  renewal), lease sweeper, heartbeat →
+  `tenants/{t}/portal_workers/{workerId}` + rolling
+  `tenants/{t}/integration_health/portal_worker` (workers map + queue
+  counts via count() aggregations), per-provider keep-alive every 5 min,
+  persistent Chromium profile per provider (headed by default), failure
+  screenshots (local, + Storage signed URL when `PORTAL_STORAGE_BUCKET`),
+  Slack via bot token `chat.postMessage` (optional; deduped login alerts),
+  secrets from env or Secret Manager `portal-worker-<provider>-username|password`
+  (values redacted from logs), graceful SIGTERM (in-flight action released
+  to pending without counting an attempt), 12h max-uptime self-exit for
+  launchd restarts. `launchd/com.c1staffing.portal-worker.plist` template.
+  CLIs: `npm run enqueue -- --provider=… --action=…`, `npm run status`.
+  Tests: `node --test` over the shared policy helpers (11 passing).
+- **Adapters**: login detection + login + keep-alive + smoke_test for both;
+  real actions throw NOT_IMPLEMENTED → needs_human + Slack, so producers can
+  be wired before the adapters land without silent loss.
+
+**End-to-end verified 2026-09-06** on Greg's laptop (headless, no creds):
+two smoke_tests → claimed within the 2s poll → browser launched → login
+wall detected → Secret Manager returned nothing → `needs_human` with
+`LOGIN_FAILED` + a screenshot of each portal's sign-in page; heartbeat and
+health docs written. Rows left in prod:
+`tenants/BCiP2bQ9CgVOCTfV6MhD/portal_actions/{fieldglass,indeed_flex}__smoke_test__1788738…`
+(harmless; delete or ignore).
+
+## Next slices (in order)
+
+1. **Bot accounts + secrets (Greg)**: dedicated Flex agency user + Fieldglass
+   supplier user; four Secret Manager secrets; SA
+   `portal-worker@hrx1-d3beb` with datastore.user (+ storage.objectAdmin for
+   screenshots, + secretAccessor on the four secrets). Any always-on box
+   works — the new M6 Mac mini ships 9/22, a refurb M4 mini / spare Mac /
+   Greg's laptop as first courier are all fine.
+2. **Flex adapter**: observe step-2 login; capture the SPA's booking request
+   (headers incl. auth) with `page.on('request')` and replay via
+   `page.request` — UI clicking as fallback. Existing API facts in
+   [[feature_indeed_flex_automation_roadmap]] (agency 3403, jobId in path,
+   `flex-core-us.indeed.com/api/v2/agency_portal/…`).
+3. **Fieldglass adapter**: one recorded walkthrough of job-seeker create +
+   submit-to-posting with Greg (Sodexo may add per-submission attestations;
+   max 3 submissions per supplier per posting).
+4. **Producers**: hire flow → `book_worker` for Flex-linked shifts
+   (assignment.refs), Sodexo match → `submit_candidate`; write result back
+   to the assignment; a `/shifts/log`-style queue view for `needs_human`.
+5. **Agent loop** (cron, Claude adapter): intake → rank (rules-based,
+   explainable — AEDT note in [[project_tiered_shift_access]]) → HRX offers
+   on existing SMS tracks → enqueue portal action on YES → call list for
+   humans. Encode the auto-book policy Greg + Mark write.
+
+## Footguns
+
+- The classifier blocks `(cmd &)`-style backgrounding in Claude sessions;
+  run the worker with the Bash tool's `run_in_background` instead.
+- Headed Chrome needs a GUI login session → LaunchAgent (not daemon),
+  auto-login, no sleep. `PORTAL_HEADLESS=1` only for servers, and expect
+  more bot-detection risk from datacenter IPs than from an office box.
+- Claude never types portal credentials; Greg provisions secrets. With no
+  creds the worker escalates instead of failing — a person can also sign in
+  by hand in the worker's Chrome window and the persistent profile keeps it.
+- Fieldglass "Site" ≠ "Work Location" — see
+  [[project_fieldglass_intake_pipeline]] before building submit payloads.
