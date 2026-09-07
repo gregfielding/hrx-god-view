@@ -477,10 +477,12 @@ export class FieldglassAdapter implements PortalAdapter {
   }
 
   /**
-   * The supplier worklist, all pages. Collects unique job_posting_detail.do
-   * links (deduped by canonical URL, fragments stripped) with the SDXOJP
-   * number from their row, and follows a "Next" control while one exists
-   * (best effort — the extension only ever read page 1).
+   * The supplier worklist. It is ONE page ("1-94 of 94", Rows=100) whose
+   * table is virtualized — the DOM holds ~15 rows at a time (screenshot
+   * 2026-09-07) — so we scroll the table's own container and keep collecting
+   * job_posting_detail.do links (deduped by `id`) until the unique count
+   * reaches the "of N" total or stops growing. A real pager "Next" is
+   * followed as a fallback when the total is still short.
    */
   private async collectWorklistLinks(ctx: AdapterContext): Promise<{ links: WorklistLink[]; pages: number }> {
     const { page } = ctx;
@@ -490,58 +492,87 @@ export class FieldglassAdapter implements PortalAdapter {
 
     const seen = new Set<string>();
     const links: WorklistLink[] = [];
-    let pages = 0;
-    const perPage: number[] = [];
-    for (let p = 0; p < 25; p += 1) {
-      pages += 1;
-      // SAP renders the list via XHR: read only once the link count has been
-      // stable for two consecutive polls (2026-09-07: 94 vs 15 links between
-      // runs because page 1 was read mid-render).
-      let found = await this.linksOnPage(page);
-      let stable = 0;
-      for (let poll = 0; poll < 20 && stable < 2; poll += 1) {
-        await page.waitForTimeout(750);
-        const again = await this.linksOnPage(page);
-        if (again.length === found.length && again.length > 0) stable += 1;
-        else stable = 0;
-        found = again;
-      }
-      perPage.push(found.length);
-      let newOnPage = 0;
+    const absorb = (found: WorklistLink[]): number => {
+      let added = 0;
       for (const link of found) {
         const k = detailKey(link.url);
         if (seen.has(k)) continue;
         seen.add(k);
         links.push(link);
-        newOnPage += 1;
+        added += 1;
       }
-      // Pagination: a "Next" link/button that is not disabled.
+      return added;
+    };
+
+    // Wait for the first rows to render.
+    for (let poll = 0; poll < 20; poll += 1) {
+      if ((await this.linksOnPage(page)).length > 0) break;
+      await page.waitForTimeout(750);
+    }
+    const total = await page
+      .locator('body')
+      .innerText()
+      .then((t) => Number(/\b\d+\s*-\s*\d+\s+of\s+(\d+)/i.exec(t)?.[1] ?? 0))
+      .catch(() => 0);
+    absorb(await this.linksOnPage(page));
+
+    // Scroll the virtualized table container until nothing new appears.
+    let idle = 0;
+    let pages = 1;
+    for (let i = 0; i < 120 && idle < 6; i += 1) {
+      if (total > 0 && links.length >= total) break;
+      const moved = await page.evaluate(() => {
+        const candidates = Array.from(document.querySelectorAll('div, table, section, main')).filter((el) => {
+          const e = el as HTMLElement;
+          const cs = getComputedStyle(e);
+          return e.scrollHeight > e.clientHeight + 40 && /(auto|scroll)/.test(cs.overflowY) && e.querySelector('a[href*="job_posting_detail.do"]');
+        }) as HTMLElement[];
+        const el = candidates.sort((a, b) => b.scrollHeight - a.scrollHeight)[0];
+        if (el) {
+          const before = el.scrollTop;
+          el.scrollTop = Math.min(el.scrollTop + el.clientHeight * 0.9, el.scrollHeight);
+          return el.scrollTop !== before;
+        }
+        const before = window.scrollY;
+        window.scrollBy(0, window.innerHeight * 0.9);
+        return window.scrollY !== before;
+      });
+      await page.waitForTimeout(600);
+      const added = absorb(await this.linksOnPage(page));
+      idle = added === 0 && !moved ? idle + 1 : added === 0 ? idle + 1 : 0;
+      if (!moved && added === 0 && idle >= 2) break;
+    }
+
+    // Fallback: a real pager when the total is still short.
+    for (let p = 0; p < 25 && total > 0 && links.length < total; p += 1) {
       const next = page
         .locator('a, button')
         .filter({ hasText: /^\s*(Next|›|»|>)\s*$/ })
         .or(page.locator('[aria-label="Next" i], [title="Next" i], a[rel="next"]'))
         .first();
-      const hasNext = (await next.count()) > 0;
-      if (!hasNext || newOnPage === 0) break;
+      if ((await next.count()) === 0) break;
       const disabled =
         (await next.getAttribute('disabled').catch(() => null)) !== null ||
         /disabled/i.test((await next.getAttribute('class').catch(() => '')) ?? '') ||
         (await next.getAttribute('aria-disabled').catch(() => null)) === 'true';
       if (disabled) break;
+      const before = links.length;
       try {
-        const prevFirst = found[0]?.url ?? '';
         await next.click({ timeout: 5_000 });
-        // Wait for the list to actually change (XHR re-render), up to ~9s.
-        for (let poll = 0; poll < 12; poll += 1) {
-          await page.waitForTimeout(750);
-          const now = await this.linksOnPage(page);
-          if (now.length > 0 && now[0].url !== prevFirst) break;
-        }
       } catch {
         break;
       }
+      await page.waitForTimeout(2_000);
+      pages += 1;
+      for (let poll = 0; poll < 10; poll += 1) {
+        absorb(await this.linksOnPage(page));
+        await page.waitForTimeout(600);
+      }
+      if (links.length === before) break;
     }
-    log.info('fieldglass worklist scanned', { links: links.length, pages, perPage });
+
+    log.info('fieldglass worklist scanned', { links: links.length, total, pages });
+    if (total > 0 && links.length < total) log.warn('worklist scan short of the reported total', { links: links.length, total });
     await ctx.screenshot(links.length === 0 ? 'fieldglass-worklist-empty' : 'fieldglass-worklist-lastpage');
     return { links, pages };
   }

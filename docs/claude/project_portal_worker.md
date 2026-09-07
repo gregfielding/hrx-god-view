@@ -208,6 +208,20 @@ our job orders as changes happen in Fieldglass? … then same for Flex."
   closes the browser and the action is released untouched; use
   `npm run requeue -- --id=…` for stuck rows, `npm run status -- --id=…`
   to read a result.
+- ☠️☠️ **Orphaned workers (root cause of the 2026-09-07 chaos)**: the
+  LaunchAgent ran `exec npm start` → npm → tsx → node. `launchctl kickstart
+  -k` / `launchctl kill` only signal the main PID (npm); killing it orphans
+  the node worker (ppid 1), which keeps polling the queue on OLD code, shares
+  the same Chromium profile dir with the restarted worker, and races it —
+  two claims on one row, "browser has been closed" storms, results
+  overwritten. Fixed in the plist (commit c2fc39fe: `exec
+  ./node_modules/.bin/tsx src/index.ts`, so launchd owns the real process);
+  Greg must re-copy the plist + `launchctl unload`/`load -w`. Until then,
+  restart with `kill <node pid>` (SIGTERM to the node child), never
+  kickstart. Check with `ps -A | grep portal-worker` — exactly ONE
+  `node --require …tsx` process should exist. The 94-posting pass then ran
+  clean: 17 ingested across two runs (5 candidate-in-mind, 6 closed), rest
+  deferred to the next pass via change detection.
 - Recommended follow-ups: switch the Gmail→ingest forward from Greg's
   mailbox to Natalie's; "vanished from worklist ⇒ probably closed"
   detection; retire the Sync Sodexo button to a manual override; Slack
