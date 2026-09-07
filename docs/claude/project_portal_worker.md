@@ -84,6 +84,11 @@ message from Natalie discloses that she is C1 Staffing's automated
 recruiting assistant and names a human contact (CA bot-disclosure law +
 Greg's "workers should know we're a real company" goal); (4) phone calls
 stay human — Natalie produces the call list, people make the calls.
+Avatar (AI-generated, Greg 2026-09-06): `public/brand/natalie-brooks.png`
+(1254px source) + `public/brand/natalie-brooks-512.jpg` (web/email size) —
+served at https://hrxone.com/brand/natalie-brooks-512.jpg after the next
+hosting deploy; use it for the Google profile photo, Slack app icon, and
+the signature block.
 
 ## Next slices (in order)
 
