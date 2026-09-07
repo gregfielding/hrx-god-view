@@ -49,6 +49,39 @@ Index: `firestore.indexes.json` fieldOverride `flex_team_asks.status`
 COLLECTION_GROUP. Deploy: `functions:dispatchScheduledWorkerReminders` +
 whatever bundles `cadenceReplyHandler` (handleInboundSms) + `firestore:indexes`.
 
+## Natalie answers DMs and @mentions (2026-09-07 night, Greg: "interact with her like a real team member")
+
+`functions/src/natalie/` — `natalieSlackInbox` (scheduled every minute, her
+user token, `maxInstances: 1`) polls `users.conversations` → `conversations.history`
+since the per-channel cursor in `app_config/natalie_slack_inbox`, plus
+`conversations.replies` for threads she already answered (follow-ups need no
+mention). First tick only records cursors — no backlog is answered. Each
+message → `answerAsNatalie` (`natalieAgent.ts`: Claude `claude-opus-5`,
+adaptive thinking, effort medium, server-side refusal fallbacks, ≤8 tool
+rounds, thread transcript from `natalie_slack_threads/{channel__threadTs}`)
+→ posted as her (channels: in-thread; DMs: inline). Tools (`natalieTools.ts`):
+`find_worker`, `worker_status` (assignments, cort state, late-check-in text,
+last SMS), `portal_sync_status` (last successful fieldglass/flex actions,
+heartbeat, failures), `request_portal_sync`, `list_flex_requests`,
+`accept_flex_request` (real accept — only on an explicit ask),
+`job_order_fill_status`, `send_worker_sms` (signed Natalie). She says so when
+asked to do something she can't yet (book in Flex, submit to Fieldglass).
+
+**DM scopes still missing**: her token has channels/groups history but not
+`im:history, im:read, mpim:history, mpim:read`, so DMs are skipped
+(`users.conversations` falls back to channel types) until she re-authorizes
+with this URL (Incognito, signed in as Natalie; the callback page shows the
+code; run the exchange script; the check script keeps it only if it is hers):
+
+```
+https://slack.com/oauth/v2/authorize?client_id=7582435419591.12004537233218&user_scope=chat:write,channels:read,groups:read,channels:history,groups:history,users:read,im:write,im:history,im:read,mpim:history,mpim:read&redirect_uri=https://hrxone.com/slack/oauth/callback
+```
+
+The api.slack.com session in Greg's Chrome stopped being a collaborator of
+the app mid-evening ("Contact a member of your team who is a Collaborator")
+— probably Greg signed into Slack as Natalie in that profile; sign back in
+as Greg to edit the app config.
+
 ## One-time steps (Greg / Natalie) — historical
 
 1. Copy the client secret from the app's Basic Information page into

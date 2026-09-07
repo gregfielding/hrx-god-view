@@ -13050,3 +13050,7 @@ export {
 export { sodexoReplyScanCron, sodexoReplyScanNow, resolveSodexoReply } from './sales/sodexoReplies';
 export { inboxTriageCron, inboxMorningBriefCron, inboxTriageNow, inboxMorningBriefNow } from './sales/inboxChiefOfStaff';
 export { getCrmReengagementStatus, crmReengagementSendBatch, crmReengagementDailyCron, setCrmReengagementAutopilot } from './sales/crmReengagement';
+
+// Natalie Brooks — Slack assistant (DMs + @mentions answered as her; 2026-09-07).
+// See docs/claude/reference_slack_natalie_persona.md.
+export { natalieSlackInbox } from './natalie/natalieSlackInbox';
