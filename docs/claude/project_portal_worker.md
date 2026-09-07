@@ -116,9 +116,19 @@ Deploy of handleInboundSms was blocked for Claude by the permission
 classifier — Greg runs `firebase deploy --only functions:handleInboundSms`.
 Avatar (AI-generated, Greg 2026-09-06): `public/brand/natalie-brooks.png`
 (1254px source) + `public/brand/natalie-brooks-512.jpg` (web/email size) —
-served at https://hrxone.com/brand/natalie-brooks-512.jpg after the next
-hosting deploy; use it for the Google profile photo, Slack app icon, and
-the signature block.
+served at https://hrxone.com/brand/natalie-brooks-512.jpg (live since the
+2026-09-06 evening hosting deploy); use it for the Google profile photo,
+Slack app icon, and the signature block. **Gmail signature SET 2026-09-06**
+(via Claude-in-Chrome on Greg's session, mailbox u/4): same layout as
+Greg's (round 74px photo, gold left rule, name / "Recruiting Assistant ·
+C1 Staffing" / 312-663-8247 · n.brooks@ / c1staffing.com / tagline) minus
+LinkedIn, plus the rule-(3) disclosure line: "Natalie is C1 Staffing's
+automated recruiting assistant. To reach a person, email Greg Fielding at
+g.fielding@c1staffing.com." Gmail enforces Trusted Types, so the block was
+built with DOM nodes, not innerHTML. Greg's own signature now points at
+https://hrxone.com/brand/greg-fielding-512.jpg (new official headshot,
+2026-09-06; `public/img/greg-fielding.jpg` replaced too so the old URL
+serves the same photo).
 
 ## Milestone 2026-09-06 (late): BOTH portal logins succeed unattended
 
