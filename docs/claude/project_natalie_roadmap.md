@@ -65,7 +65,13 @@ can read, she closes her own loops, and she says plainly what she cannot do.
    late/no-show/cancel state is relayed by Natalie to the recruiter thread.
 
 ## Phase 4 — full channels (need one-time grants from Greg)
-10. ⏳ Email: code shipped (`natalie/natalieMailbox.ts` — tenant grant at
+10. ✅ Email: connected 2026-09-07 14:35 PT (Greg added n.brooks@ as an OAuth
+    test user from the gregpfielding@gmail.com console account — the project
+    owner — then consented as Natalie; verified: profile + inbox read OK).
+    NOTE the OAuth app is still in *Testing* publishing status, so Google
+    expires the refresh token after 7 days; flip Audience → Publishing status
+    to "In production" (unverified-app warning is fine) or re-consent weekly.
+    Code: (`natalie/natalieMailbox.ts` — tenant grant at
     `tenants/{t}/integrations/natalieMailbox`, OAuth purpose `natalieMailbox`
     on the shared `gmailOAuthCallback`; tools `read_inbox` / `send_email`;
     the brief lists unread non-automated threads). One-time step: open the
