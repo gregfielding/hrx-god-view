@@ -84,6 +84,17 @@ message from Natalie discloses that she is C1 Staffing's automated
 recruiting assistant and names a human contact (CA bot-disclosure law +
 Greg's "workers should know we're a real company" goal); (4) phone calls
 stay human — Natalie produces the call list, people make the calls.
+**HRX user PROVISIONED 2026-09-06**: Auth uid `sSPyxJiaYsXlHJb5XUOJ3d14PcU2`,
+claims roles[T]=Admin/7, users doc mirrors Deborah/Greg shape (securityLevel
+'7' + `recruiter:true` + `crm_sales:true` at top level AND in
+tenantIds[T]; `isAutomationPersona:true` marker; avatar URL set). Script:
+`functions/.scratch/invite-natalie-brooks.ts` (idempotent, --write). Flex
+agency user invited as Admin. Phone: give her a dedicated Twilio recruiter
+number via HRX's existing purchase/assign flow (recruiterNumbers.ts →
+inbound routed to handleInboundSms → readable in HRX conversations) so
+portal SMS codes and worker replies are monitorable without Twilio console
+access — Claude's SA cannot read the Twilio secrets, so Greg does this in
+the HRX UI or exports TWILIO_* first.
 Avatar (AI-generated, Greg 2026-09-06): `public/brand/natalie-brooks.png`
 (1254px source) + `public/brand/natalie-brooks-512.jpg` (web/email size) —
 served at https://hrxone.com/brand/natalie-brooks-512.jpg after the next
