@@ -20,6 +20,16 @@ async function main() {
   const limit = Number(arg('limit') || 15);
   const status = arg('status') as PortalActionStatus | undefined;
 
+  // --id=<actionId>: dump one action (result + lastError) and exit.
+  const id = arg('id');
+  if (id) {
+    const snap = await actionsCollection(db, config.tenantId).doc(id).get();
+    if (!snap.exists) throw new Error(`no action ${id}`);
+    const a = snap.data() as PortalActionDoc;
+    console.log(JSON.stringify({ status: a.status, attempts: a.attempts, lastError: a.lastError, result: a.result, history: a.history }, null, 2));
+    return;
+  }
+
   console.log('queue:', await queueCounts(db, config.tenantId));
 
   const workers = await db.collection('tenants').doc(config.tenantId).collection('portal_workers').get();

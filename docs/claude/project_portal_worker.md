@@ -134,6 +134,56 @@ page, so interstitial detection must look at headings only. `npm run
 login -- --provider=X` = per-step-screenshot login debugger on a separate
 profile. Set-password/reset links MUST be opened in Incognito.
 
+## Sync passes (2026-09-06 late, commit f6a3e184): the buttons are now Natalie's job
+
+Greg: "Can this system replace the Sync Sodexo button… can Natalie update
+our job orders as changes happen in Fieldglass? … then same for Flex."
+- **`fieldglass_sync`** (adapter `sync()`): HRX pending queue
+  (`fieldglassEnrichmentQueue`) + paginated worklist scan
+  (`job_posting_list.do?cl=1`, follows Next) → opens each
+  `job_posting_detail.do` page in Playwright (SAP is JS-rendered; waits
+  for the SDXOJP id) → POSTs innerText to `fieldglassEnrichmentIngest`
+  with `FIELDGLASS_EXTENSION_KEY` (same server path as the extension: LLM
+  extraction → JO ensure/close/halt). **Targeted** syncs
+  (`payload.postingIds`) resolve SDXOJP → detail URL via the HRX request
+  row (`event.detailUrl` / `enrichment.sourceUrl`), else the worklist row
+  text, else the portal search box — ☠️ `job_posting_detail.do?id=` takes
+  an INTERNAL id, not the SDXOJP number (constructed URLs render nothing).
+- **`indeed_flex_sync`**: jobs list (API body tapped via
+  `page.on('response')` on `flex-core-us.indeed.com/api/v2/agency_portal/`,
+  DOM `/job-details/` links as fallback) → per job open
+  `…/job-details/{id}?…&workers=booked`, wait for the
+  `workers?booked_agency_shift_ids` response, bundle {job, agency_shifts,
+  roster} → `indeedFlexPortalIngest`; then `/o/timesheets` entries pages +
+  a replay of `timesheets/entries` for the last N days using the SPA's own
+  Authorization header via `context.request` → `indeedFlexTimesheetIngest`.
+  Skips Completed jobs unless `includeCompleted`.
+- **Change detection** (`src/syncState.ts`): sha256 of normalized page
+  text / JSON bundle in `tenants/{t}/portal_state/{provider}_sync`; unchanged
+  pages skip the paid extraction, re-ingested anyway after 24h; `force`
+  bypasses. This is what makes an hourly cadence affordable (Greg's manual
+  cadence was ~3 presses/day × ~50 postings).
+- **Scheduler** (`scheduleSyncsDue` in index.ts): every
+  `PORTAL_FG_SYNC_EVERY_MS` / `PORTAL_FLEX_SYNC_EVERY_MS` (default 60 min)
+  inside `PORTAL_SYNC_HOURS` (6-21 America/Chicago) the worker enqueues a
+  full pass keyed `full__<15-min bucket>` so restarts/second workers don't
+  double-run; priority 150 (targeted work wins). Sync actions get
+  `PORTAL_SYNC_ACTION_TIMEOUT_MS` (90 min) — the 4-min default timed out a
+  50-posting pass on the first run — and a timeout now tears the browser
+  context down so the abandoned promise can't keep driving the page.
+- **Change loop (functions, needs deploy of
+  `onFieldglassIngestEventCreatedParse`)**: an unclassified email that names
+  a known posting, or a re-distribution of a decided order, enqueues a
+  targeted `fieldglass_sync` (priority 20, force) via
+  `enqueuePortalAction`; the SMS alert now says Natalie is re-syncing it.
+- Worker env now also needs `FIELDGLASS_EXTENSION_KEY` /
+  `INDEED_FLEX_EXTENSION_KEY` (same values as functions env). ☠️ Appending
+  to a `.env` that lacks a trailing newline glued a key onto the password
+  line and broke the Fieldglass login for 10 minutes — check `cut -d= -f1`.
+- Recommended follow-ups: switch the Gmail→ingest forward from Greg's
+  mailbox to Natalie's; "vanished from worklist ⇒ probably closed"
+  detection; retire the Sync Sodexo button to a manual override.
+
 ## Next slices (in order)
 
 1. **Bot accounts + secrets (Greg)**: dedicated Flex agency user + Fieldglass
