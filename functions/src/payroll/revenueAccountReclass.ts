@@ -34,6 +34,17 @@ export async function pushRevenueAccountReclass(
   const a4100 = accts.find((a) => /events\s*&\s*venue/i.test(String(a.Name)));
   if (!a4200 || !a4100) throw new Error('4100/4200 income accounts not found');
 
+  // Division (QBO Department) per line, keyed off the ACCOUNT — Tabitha
+  // 2026-09-04: "4100 - Division is event, 4200 - Division is recurring";
+  // the JEs were landing in Not Specified on P&L by Division.
+  const depRes = (await qboQuery(tenantId, 'SELECT * FROM Department MAXRESULTS 200')) as Record<string, any>;
+  const deps: Array<Record<string, any>> = depRes.QueryResponse?.Department ?? depRes.Department ?? [];
+  const divEvent = deps.find((d) => /event/i.test(String(d.Name)));
+  const divRecurring = deps.find((d) => /recurring/i.test(String(d.Name)));
+  if (!divEvent || !divRecurring) throw new Error('Event-based/Recurring divisions not found');
+  const divForAccount = (acctId: string): Record<string, any> =>
+    acctId === String(a4100.Id) ? divEvent : divRecurring;
+
   const itRes = (await qboQuery(tenantId, 'SELECT Id, Name, IncomeAccountRef FROM Item MAXRESULTS 1000')) as Record<string, any>;
   const items: Array<Record<string, any>> = itRes.QueryResponse?.Item ?? itRes.Item ?? [];
   const itemPostsTo4200 = new Set(
@@ -98,12 +109,20 @@ export async function pushRevenueAccountReclass(
     const prior = existing.get(month);
     if (prior) {
       let net = 0;
+      let missingDivision = false;
       for (const l of (prior.Line ?? []) as Array<Record<string, any>>) {
         const d = l.JournalEntryLineDetail;
-        if (!d || String(d.AccountRef?.value) !== String(a4200.Id)) continue;
+        if (!d) continue;
+        const acctId = String(d.AccountRef?.value ?? '');
+        if (acctId === String(a4100.Id) || acctId === String(a4200.Id)) {
+          if (String(d.DepartmentRef?.value ?? '') !== String(divForAccount(acctId).Id)) {
+            missingDivision = true;
+          }
+        }
+        if (acctId !== String(a4200.Id)) continue;
         net += (d.PostingType === 'Debit' ? 1 : -1) * (Number(l.Amount) || 0);
       }
-      if (Math.abs(round2(net) - total) <= 1) {
+      if (Math.abs(round2(net) - total) <= 1 && !missingDivision) {
         results.push({ month, amount: total, status: 'already_reclassed' });
         continue;
       }
@@ -128,6 +147,7 @@ export async function pushRevenueAccountReclass(
           PostingType: debitSide ? 'Debit' : 'Credit',
           AccountRef: { value: String(a4200.Id) },
           ClassRef: { value: s.clsId, name: s.fqn },
+          DepartmentRef: { value: String(divRecurring.Id), name: String(divRecurring.Name) },
         },
       });
       lines.push({
@@ -138,6 +158,7 @@ export async function pushRevenueAccountReclass(
           PostingType: debitSide ? 'Credit' : 'Debit',
           AccountRef: { value: String(a4100.Id) },
           ClassRef: { value: s.clsId, name: s.fqn },
+          DepartmentRef: { value: String(divEvent.Id), name: String(divEvent.Name) },
         },
       });
     }

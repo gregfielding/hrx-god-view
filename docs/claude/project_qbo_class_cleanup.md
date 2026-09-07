@@ -660,3 +660,31 @@ deposit variance — computed ~\$10K/mo vs ~\$7.5K/mo paid means a
 carrier catch-up bill is building; watch 7140. Jan–May stays on 7140
 (pre-Everee, Greg's scope ruling). Known limit: GB->FIFA WC follows
 the JO-wide date split (~\$1.5K NY/Dallas blur).
+
+## Division (QBO Department) tagging + Tabitha's revenue matrix (2026-09-06)
+
+Tabitha (email 9/4, "Update & Claude JE Review Request"): the [revrc:]
+JEs were landing in **Not Specified** on P&L by Division. QBO Departments
+in this file: `Event-based` (1000000011), `Recurring` (1000000001),
+`Corp / Unalloc.` (1000000021). Rule is keyed off the ACCOUNT: 4100 lines
+→ Event-based, 4200 lines → Recurring. revenueAccountReclass.ts now
+stamps per-line DepartmentRef and its self-truing rewrite also fires when
+any 4100/4200 line is missing its division (one-time backfill of all 9
+existing JEs rides the next real run).
+
+Her full revenue tagging matrix (record of truth for future classing):
+- 4100 Events & Venue — AEG, VenueSmart sub-classes, RS3-Events, 812 Mgmt
+- 4200 Recurring — Sodexo, Indeed Flex, Proof of Pudding (RS3-Hosp), G6,
+  Contigo, Black Caviar, Western Group Packaging, C1 MedStaff
+- 4300 Other — anything not fitting 4100/4200, confirm with Vicki
+- 4900 Refunds & Discounts — negative income, tagged to customer class
+
+⚠️ OPEN CONFLICT (needs Greg/Vicki ruling): Greg 2026-09-01 said 4200 is
+ONLY Sodexo + Indeed Flex, so the reclass moved Proof of Pudding
+($326,220), Contigo ($100,182), Black Caviar ($56,981), G6 ($11,275) —
+~$494.7K — out of 4200 into 4100. Tabitha's matrix says those are 4200.
+If her matrix wins: extend `isRecurringFamily` in
+revenueAccountReclass.ts to include those five classes (+ Western Group
+Packaging, C1 MedStaff when they appear) and rerun — self-truing rewrites
+all months. AEG / RS3-Events / 812 Mgmt / Western Group are not active
+QBO classes yet (nothing to do until they exist).
