@@ -14,6 +14,7 @@
     "test": "node --import tsx --test test/*.test.ts",
     "enqueue": "tsx scripts/enqueue.ts",
     "status": "tsx scripts/status.ts",
+    "login": "tsx scripts/login-debug.ts",
     "browsers": "playwright install chromium"
   },
   "dependencies": {

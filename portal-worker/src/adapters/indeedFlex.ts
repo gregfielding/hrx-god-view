@@ -52,11 +52,17 @@ export class IndeedFlexAdapter implements PortalAdapter {
     await email.fill(creds.username);
     await page.getByRole('button', { name: /continue/i }).click();
     await page.waitForTimeout(3_000);
+    await ctx.screenshot('flex-login-step2');
 
     const password = page.locator('input[type="password"]');
     if ((await password.count()) > 0) {
       await password.first().fill(creds.password);
-      await password.first().press('Enter');
+      const filledLen = await password.first().inputValue().then((v) => v.length);
+      log.info('flex password step', { url: page.url(), filledLen, expectedLen: creds.password.length });
+      await page.waitForTimeout(500);
+      const cont = page.getByRole('button', { name: /continue|sign in/i });
+      if ((await cont.count()) > 0) await cont.first().click();
+      else await password.first().press('Enter');
       await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => undefined);
       await page.waitForTimeout(2_000);
       if (await this.isLoginWall(page)) {
