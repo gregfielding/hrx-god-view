@@ -122,10 +122,12 @@ Slack app icon, and the signature block. **Gmail signature SET 2026-09-06**
 (via Claude-in-Chrome on Greg's session, mailbox u/4): same layout as
 Greg's (round 74px photo, gold left rule, name / "Recruiting Assistant ·
 C1 Staffing" / 312-663-8247 · n.brooks@ / c1staffing.com / tagline) minus
-LinkedIn, plus the rule-(3) disclosure line: "Natalie is C1 Staffing's
-automated recruiting assistant. To reach a person, email Greg Fielding at
-g.fielding@c1staffing.com." Gmail enforces Trusted Types, so the block was
-built with DOM nodes, not innerHTML. Greg's own signature now points at
+LinkedIn. The rule-(3) disclosure line ("Natalie is C1 Staffing's
+automated recruiting assistant…") was added and then REMOVED at Greg's
+direction the same evening — the signature carries no automation
+disclosure; keep the disclosure in message BODIES where rule (3) applies.
+Gmail enforces Trusted Types, so the block was built with DOM nodes, not
+innerHTML. Greg's own signature now points at
 https://hrxone.com/brand/greg-fielding-512.jpg (new official headshot,
 2026-09-06; `public/img/greg-fielding.jpg` replaced too so the old URL
 serves the same photo).
