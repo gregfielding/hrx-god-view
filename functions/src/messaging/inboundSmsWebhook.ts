@@ -90,6 +90,46 @@ export const handleInboundSms = onRequest(
         logger.warn('[sms_inbound_raw] write failed (non-blocking)', { err: rawErr?.message || String(rawErr) });
       }
 
+      // Natalie's SMS watches (2026-09-07): when she texted someone an offer
+      // from Slack/Claude, relay their reply into that Slack thread. Fail-open.
+      try {
+        if (fromNumber && messageBody) {
+          const fromE164 = String(fromNumber).startsWith('+') ? String(fromNumber) : `+${String(fromNumber).replace(/\D/g, '')}`;
+          const watches = await db.collection('natalie_sms_watches').where('phoneE164', '==', fromE164).where('status', '==', 'active').limit(3).get();
+          for (const w of watches.docs) {
+            const exp = w.get('expiresAt');
+            if (exp && typeof exp.toMillis === 'function' && exp.toMillis() < Date.now()) continue;
+            const slack = w.get('slack') as { channel?: string; ts?: string } | undefined;
+            if (!slack?.channel) continue;
+            const intent = /\b(yes|si|sí|yeah|yep|ok|sure|confirm(ed)?)\b/i.test(String(messageBody)) ? 'yes' : /\b(no|nope|can't|cannot|cant)\b/i.test(String(messageBody)) ? 'no' : null;
+            let placement = '';
+            if (intent === 'yes' && w.get('offer')) {
+              try {
+                const { acceptOfferFromReply } = await import('../natalie/natalieFill');
+                const placed = await acceptOfferFromReply(w.data() as Record<string, unknown>, String(messageBody));
+                placement = placed.placed ? ` → ${placed.message}` : ` (could not place: ${placed.message})`;
+              } catch (placeErr: any) {
+                placement = ` (auto-place failed: ${placeErr?.message || String(placeErr)})`;
+              }
+            }
+            await db.collection('natalie_relays').add({
+              tenantId: w.get('tenantId') ?? null,
+              assignmentId: null,
+              userId: w.get('userId') ?? null,
+              workerName: w.get('workerName') ?? null,
+              text: `${String(messageBody).slice(0, 500)}${placement}`,
+              intent,
+              targets: [{ channel: slack.channel, ts: slack.ts ?? null }],
+              status: 'pending',
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            await w.ref.set({ lastReplyAt: admin.firestore.FieldValue.serverTimestamp(), lastReply: String(messageBody).slice(0, 200) }, { merge: true });
+          }
+        }
+      } catch (watchErr: any) {
+        logger.warn('[natalie_sms_watch] relay failed (non-blocking)', { err: watchErr?.message || String(watchErr) });
+      }
+
       // Validate required fields
       if (!fromNumber || !messageBody) {
         logger.error('Missing required fields in Twilio webhook');

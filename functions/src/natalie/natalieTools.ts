@@ -10,6 +10,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { enqueuePortalAction } from '../integrations/portalActions/enqueuePortalAction';
 import { NATALIE_DISPLAY_NAME, NATALIE_HRX_UID, recordNatalieAction, registerFollowup, type SlackRef } from './natalieAudit';
 import { readInbox, sendEmail } from './natalieMailbox';
+import { candidatesForJobOrder, offerShiftToWorker, placeWorkerOnShift, upcomingShifts, workerReachBlast } from './natalieFill';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -111,6 +112,30 @@ export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
       },
       required: ['title', 'assigneeName', 'dueDate'],
     },
+  },
+  {
+    name: 'candidates_for_job_order',
+    description:
+      "Who could fill an order: applicants to the job order (interview score, reliability, background) plus reliable workers within 15/30/60 miles of the worksite, ranked with reasons, excluding people already on the order. Also returns the order's upcoming shifts with needed vs assigned. Use for 'anyone good for the OnTrac order?' or before offering shifts. Find the jobOrderId with job_order_fill_status.",
+    input_schema: { type: 'object', properties: { jobOrderId: { type: 'string' }, radiusMiles: { type: 'number', enum: [15, 30, 60] }, limit: { type: 'number' } }, required: ['jobOrderId'] },
+  },
+  {
+    name: 'offer_shift',
+    description:
+      "Text a worker an offer for one specific shift (date, time, site, pay) from C1 signed Natalie, with 'Reply YES'. A YES places them on the shift automatically and confirms by text; replies are relayed into this Slack thread. Use when a recruiter asks you to reach out to someone about a shift, or to fill an order after candidates_for_job_order. Needs userId, jobOrderId and shiftId.",
+    input_schema: { type: 'object', properties: { userId: { type: 'string' }, jobOrderId: { type: 'string' }, shiftId: { type: 'string' }, extra: { type: 'string', description: 'Optional extra sentence, e.g. "more days this week"' } }, required: ['userId', 'jobOrderId', 'shiftId'] },
+  },
+  {
+    name: 'place_worker',
+    description:
+      'Put a worker on a shift in HRX right away (no offer text) — the same as a recruiter clicking Assign. Use when the person explicitly says to put someone on a shift. Needs userId, jobOrderId and shiftId.',
+    input_schema: { type: 'object', properties: { userId: { type: 'string' }, jobOrderId: { type: 'string' }, shiftId: { type: 'string' } }, required: ['userId', 'jobOrderId', 'shiftId'] },
+  },
+  {
+    name: 'worker_reach_blast',
+    description:
+      "Send the job order's Worker Reach text blast to eligible workers near the worksite (nearest first, up to 200; opt-outs and anyone texted in the last 24h are skipped) inviting them to the jobs-board posting. Use when targeted offers are not enough. radiusMiles 15, 30 or 60. Only when a recruiter asked for a blast or agreed to one.",
+    input_schema: { type: 'object', properties: { jobOrderId: { type: 'string' }, radiusMiles: { type: 'number', enum: [15, 30, 60] }, message: { type: 'string', description: 'Optional custom text; {link} inserts the jobs-board link' } }, required: ['jobOrderId'] },
   },
   {
     name: 'read_inbox',
@@ -599,6 +624,20 @@ export async function runNatalieTool(name: string, input: Record<string, unknown
       return jobOrderFillStatus(ctx.tenantId, s(input.query));
     case 'send_worker_sms':
       return sendWorkerSms(ctx, input as { userId: string; text: string });
+    case 'candidates_for_job_order': {
+      const jobOrderId = s(input.jobOrderId);
+      const [cands, shifts] = await Promise.all([candidatesForJobOrder(ctx.tenantId, jobOrderId, { radiusMiles: Number(input.radiusMiles) || 15, limit: Number(input.limit) || 12 }), upcomingShifts(ctx.tenantId, jobOrderId, 10)]);
+      return { ...cands, upcomingShifts: shifts };
+    }
+    case 'offer_shift':
+      return offerShiftToWorker({ tenantId: ctx.tenantId, userId: s(input.userId), jobOrderId: s(input.jobOrderId), shiftId: s(input.shiftId), extra: s(input.extra) || undefined, askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack });
+    case 'place_worker': {
+      const r = await placeWorkerOnShift(ctx.tenantId, s(input.jobOrderId), s(input.shiftId), s(input.userId), { source: 'natalie_slack_place', note: `Placed by Natalie (asked by ${ctx.askedByName} in Slack)` });
+      await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'place_worker', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { jobOrderId: s(input.jobOrderId), shiftId: s(input.shiftId) }, result: r as Record<string, unknown>, summary: r.placed ? 'Placed the worker on the shift' : `Could not place the worker (${r.error ?? (r.already ? 'already on it' : 'unknown')})`, userId: s(input.userId), jobOrderId: s(input.jobOrderId), assignmentId: r.assignmentId || null });
+      return { ...r, hrxLink: r.assignmentId ? `https://hrxone.com/assignments/${r.assignmentId}` : null };
+    }
+    case 'worker_reach_blast':
+      return workerReachBlast({ tenantId: ctx.tenantId, jobOrderId: s(input.jobOrderId), radiusMiles: Number(input.radiusMiles) || 30, message: s(input.message) || undefined, askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack });
     case 'read_inbox': {
       const r = await readInbox(ctx.tenantId, { query: s(input.query) || undefined, max: Number(input.max) || 15 });
       return r.connected ? r : { error: "Natalie's mailbox is not connected to HRX yet — Greg needs to run the one-time Google consent for n.brooks@." };
