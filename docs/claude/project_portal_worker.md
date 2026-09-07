@@ -222,8 +222,12 @@ our job orders as changes happen in Fieldglass? … then same for Flex."
   `node --require …tsx` process should exist. The 94-posting pass then ran
   clean: 17 ingested across two runs (5 candidate-in-mind, 6 closed), rest
   deferred to the next pass via change detection.
-- Recommended follow-ups: switch the Gmail→ingest forward from Greg's
-  mailbox to Natalie's; "vanished from worklist ⇒ probably closed"
+- **First clean full Fieldglass pass 2026-09-07 02:06Z**: 94/94 postings,
+  79 ingested, 15 skipped unchanged, 0 failed, 6 candidate-in-mind, 12
+  closed + 1 halted cascaded, 17.6 min. **Gmail→ingest forward MOVED to
+  Natalie's mailbox** the same night (see
+  [[project_fieldglass_intake_pipeline]]); Greg's filter is mark-as-read only.
+- Recommended follow-ups: "vanished from worklist ⇒ probably closed"
   detection; retire the Sync Sodexo button to a manual override; Slack
   digest of each pass's summary (closed/halted/candidate-in-mind/attention).
 

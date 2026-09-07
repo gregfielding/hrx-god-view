@@ -86,6 +86,19 @@ Goal (2026-07-06): win Sodexo orders (high margin, but distributed to many compe
 
 **WORKER REACH CARD (007a47c9, deployed 2026-07-08)** — manual radius blast on the JO Auto Messaging tab, exactly per Greg's agreed design: radius toggle 15/30/60mi, live readout (workers in radius / SMS-reachable / texted-in-24h-will-skip via `previewJobOrderWorkerReach` callable), editable message (untouched default stays bilingual EN/ES; custom text goes to everyone as-written, `{link}` interpolates the board URL and is auto-appended if dropped), confirm dialog → `sendJobOrderWorkerReachBlast` (sec 5-7, Twilio secrets, resolves newest shift for the log anchor). Runner extensions in jobOrderAutoMessaging.ts: `radiusMilesOverride` (activates radius mode even without stored config), `customMessage`, source `'manual_blast'` → legacy-log source `auto_messaging_manual_blast`; **manual blasts are radius-ONLY (group members NOT unioned — send must match the confirmed preview)**; sendLog rows get radiusMilesUsed/customMessage and the UI shows Blast/Resend chips. Safety unchanged: nearest-first 200 cap, STOP/opt-out, global 24h SMS cap; only the 15-min per-JO cooldown bypassed. Verified all 46 FG JOs carry worksiteCoordinates (query `fieldglass.postingId`); JOs without coords get a disabled card. Smoke (Broadcom Mendota Hts): 15/30/60mi → 73/77/79 in radius, ~1 unreachable, ~70 in 24h cooldown from prior night's blast. SIDE FINDING: some CRM-created JOs have `createdAt: {}` (empty map — sorts above Timestamps in desc orderBy); spawned background task to fix writer + migrate.
 
+**EMAIL ROUTE MOVED 2026-09-07 (Claude via Claude-in-Chrome, Greg approved):**
+the Gmail→`fieldglass@ingest.hrxone.com` forward now lives in **Natalie
+Brooks' mailbox** (n.brooks@c1staffing.com, the automation persona — see
+[[project_portal_worker]]): filter `from:(fieldglass.cloud.sap)` → Mark as
+read + Forward to fieldglass@ingest.hrxone.com (forwarding address verified
+via the Google confirmation link, which arrived at the webhook as a
+`rejected_dkim` ingest event whose raw text carried the link). Greg's own
+filter is now Mark-as-read only (his other Fieldglass forwards to the
+Sodexo Slack channel, dm@ and mk@ are untouched). Same trusted-forwarder
+DKIM path (google.com re-signs, From stays SAP), so the webhook needs no
+change. Natalie was set to receive ALL Fieldglass notifications, so her
+inbox is now the audit trail of everything Sodexo sends.
+
 **Phases**: P1 intake (inbound email route + Fieldglass extractor + site matching + review queue rows + instant recruiter SMS); P2 one-click approve → gig JO + shifts + auto-post + auto-invite `addedToFieldglass` workers via jobOrderAutoMessagingOnShiftCreated; P3 earned autonomy (auto-publish repeat site+title, auto-expire on closed notices); parallel track — official SAP Fieldglass supplier REST API/download connectors (technical user + license key via Configuration Manager; SAP engagement, could later submit job seekers via API). Unattended credentialed scraping ruled out (brittle, ToS/account risk).
 
 **PORTAL INTEGRATIONS DEEP-DIVE 2026-07-20 (artifact
