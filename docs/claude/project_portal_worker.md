@@ -68,6 +68,23 @@ health docs written. Rows left in prod:
 `tenants/BCiP2bQ9CgVOCTfV6MhD/portal_actions/{fieldglass,indeed_flex}__smoke_test__1788738…`
 (harmless; delete or ignore).
 
+## The persona: Natalie Brooks (Greg, 2026-09-06)
+
+The automation's identity across every external system is **Natalie Brooks,
+n.brooks@c1staffing.com** (Google Workspace user — a real mailbox, not an
+alias, because Flex's email-first login and Fieldglass notifications need an
+inbox). Use it for: the Indeed Flex agency user (Account level Standard,
+all branches/clients/locations/roles), the Fieldglass supplier user, the
+Slack app/bot user, and any outbound email/SMS the agent sends later.
+Rules: (1) Claude never holds the password — Greg puts creds in the
+worker's `.env` / Secret Manager; (2) the mailbox gets connected to HRX via
+the existing Gmail OAuth integration so functions can read login codes and
+portal notifications, and Greg is a delegate on it; (3) any signature or
+message from Natalie discloses that she is C1 Staffing's automated
+recruiting assistant and names a human contact (CA bot-disclosure law +
+Greg's "workers should know we're a real company" goal); (4) phone calls
+stay human — Natalie produces the call list, people make the calls.
+
 ## Next slices (in order)
 
 1. **Bot accounts + secrets (Greg)**: dedicated Flex agency user + Fieldglass
