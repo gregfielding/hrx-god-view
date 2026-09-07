@@ -192,9 +192,26 @@ our job orders as changes happen in Fieldglass? … then same for Flex."
   `INDEED_FLEX_EXTENSION_KEY` (same values as functions env). ☠️ Appending
   to a `.env` that lacks a trailing newline glued a key onto the password
   line and broke the Fieldglass login for 10 minutes — check `cut -d= -f1`.
+- Live results 2026-09-07 ~01:30Z: **Flex full pass OK** — 14 jobs on the
+  list (DOM links; the SPA's jobs-list API body was NOT seen, so
+  `jobsFromCaptures` is a fallback that hasn't fired yet), 5 non-completed
+  visited, rosters ingested (3 "unmatched_no_shift" = HRX has no shift
+  linked for those 0-booked new jobs — an HRX matching state, not a
+  courier failure), second pass skipped 3 unchanged; timesheets: view
+  pages + replayed 7-day window (the SPA's Authorization header replays
+  fine via `context.request`) → 75 rows, 5 needing attention. **Fieldglass
+  worklist** = 94 links over 3 pages (Next-button pagination works; the
+  extension only ever read page 1 and Greg saw "4 page-boundary
+  stragglers"). ☠️ Restarting the worker mid-pass with the pre-7b546995
+  code let the abandoned loop keep running and later overwrite the row
+  with 94 "browser has been closed" failures — since 7b546995 SIGTERM
+  closes the browser and the action is released untouched; use
+  `npm run requeue -- --id=…` for stuck rows, `npm run status -- --id=…`
+  to read a result.
 - Recommended follow-ups: switch the Gmail→ingest forward from Greg's
   mailbox to Natalie's; "vanished from worklist ⇒ probably closed"
-  detection; retire the Sync Sodexo button to a manual override.
+  detection; retire the Sync Sodexo button to a manual override; Slack
+  digest of each pass's summary (closed/halted/candidate-in-mind/attention).
 
 ## Next slices (in order)
 

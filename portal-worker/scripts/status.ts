@@ -38,7 +38,9 @@ async function main() {
     const d = w.data();
     const beat = d.lastHeartbeatAt?.toDate?.() as Date | undefined;
     const ageS = beat ? Math.round((Date.now() - beat.getTime()) / 1000) : null;
-    console.log(`  ${w.id.padEnd(28)} ${String(d.status).padEnd(8)} heartbeat ${ageS === null ? '?' : ageS + 's ago'}  sessions=${JSON.stringify(d.sessions || {})}`);
+    const busy = d.busyWith ? `  busy: ${d.busyWith.action} ${d.busyWith.note ? `(${d.busyWith.note})` : ''} since ${d.busyWith.since}` : '';
+    console.log(`  ${w.id.padEnd(28)} ${String(d.status).padEnd(8)} heartbeat ${ageS === null ? '?' : ageS + 's ago'}${busy}`);
+    console.log(`  ${''.padEnd(28)} sessions=${JSON.stringify(d.sessions || {})}`);
   }
 
   let q = actionsCollection(db, config.tenantId).orderBy('updatedAt', 'desc').limit(limit);
