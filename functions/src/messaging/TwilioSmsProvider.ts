@@ -20,6 +20,7 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from './twilioSecrets';
+import { recordSmsCarrierBlock, TWILIO_UNSUBSCRIBED_RECIPIENT } from './smsDeliveryAlerts';
 import { shortenUrlsInBody } from './linkShortener';
 
 export class TwilioSmsProvider implements SmsProvider {
@@ -150,6 +151,9 @@ export class TwilioSmsProvider implements SmsProvider {
         to,
         messageTypeId: params.messageTypeId,
       });
+      if (errorCode === TWILIO_UNSUBSCRIBED_RECIPIENT) {
+        await recordSmsCarrierBlock({ tenantId: params.tenantId, userId: params.userId ?? null, toPhone: to, errorCode, errorMessage, messageTypeId: params.messageTypeId, source: 'TwilioSmsProvider' });
+      }
 
       // Do NOT throw; return structured failure so caller can log it
       return {

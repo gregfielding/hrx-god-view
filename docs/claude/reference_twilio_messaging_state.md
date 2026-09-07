@@ -51,6 +51,14 @@ this service's Sender Pool, set its inbound request URL to
 sends at this MG SID. Until then Natalie texts through the 888 (C1
 Messaging) with her signature.
 
+## Opt-out keywords (C1 Messaging) — changed 2026-09-07
+
+Standard Opt-Out Keywords now: end, optout, quit, revoke, stop, stopall,
+unsubscribe (`cancel` removed — see [[feedback_twilio_cancel_keyword_optout]]).
+Opt-in: start, unstop, yes. Help: help, info. Twilio's auto-replies to these
+do NOT show in the Messages log. Carrier blocks now surface in Slack via
+`ops_alerts` (channel configurable at `app_config/ops_alerts.slackChannelId`).
+
 ## What this means
 
 - Sending from ANY local (10DLC) number on this account is unregistered

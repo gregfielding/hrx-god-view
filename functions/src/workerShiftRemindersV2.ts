@@ -2,6 +2,8 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { defineSecret } from 'firebase-functions/params';
+import { drainOpsAlertsToSlack } from './messaging/smsDeliveryAlerts';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
 import { writeWorkerInboxNotification } from './messaging/unifiedWorkerNotifications';
@@ -22,6 +24,11 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from './messaging/twilioSecrets';
+
+/** Ops alerts (e.g. Twilio 21610 carrier blocks) are drained to Slack from this
+ *  5-minute dispatcher because it already runs constantly; the senders themselves
+ *  never need the Slack secret. */
+const OPS_SLACK_BOT_TOKEN = defineSecret('SLACK_BOT_TOKEN');
 import {
   resolveShiftReminderProfile,
   ALL_SHIFT_REMINDER_TYPES,
@@ -2106,9 +2113,17 @@ export const dispatchScheduledWorkerReminders = onSchedule(
     // a timeout mid-batch strands every claimed reminder in `processing`,
     // which nothing revives. 540s comfortably covers the worst batch.
     timeoutSeconds: 540,
-    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN, OPS_SLACK_BOT_TOKEN],
   },
   async () => {
+    // Mirror pending ops alerts (carrier blocks etc.) to Slack — fail-open.
+    try {
+      const posted = await drainOpsAlertsToSlack(OPS_SLACK_BOT_TOKEN.value() || process.env.SLACK_BOT_TOKEN);
+      if (posted) logger.info('[worker_shift_reminders] ops alerts posted to Slack', { posted });
+    } catch (e) {
+      logger.warn('[worker_shift_reminders] ops alert drain failed', { err: String(e) });
+    }
+
     const now = admin.firestore.Timestamp.now();
     const due = await db
       .collectionGroup(REMINDER_SUBCOLLECTION)

@@ -37,6 +37,27 @@
    (Daniel/Deborah) call or push-notify the list above and ask them to text
    START; until then every SMS to them silently fails (HRX logs 21610).
 
+## Status 2026-09-07 (same night)
+
+- Twilio: `cancel` REMOVED from C1 Messaging's opt-out keywords (now end,
+  optout, quit, revoke, stop, stopall, unsubscribe) — done via Claude-in-Chrome,
+  Greg approved. Do the same on MG2dd6557… when Natalie's campaign is approved.
+- HRX copy: all "Reply … CANCEL/CANCELAR" → "NO" (commit 53549e10).
+- 21610 alerting BUILT: `functions/src/messaging/smsDeliveryAlerts.ts` —
+  both senders (`twilio.ts` sendWorkerMessageInternal, `TwilioSmsProvider`)
+  call `recordSmsCarrierBlock` on 21610 → user doc gets
+  `smsBlockedSystem:true` + `smsBlockedReason:'twilio_21610'` +
+  `smsBlockedCarrierAt` (so HRX stops sending and the banner shows it; the
+  START/UNSTOP handler clears smsBlockedSystem) and
+  `tenants/{t}/ops_alerts/sms_21610__{uid}__{day}` (pending → posted).
+  `dispatchScheduledWorkerReminders` (every 5 min) binds SLACK_BOT_TOKEN and
+  drains pending ops_alerts to Slack: channel = `app_config/ops_alerts.slackChannelId`,
+  default #dev (C08U7U0FL03). Needs deploy of dispatchScheduledWorkerReminders;
+  other functions pick up the sender hook on their next deploy.
+- Still open: the 9 unverified/blocked workers must text START (recruiter
+  calls); a re-run of `.scratch/twilio-cancel-optout-audit2.cjs` after that
+  shows who is still blocked.
+
 ## Why it hid
 
 Twilio's keyword handling runs before the webhook; HRX's cadence saw the

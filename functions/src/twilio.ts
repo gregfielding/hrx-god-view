@@ -19,6 +19,7 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from './messaging/twilioSecrets';
+import { recordSmsCarrierBlock, TWILIO_UNSUBSCRIBED_RECIPIENT } from './messaging/smsDeliveryAlerts';
 import { maybeEmitPhoneVerifiedCategoryScore } from './categoryScoreEvolution/activityCategoryScoreEmit';
 import { shortenUrlsInBody } from './messaging/linkShortener';
 
@@ -1281,6 +1282,9 @@ export async function sendWorkerMessageInternal(
           });
         } catch (fallbackError: any) {
           logger.error(`Fallback to direct number also failed: ${fallbackError.message}`);
+          if (String(fallbackError.code) === TWILIO_UNSUBSCRIBED_RECIPIENT) {
+            await recordSmsCarrierBlock({ tenantId, userId: recipientUserId, toPhone: to, errorCode: TWILIO_UNSUBSCRIBED_RECIPIENT, errorMessage: fallbackError.message, messageTypeId: context?.messageTypeId ?? null, source: 'twilio.ts' });
+          }
           return {
             success: false,
             messageId: null,
@@ -1301,6 +1305,12 @@ export async function sendWorkerMessageInternal(
           errorCode: '30034'
         };
       } else {
+        // 21610 = recipient unsubscribed at the carrier (they texted an opt-out
+        // keyword). Record + alert so the worker doesn't silently go dark
+        // (docs/claude/feedback_twilio_cancel_keyword_optout.md), then rethrow.
+        if (String(twilioError.code) === TWILIO_UNSUBSCRIBED_RECIPIENT) {
+          await recordSmsCarrierBlock({ tenantId, userId: recipientUserId, toPhone: to, errorCode: TWILIO_UNSUBSCRIBED_RECIPIENT, errorMessage: twilioError.message, messageTypeId: context?.messageTypeId ?? null, source: 'twilio.ts' });
+        }
         throw twilioError;
       }
     }
