@@ -1,12 +1,14 @@
 /**
  * Tools Natalie can use when a recruiter DMs or @mentions her in Slack.
- * Every tool is read-only against Firestore except the two that enqueue
- * portal work (a sync, a Flex accept) and the one that texts a worker —
- * all three are actions a recruiter explicitly asked for in the message.
+ * Read-only against Firestore except the actions a recruiter explicitly
+ * asked for (sync, accept, text, note, task) — each of those is recorded in
+ * `natalie_actions` and on the worker's activity feed (natalieAudit.ts), and
+ * portal actions get a follow-up posted into the Slack thread when they end.
  */
 import * as admin from 'firebase-admin';
 import type Anthropic from '@anthropic-ai/sdk';
 import { enqueuePortalAction } from '../integrations/portalActions/enqueuePortalAction';
+import { NATALIE_DISPLAY_NAME, NATALIE_HRX_UID, recordNatalieAction, registerFollowup, type SlackRef } from './natalieAudit';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -25,6 +27,8 @@ export interface NatalieToolContext {
   /** Slack user id of the person asking (for audit stamps). */
   askedBySlackUserId: string;
   askedByName: string;
+  /** Where the ask came from — outcomes get posted back here. */
+  slack?: SlackRef;
 }
 
 export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
@@ -37,7 +41,7 @@ export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: 'worker_status',
     description:
-      "Everything current about one worker: upcoming and recent assignments (job, site, start, confirmation state, check-in, no-show, cancellation), whether they were texted for a late check-in, and their last few SMS exchanges. Needs the worker's HRX user id from find_worker.",
+      "Everything current about one worker: upcoming and recent assignments (job, site, start, confirmation state, check-in, no-show, cancellation), whether they were texted for a late check-in, recruiter notes, and their last few SMS exchanges. Needs the worker's HRX user id from find_worker.",
     input_schema: { type: 'object', properties: { userId: { type: 'string' } }, required: ['userId'] },
   },
   {
@@ -49,7 +53,7 @@ export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: 'request_portal_sync',
     description:
-      'Queue a sync now. provider "fieldglass" pulls Sodexo/Fieldglass job postings into HRX job orders; provider "indeed_flex" pulls Flex jobs, rosters and timesheets. Optional postingIds (Fieldglass SDXOJP…) or flexJobIds to target specific ones. Returns the queued action id; the portal worker runs it within a couple of minutes.',
+      'Queue a sync now. provider "fieldglass" pulls Sodexo/Fieldglass job postings into HRX job orders; provider "indeed_flex" pulls Flex jobs, rosters and timesheets. Optional postingIds (Fieldglass SDXOJP…) or flexJobIds to target specific ones. Returns the queued action id; the portal worker runs it within a couple of minutes and you will post the result in the thread when it finishes.',
     input_schema: {
       type: 'object',
       properties: {
@@ -77,6 +81,35 @@ export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
     description:
       'Find open HRX job orders matching a client, site, or title and report upcoming shifts with workers needed vs. assigned. Use for "how is the CORT order looking" or "what do we still need to fill this week".',
     input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Client, site, or job title words. Empty = all open orders with upcoming shifts.' } }, required: [] },
+  },
+  {
+    name: 'add_worker_note',
+    description:
+      "Save something a recruiter tells you about a worker onto their HRX profile notes (e.g. 'prefers mornings', 'do not send to CORT', 'great with forklifts'). Use when someone shares a fact or preference about a worker that should be remembered. Needs the HRX user id from find_worker.",
+    input_schema: { type: 'object', properties: { userId: { type: 'string' }, note: { type: 'string' } }, required: ['userId', 'note'] },
+  },
+  {
+    name: 'rank_workers',
+    description:
+      "Rank workers by reliability for a shift or client: completed shifts, no-shows, worker cancellations over the last 90 days, tier, and recruiter notes, with reasons. Optional query narrows to people who have worked for that client/site/title before (e.g. 'CORT', 'Denver', 'forklift'). Use for 'who should I send Saturday?' or 'who are my most reliable people for OnTrac?'.",
+    input_schema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } }, required: [] },
+  },
+  {
+    name: 'create_task',
+    description:
+      "Create an HRX task on a recruiter's task list ('remind Rosa Thursday to call Claudia'). assigneeName is the recruiter's first name (or 'me' for the person asking); dueDate is YYYY-MM-DD; include the worker's user id when the task is about a worker.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        assigneeName: { type: 'string' },
+        dueDate: { type: 'string' },
+        details: { type: 'string' },
+        userId: { type: 'string' },
+        priority: { type: 'string', enum: ['low', 'medium', 'high', 'urgent'] },
+      },
+      required: ['title', 'assigneeName', 'dueDate'],
+    },
   },
   {
     name: 'send_worker_sms',
@@ -187,6 +220,13 @@ async function workerStatus(tenantId: string, userId: string): Promise<unknown> 
   } catch {
     sms = [{ note: 'message log unavailable' }];
   }
+  let notes: unknown[] = [];
+  try {
+    const ns = await db.collection('users').doc(userId).collection('notes').orderBy('createdAt', 'desc').limit(6).get();
+    notes = ns.docs.map((d) => ({ at: tsToIso(d.get('createdAt')), by: s(d.get('authorName')) || null, note: s(d.get('content')).slice(0, 240) }));
+  } catch {
+    notes = [];
+  }
   return {
     worker: {
       name: `${s(x.firstName)} ${s(x.lastName)}`.trim(),
@@ -197,6 +237,7 @@ async function workerStatus(tenantId: string, userId: string): Promise<unknown> 
       phoneInvalid: x.phoneInvalid === true,
       profileLink: `https://hrxone.com/users/${userId}`,
     },
+    notes,
     upcoming,
     recent,
     recentSms: sms,
@@ -252,7 +293,11 @@ async function requestPortalSync(ctx: NatalieToolContext, input: { provider: 'fi
           priority: 15,
           force: true,
         });
-  return { queued: true, actionId: res.id, created: res.created, status: res.status, note: 'The portal worker picks this up on its next loop (usually within 1–2 minutes); a full pass takes 10–40 minutes.' };
+  const label = input.provider === 'fieldglass' ? 'Fieldglass' : 'Indeed Flex';
+  const target = input.postingIds?.length ? ` for ${input.postingIds.join(', ')}` : input.flexJobIds?.length ? ` for jobs ${input.flexJobIds.join(', ')}` : '';
+  await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'portal_sync', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: input as Record<string, unknown>, result: { actionId: res.id }, summary: `Queued a ${label} sync${target}` });
+  if (ctx.slack) await registerFollowup({ tenantId: ctx.tenantId, portalActionId: res.id, slack: ctx.slack, askedByName: ctx.askedByName, description: `${label} sync${target}` });
+  return { queued: true, actionId: res.id, created: res.created, status: res.status, note: 'The portal worker picks this up on its next loop (usually within 1–2 minutes); a full pass takes 10–40 minutes. You will post the result in this thread automatically when it finishes — tell the person that.' };
 }
 
 async function listFlexRequests(tenantId: string, days: number): Promise<unknown> {
@@ -292,7 +337,9 @@ async function acceptFlexRequest(ctx: NatalieToolContext, input: { flexJobId: st
     maxAttempts: 2,
     force: true,
   });
-  return { queued: true, actionId: res.id, existingStatus: res.existingStatus ?? null, note: 'The portal worker will open the request and click Confirm within a few minutes, then pull the job into HRX. If the request already expired or was accepted, the action reports that instead.' };
+  await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'flex_accept', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { flexJobId, headcount: input.headcount ?? null }, result: { actionId: res.id }, summary: `Queued portal accept of Indeed Flex request ${flexJobId}` });
+  if (ctx.slack) await registerFollowup({ tenantId: ctx.tenantId, portalActionId: res.id, slack: ctx.slack, askedByName: ctx.askedByName, description: `accept Flex request ${flexJobId}` });
+  return { queued: true, actionId: res.id, existingStatus: res.existingStatus ?? null, note: 'The portal worker will open the request and click Confirm within a few minutes, then pull the job into HRX. You will post the outcome in this thread automatically; if the request already expired or was accepted, that gets reported instead.' };
 }
 
 async function jobOrderFillStatus(tenantId: string, query: string): Promise<unknown> {
@@ -350,7 +397,168 @@ async function sendWorkerSms(ctx: NatalieToolContext, input: { userId: string; t
     messageTypeId: 'natalie_slack_request',
     systemContext: true,
   } as never);
+  await recordNatalieAction({
+    tenantId: ctx.tenantId, kind: 'worker_sms', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack,
+    input: { text: body }, result: { success: r.success, status: r.status, errorCode: r.errorCode ?? null },
+    summary: r.success ? `Texted the worker: "${input.text.trim().slice(0, 120)}"` : `Tried to text the worker but it failed (${r.errorCode ?? r.error ?? 'unknown'})`,
+    userId: input.userId,
+  });
   return { sent: r.success, status: r.status, error: r.error ?? null, errorCode: r.errorCode ?? null, to: `…${last4(phone)}` };
+}
+
+async function addWorkerNote(ctx: NatalieToolContext, input: { userId: string; note: string }): Promise<unknown> {
+  const u = await db.collection('users').doc(input.userId).get();
+  if (!u.exists) return { error: 'No such user id' };
+  const content = input.note.trim();
+  if (!content) return { error: 'Empty note' };
+  const ref = await db.collection('users').doc(input.userId).collection('notes').add({
+    content: `${content} — via ${ctx.askedByName || 'Slack'}`,
+    authorId: NATALIE_HRX_UID,
+    authorName: NATALIE_DISPLAY_NAME,
+    source: 'natalie_slack',
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'worker_note', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { note: content }, result: { noteId: ref.id }, summary: `Added a note: "${content.slice(0, 120)}"`, userId: input.userId });
+  return { saved: true, noteId: ref.id, profileLink: `https://hrxone.com/users/${input.userId}` };
+}
+
+export interface WorkerReliability {
+  userId: string;
+  name: string;
+  tier: unknown;
+  completed: number;
+  noShows: number;
+  cancels: number;
+  upcoming: number;
+  lastWorked: string | null;
+  matchedQuery: number;
+  score: number;
+  reasons: string[];
+}
+
+/** Pure scoring so it can be unit-tested. */
+export function scoreReliability(w: Omit<WorkerReliability, 'score' | 'reasons'>): { score: number; reasons: string[] } {
+  const reasons: string[] = [];
+  let score = 50;
+  score += Math.min(w.completed, 20) * 2;
+  if (w.completed >= 10) reasons.push(`${w.completed} completed shifts in 90 days`);
+  else if (w.completed > 0) reasons.push(`${w.completed} completed shift${w.completed === 1 ? '' : 's'} recently`);
+  else reasons.push('no completed shifts in the last 90 days');
+  score -= w.noShows * 25;
+  if (w.noShows) reasons.push(`${w.noShows} no-show${w.noShows === 1 ? '' : 's'}`);
+  score -= w.cancels * 8;
+  if (w.cancels) reasons.push(`${w.cancels} late cancel${w.cancels === 1 ? '' : 's'}`);
+  const tier = Number(w.tier);
+  if (tier === 1) { score += 10; reasons.push('Tier 1'); }
+  else if (tier === 3) { score -= 10; reasons.push('Tier 3'); }
+  if (w.matchedQuery) { score += 8; reasons.push(`worked there ${w.matchedQuery}×`); }
+  if (w.noShows === 0 && w.completed >= 5) reasons.push('no no-shows');
+  return { score, reasons };
+}
+
+async function rankWorkers(tenantId: string, query: string, limit: number): Promise<unknown> {
+  const since = admin.firestore.Timestamp.fromMillis(Date.now() - 90 * 86400000);
+  const snap = await db.collection(`tenants/${tenantId}/assignments`).where('startTime', '>=', since).limit(4000).get();
+  const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
+  const agg = new Map<string, Omit<WorkerReliability, 'score' | 'reasons' | 'name' | 'tier'>>();
+  const now = Date.now();
+  for (const d of snap.docs) {
+    const a = d.data() as Record<string, unknown>;
+    const uid = s(a.userId) || s(a.candidateId);
+    if (!uid) continue;
+    const row = agg.get(uid) ?? { userId: uid, completed: 0, noShows: 0, cancels: 0, upcoming: 0, lastWorked: null as string | null, matchedQuery: 0 };
+    const cort = (a.cortConfirmation ?? {}) as Record<string, unknown>;
+    const status = s(a.status).toLowerCase();
+    const start = tsToIso(a.startTime);
+    const past = start ? Date.parse(start) < now : false;
+    if (!past) row.upcoming += 1;
+    else if (cort.state === 'no_show' || status === 'no_show') row.noShows += 1;
+    else if (cort.state === 'cancelled' || ['cancelled', 'canceled', 'worker_cancelled', 'worker-cancelled'].includes(status)) row.cancels += 1;
+    else if (['completed', 'checked_in'].includes(String(cort.state)) || ['completed', 'active', 'confirmed', 'in_progress'].includes(status)) {
+      row.completed += 1;
+      if (start && (!row.lastWorked || start > row.lastWorked)) row.lastWorked = start;
+    }
+    if (words.length) {
+      const hay = `${s(a.jobTitle)} ${s(a.title)} ${s(a.jobOrderName)} ${s(a.locationName)} ${s(a.worksiteName)} ${s(a.companyName)}`.toLowerCase();
+      if (words.every((w) => hay.includes(w))) row.matchedQuery += 1;
+    }
+    agg.set(uid, row);
+  }
+  let rows = [...agg.values()];
+  if (words.length) rows = rows.filter((r) => r.matchedQuery > 0);
+  rows = rows.filter((r) => r.completed + r.noShows + r.cancels > 0);
+  const out: WorkerReliability[] = [];
+  for (const r of rows) {
+    const u = await db.collection('users').doc(r.userId).get();
+    const x = (u.data() ?? {}) as Record<string, unknown>;
+    if (x.smsBlockedSystem === true || x.phoneInvalid === true) continue;
+    const base = { ...r, name: `${s(x.firstName)} ${s(x.lastName)}`.trim() || r.userId, tier: (x.workerTiers as Record<string, unknown> | undefined)?.global ?? null };
+    const { score, reasons } = scoreReliability(base);
+    out.push({ ...base, score, reasons });
+  }
+  out.sort((a, b) => b.score - a.score);
+  const top = out.slice(0, Math.max(1, Math.min(limit || 10, 25)));
+  for (const w of top) {
+    try {
+      const ns = await db.collection('users').doc(w.userId).collection('notes').orderBy('createdAt', 'desc').limit(2).get();
+      const notes = ns.docs.map((d) => s(d.get('content')).slice(0, 120)).filter(Boolean);
+      if (notes.length) w.reasons.push(`notes: ${notes.join(' | ')}`);
+    } catch {
+      /* ignore */
+    }
+  }
+  return { ranked: top.map((w) => ({ ...w, profileLink: `https://hrxone.com/users/${w.userId}` })), consideredWorkers: rows.length, window: '90 days', note: top.length === 0 ? 'Nobody matched — try a broader query.' : undefined };
+}
+
+async function createTask(ctx: NatalieToolContext, input: { title: string; assigneeName: string; dueDate: string; details?: string; userId?: string; priority?: string }): Promise<unknown> {
+  const want = s(input.assigneeName).toLowerCase();
+  let assigneeId: string | null = null;
+  let assigneeLabel = '';
+  const staff = await db.collection('users').where(`tenantIds.${ctx.tenantId}.status`, '==', 'active').limit(400).get();
+  const candidates = staff.docs
+    .map((d) => ({ id: d.id, x: d.data() as Record<string, unknown> }))
+    .filter(({ x }) => Number((x.tenantIds as Record<string, Record<string, unknown>>)?.[ctx.tenantId]?.securityLevel ?? x.securityLevel ?? 0) >= 5);
+  if (want === 'me' || want === 'myself' || !want) {
+    const me = await db.collection(`tenants/${ctx.tenantId}/slackUsers`).doc(ctx.askedBySlackUserId).get();
+    assigneeId = s(me.get('hrxUserId')) || null;
+    if (!assigneeId) {
+      const byName = candidates.find(({ x }) => `${s(x.firstName)} ${s(x.lastName)}`.toLowerCase().startsWith(ctx.askedByName.toLowerCase()));
+      assigneeId = byName?.id ?? null;
+    }
+    assigneeLabel = ctx.askedByName;
+  } else {
+    const hit =
+      candidates.find(({ x }) => s(x.firstName).toLowerCase() === want || `${s(x.firstName)} ${s(x.lastName)}`.toLowerCase() === want) ??
+      candidates.find(({ x }) => s(x.firstName).toLowerCase().startsWith(want));
+    assigneeId = hit?.id ?? null;
+    assigneeLabel = hit ? `${s(hit.x.firstName)} ${s(hit.x.lastName)}`.trim() : input.assigneeName;
+  }
+  if (!assigneeId) return { error: `Could not find a staff member named "${input.assigneeName}". Staff known: ${candidates.map(({ x }) => s(x.firstName)).filter(Boolean).slice(0, 12).join(', ')}` };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) return { error: 'dueDate must be YYYY-MM-DD' };
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const ref = await db.collection(`tenants/${ctx.tenantId}/tasks`).add({
+    tenantId: ctx.tenantId,
+    title: input.title.trim().slice(0, 140),
+    description: `${s(input.details) || input.title.trim()}\n\nCreated by Natalie from Slack (asked by ${ctx.askedByName}).`,
+    type: /call|phone/i.test(input.title) ? 'phone_call' : /email/i.test(input.title) ? 'email' : 'follow_up',
+    category: 'follow_up',
+    priority: ['low', 'medium', 'high', 'urgent'].includes(s(input.priority)) ? input.priority : 'medium',
+    status: 'upcoming',
+    scheduledDate: input.dueDate,
+    dueDate: input.dueDate,
+    assignedTo: assigneeId,
+    createdBy: NATALIE_HRX_UID,
+    createdByName: NATALIE_DISPLAY_NAME,
+    associations: { contacts: [], deals: [], companies: [], ...(input.userId ? { workers: [input.userId] } : {}) },
+    aiGenerated: true,
+    aiReason: `Requested in Slack by ${ctx.askedByName}`,
+    source: 'natalie_slack',
+    createdAt: now,
+    updatedAt: now,
+  });
+  await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'task', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: input as Record<string, unknown>, result: { taskId: ref.id, assigneeId }, summary: `Created a task for ${assigneeLabel}: "${input.title.trim().slice(0, 100)}" due ${input.dueDate}`, userId: input.userId ?? null });
+  return { created: true, taskId: ref.id, assignedTo: assigneeLabel, dueDate: input.dueDate, link: 'https://hrxone.com/tasks' };
 }
 
 export async function runNatalieTool(name: string, input: Record<string, unknown>, ctx: NatalieToolContext): Promise<unknown> {
@@ -371,6 +579,12 @@ export async function runNatalieTool(name: string, input: Record<string, unknown
       return jobOrderFillStatus(ctx.tenantId, s(input.query));
     case 'send_worker_sms':
       return sendWorkerSms(ctx, input as { userId: string; text: string });
+    case 'add_worker_note':
+      return addWorkerNote(ctx, input as { userId: string; note: string });
+    case 'rank_workers':
+      return rankWorkers(ctx.tenantId, s(input.query), Number(input.limit) || 10);
+    case 'create_task':
+      return createTask(ctx, input as { title: string; assigneeName: string; dueDate: string; details?: string; userId?: string; priority?: string });
     default:
       return { error: `unknown tool ${name}` };
   }

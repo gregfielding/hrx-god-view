@@ -20,6 +20,7 @@ import { logger } from 'firebase-functions/v2';
 import { NATALIE_SLACK_USER_TOKEN, postAsNatalie } from '../messaging/slackAsNatalie';
 import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from '../messaging/twilioSecrets';
 import { answerAsNatalie, type NatalieTurn } from './natalieAgent';
+import { drainNatalieOutbox } from './natalieOutbox';
 import { C1_TENANT_ID } from './natalieTools';
 
 if (!admin.apps.length) admin.initializeApp();
@@ -218,7 +219,7 @@ export async function pollNatalieInbox(token: string): Promise<{ answered: numbe
     const history = await loadThread(key);
     const turn: NatalieTurn = { role: 'user', text, by: askedBy, byName: askedByName, ts: p.message.ts };
     try {
-      const ans = await answerAsNatalie({ history, message: turn, ctx: { tenantId: C1_TENANT_ID, askedBySlackUserId: askedBy, askedByName } });
+      const ans = await answerAsNatalie({ history, message: turn, ctx: { tenantId: C1_TENANT_ID, askedBySlackUserId: askedBy, askedByName, slack: { channel: p.channel, ts: p.message.ts, threadTs: p.isDm && p.threadTs === p.message.ts ? undefined : p.threadTs } } });
       // DMs: reply inline (no thread) unless the person is already in a thread. Channels: always thread.
       const threadTs = p.isDm && p.threadTs === p.message.ts ? undefined : p.threadTs;
       const post = await postAsNatalie(token, { channel: p.channel, text: ans.text, threadTs });
@@ -237,6 +238,8 @@ export async function pollNatalieInbox(token: string): Promise<{ answered: numbe
     }
   }
   await saveState(state);
+  const outbox = await drainNatalieOutbox(token);
+  if (outbox.followups || outbox.escalations || outbox.relays) logger.info('[natalie] outbox drained', outbox);
   return { answered, skipped };
 }
 

@@ -5,6 +5,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineSecret } from 'firebase-functions/params';
 import { drainOpsAlertsToSlack } from './messaging/smsDeliveryAlerts';
 import { drainFlexTeamAsks, enqueueFlexTeamAsk, NATALIE_SLACK_USER_TOKEN } from './messaging/slackAsNatalie';
+import { enqueueRecruiterEscalation } from './natalie/natalieAudit';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
 import { writeWorkerInboxNotification } from './messaging/unifiedWorkerNotifications';
@@ -1632,6 +1633,14 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
         assignment: assignmentData as Record<string, unknown>,
         kind: 'no_show',
         detail: 'no check-in 30 minutes after start',
+      });
+      // Natalie DMs the assigned recruiter (roadmap Phase 1.3) — not just a dashboard flag.
+      await enqueueRecruiterEscalation({
+        tenantId: reminder.tenantId,
+        assignmentId: reminder.assignmentId,
+        assignment: assignmentData as Record<string, unknown>,
+        kind: 'no_show',
+        detail: (assignmentData as Record<string, unknown>).cortConfirmation && ((assignmentData as Record<string, unknown>).cortConfirmation as Record<string, unknown>).lateCheckinTextedAt ? 'I texted at T+15 and got no reply.' : undefined,
       });
     } catch (err: any) {
       notifyError = err?.message || String(err);
