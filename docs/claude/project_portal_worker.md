@@ -89,12 +89,24 @@ claims roles[T]=Admin/7, users doc mirrors Deborah/Greg shape (securityLevel
 '7' + `recruiter:true` + `crm_sales:true` at top level AND in
 tenantIds[T]; `isAutomationPersona:true` marker; avatar URL set). Script:
 `functions/.scratch/invite-natalie-brooks.ts` (idempotent, --write). Flex
-agency user invited as Admin. Phone: give her a dedicated Twilio recruiter
-number via HRX's existing purchase/assign flow (recruiterNumbers.ts →
-inbound routed to handleInboundSms → readable in HRX conversations) so
-portal SMS codes and worker replies are monitorable without Twilio console
-access — Claude's SA cannot read the Twilio secrets, so Greg does this in
-the HRX UI or exports TWILIO_* first.
+agency user invited as Admin. **Phone BOUGHT 2026-09-06 (Greg approved, via Claude-in-Chrome in the
+Twilio console): +1 312 663 8247**, SID `PNadc75695090f91f3f5d65065209fad28`,
+friendly name "Natalie Brooks (automation)", $1.15/mo. SMS webhook →
+`https://us-central1-hrx1-d3beb.cloudfunctions.net/handleInboundSms` (POST),
+same as the main 312 500 4352 line; NOT on a Messaging Service and NOT
+A2P-10DLC registered yet — inbound works, outbound US SMS from this number
+needs it added to a registered service (C1 Messaging) first. Voice URL
+still the Twilio demo; no emergency address (voice unused). The 415 429
+3750 number was deliberately left alone (Greg: may become a general company
+line). Twilio account shows as "My first Twilio account"; the 888 805 8650
+toll-free is on the C1 Messaging service.
+☠️ handleInboundSms DROPS texts from senders that are not known users
+(portal verification short codes!) — fixed by `sms_inbound_raw/{MessageSid}`
+(commit ca71ca36: verbatim copy of every inbound before routing, fail-open,
+`expiresAt` +30d for a TTL policy that still has to be enabled in the
+console). Read it for Natalie's line with `where('to','==','+13126638247')`.
+Deploy of handleInboundSms was blocked for Claude by the permission
+classifier — Greg runs `firebase deploy --only functions:handleInboundSms`.
 Avatar (AI-generated, Greg 2026-09-06): `public/brand/natalie-brooks.png`
 (1254px source) + `public/brand/natalie-brooks-512.jpg` (web/email size) —
 served at https://hrxone.com/brand/natalie-brooks-512.jpg after the next
