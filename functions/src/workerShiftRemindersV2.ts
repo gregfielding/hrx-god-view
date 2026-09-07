@@ -4,6 +4,7 @@ import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineSecret } from 'firebase-functions/params';
 import { drainOpsAlertsToSlack } from './messaging/smsDeliveryAlerts';
+import { drainFlexTeamAsks, enqueueFlexTeamAsk, NATALIE_SLACK_USER_TOKEN } from './messaging/slackAsNatalie';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
 import { writeWorkerInboxNotification } from './messaging/unifiedWorkerNotifications';
@@ -1622,6 +1623,16 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
           },
         },
       });
+
+      // Flex-linked shift: Natalie asks the Indeed Flex team whether they
+      // want a replacement (Slack, via the dispatcher drain). Best-effort.
+      await enqueueFlexTeamAsk({
+        tenantId: reminder.tenantId,
+        assignmentId: reminder.assignmentId,
+        assignment: assignmentData as Record<string, unknown>,
+        kind: 'no_show',
+        detail: 'no check-in 30 minutes after start',
+      });
     } catch (err: any) {
       notifyError = err?.message || String(err);
       logger.error('[worker_shift_reminders] noshow_check_failed', {
@@ -2116,7 +2127,7 @@ export const dispatchScheduledWorkerReminders = onSchedule(
     // a timeout mid-batch strands every claimed reminder in `processing`,
     // which nothing revives. 540s comfortably covers the worst batch.
     timeoutSeconds: 540,
-    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN, OPS_SLACK_BOT_TOKEN],
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN, OPS_SLACK_BOT_TOKEN, NATALIE_SLACK_USER_TOKEN],
   },
   async () => {
     // Mirror pending ops alerts (carrier blocks etc.) to Slack — fail-open.
@@ -2125,6 +2136,13 @@ export const dispatchScheduledWorkerReminders = onSchedule(
       if (posted) logger.info('[worker_shift_reminders] ops alerts posted to Slack', { posted });
     } catch (e) {
       logger.warn('[worker_shift_reminders] ops alert drain failed', { err: String(e) });
+    }
+    // Natalie's replacement asks to the Indeed Flex team (cancel / no-show) — fail-open.
+    try {
+      const asked = await drainFlexTeamAsks(NATALIE_SLACK_USER_TOKEN.value() || process.env.NATALIE_SLACK_USER_TOKEN);
+      if (asked) logger.info('[worker_shift_reminders] flex team asks posted as Natalie', { asked });
+    } catch (e) {
+      logger.warn('[worker_shift_reminders] flex team ask drain failed', { err: String(e) });
     }
 
     const now = admin.firestore.Timestamp.now();

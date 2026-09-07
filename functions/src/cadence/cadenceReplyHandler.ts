@@ -40,6 +40,7 @@ import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from '../twilio';
 import { notifyRecruitersOnWorkerEvent } from '../messaging/notifyRecruitersOnWorkerEvent';
 import { classifyCadenceReply, type CadenceReplyIntent } from './replyClassifier';
+import { enqueueFlexTeamAsk } from '../messaging/slackAsNatalie';
 import { ALL_SHIFT_REMINDER_TYPES, type ShiftReminderType } from './shiftReminderProfile';
 import { getTenantSmsBrand } from './sequenceCopyOverrides';
 
@@ -432,6 +433,16 @@ async function applyCancellation(active: ActiveCadence, context: {
         phoneE164: context.phoneE164,
       },
     },
+  });
+
+  // Flex-linked shift: Natalie asks the Indeed Flex team in Slack whether
+  // they want a replacement today (posted by the 5-min dispatcher drain).
+  await enqueueFlexTeamAsk({
+    tenantId,
+    assignmentId,
+    assignment,
+    kind: 'cancelled',
+    detail: context.matchedToken ? `replied ${context.matchedToken} by text` : undefined,
   });
 
   logger.info('[cadence_reply] cancellation applied', {

@@ -22,7 +22,34 @@ a **user token** obtained by Natalie herself authorizing a dedicated app.
   completed") — that would have installed it for GREG, which we don't want
   anyway. The app exists; only Natalie's authorization matters.
 
-## One-time steps (Greg / Natalie)
+## Status 2026-09-07 evening: DONE — token stored and verified
+
+`NATALIE_SLACK_USER_TOKEN` (Secret Manager) is Natalie's (`auth.test` →
+U0BV79X65R9 n.brooks). Verified: reads #indeedflex_c1staffing, posts and
+thread-replies in #dev. Two earlier attempts stored GREG's token (Allow was
+clicked in his signed-in Chrome profile) — both revoked at Slack
+(`auth.revoke`) and the secret versions disabled; only version 3 is live.
+Lessons: the Slack permission page does NOT name the user; do the Allow in
+a real Incognito window signed in as Natalie, and the SPA now serves
+`/slack/oauth/callback` as a page that shows the code (commit f7c722ed)
+instead of bouncing to /login and losing it.
+
+**HRX wiring (commit same evening)** — `functions/src/messaging/slackAsNatalie.ts`:
+`enqueueFlexTeamAsk` (called from the cadence worker-CANCEL branch and the
+T+30 no-show flip, only for Flex-linked assignments) writes
+`tenants/{t}/flex_team_asks/{kind__assignmentId}`; `drainFlexTeamAsks`
+runs inside `dispatchScheduledWorkerReminders` (every 5 min, binds the
+token) and posts `composeFlexTeamAsk(...)` as Natalie — "would you like a
+replacement today?", escalating to "permanent replacement" from the 2nd
+prior no-call/no-show (counted from the worker's other assignments).
+Config in `tenants/{t}/app_config/indeed_flex`: `flexTeamAskChannelId`
+(default **#dev C08U7U0FL03** for review; set to `C0B8ACFEU21` to go live
+with the Indeed Flex team) and `flexTeamAsksEnabled` (false = suppress).
+Index: `firestore.indexes.json` fieldOverride `flex_team_asks.status`
+COLLECTION_GROUP. Deploy: `functions:dispatchScheduledWorkerReminders` +
+whatever bundles `cadenceReplyHandler` (handleInboundSms) + `firestore:indexes`.
+
+## One-time steps (Greg / Natalie) — historical
 
 1. Copy the client secret from the app's Basic Information page into
    Secret Manager without echoing it (zsh, paste when prompted):
@@ -52,11 +79,7 @@ a **user token** obtained by Natalie herself authorizing a dedicated app.
    cd functions && node .scratch/slack-natalie-token-exchange.cjs 7582435419591.12004537233218 <code>
    ```
 
-4. Wire HRX: a `postAsNatalie(channelId, text)` helper that binds
-   `defineSecret('NATALIE_SLACK_USER_TOKEN')` and calls `chat.postMessage`
-   (user tokens post as the user — no `as_user` needed). Callers: the
-   CANCEL / no-show branch of the cadence reply handler, the late check-in
-   step, and the ops alert drain when a persona voice is wanted.
+4. HRX wiring — done, see the status section above (`slackAsNatalie.ts`).
 
 ## Gotchas
 
