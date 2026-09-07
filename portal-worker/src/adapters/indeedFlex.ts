@@ -24,7 +24,7 @@
  * Booking (`book_worker`) is NOT implemented yet.
  */
 import type { Page, Response } from 'playwright';
-import type { AcceptJobRequestPayload, IndeedFlexSyncPayload, PortalActionDoc, SmokeTestPayload } from '../../../shared/portalActions.ts';
+import type { AcceptJobRequestPayload, CapturePagePayload, IndeedFlexSyncPayload, PortalActionDoc, SmokeTestPayload } from '../../../shared/portalActions.ts';
 import { enqueuePortalAction } from '../enqueue.ts';
 import { isBrowserGone, PortalActionFailure } from '../errors.ts';
 import { HrxApiError, ingestFlexPortalCapture, ingestFlexTimesheets, type FlexPortalEnvelope } from '../hrxApi.ts';
@@ -195,6 +195,8 @@ export class IndeedFlexAdapter implements PortalAdapter {
         return this.sync(ctx, (action.payload ?? {}) as IndeedFlexSyncPayload);
       case 'accept_job_request':
         return this.acceptJobRequest(ctx, (action.payload ?? {}) as AcceptJobRequestPayload);
+      case 'capture_page':
+        return this.capturePage(ctx, (action.payload ?? {}) as CapturePagePayload);
       case 'book_worker':
       case 'unbook_worker':
         throw new PortalActionFailure(
@@ -389,6 +391,84 @@ export class IndeedFlexAdapter implements PortalAdapter {
       summary.followUpSyncError = err instanceof Error ? err.message.slice(0, 200) : String(err);
     }
     return { ...summary, confirmed: true };
+  }
+
+  // --- capture_page (adapter-building explorer) ------------------------------
+
+  private async dumpInteractive(page: Page): Promise<unknown[]> {
+    return page.evaluate(() => {
+      const out: unknown[] = [];
+      const els = document.querySelectorAll('button, a[href], input, select, textarea, [role="tab"], [role="button"], [role="checkbox"], [role="option"]');
+      let i = 0;
+      for (const el of Array.from(els)) {
+        const r = (el as HTMLElement).getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) continue;
+        const e = el as HTMLElement & { href?: string; type?: string; value?: string; placeholder?: string; name?: string; disabled?: boolean; checked?: boolean };
+        out.push({
+          i: i++,
+          tag: el.tagName.toLowerCase(),
+          role: el.getAttribute('role'),
+          text: (e.innerText || e.getAttribute('aria-label') || e.placeholder || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+          href: e.href ? String(e.href).slice(0, 160) : undefined,
+          type: e.type,
+          name: e.name || undefined,
+          value: e.value !== undefined && e.value !== '' ? String(e.value).slice(0, 40) : undefined,
+          disabled: e.disabled || el.getAttribute('aria-disabled') === 'true' || undefined,
+          checked: e.checked || el.getAttribute('aria-checked') === 'true' || undefined,
+          testid: el.getAttribute('data-testid') || undefined,
+        });
+        if (out.length >= 250) break;
+      }
+      return out;
+    });
+  }
+
+  private async capturePage(ctx: AdapterContext, payload: CapturePagePayload): Promise<Record<string, unknown>> {
+    const { page } = ctx;
+    let url = payload.url;
+    if (!url && payload.flexJobId) {
+      await page.goto(JOBS_LIST_URL, { waitUntil: 'domcontentloaded' });
+      await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
+      await this.dismissSurvey(page);
+      await this.scrollToLoadAll(page);
+      const dom = await this.jobsFromDom(page);
+      const job = dom.find((j) => j.jobId === payload.flexJobId) ?? { jobId: payload.flexJobId, platformId: null, roleId: null, venueId: null, status: null, title: null, client: null, href: null };
+      const u = new URL(this.detailUrl(job, null));
+      for (const [k, v] of Object.entries(payload.params ?? {})) u.searchParams.set(k, v);
+      url = u.toString();
+    }
+    if (!url) throw new PortalActionFailure('INVALID_PAYLOAD', 'capture_page needs url or flexJobId');
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
+    await page.waitForTimeout(1_500);
+    if (await this.isLoginWall(page)) throw new PortalActionFailure('LOGIN_REQUIRED', 'capture landed on sign-in');
+    await this.dismissSurvey(page);
+    const steps: Array<Record<string, unknown>> = [];
+    for (const name of payload.clicks ?? []) {
+      const re = new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      const target = page.getByRole('button', { name: re }).or(page.getByRole('link', { name: re })).or(page.getByRole('tab', { name: re })).or(page.getByText(re)).first();
+      const found = (await target.count()) > 0;
+      if (found) {
+        await target.click({ timeout: 10_000 }).catch((e) => steps.push({ click: name, error: String(e).slice(0, 120) }));
+        await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => undefined);
+        await page.waitForTimeout(1_200);
+      }
+      steps.push({ click: name, found, url: page.url() });
+    }
+    if (payload.typeInto?.text) {
+      const hint = payload.typeInto.placeholderOrLabel;
+      const box = hint ? page.getByPlaceholder(new RegExp(hint, 'i')).or(page.getByLabel(new RegExp(hint, 'i'))).first() : page.getByRole('textbox').first();
+      if ((await box.count()) > 0) {
+        await box.fill(payload.typeInto.text);
+        await page.waitForTimeout(payload.settleMs ?? 2_000);
+        steps.push({ typed: payload.typeInto.text });
+      } else steps.push({ typed: payload.typeInto.text, error: 'no textbox' });
+    }
+    await page.waitForTimeout(payload.settleMs ?? 2_000);
+    const shot = await ctx.screenshot(`capture-${payload.flexJobId ?? 'page'}`);
+    const text = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').slice(0, 8_000);
+    const interactive = await this.dumpInteractive(page);
+    return { url: page.url(), title: await page.title(), steps, screenshot: shot ?? null, text, interactive };
   }
 
   // --- indeed_flex_sync -----------------------------------------------------

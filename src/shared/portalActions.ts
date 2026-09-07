@@ -47,7 +47,13 @@ export type PortalActionType =
    * Indeed") — the jobs-list Respond → allocation page → Confirm flow.
    * Committing: once confirmed, C1 owns filling the headcount.
    */
-  | 'accept_job_request';
+  | 'accept_job_request'
+  /**
+   * Explorer used while building adapters: open a page (or a job's detail
+   * page), optionally click through named buttons/links, and return the
+   * page text, interactive elements, and a screenshot. Never submits forms.
+   */
+  | 'capture_page';
 
 export const PORTAL_ACTION_TYPES: readonly PortalActionType[] = [
   'smoke_test',
@@ -58,6 +64,7 @@ export const PORTAL_ACTION_TYPES: readonly PortalActionType[] = [
   'fieldglass_sync',
   'indeed_flex_sync',
   'accept_job_request',
+  'capture_page',
 ];
 
 /** Which provider each action type belongs to (smoke_test is universal). */
@@ -69,6 +76,7 @@ export const PORTAL_ACTION_PROVIDER: Record<Exclude<PortalActionType, 'smoke_tes
   fieldglass_sync: 'fieldglass',
   indeed_flex_sync: 'indeed_flex',
   accept_job_request: 'indeed_flex',
+  capture_page: 'indeed_flex',
 };
 
 export type PortalActionStatus =
@@ -231,6 +239,20 @@ export interface AcceptJobRequestPayload {
   reason?: string;
 }
 
+export interface CapturePagePayload {
+  /** Absolute URL to open, or omit and give flexJobId to open that job's detail page. */
+  url?: string;
+  flexJobId?: string;
+  /** Query params to set on the job detail URL (e.g. { workers: 'available' }). */
+  params?: Record<string, string>;
+  /** Buttons/links/tabs to click in order after load (case-insensitive substring of the accessible name). */
+  clicks?: string[];
+  /** Text to type into the first visible textbox after the clicks (e.g. a worker search). */
+  typeInto?: { placeholderOrLabel?: string; text: string };
+  /** Milliseconds to wait after the last step (default 2000). */
+  settleMs?: number;
+}
+
 export type PortalActionPayloadMap = {
   smoke_test: SmokeTestPayload;
   book_worker: BookWorkerPayload;
@@ -240,6 +262,7 @@ export type PortalActionPayloadMap = {
   fieldglass_sync: FieldglassSyncPayload;
   indeed_flex_sync: IndeedFlexSyncPayload;
   accept_job_request: AcceptJobRequestPayload;
+  capture_page: CapturePagePayload;
 };
 
 export interface PortalActionLease {
@@ -439,6 +462,8 @@ export function defaultPortalActionKeyParts<A extends PortalActionType>(
       const p = payload as AcceptJobRequestPayload;
       return [p.flexJobId, p.dryRun ? 'dry' : undefined];
     }
+    case 'capture_page':
+      return ['capture', String(Date.now())];
     case 'smoke_test':
     default:
       return [];
