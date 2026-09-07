@@ -58,6 +58,13 @@ import { getDateScheduleEntriesWithHours } from '../utils/dateSchedule';
 import { format } from 'date-fns';
 import { downloadAssignmentIcs } from '../utils/assignmentCalendarIcs';
 
+/**
+ * Worker-card canon (JobPostingDetail `cardPadding`, 2026-08-24): a uniform
+ * 16px inset and a 16px gap between cards. This page had 8px sides and 24px
+ * gaps — Greg flagged the mismatch on the first Claim Shift test (2026-09-06).
+ */
+const cardContentSx = { p: 2, '&:last-child': { pb: 2 } } as const;
+
 interface AssignmentDetails {
   id: string;
   tenantId: string;
@@ -1468,7 +1475,7 @@ const AssignmentDetails: React.FC = () => {
       </Stack>
 
       {/* Main content: full-width stack; My Recruiter appended at bottom only when assigned */}
-      <Stack spacing={3}>
+      <Stack spacing={2}>
         {assignment.isOpenShift && (
           <Alert severity="info" icon={<ScheduleIcon />} sx={{ borderRadius: 0 }}>
             {t('assignments.openShiftExplainer')}
@@ -1476,7 +1483,7 @@ const AssignmentDetails: React.FC = () => {
         )}
         {/* Assignment Info (combined): two columns, company/worksite/address looked up when needed */}
         <Card elevation={0}>
-          <CardContent sx={{ pt: 1, px: 1 }}>
+          <CardContent sx={cardContentSx}>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
               {t('assignment.assignmentInfo')}
             </Typography>
@@ -1622,7 +1629,7 @@ const AssignmentDetails: React.FC = () => {
           if (!sDesc && !clockUrl) return null;
           return (
             <Card elevation={0}>
-              <CardContent sx={{ pt: 1, px: 1 }}>
+              <CardContent sx={cardContentSx}>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                   Shift details
                 </Typography>
@@ -1660,8 +1667,8 @@ const AssignmentDetails: React.FC = () => {
             find on arrival. App parity: assignment_detail_screen.dart renders
             the same card with Text / Call rows. */}
         {(assignment.onsiteContactName || assignment.onsiteContactPhone) && (
-          <Card sx={{ mb: 2 }}>
-            <CardContent>
+          <Card elevation={0}>
+            <CardContent sx={cardContentSx}>
               <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
                 <PersonPinCircleIcon fontSize="small" color="action" />
                 <Typography variant="h6">{t('assignment.onsiteContact')}</Typography>
@@ -1785,7 +1792,7 @@ const AssignmentDetails: React.FC = () => {
               const files = s.getFiles();
               return (
                 <Card key={s.key} elevation={0}>
-                  <CardContent sx={{ pt: 1, px: 1 }}>
+                  <CardContent sx={cardContentSx}>
                     <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                       {s.title}
                     </Typography>
@@ -1822,7 +1829,7 @@ const AssignmentDetails: React.FC = () => {
         {/* Notes */}
         {assignment.notes && (
           <Card elevation={0}>
-            <CardContent sx={{ pt: 1, px: 1 }}>
+            <CardContent sx={cardContentSx}>
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                 Additional Notes
               </Typography>
@@ -1840,7 +1847,7 @@ const AssignmentDetails: React.FC = () => {
         {/* Location map card — only when we have a worksite address */}
         {worksiteAddressStr && (
           <Card elevation={0}>
-            <CardContent sx={{ pt: 1, px: 1 }}>
+            <CardContent sx={cardContentSx}>
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                 {t('assignment.locationMap')}
               </Typography>
@@ -1884,7 +1891,7 @@ const AssignmentDetails: React.FC = () => {
               title="My Recruiter"
               titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
             />
-            <CardContent sx={{ pt: 0, px: 1 }}>
+            <CardContent sx={{ ...cardContentSx, pt: 0 }}>
               <Stack spacing={2}>
                 {recruiters.map((r) => (
                   <Stack key={r.id} spacing={0.75} component="div">
