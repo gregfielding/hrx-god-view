@@ -26,6 +26,43 @@ if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
 
 export const TWILIO_UNSUBSCRIBED_RECIPIENT = '21610';
+/** Twilio: "Invalid 'To' phone number" — the number on file can never receive SMS. */
+export const TWILIO_INVALID_TO = '21211';
+/** Twilio: "'To' number is not a valid mobile number" (landline / VoIP without SMS). */
+export const TWILIO_NOT_SMS_CAPABLE = '21614';
+
+/**
+ * Error codes after which retrying the SAME number is pointless. Crons that
+ * defer-and-retry on send failure (prescreen reminders, cadences) must treat
+ * these as terminal — the 2026-09-07 incident was 817 Twilio rejections in
+ * 36h from one cron re-sending to 19 invalid numbers every hour.
+ */
+export const PERMANENT_SMS_ERROR_CODES: ReadonlySet<string> = new Set([
+  TWILIO_INVALID_TO,
+  TWILIO_NOT_SMS_CAPABLE,
+  TWILIO_UNSUBSCRIBED_RECIPIENT,
+  '21617', // Twilio: recipient opted out (alt code)
+  '30006', // landline or unreachable carrier
+  'PHONE_INVALID', // HRX: users.phoneInvalid stamped by recordSmsInvalidNumber
+  'SMS_BLOCKED', // HRX: users.smsBlockedSystem (STOP / carrier block)
+  'OPTED_OUT', // HRX: users.smsOptIn === false
+]);
+
+export interface SmsSendOutcome {
+  success: boolean;
+  status?: string;
+  errorCode?: string | null;
+  error?: string;
+}
+
+/** True when a failed send should NOT be retried against the same number. */
+export function isPermanentSmsFailure(r: SmsSendOutcome | null | undefined): boolean {
+  if (!r || r.success) return false;
+  if (r.status === 'skipped') return true; // opt-out / blocked / invalid — sender refused before Twilio
+  const code = String(r.errorCode ?? '').trim();
+  if (code && PERMANENT_SMS_ERROR_CODES.has(code)) return true;
+  return /invalid phone number|not sms capable|opted out|marked invalid/i.test(String(r.error ?? ''));
+}
 /** Default Slack channel when app_config/ops_alerts has none: #dev. */
 const DEFAULT_OPS_CHANNEL = 'C08U7U0FL03';
 
@@ -137,6 +174,80 @@ export async function recordSmsCarrierBlock(input: SmsCarrierBlockInput): Promis
   }
 }
 
+/**
+ * Record a number Twilio says can never receive SMS (21211 / 21614).
+ * Stamps `users.phoneInvalid` so every sender skips the number until a
+ * recruiter fixes it, and raises one ops alert per (user, day). Never throws.
+ */
+export async function recordSmsInvalidNumber(input: SmsCarrierBlockInput): Promise<boolean> {
+  try {
+    let uid = input.userId;
+    let tenantId = input.tenantId;
+    let name = '';
+    if (!uid || !tenantId) {
+      const r = await resolveUserByPhone(input.toPhone);
+      if (r) {
+        uid = uid || r.uid;
+        tenantId = tenantId || r.tenantId;
+        name = r.name;
+      }
+    } else {
+      const u = await db.collection('users').doc(uid).get();
+      const d = (u.data() ?? {}) as Record<string, unknown>;
+      name = `${String(d.firstName ?? '')} ${String(d.lastName ?? '')}`.trim();
+    }
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    if (uid) {
+      await db
+        .collection('users')
+        .doc(uid)
+        .set(
+          {
+            phoneInvalid: true,
+            phoneInvalidReason: `twilio_${input.errorCode}`,
+            phoneInvalidAt: now,
+            phoneInvalidLastMessageType: input.messageTypeId ?? null,
+          },
+          { merge: true },
+        );
+    }
+    if (!tenantId) {
+      logger.warn('[smsDeliveryAlerts] invalid number with no tenant — logged only', { toLast4: last4(input.toPhone), errorCode: input.errorCode });
+      return false;
+    }
+    const day = new Date().toISOString().slice(0, 10);
+    const key = `sms_${input.errorCode}__${uid ?? last4(input.toPhone)}__${day}`;
+    const ref = db.collection('tenants').doc(tenantId).collection('ops_alerts').doc(key);
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (snap.exists) {
+        tx.update(ref, { occurrences: admin.firestore.FieldValue.increment(1), lastAt: now });
+        return false;
+      }
+      tx.set(ref, {
+        kind: 'sms_invalid_number',
+        status: 'pending',
+        tenantId,
+        userId: uid ?? null,
+        workerName: name || null,
+        phoneLast4: last4(input.toPhone),
+        errorCode: input.errorCode,
+        errorMessage: (input.errorMessage ?? '').slice(0, 200),
+        messageTypeId: input.messageTypeId ?? null,
+        source: input.source,
+        occurrences: 1,
+        firstAt: now,
+        lastAt: now,
+        createdAt: now,
+      });
+      return true;
+    });
+  } catch (err) {
+    logger.warn('[smsDeliveryAlerts] recordSmsInvalidNumber failed (non-fatal)', { err: err instanceof Error ? err.message : String(err) });
+    return false;
+  }
+}
+
 function formatAlert(a: Record<string, unknown>): string {
   const who = a.workerName ? `${a.workerName} (…${a.phoneLast4})` : `…${a.phoneLast4}`;
   const kind = String(a.kind ?? '');
@@ -145,6 +256,13 @@ function formatAlert(a: Record<string, unknown>): string {
       `:no_entry: *SMS blocked by Twilio* — ${who} is unsubscribed at the carrier (error ${a.errorCode}). ` +
       `Every text to them fails until *they* text START to the 888. Last attempt: ${a.messageTypeId ?? 'unknown message'}` +
       (Number(a.occurrences) > 1 ? ` · ${a.occurrences} attempts today` : '') +
+      (a.userId ? `\nhttps://hrxone.com/users/${a.userId}` : '')
+    );
+  }
+  if (kind === 'sms_invalid_number') {
+    return (
+      `:phone: *Invalid phone number on file* — ${who}: Twilio rejected it (error ${a.errorCode}), so texts to this worker cannot be delivered. ` +
+      `HRX has stopped sending until a recruiter corrects the number on their profile. Last attempt: ${a.messageTypeId ?? 'unknown message'}` +
       (a.userId ? `\nhttps://hrxone.com/users/${a.userId}` : '')
     );
   }

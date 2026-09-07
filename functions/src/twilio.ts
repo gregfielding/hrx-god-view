@@ -19,7 +19,7 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from './messaging/twilioSecrets';
-import { recordSmsCarrierBlock, TWILIO_UNSUBSCRIBED_RECIPIENT } from './messaging/smsDeliveryAlerts';
+import { recordSmsCarrierBlock, recordSmsInvalidNumber, TWILIO_INVALID_TO, TWILIO_NOT_SMS_CAPABLE, TWILIO_UNSUBSCRIBED_RECIPIENT } from './messaging/smsDeliveryAlerts';
 import { maybeEmitPhoneVerifiedCategoryScore } from './categoryScoreEvolution/activityCategoryScoreEmit';
 import { shortenUrlsInBody } from './messaging/linkShortener';
 
@@ -1077,10 +1077,25 @@ export async function sendWorkerMessageInternal(
           success: false,
           messageId: null,
           status: 'skipped',
-          error: 'Recipient has opted out of SMS messages'
+          error: 'Recipient has opted out of SMS messages',
+          errorCode: 'OPTED_OUT',
         };
       }
-      
+
+      // Twilio has rejected this number outright before (21211 / 21614,
+      // stamped by recordSmsInvalidNumber) — do not burn another API call
+      // until a recruiter corrects it. Incident 2026-09-07: 817 rejections.
+      if (recipientUserData?.phoneInvalid === true) {
+        logger.info(`Skipping SMS to ${to} - phone marked invalid (${recipientUserData?.phoneInvalidReason ?? 'unknown'})`);
+        return {
+          success: false,
+          messageId: null,
+          status: 'skipped',
+          error: 'Recipient phone number is marked invalid (Twilio rejected it)',
+          errorCode: 'PHONE_INVALID',
+        };
+      }
+
       // PHASE 1.1: Check smsBlockedSystem (STOP keyword enforcement)
       if (recipientUserData?.smsBlockedSystem === true) {
         logger.info(`Skipping SMS to ${to} - user has sent STOP keyword (smsBlockedSystem=true)`);
@@ -1452,26 +1467,40 @@ export async function sendWorkerMessageInternal(
     
     // Handle specific Twilio errors
     if (error.code === 21211 || error.code === 21614) {
+      // Permanent: stamp users.phoneInvalid + ops alert so nobody retries
+      // this number every hour (incident 2026-09-07, 817 × 21211 in 36h).
+      await recordSmsInvalidNumber({
+        tenantId: context?.tenantId ?? null,
+        userId: context?.userId ?? null,
+        toPhone: to,
+        errorCode: error.code === 21211 ? TWILIO_INVALID_TO : TWILIO_NOT_SMS_CAPABLE,
+        errorMessage: error.message,
+        messageTypeId: context?.messageTypeId ?? null,
+        source: 'twilio.ts',
+      });
       return {
         success: false,
         messageId: null,
         status: 'failed',
-        error: 'Invalid phone number format or not SMS capable'
+        error: 'Invalid phone number format or not SMS capable',
+        errorCode: String(error.code),
       };
     } else if (error.code === 21617) {
       return {
         success: false,
         messageId: null,
         status: 'failed',
-        error: 'Recipient has opted out of SMS messages'
+        error: 'Recipient has opted out of SMS messages',
+        errorCode: '21617',
       };
     }
-    
+
     return {
       success: false,
       messageId: null,
       status: 'failed',
-      error: error.message || 'Unknown error'
+      error: error.message || 'Unknown error',
+      errorCode: error.code != null ? String(error.code) : undefined,
     };
   }
 }

@@ -74,6 +74,46 @@ per-sender. So for ANY portal / SaaS phone verification for Natalie
 worker replies to her line are unaffected (`sms_inbound_raw` audit copy
 + routing).
 
+## Incident 2026-09-07: 817 outbound failures in 36h = invalid numbers re-sent every 30 min
+
+Greg saw the Twilio log solid red. Deep dive (Claude, scratch
+`twilio-outbound-failures.cjs` / `twilio-21211-shape.cjs`, read-only):
+- 818 of 871 outbound messages failed; **817 were error 21211 "Invalid 'To'
+  number"** to only **19 numbers** — impossible NANP area codes (555, 459,
+  893, 932, 797, 444…) typed by applicants on the apply landing page months
+  ago, plus a few test accounts. The 888 toll-free sender itself is fine
+  (TWILIO_APPROVED); delivered messages kept flowing.
+- Root cause: three crons treat EVERY send failure as transient and
+  re-defer 30 min forever — `processScheduledInterviewInvites`
+  (`interviewInviteScheduledAt` + `autoInterviewInvitePhoneDeferrals`; its
+  48-deferral cap only covered the *no phone* branch), `processApplyWizardReminders`
+  (`applyWizardReminderDueAt`, no cap at all — one user reached 5,001
+  deferrals, i.e. since April), and `processWorkerAiPrescreenReminders`
+  (`*DueAt` + `DEFERRAL_MS`). `sendWorkerMessageInternal` swallowed the
+  Twilio code, so callers could not tell "bad number" from "rate limit".
+- Fix (commit on 2026-09-07): `messaging/smsDeliveryAlerts.ts` gained
+  `PERMANENT_SMS_ERROR_CODES` + `isPermanentSmsFailure(result)` (21211,
+  21614, 21610, 21617, 30006, and HRX `status:'skipped'` refusals) and
+  `recordSmsInvalidNumber` (stamps `users.phoneInvalid` +
+  `phoneInvalidReason: 'twilio_21211'`, raises an `ops_alerts` doc kind
+  `sms_invalid_number` → Slack #dev via the existing drain).
+  `sendWorkerMessageInternal` now returns `errorCode` on every failure,
+  calls the recorder on 21211/21614, and short-circuits `phoneInvalid`
+  users with `status:'skipped', errorCode:'PHONE_INVALID'` (no Twilio call).
+  All three crons stop on permanent failures (clear the pending flag /
+  delete `interviewInviteScheduledAt`, outcome `sms_unreachable`) and the
+  invite + wizard crons also give up after 48 deferrals of any kind.
+- Deploy list: `functions:processScheduledInterviewInvites,functions:processApplyWizardReminders,functions:processWorkerAiPrescreenReminders`
+  plus everything that bundles `twilio.ts` picks the change up on its next
+  deploy. Backfill script `functions/.scratch/backfill-unreachable-invites.ts`
+  (`--dry` first) stops the 16 looping users immediately; the deployed code
+  does the same on their next tick.
+- Recruiter follow-up: users with `phoneInvalid: true` need a corrected
+  phone; clearing the flag re-enables sending (nothing clears it
+  automatically yet — worth a "fix phone" affordance on the profile).
+- Also learned the same day: Twilio blocks inbound OTP codes TO Twilio
+  numbers (30038) — see the Natalie section above.
+
 ## What this means
 
 - Sending from ANY local (10DLC) number on this account is unregistered

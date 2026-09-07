@@ -6,6 +6,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from '../twilio';
 import { markLifecycleEventIfFirst } from '../messaging/lifecycleDedupe';
+import { isPermanentSmsFailure } from '../messaging/smsDeliveryAlerts';
 
 /**
  * One prescreen/interview SMS per worker per day, across ALL application
@@ -367,10 +368,15 @@ async function processPrescreenChaseSms(args: {
   const sentAt = admin.firestore.Timestamp.now();
 
   if (!smsResult.success) {
+    // Permanent failures (invalid number, opted out, carrier block) end the
+    // chase instead of re-deferring forever — see smsDeliveryAlerts.ts.
+    const permanent = isPermanentSmsFailure(smsResult);
     await docSnap.ref.update({
-      [pendingKey]: true,
+      [pendingKey]: !permanent,
       [errKey]: smsResult.error || 'send_failed',
-      [dueKey]: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS),
+      ...(permanent
+        ? { [outcomeKey]: 'sms_unreachable' }
+        : { [dueKey]: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS) }),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return 'error';
@@ -583,10 +589,15 @@ async function processProfileFirstPrescreenChaseUserSms(args: {
   const sentAt = admin.firestore.Timestamp.now();
 
   if (!smsResult.success) {
+    // Permanent failures (invalid number, opted out, carrier block) end the
+    // chase instead of re-deferring forever — see smsDeliveryAlerts.ts.
+    const permanent = isPermanentSmsFailure(smsResult);
     await docSnap.ref.update({
-      [pendingKey]: true,
+      [pendingKey]: !permanent,
       [errKey]: smsResult.error || 'send_failed',
-      [dueKey]: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS),
+      ...(permanent
+        ? { [outcomeKey]: 'sms_unreachable' }
+        : { [dueKey]: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS) }),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return 'error';
@@ -909,15 +920,20 @@ export const processWorkerAiPrescreenReminders = onSchedule(
 
       if (!smsResult.success) {
         errors += 1;
+        const permanent = isPermanentSmsFailure(smsResult);
         logger.warn('workerAiPrescreenReminder: send failed', {
           applicationId,
           userId,
           error: smsResult.error,
+          errorCode: smsResult.errorCode ?? null,
+          permanent,
         });
         await docSnap.ref.update({
-          workerAiPrescreenReminderPending: true,
+          workerAiPrescreenReminderPending: !permanent,
           workerAiPrescreenReminderLastError: smsResult.error || 'send_failed',
-          workerAiPrescreenReminderDueAt: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS),
+          ...(permanent
+            ? { workerAiPrescreenReminderLastOutcome: 'sms_unreachable' }
+            : { workerAiPrescreenReminderDueAt: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS) }),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         continue;
@@ -1141,15 +1157,20 @@ export const processWorkerAiPrescreenReminders = onSchedule(
 
       if (!smsResult.success) {
         followUpErrors += 1;
+        const permanent = isPermanentSmsFailure(smsResult);
         logger.warn('workerAiPrescreenFollowUp: send failed', {
           applicationId,
           userId,
           error: smsResult.error,
+          errorCode: smsResult.errorCode ?? null,
+          permanent,
         });
         await docSnap.ref.update({
-          workerAiPrescreenFollowUpPending: true,
+          workerAiPrescreenFollowUpPending: !permanent,
           workerAiPrescreenFollowUpLastError: smsResult.error || 'send_failed',
-          workerAiPrescreenFollowUpDueAt: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS),
+          ...(permanent
+            ? { workerAiPrescreenFollowUpLastOutcome: 'sms_unreachable' }
+            : { workerAiPrescreenFollowUpDueAt: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS) }),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         continue;

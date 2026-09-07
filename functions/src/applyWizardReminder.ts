@@ -16,6 +16,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from './twilio';
 import { buildWorkerAiPrescreenInviteUrl } from './utils/workerUrls';
+import { isPermanentSmsFailure } from './messaging/smsDeliveryAlerts';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -42,6 +43,8 @@ const BATCH_LIMIT = 75;
 /** If phone not on profile yet, defer up to ~24h (48 × 30m). */
 const MAX_PHONE_DEFERRALS = 48;
 const DEFERRAL_MS = 30 * 60 * 1000;
+/** Give up after this many failed sends (~24h of 30-min deferrals). */
+const MAX_DEFERRALS = 48;
 
 function phoneE164FromUser(data: Record<string, unknown>): string {
   const e = String(data.phoneE164 || '').trim();
@@ -324,10 +327,16 @@ export const processApplyWizardReminders = onSchedule(
       const sentAt = admin.firestore.Timestamp.now();
 
       if (!smsResult.success) {
-        logger.warn('applyWizardReminder: send failed', { uid, error: smsResult.error });
+        // Invalid number / opt-out / carrier block, or too many deferrals →
+        // stop the reminder instead of re-deferring forever (incident 2026-09-07).
+        const priorDeferrals = Number((docSnap.data() as Record<string, unknown>).applyWizardReminderDeferrals ?? 0) || 0;
+        const permanent = isPermanentSmsFailure(smsResult) || priorDeferrals + 1 >= MAX_DEFERRALS;
+        logger.warn('applyWizardReminder: send failed', { uid, error: smsResult.error, errorCode: smsResult.errorCode ?? null, permanent, priorDeferrals });
         await docSnap.ref.update({
           applyWizardReminderLastError: smsResult.error || 'send_failed',
-          applyWizardReminderDueAt: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS),
+          ...(permanent
+            ? { applyWizardReminderPending: false, applyWizardReminderLastOutcome: 'sms_unreachable' }
+            : { applyWizardReminderDueAt: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS) }),
           applyWizardReminderDeferrals: admin.firestore.FieldValue.increment(1),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
