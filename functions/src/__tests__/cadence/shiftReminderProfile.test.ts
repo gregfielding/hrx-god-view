@@ -32,6 +32,7 @@ describe('shiftReminderProfile — Claim Shift fence', () => {
       'assignment_reconfirm_4h',
       'assignment_reminder_2h_instructions',
       'assignment_checkin_0h',
+      'assignment_late_checkin_15m',
       'assignment_noshow_check',
     ]);
     for (const ask of ASK_LADDER_REMINDER_TYPES) expect(types(p)).to.not.include(ask);

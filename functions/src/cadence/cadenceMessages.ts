@@ -7,6 +7,7 @@
  *   - assignment_reminder_2h_instructions   → worksite address + shift details
  *   - assignment_reminder_15m_clockin       → clock-in URL + quick location nudge
  *   - assignment_checkin_0h                 → "are you on site?" check-in ping
+ *   - assignment_late_checkin_15m           → T+15m no clock-in seen: "are you on your way?" (Natalie)
  *
  * The existing assignment_reminder_24h and assignment_reminder_2h message
  * bodies still live in workerShiftRemindersV2.ts#buildReminderMessage — this
@@ -60,7 +61,8 @@ export interface CadenceMessagePayload {
 export type CadenceReminderType =
   | 'assignment_reminder_2h_instructions'
   | 'assignment_reminder_15m_clockin'
-  | 'assignment_checkin_0h';
+  | 'assignment_checkin_0h'
+  | 'assignment_late_checkin_15m';
 
 export type OpenShiftReminderType = 'openshift_welcome' | 'openshift_weekly_digest';
 
@@ -355,6 +357,22 @@ export function buildCadenceMessage(
       };
     }
 
+    case 'assignment_late_checkin_15m': {
+      // Signed by Natalie (the automation persona). "Ask, never declare": a
+      // failed clock-in link looks exactly like a no-show (Jahon Walker,
+      // 2026-08-31), so this is a question with a HERE / NO answer.
+      const sms = es
+        ? `${brand}: Tu turno de ${job} en ${location} empezó a las ${startLabel} y aún no vemos tu entrada. ¿Vas en camino? Responde AQUÍ cuando llegues, o NO si no puedes ir. — Natalie, asistente de reclutamiento de C1 Staffing`
+        : `${brand}: Your ${job} shift at ${location} started at ${startLabel} and we don't see you clocked in yet. Are you on your way? Reply HERE once you're on site, or NO if you can't make it. — Natalie, C1 Staffing recruiting assistant`;
+      return {
+        title: es ? '¿Vas en camino?' : 'Are you on your way?',
+        body: es
+          ? `${job} empezó a las ${startLabel} y no vemos tu entrada. Responde AQUÍ o NO.`
+          : `${job} started at ${startLabel} and we don't see a clock-in. Reply HERE or NO.`,
+        sms,
+      };
+    }
+
     default: {
       // Exhaustiveness — TS will complain if a new reminder type is added
       // without a case above.
@@ -373,6 +391,7 @@ export function isCadenceReminderType(value: string): value is CadenceReminderTy
   return (
     value === 'assignment_reminder_2h_instructions' ||
     value === 'assignment_reminder_15m_clockin' ||
-    value === 'assignment_checkin_0h'
+    value === 'assignment_checkin_0h' ||
+    value === 'assignment_late_checkin_15m'
   );
 }

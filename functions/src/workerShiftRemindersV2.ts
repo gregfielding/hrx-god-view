@@ -97,6 +97,8 @@ const HOURS_BY_TYPE: Record<ReminderType, number> = {
   assignment_reminder_2h_instructions: 2,
   assignment_reminder_15m_clockin: 0.25,
   assignment_checkin_0h: 0,
+  // T+15m worker-facing late check-in (Flex-linked only; negative = after start).
+  assignment_late_checkin_15m: -0.25,
   // Negative = after start (30m past start).
   assignment_noshow_check: -0.5,
   // Open-shift lifecycle — synthesized fire times, not offsets from start.
@@ -119,6 +121,7 @@ const DOC_ID_BY_TYPE: Record<ReminderType, string> = {
   assignment_reminder_2h_instructions: 'assignment_reminder_2h_instructions',
   assignment_reminder_15m_clockin: 'assignment_reminder_15m_clockin',
   assignment_checkin_0h: 'assignment_checkin_0h',
+  assignment_late_checkin_15m: 'assignment_late_checkin_15m',
   assignment_noshow_check: 'assignment_noshow_check',
   openshift_welcome: 'openshift_welcome',
   openshift_weekly_digest: 'openshift_weekly_digest',

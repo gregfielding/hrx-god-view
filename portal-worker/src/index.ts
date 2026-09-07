@@ -79,30 +79,42 @@ class Worker {
   }
 
   private async tick(): Promise<void> {
+    // Watchdog (2026-09-07): a laptop sleep mid-page-call left a Playwright
+    // promise hanging forever; the heartbeat timer kept the worker looking
+    // alive while nothing was scheduled for 11 hours. Every non-action step
+    // of a tick is bounded; a hung keep-alive tears the browsers down so the
+    // stuck call throws instead of blocking the loop.
+    const HOUSEKEEPING_MS = 60_000;
     if (Date.now() - this.lastSweepAt > this.config.sweepMs) {
       this.lastSweepAt = Date.now();
-      await sweepExpiredLeases(this.db, this.config.tenantId, this.config.workerId);
+      await withTimeout(sweepExpiredLeases(this.db, this.config.tenantId, this.config.workerId), HOUSEKEEPING_MS, 'sweep');
     }
 
-    await this.scheduleSyncsDue();
+    await withTimeout(this.scheduleSyncsDue(), HOUSEKEEPING_MS, 'scheduleSyncs');
 
     const sinceLast = Date.now() - this.lastActionFinishedAt;
     if (sinceLast < this.config.actionMinGapMs) return;
 
-    const claimed = await claimNext(
-      this.db,
-      this.config.tenantId,
-      this.config.workerId,
-      this.config.enabledProviders,
-      this.config.leaseMs,
+    const claimed = await withTimeout(
+      claimNext(this.db, this.config.tenantId, this.config.workerId, this.config.enabledProviders, this.config.leaseMs),
+      HOUSEKEEPING_MS,
+      'claim',
     );
     if (claimed) {
-      await this.execute(claimed);
+      await this.execute(claimed); // execute() bounds the browser work itself
       this.lastActionFinishedAt = Date.now();
       return;
     }
 
-    await this.keepAliveDue();
+    try {
+      await withTimeout(this.keepAliveDue(), this.config.actionTimeoutMs, 'keepAlive');
+    } catch (err) {
+      if (classifyError(err).code === 'TIMEOUT') {
+        log.warn('keep-alive watchdog fired — resetting browsers');
+        await this.browser.closeAll();
+        this.lastKeepAliveAt.clear();
+      } else throw err;
+    }
   }
 
   private async execute(claimed: ClaimedAction): Promise<void> {

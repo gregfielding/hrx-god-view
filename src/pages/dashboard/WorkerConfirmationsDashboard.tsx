@@ -36,7 +36,14 @@ import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase';
 import PageHeader from '../../components/PageHeader';
 
-type ConfirmationStatus = 'pending' | 'confirmed' | 'checked_in' | 'cancelled' | 'no_show';
+/**
+ * `late` is derived, not stored: the shift started ≥15 minutes ago, the
+ * worker is still pending/confirmed, and no clock-in has arrived (the Flex
+ * timesheet feed stamps `checked_in` on a real punch). Natalie's T+15 text
+ * ("are you on your way?") stamps `cortConfirmation.lateCheckinTextedAt`.
+ */
+type ConfirmationStatus = 'pending' | 'confirmed' | 'late' | 'checked_in' | 'cancelled' | 'no_show';
+const LATE_AFTER_MS = 15 * 60 * 1000;
 
 const STATUS_META: Record<
   ConfirmationStatus,
@@ -44,12 +51,14 @@ const STATUS_META: Record<
 > = {
   pending: { label: 'Pending', color: 'warning' },
   confirmed: { label: 'Confirmed', color: 'success' },
+  late: { label: 'Late — no clock-in', color: 'error' },
   checked_in: { label: 'On site', color: 'info' },
   cancelled: { label: 'Unable to attend', color: 'error' },
   no_show: { label: 'No-show', color: 'error' },
 };
 
 const STATUS_SORT: Record<ConfirmationStatus, number> = {
+  late: -1,
   pending: 0,
   no_show: 1,
   cancelled: 2,
@@ -72,6 +81,8 @@ interface RowModel {
   startTime: string;
   status: ConfirmationStatus;
   respondedAt: string | null;
+  /** "10:15 AM" when Natalie's T+15 "are you on your way?" text went out. */
+  lateTextedAt: string | null;
 }
 
 function normStatus(v: unknown): string {
@@ -81,6 +92,36 @@ function normStatus(v: unknown): string {
 function toShortTime(v: unknown): string {
   const s = typeof v === 'string' ? v.trim() : '';
   return s || '—';
+}
+
+/** Start instant in ms, mirroring the dispatcher: startDateTime, else startDate + startTime (viewer-local). */
+function resolveStartMs(data: Record<string, unknown>): number {
+  const ts = data.startDateTime as { toMillis?: () => number } | undefined;
+  if (ts && typeof ts.toMillis === 'function') return ts.toMillis();
+  const date = String(data.startDate ?? '').trim();
+  const time = String(data.startTime ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return NaN;
+  const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i.exec(time);
+  if (!m) return NaN;
+  let h = Number(m[1]);
+  const min = Number(m[2]);
+  if (m[3]) {
+    const pm = m[3].toUpperCase() === 'PM';
+    if (pm && h < 12) h += 12;
+    if (!pm && h === 12) h = 0;
+  }
+  const [y, mo, d] = date.split('-').map(Number);
+  return new Date(y, mo - 1, d, h, min).getTime();
+}
+
+function fmtShortClock(v: unknown): string | null {
+  const ts = v as { toDate?: () => Date } | undefined;
+  if (!ts || typeof ts.toDate !== 'function') return null;
+  try {
+    return ts.toDate().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  } catch {
+    return null;
+  }
 }
 
 function fmtRespondedAt(cort: Record<string, unknown> | undefined): string | null {
@@ -184,16 +225,22 @@ const WorkerConfirmationsDashboard: React.FC<{
           | Record<string, unknown>
           | undefined;
         const cortState = normStatus(cort?.state);
+        const startMs = resolveStartMs(data);
+        const sinceStart = Number.isFinite(startMs) ? Date.now() - startMs : NaN;
+        const lateNow = sinceStart >= LATE_AFTER_MS && sinceStart < 6 * 60 * 60 * 1000;
         const status: ConfirmationStatus =
-          cortState === 'confirmed'
-            ? 'confirmed'
-            : cortState === 'checked_in'
-              ? 'checked_in'
-              : cortState === 'cancelled'
-                ? 'cancelled'
-                : cortState === 'no_show'
-                  ? 'no_show'
-                  : 'pending';
+          cortState === 'checked_in'
+            ? 'checked_in'
+            : cortState === 'cancelled'
+              ? 'cancelled'
+              : cortState === 'no_show'
+                ? 'no_show'
+                : lateNow
+                  ? 'late'
+                  : cortState === 'confirmed'
+                    ? 'confirmed'
+                    : 'pending';
+        const lateTextedAt = fmtShortClock(cort?.lateCheckinTextedAt);
         return {
           assignmentId: id,
           userId: uid,
@@ -212,6 +259,7 @@ const WorkerConfirmationsDashboard: React.FC<{
           startTime: toShortTime(data.startTime),
           status,
           respondedAt: fmtRespondedAt(cort),
+          lateTextedAt,
         };
       });
 
@@ -237,6 +285,7 @@ const WorkerConfirmationsDashboard: React.FC<{
     const c: Record<ConfirmationStatus, number> = {
       pending: 0,
       confirmed: 0,
+      late: 0,
       checked_in: 0,
       cancelled: 0,
       no_show: 0,
@@ -370,6 +419,11 @@ const WorkerConfirmationsDashboard: React.FC<{
                           color={STATUS_META[r.status].color}
                           label={STATUS_META[r.status].label}
                         />
+                        {r.status === 'late' && r.lateTextedAt ? (
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Natalie texted {r.lateTextedAt}
+                          </Typography>
+                        ) : null}
                       </TableCell>
                       <TableCell>
                         <Typography variant="caption" color="text.secondary">

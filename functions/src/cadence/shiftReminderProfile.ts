@@ -34,6 +34,10 @@ export type ShiftReminderType =
   | 'assignment_reminder_2h_instructions'
   | 'assignment_reminder_15m_clockin'
   | 'assignment_checkin_0h'
+  // Worker-facing "are you coming?" at T+15m when the Flex clock-in feed shows
+  // no punch (2026-09-07, Greg / Daniel's confirmations board). Dispatcher
+  // gates it to Flex-linked assignments (the only ones with a clock-in signal).
+  | 'assignment_late_checkin_15m'
   | 'assignment_reminder_23h_escalate'
   | 'assignment_reminder_22h_final'
   // Qwick-style second opt-in a few hours before start — plans change
@@ -116,6 +120,8 @@ const GIG_STANDARD_STEPS: ShiftReminderStep[] = [
   // Replaces the generic 2h reminder with the instructions / address variant.
   { type: 'assignment_reminder_2h_instructions', offsetHours: 2 },
   { type: 'assignment_checkin_0h', offsetHours: 0 },
+  // T+15m: no clock-in yet → ask the worker (HERE / NO). Flex-linked only.
+  { type: 'assignment_late_checkin_15m', offsetHours: -0.25 },
   // Silent — fires 30 minutes AFTER shift start (negative offset).
   // Dispatcher checks whether worker has checked in; if not, flips state
   // to no_show and alerts recruiters. Worker receives nothing from this
@@ -154,6 +160,10 @@ const CAREER_PLACEMENT_PROFILE: ShiftReminderProfile = {
   steps: [
     { type: 'career_first_day', offsetHours: 15 },
     { type: 'assignment_reminder_2h', offsetHours: 2 },
+    // Careers placed through Flex have clock-ins too (Greg 2026-09-07: "not
+    // just for gigs"); the step is a no-op for non-Flex careers.
+    { type: 'assignment_late_checkin_15m', offsetHours: -0.25 },
+    { type: 'assignment_noshow_check', offsetHours: -0.5 },
   ],
 };
 
@@ -249,6 +259,7 @@ export const ALL_SHIFT_REMINDER_TYPES: ReadonlyArray<ShiftReminderType> = [
   'assignment_reminder_2h_instructions',
   'assignment_reminder_15m_clockin',
   'assignment_checkin_0h',
+  'assignment_late_checkin_15m',
   'assignment_reminder_23h_escalate',
   'assignment_reminder_22h_final',
   'assignment_reconfirm_4h',

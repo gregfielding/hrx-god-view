@@ -279,6 +279,43 @@ timesheet grid row, then clock-outs at the end of the day" + the plus-15
   included — this is not gig-only). ☠️ A failed clock-in link looks exactly
   like a no-show (Jahon Walker, 2026-08-31) — always ask, never declare.
 
+## Late check-in ask + Flex no-show unmute (2026-09-07, session 2)
+
+- **`assignment_late_checkin_15m`** (offset -0.25h) added to `gig_standard`,
+  `cort_gig` (via the spread) and `career_placement` (Greg: "not just for
+  gigs"). Dispatcher gate (workerShiftRemindersV2.ts): dismiss if cortState is
+  checked_in/no_show/cancelled; dismiss `late_checkin_no_clockin_signal`
+  unless `isFlexLinkedAssignment` (assignmentSource 'indeed_flex_portal' /
+  flexWorkerId / flexJobId, or the shift's `clockInUrl` contains
+  time.indeed.com or carries flexJobId/flexRequestId); fresh
+  `findFlexClockIn` query on `indeed_flex_timesheets` (hrxAssignmentId +
+  workDate in the assignment tz) → if a punch exists stamp checked_in and
+  dismiss `late_checkin_clocked_in`; else stamp
+  `cortConfirmation.lateCheckinTextedAt/Via` and send. Copy in
+  cadenceMessages.ts (EN/ES), signed "Natalie, C1 Staffing recruiting
+  assistant", asks HERE / NO — never says no-show. Registry entry added.
+  Sends via the normal path = the 888 (Greg: interim) until the 10DLC
+  campaign is approved.
+- **No-show probe unmuted for Flex-linked assignments only**
+  (`flexLinkedForProbe` short-circuits `isNoShowDetectionEnabled`); other
+  accounts stay muted (no clock-in signal).
+- **Dashboard** (`WorkerConfirmationsDashboard.tsx`): derived `late` status
+  (start ≥15 min ago and <6h, not checked_in/cancelled/no_show; start from
+  `startDateTime` else startDate+startTime viewer-local), red chip "Late —
+  no clock-in", sorted first, caption "Natalie texted 10:15" from
+  `cortConfirmation.lateCheckinTextedAt`. Recruiter view → no Flutter parity.
+- ⚠️ Existing assignments keep their already-planned reminder docs; the new
+  step appears only for assignments (re)planned after the deploy.
+- **Worker watchdog** (portal-worker index.ts tick): housekeeping steps bounded
+  to 60s, keep-alive to actionTimeoutMs; a keep-alive timeout tears the
+  browsers down. Cause: laptop sleep mid-page-call at 05:24Z left the loop
+  hung for 11h while the heartbeat timer kept the doc fresh (status looked
+  "idle"). ☠️ A fresh heartbeat does NOT prove the loop is running — check
+  `scheduled sync` lines in the log.
+- Remaining from the plan: Natalie's Slack posts in #indeedflex_c1staffing on
+  CANCEL/no-show (needs her Slack membership), reliability summary, 21610
+  alert channel choice.
+
 ## Next slices (in order)
 
 1. **Bot accounts + secrets (Greg)**: dedicated Flex agency user + Fieldglass

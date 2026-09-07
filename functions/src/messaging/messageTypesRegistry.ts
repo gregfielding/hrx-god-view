@@ -239,6 +239,21 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     enabled: true,
   },
   {
+    id: 'assignment_late_checkin_15m',
+    label: 'Assignment Late Check-in (T+15m)',
+    category: 'transactional',
+    defaultChannels: ['sms', 'push'],
+    critical: true,
+    allowReply: true,
+    requiresExplicitSmsOptIn: true,
+    requiresTemplate: false,
+    aiAllowedToDraft: false,
+    aiAllowedToAutoSend: true,
+    description:
+      'Sent 15 minutes after scheduled start when the Indeed Flex clock-in feed shows no punch and the worker has not replied HERE. Asks "are you on your way?" (HERE / NO). Flex-linked assignments only; signed by Natalie.',
+    enabled: true,
+  },
+  {
     id: 'assignment_reminder_23h_escalate',
     label: 'Assignment Reminder (23h) — Escalation',
     category: 'transactional',

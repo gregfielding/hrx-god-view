@@ -154,4 +154,16 @@ describe('renderCadenceTemplate logistics variables', () => {
     );
     expect(out).to.equal('C1 Staffing: find Maria Lopez (Catering Lead): +14155550123. Parking: Lot C. Check-in: Gate B.');
   });
+
+  it('T+15 late check-in asks (HERE / NO), never declares, and is signed by Natalie', () => {
+    const msg = buildCadenceMessage('assignment_late_checkin_15m', basePayload(), 'en', 'C1 Staffing');
+    expect(msg.sms).to.contain("don't see you clocked in yet");
+    expect(msg.sms).to.contain('Reply HERE');
+    expect(msg.sms).to.contain('or NO if you can');
+    expect(msg.sms).to.contain('Natalie');
+    expect(msg.sms).to.not.match(/no.?show/i);
+    const es = buildCadenceMessage('assignment_late_checkin_15m', basePayload(), 'es', 'C1 Staffing');
+    expect(es.sms).to.contain('Responde AQUÍ');
+    expect(es.sms).to.contain('o NO si no puedes ir');
+  });
 });
