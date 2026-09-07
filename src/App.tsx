@@ -27,6 +27,7 @@ const Login = lazy(() => import('./pages/Login'));
 // Phone (OTP) sign-in — alternate login layout under test (Greg 2026-08-21).
 const PhoneLoginPage = lazy(() => import('./pages/PhoneLoginPage'));
 const LoginGate = lazy(() => import('./pages/LoginGate'));
+const SlackOAuthCallback = lazy(() => import('./pages/SlackOAuthCallback'));
 const UserOnboarding = lazy(() => import('./pages/UserOnboarding'));
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { canAccessAccountInvoicingTab, canAccessGlobalInvoicing } from './utils/invoicingAccessControl';
@@ -592,6 +593,8 @@ function App() {
       <Route path="/login/email" element={<Login />} />
       <Route path="/login/phone" element={<PhoneLoginPage />} />
       <Route path="/crm/public" element={<PublicCRMView />} />
+      {/* Slack persona OAuth landing — shows the one-time code instead of bouncing to /login. */}
+      <Route path="/slack/oauth/callback" element={<SlackOAuthCallback />} />
       <Route path="/setup-password" element={<SetupPassword />} />
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
