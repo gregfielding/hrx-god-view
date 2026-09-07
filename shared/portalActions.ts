@@ -41,7 +41,13 @@ export type PortalActionType =
    * timesheets, replayed to indeedFlexPortalIngest / indeedFlexTimesheetIngest.
    * Replaces the Chrome-extension passive capture.
    */
-  | 'indeed_flex_sync';
+  | 'indeed_flex_sync'
+  /**
+   * Indeed Flex: accept a NEW job request ("You have been allocated 1 job by
+   * Indeed") — the jobs-list Respond → allocation page → Confirm flow.
+   * Committing: once confirmed, C1 owns filling the headcount.
+   */
+  | 'accept_job_request';
 
 export const PORTAL_ACTION_TYPES: readonly PortalActionType[] = [
   'smoke_test',
@@ -51,6 +57,7 @@ export const PORTAL_ACTION_TYPES: readonly PortalActionType[] = [
   'withdraw_candidate',
   'fieldglass_sync',
   'indeed_flex_sync',
+  'accept_job_request',
 ];
 
 /** Which provider each action type belongs to (smoke_test is universal). */
@@ -61,6 +68,7 @@ export const PORTAL_ACTION_PROVIDER: Record<Exclude<PortalActionType, 'smoke_tes
   withdraw_candidate: 'fieldglass',
   fieldglass_sync: 'fieldglass',
   indeed_flex_sync: 'indeed_flex',
+  accept_job_request: 'indeed_flex',
 };
 
 export type PortalActionStatus =
@@ -202,6 +210,27 @@ export interface IndeedFlexSyncPayload {
   reason?: string;
 }
 
+export interface AcceptJobRequestPayload {
+  /** Indeed Flex job id shown on the jobs list (e.g. 545107). */
+  flexJobId: string;
+  /**
+   * Workers to accept per day. Omit to keep the portal's default (= the
+   * client's requested headcount). Applied to every day row on the
+   * allocation page.
+   */
+  acceptHeadcount?: number;
+  /**
+   * Walk the whole flow (find row → Respond → allocation page → fill the
+   * headcount) and screenshot, but do NOT click Confirm. For rehearsing a
+   * new venue/client without committing.
+   */
+  dryRun?: boolean;
+  /** `tenants/{t}/external_shift_requests/{id}` that asked for it (audit). */
+  externalShiftRequestId?: string;
+  /** Why this run exists — 'auto_accept' | 'manual' | … (audit only). */
+  reason?: string;
+}
+
 export type PortalActionPayloadMap = {
   smoke_test: SmokeTestPayload;
   book_worker: BookWorkerPayload;
@@ -210,6 +239,7 @@ export type PortalActionPayloadMap = {
   withdraw_candidate: WithdrawCandidatePayload;
   fieldglass_sync: FieldglassSyncPayload;
   indeed_flex_sync: IndeedFlexSyncPayload;
+  accept_job_request: AcceptJobRequestPayload;
 };
 
 export interface PortalActionLease {
@@ -402,6 +432,12 @@ export function defaultPortalActionKeyParts<A extends PortalActionType>(
       const p = payload as IndeedFlexSyncPayload;
       if (p.flexJobIds?.length) return ['targeted', p.flexJobIds.slice().sort().join('+')];
       return ['full', portalSyncBucket(Date.now())];
+    }
+    case 'accept_job_request': {
+      // One row per Flex job: a second producer (re-match, recruiter click)
+      // collapses onto the same action instead of double-accepting.
+      const p = payload as AcceptJobRequestPayload;
+      return [p.flexJobId, p.dryRun ? 'dry' : undefined];
     }
     case 'smoke_test':
     default:

@@ -316,6 +316,70 @@ timesheet grid row, then clock-outs at the end of the day" + the plus-15
   CANCEL/no-show (needs her Slack membership), reliability summary, 21610
   alert channel choice.
 
+## Venue aliases + `accept_job_request` (2026-09-07, session 3)
+
+**Why**: Natalie's inbox showed Indeed Flex "You have been allocated a job"
+emails that nobody acted on — three OnTrac Denver requests (545616/17/18)
+hit "Booking deadline passed" on 2026-09-06/07 because the venue strings
+`Denver, CO - BCO002` and `SF - 201 3rd Street - SVC07/51/00` fuzzy-scored
+below 0.5, the rows sat in /shifts/log as NEEDS REVIEW, and accepting in
+the portal was still a human click. Greg: "Do the venue alias and accept
+action now."
+
+**Venue aliases written** (`tenants/{t}/venue_aliases`, same shape as the
+`linkVenueToAccount` callable, createdBy = Natalie's uid):
+- `denver, co - bco002` → OnTrac Denver (`autoLoc_c8063316925cd9db434ca0c2e80293d1`)
+- `201 3rd street` → CORT San Francisco Warehouse (`autoLoc_784610feec9911c3ede719934b77b6f7`)
+  (the SVC07/xx/00 suffix is CORT's service code; the alias key strips it)
+Re-matching the six open rows flipped all of them to `exact`, BUT both
+accounts have **no open Gig "inbox" JO** (`wouldCreateNewJobOrder: true`),
+so the nightly triage cannot mint the HRX shifts until someone creates an
+open `jobType: 'gig'` JO on each account (`recruiterAccountId` = account).
+Scratch: `functions/.scratch/write-flex-venue-aliases.ts` (`--dry` first).
+
+**Portal flow observed in Greg's session** (jobs list, status "New", button
+"Respond"): Respond → `/allocations/{allocationId}/platforms/2590?roleId=&venueId=`
+titled "You have been allocated 1 job by Indeed", one row per day with a
+"Workers Accepted/Requested" number input (defaults to requested) and an
+"Optional backups" count, buttons **Decline All** / **Confirm**. The
+allocation id is NOT the job id; the page text carries "Job ID: 545107".
+
+**`accept_job_request` action** (shared contract + worker adapter):
+payload `{flexJobId, acceptHeadcount?, dryRun?, externalShiftRequestId?, reason?}`,
+id keyed on the job id (`indeed_flex__accept_job_request__<jobId>[__dry]`).
+Adapter: dismiss the "Tell us what you think" survey modal (it steals
+clicks), scroll-load the list, find the row by exact job-id text; no
+Respond + "In Progress/Book Workers" ⇒ idempotent `alreadyAccepted`;
+Respond → verify allocation URL + job id in page → fill every
+`input[type=number]` when `acceptHeadcount` given → screenshot →
+(`dryRun` stops here) → Confirm → any secondary dialog's confirm → reload
+list and require the row to read In Progress/Book Workers (else
+PORTAL_REJECTED with screenshots) → enqueue a targeted
+`indeed_flex_sync` for the job. Worker must be restarted after adapter
+changes (`kill <tsx pid>`; launchd relaunches) — an old worker claims new
+action types and fails them INVALID_PAYLOAD; re-enqueue with `--force`.
+
+**Producer** (`functions/src/integrations/indeedFlex/flexAutoAccept.ts`):
+`maybeEnqueueFlexAccept` runs from `onShiftRequestCreatedMatch` and the
+`linkVenueToAccount` re-match when a `new_request` lands `exact`. Policy
+doc `tenants/{t}/app_config/indeed_flex`:
+`autoAcceptNewRequests` (master, default OFF), `autoAcceptAccountIds`
+(allow-list), `autoAcceptExcludeAccountIds`, `autoAcceptDryRun`,
+`autoAcceptMaxHeadcount`; stale (ended) requests and rows without a
+numeric job id are skipped. Stamps `portalAccept{actionId,…}` on the
+request row. Pure policy is unit-tested
+(`src/__tests__/integrations/indeedFlex/flexAutoAccept.test.ts`).
+Deploy list: `functions:onShiftRequestCreatedMatch,functions:linkVenueToAccount`
+(no new function — Cloud Run cap untouched).
+
+**Slack as Natalie** (same session): app "Natalie Brooks (HRX)" created
+from the manifest in Greg's api.slack.com (App ID `A0C04FT6V6E`, Client ID
+`7582435419591.12004537233218`, user scopes chat:write, channels:read,
+groups:read, channels:history, groups:history, users:read, im:write,
+redirect `https://hrxone.com/slack/oauth/callback`). Slack's "Create and
+Install" step failed (install popup) — irrelevant, the install we want is
+Natalie's own user-token OAuth, see [[reference_slack_natalie_persona]].
+
 ## Next slices (in order)
 
 1. **Bot accounts + secrets (Greg)**: dedicated Flex agency user + Fieldglass

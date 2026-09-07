@@ -13,10 +13,19 @@
  * all normalizing. Nothing is extracted here, so a portal UI change cannot
  * break the payloads; only the navigation can.
  *
+ * `accept_job_request` (2026-09-07) = the "You have been allocated 1 job by
+ * Indeed" flow observed in Greg's session: jobs list row (status New, action
+ * "Respond") → /allocations/{allocationId}/platforms/{platformId} page with one
+ * row per day ("Workers Accepted/Requested" number input, defaults to the
+ * requested headcount) → "Confirm" (or "Decline All"). Confirm commits C1 to
+ * fill the headcount, so the action verifies the row flipped to In Progress /
+ * Book Workers afterwards and queues a targeted sync.
+ *
  * Booking (`book_worker`) is NOT implemented yet.
  */
 import type { Page, Response } from 'playwright';
-import type { IndeedFlexSyncPayload, PortalActionDoc, SmokeTestPayload } from '../../../shared/portalActions.ts';
+import type { AcceptJobRequestPayload, IndeedFlexSyncPayload, PortalActionDoc, SmokeTestPayload } from '../../../shared/portalActions.ts';
+import { enqueuePortalAction } from '../enqueue.ts';
 import { isBrowserGone, PortalActionFailure } from '../errors.ts';
 import { HrxApiError, ingestFlexPortalCapture, ingestFlexTimesheets, type FlexPortalEnvelope } from '../hrxApi.ts';
 import { log } from '../logger.ts';
@@ -184,6 +193,8 @@ export class IndeedFlexAdapter implements PortalAdapter {
         return this.smokeTest(ctx, action.payload as SmokeTestPayload);
       case 'indeed_flex_sync':
         return this.sync(ctx, (action.payload ?? {}) as IndeedFlexSyncPayload);
+      case 'accept_job_request':
+        return this.acceptJobRequest(ctx, (action.payload ?? {}) as AcceptJobRequestPayload);
       case 'book_worker':
       case 'unbook_worker':
         throw new PortalActionFailure(
@@ -201,6 +212,166 @@ export class IndeedFlexAdapter implements PortalAdapter {
     await ctx.page.waitForTimeout(2_000);
     if (await this.isLoginWall(ctx.page)) throw new PortalActionFailure('LOGIN_REQUIRED', 'landed on the sign-in wall');
     return { url: ctx.page.url(), title: await ctx.page.title(), checkedAt: new Date().toISOString() };
+  }
+
+  // --- accept_job_request ---------------------------------------------------
+
+  /** The "Tell us what you think of Indeed Flex" survey modal steals clicks on the jobs list. */
+  private async dismissSurvey(page: Page): Promise<void> {
+    const dialog = page.getByRole('dialog').filter({ hasText: /tell us what you think|how was your experience/i });
+    if ((await dialog.count()) === 0) return;
+    const close = dialog.getByRole('button', { name: /close|dismiss/i }).first();
+    if ((await close.count()) > 0) await close.click().catch(() => undefined);
+    else await page.keyboard.press('Escape').catch(() => undefined);
+    await page.waitForTimeout(500);
+  }
+
+  /** The jobs-list row that carries this job id (cells are text, so match the id exactly). */
+  private jobRow(page: Page, jobId: string) {
+    return page.locator('tr, [role="row"]').filter({ has: page.getByText(jobId, { exact: true }) }).first();
+  }
+
+  private async acceptJobRequest(ctx: AdapterContext, payload: AcceptJobRequestPayload): Promise<Record<string, unknown>> {
+    const jobId = String(payload.flexJobId ?? '').trim();
+    if (!/^\d+$/.test(jobId)) throw new PortalActionFailure('INVALID_PAYLOAD', `accept_job_request needs a numeric flexJobId (got "${payload.flexJobId}")`);
+    const wantHeadcount = payload.acceptHeadcount != null ? Math.max(0, Math.floor(Number(payload.acceptHeadcount))) : null;
+    if (wantHeadcount != null && !Number.isFinite(wantHeadcount)) throw new PortalActionFailure('INVALID_PAYLOAD', 'acceptHeadcount must be a number');
+    const { page } = ctx;
+    const startedAt = Date.now();
+
+    // 1. Jobs list → the row for this job.
+    ctx.progress(`accept ${jobId}: loading jobs list`);
+    await page.goto(JOBS_LIST_URL, { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
+    await page.waitForTimeout(1_500);
+    if (await this.isLoginWall(page)) throw new PortalActionFailure('LOGIN_REQUIRED', 'jobs list redirected to sign-in');
+    await this.dismissSurvey(page);
+    await this.scrollToLoadAll(page);
+    const row = this.jobRow(page, jobId);
+    if ((await row.count()) === 0) {
+      const shot = await ctx.screenshot(`flex-accept-${jobId}-row-missing`);
+      throw new PortalActionFailure('SELECTOR_MISSING', `job ${jobId} is not on the jobs list (expired, withdrawn, or outside the 365-day window)`, { screenshot: shot });
+    }
+    const rowText = (await row.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+    const respond = row.getByRole('button', { name: /respond/i }).or(row.getByRole('link', { name: /respond/i })).first();
+    if ((await respond.count()) === 0) {
+      // Already answered (In Progress / Book Workers) → idempotent success; anything else is a real stop.
+      if (/book workers|in progress/i.test(rowText)) {
+        log.info('flex accept: job already accepted', { jobId, rowText: rowText.slice(0, 200) });
+        return { jobId, alreadyAccepted: true, rowText: rowText.slice(0, 300), checkedAt: new Date().toISOString() };
+      }
+      const shot = await ctx.screenshot(`flex-accept-${jobId}-no-respond`);
+      throw new PortalActionFailure('PORTAL_REJECTED', `job ${jobId} has no Respond action (row: ${rowText.slice(0, 160)})`, { screenshot: shot });
+    }
+
+    // 2. Respond → allocation page.
+    ctx.progress(`accept ${jobId}: opening allocation`);
+    await row.scrollIntoViewIfNeeded().catch(() => undefined);
+    await respond.click();
+    await page.waitForURL(/\/allocations\//, { timeout: 20_000 }).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
+    await page.waitForTimeout(1_000);
+    const allocationUrl = page.url();
+    const bodyText = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
+    if (!/\/allocations\//.test(allocationUrl) || !bodyText.includes(jobId)) {
+      const shot = await ctx.screenshot(`flex-accept-${jobId}-allocation-unexpected`);
+      throw new PortalActionFailure('SELECTOR_MISSING', `Respond did not open the allocation page for ${jobId} (at ${allocationUrl})`, { screenshot: shot });
+    }
+    const confirm = page.getByRole('button', { name: /^confirm$/i }).first();
+    if ((await confirm.count()) === 0) {
+      const shot = await ctx.screenshot(`flex-accept-${jobId}-no-confirm`);
+      throw new PortalActionFailure('SELECTOR_MISSING', `allocation page for ${jobId} has no Confirm button`, { screenshot: shot });
+    }
+
+    // 3. Headcount per day (portal default = requested). Only touch it when asked.
+    const inputs = page.locator('input[type="number"]');
+    const dayRows = await inputs.count();
+    const before: Array<{ accepted: string; requested: string | null }> = [];
+    for (let i = 0; i < dayRows; i += 1) {
+      const inp = inputs.nth(i);
+      const requested = await inp.evaluate((el) => {
+        const t = el.parentElement?.parentElement?.textContent ?? '';
+        return /\/\s*(\d+)/.exec(t)?.[1] ?? null;
+      }).catch(() => null);
+      if (wantHeadcount != null) {
+        await inp.fill(String(wantHeadcount));
+        await inp.evaluate((el) => el.dispatchEvent(new Event('change', { bubbles: true }))).catch(() => undefined);
+      }
+      before.push({ accepted: await inp.inputValue().catch(() => ''), requested });
+    }
+    const shotBefore = await ctx.screenshot(`flex-accept-${jobId}-before-confirm`);
+    const summary: Record<string, unknown> = {
+      jobId,
+      allocationUrl,
+      dayRows,
+      headcounts: before,
+      requestedHeadcount: wantHeadcount,
+      screenshotBefore: shotBefore ?? null,
+      header: /allocated[^.]{0,120}/i.exec(bodyText)?.[0] ?? null,
+    };
+    if (payload.dryRun) {
+      log.info('flex accept: dry run — not confirming', { jobId, allocationUrl });
+      await page.goto(JOBS_LIST_URL, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+      return { ...summary, dryRun: true, confirmed: false, elapsedMs: Date.now() - startedAt };
+    }
+
+    // 4. Confirm (+ any "are you sure" dialog).
+    ctx.progress(`accept ${jobId}: confirming`);
+    await confirm.click();
+    await page.waitForTimeout(1_500);
+    const dialog = page.getByRole('dialog').or(page.locator('[role="alertdialog"]'));
+    if ((await dialog.count()) > 0) {
+      const again = dialog.getByRole('button', { name: /confirm|yes|accept|continue|ok/i }).first();
+      if ((await again.count()) > 0) {
+        summary.secondaryConfirm = (await again.innerText().catch(() => '')).trim();
+        await again.click();
+        await page.waitForTimeout(1_500);
+      }
+    }
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
+    const afterText = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
+    const portalError = /something went wrong|error|could not|unable to/i.exec(afterText)?.[0] ?? null;
+    summary.screenshotAfter = (await ctx.screenshot(`flex-accept-${jobId}-after-confirm`)) ?? null;
+
+    // 5. Verify on the jobs list: Respond gone, row now In Progress / Book Workers.
+    ctx.progress(`accept ${jobId}: verifying`);
+    await page.goto(JOBS_LIST_URL, { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
+    await page.waitForTimeout(1_500);
+    await this.dismissSurvey(page);
+    await this.scrollToLoadAll(page);
+    const rowAfter = this.jobRow(page, jobId);
+    const rowAfterText = (await rowAfter.count()) > 0 ? (await rowAfter.innerText().catch(() => '')).replace(/\s+/g, ' ').trim() : '';
+    const stillRespond = (await rowAfter.count()) > 0 && (await rowAfter.getByRole('button', { name: /respond/i }).count()) > 0;
+    const verified = !stillRespond && /book workers|in progress/i.test(rowAfterText);
+    summary.rowAfter = rowAfterText.slice(0, 300);
+    summary.verified = verified;
+    summary.elapsedMs = Date.now() - startedAt;
+    if (!verified) {
+      const shot = await ctx.screenshot(`flex-accept-${jobId}-unverified`);
+      throw new PortalActionFailure(
+        'PORTAL_REJECTED',
+        `Confirm did not flip job ${jobId} to In Progress${portalError ? ` (portal said: ${portalError})` : ''}; row now: ${rowAfterText.slice(0, 160) || '(missing)'}`,
+        { screenshot: shot, ...summary },
+      );
+    }
+    log.info('flex accept: confirmed', { jobId, headcounts: before, allocationUrl });
+
+    // 6. Pull the accepted job into HRX right away (rosters/shifts) instead of waiting for the hourly pass.
+    try {
+      const sync = await enqueuePortalAction(ctx.db, {
+        tenantId: ctx.config.tenantId,
+        action: 'indeed_flex_sync',
+        payload: { flexJobIds: [jobId], includeTimesheets: false, force: true, reason: `accept_job_request:${jobId}` },
+        createdBy: { kind: 'system', id: `portal-worker:${ctx.config.workerId}` },
+        priority: 20,
+        force: true,
+      });
+      summary.followUpSyncId = sync.id;
+    } catch (err) {
+      summary.followUpSyncError = err instanceof Error ? err.message.slice(0, 200) : String(err);
+    }
+    return { ...summary, confirmed: true };
   }
 
   // --- indeed_flex_sync -----------------------------------------------------

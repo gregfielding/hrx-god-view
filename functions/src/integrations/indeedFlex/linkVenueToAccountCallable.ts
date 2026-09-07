@@ -27,6 +27,7 @@ import { createFirestoreReader } from './matcher/firestoreReader';
 import { matchShiftRequest } from './matcher/matchShiftRequest';
 import { recommendedActionFor } from './matcher/recommendedAction';
 import { aliasDocIdFor, aliasKeyFor } from './matcher/venueAliases';
+import { maybeEnqueueFlexAccept } from './flexAutoAccept';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -190,6 +191,24 @@ export const linkVenueToAccount = onCall<Input, Promise<Output>>(
             }
             await reqRef.update(updates);
             result.rematchConfidence = matched.matchConfidence;
+            // The recruiter just confirmed the venue → account link; if
+            // auto-accept is on, hand the request to Natalie's worker now.
+            if (reqData.eventType === 'new_request' && matched.matchConfidence === 'exact') {
+              await maybeEnqueueFlexAccept(
+                db,
+                tenantId,
+                {
+                  requestId,
+                  eventType: String(reqData.eventType),
+                  status: String(reqData.status ?? ''),
+                  matchConfidence: matched.matchConfidence,
+                  matchedAccountId: matched.matchedAccountId,
+                  matchedAccountName: matched.matchedAccountName,
+                  event: event as { jobId?: string; headcount?: number; workDate?: string; endDate?: string },
+                },
+                `linkVenueToAccount:${req.auth.uid}`,
+              );
+            }
             if (matched.matchedJobOrderId) {
               result.rematchedJobOrderId = matched.matchedJobOrderId;
             }

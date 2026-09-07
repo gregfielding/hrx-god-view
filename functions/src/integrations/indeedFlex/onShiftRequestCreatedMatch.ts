@@ -36,6 +36,7 @@ import { logger } from 'firebase-functions/v2';
 import { createFirestoreReader } from './matcher/firestoreReader';
 import { matchShiftRequest } from './matcher/matchShiftRequest';
 import { recommendedActionFor } from './matcher/recommendedAction';
+import { maybeEnqueueFlexAccept } from './flexAutoAccept';
 import type {
   ExternalShiftRequest,
   IndeedFlexEvent,
@@ -124,6 +125,26 @@ export const onShiftRequestCreatedMatch = onDocumentCreated(
     }
 
     await event.data?.ref.update(updates);
+
+    // Natalie's auto-accept (2026-09-07): an exact-matched NEW request goes
+    // to the portal worker so it is accepted before Indeed's booking
+    // deadline. Policy-gated in app_config/indeed_flex; never throws.
+    if (data.eventType === 'new_request' && result.matchConfidence === 'exact') {
+      await maybeEnqueueFlexAccept(
+        db,
+        tenantId,
+        {
+          requestId,
+          eventType: data.eventType,
+          status: data.status,
+          matchConfidence: result.matchConfidence,
+          matchedAccountId: result.matchedAccountId,
+          matchedAccountName: result.matchedAccountName,
+          event: data.event as { jobId?: string; headcount?: number; workDate?: string; endDate?: string },
+        },
+        `onShiftRequestCreatedMatch:${requestId}`,
+      );
+    }
 
     logger.info('[onShiftRequestCreatedMatch] matched', {
       tenantId,
