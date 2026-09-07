@@ -119,7 +119,7 @@ describe('buildClaimConfirmationMessage (Claim Shift track)', () => {
     expect(msg.sms).to.contain('at Oracle Park');
     expect(msg.sms).to.contain('Address: 24 Willie Mays Plaza');
     expect(msg.sms).to.contain('Details: https://hrxone.com/a/1');
-    expect(msg.sms).to.contain('Reply CANCEL if your plans change.');
+    expect(msg.sms).to.contain('Reply NO if your plans change.');
     expect(msg.sms).to.not.match(/reply YES/i);
     expect(msg.title).to.equal('Shift claimed!');
     expect(msg.sms.length).to.be.lessThan(320);
@@ -134,7 +134,7 @@ describe('buildClaimConfirmationMessage (Claim Shift track)', () => {
     );
     expect(msg.sms).to.contain('¡Estás en el equipo!');
     expect(msg.sms).to.contain('Concessions — Gate B');
-    expect(msg.sms).to.contain('Responde CANCEL');
+    expect(msg.sms).to.contain('Responde NO');
     expect(msg.sms).to.not.contain('Details:');
   });
 });

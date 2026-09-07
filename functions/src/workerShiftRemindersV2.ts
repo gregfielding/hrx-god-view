@@ -1004,12 +1004,12 @@ function buildReminderMessage(
       ? {
           title: 'Confirma tu turno',
           body: `Estás en el equipo: ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar.`,
-          sms: `${brand}: Estás en el equipo — ${payload.jobTitle} el ${startLabel} en ${payload.locationName}.${addr} Responde SI para confirmar o CANCELAR si no puedes ir.`,
+          sms: `${brand}: Estás en el equipo — ${payload.jobTitle} el ${startLabel} en ${payload.locationName}.${addr} Responde SI para confirmar o NO si no puedes ir.`,
         }
       : {
           title: 'Confirm your shift',
           body: `You're on the crew: ${payload.jobTitle} at ${startLabel}. Reply YES to confirm.`,
-          sms: `${brand}: You're on the crew — ${payload.jobTitle} at ${startLabel} at ${payload.locationName}.${addr} Reply YES to confirm or CANCEL if you can't make it.`,
+          sms: `${brand}: You're on the crew — ${payload.jobTitle} at ${startLabel} at ${payload.locationName}.${addr} Reply YES to confirm or NO if you can't make it.`,
         };
   }
 
@@ -1022,12 +1022,12 @@ function buildReminderMessage(
       ? {
           title: '¿Sigues disponible?',
           body: `${payload.jobTitle} el ${startLabel}. Responde SI para confirmar.`,
-          sms: `${brand}: ¿Sigues disponible? ${payload.jobTitle} el ${startLabel} en ${payload.locationName}. Responde SI — o CANCELAR ahora para que podamos cubrir tu lugar.`,
+          sms: `${brand}: ¿Sigues disponible? ${payload.jobTitle} el ${startLabel} en ${payload.locationName}. Responde SI — o NO ahora para que podamos cubrir tu lugar.`,
         }
       : {
           title: 'Still good for your shift?',
           body: `${payload.jobTitle} at ${startLabel}. Reply YES to confirm.`,
-          sms: `${brand}: Still good for your shift? ${payload.jobTitle} at ${startLabel} at ${payload.locationName}. Reply YES — or CANCEL now so we can cover your spot.`,
+          sms: `${brand}: Still good for your shift? ${payload.jobTitle} at ${startLabel} at ${payload.locationName}. Reply YES — or NO now so we can cover your spot.`,
         };
   }
 
@@ -1055,12 +1055,12 @@ function buildReminderMessage(
       ? {
           title: 'Confirma tu turno',
           body: `Por favor confirma tu turno de ${payload.jobTitle} el ${startLabel}.`,
-          sms: `${brand}: Todavía necesitamos tu respuesta para tu turno de ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar o CANCELAR para declinar.`,
+          sms: `${brand}: Todavía necesitamos tu respuesta para tu turno de ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar o NO para declinar.`,
         }
       : {
           title: 'Please confirm your shift',
           body: `Please confirm your ${payload.jobTitle} shift at ${startLabel}.`,
-          sms: `${brand}: We still need a response for your ${payload.jobTitle} shift at ${startLabel}. Reply YES to confirm or CANCEL to decline.`,
+          sms: `${brand}: We still need a response for your ${payload.jobTitle} shift at ${startLabel}. Reply YES to confirm or NO to decline.`,
         };
   }
   if (reminderType === 'assignment_reminder_22h_final') {
@@ -1068,12 +1068,12 @@ function buildReminderMessage(
       ? {
           title: 'Último aviso — confirma tu turno',
           body: `Último aviso: confirma ${payload.jobTitle} el ${startLabel}.`,
-          sms: `${brand}: Último recordatorio para ${payload.jobTitle} el ${startLabel}. Responde SI para mantener tu turno o CANCELAR — si no respondes, puede que lo reasignemos.`,
+          sms: `${brand}: Último recordatorio para ${payload.jobTitle} el ${startLabel}. Responde SI para mantener tu turno o NO — si no respondes, puede que lo reasignemos.`,
         }
       : {
           title: 'Last call — confirm your shift',
           body: `Last call: please confirm ${payload.jobTitle} at ${startLabel}.`,
-          sms: `${brand}: Last reminder for ${payload.jobTitle} at ${startLabel}. Reply YES to keep the shift or CANCEL — otherwise we may need to reassign it.`,
+          sms: `${brand}: Last reminder for ${payload.jobTitle} at ${startLabel}. Reply YES to keep the shift or NO — otherwise we may need to reassign it.`,
         };
   }
 
@@ -1083,12 +1083,12 @@ function buildReminderMessage(
         ? {
             title: 'Confirma tu turno de mañana',
             body: `${payload.jobTitle} mañana el ${startLabel}. Responde SI para confirmar.`,
-            sms: `${brand}: Estás programado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Responde SI para confirmar o CANCELAR para declinar.`,
+            sms: `${brand}: Estás programado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Responde SI para confirmar o NO para declinar.`,
           }
         : {
             title: 'Confirm your shift tomorrow',
             body: `${payload.jobTitle} tomorrow at ${startLabel}. Reply YES to confirm.`,
-            sms: `${brand}: You're scheduled for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. Reply YES to confirm or CANCEL to decline.`,
+            sms: `${brand}: You're scheduled for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. Reply YES to confirm or NO to decline.`,
           };
     }
     return es

@@ -189,8 +189,8 @@ export function buildClaimConfirmationMessage(
   if (assignmentUrl) parts.push(es ? `Detalles: ${assignmentUrl}` : `Details: ${assignmentUrl}`);
   parts.push(
     es
-      ? 'Te enviaremos los detalles del sitio antes del turno. Responde CANCEL si cambian tus planes.'
-      : "We'll text site details before your shift. Reply CANCEL if your plans change.",
+      ? 'Te enviaremos los detalles del sitio antes del turno. Responde NO si cambian tus planes.'
+      : "We'll text site details before your shift. Reply NO if your plans change.",
   );
   return {
     title: es ? '¡Turno reservado!' : 'Shift claimed!',
