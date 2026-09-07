@@ -12,12 +12,22 @@ description + the current codebase.
 opt-in is per posting: `job_postings/{postId}.claimShiftEnabled` (toggle
 "Instant Claim (workers book without an offer)" in the JO Jobs Board tab
 editor `JobPostForm` and in `PostToJobsBoardDialog`; gig postings only;
-default off). With it on, every available gig shift row shows a black
-**Claim Shift** instead of the green Apply (web `ShiftSelector`, app
-`_GigRowActionButton`), the header/sticky CTA reads Claim Shift and opens
-the first free row, and the acknowledgement sheet (uniform / transportation
-/ arrival / no-show, green confirm) books the day on the spot and routes to
-Assignment Details.
+default off). With it on, every available gig shift row shows a GREEN
+**Claim Shift** in place of the green Apply (web `ShiftSelector`, app
+`_GigRowActionButton`; the 9/3 spec said black — Greg flipped it to green
+after the first production claim on 2026-09-06: the row CTA is the GO
+action), the header/sticky CTA reads Claim Shift and opens the first free
+row, and the acknowledgement sheet (uniform / transportation / arrival /
+no-show, green confirm) books the day on the spot and routes to Assignment
+Details.
+
+**First production claim (Greg, 2026-09-06 ~18:05 PT, posting
+moWsEDWmnA5jaR4O0X2X "Electric Forest" test shift 9/28)**: button + sheet
+rendered, callable ran, and the HEADSHOT GATE refused it — Greg's photo on
+file is a two-person shot the Vision verifier rejected as `multiple_faces`
+(a blocking reason by policy), so the sheet showed the inline uploader.
+No assignment was written (gates run before the transaction). Working as
+designed; the fix on the worker side is a solo headshot.
 
 - **Endpoint**: `respondToAssignment` with `decision: 'claim'` +
   `{ tenantId, jobOrderId, shiftId, date?, jobPostId?, channel, acknowledgements }`

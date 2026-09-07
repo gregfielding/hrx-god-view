@@ -2213,7 +2213,14 @@ const JobPostingDetail: React.FC = () => {
       posting?.showBackgroundChecks ? 'Background check required' : null,
       posting?.showDrugScreening ? 'Drug screening required' : null,
       posting?.eVerifyRequired ? 'E-Verify required' : null,
-      posting?.requiredPpe ? `Required PPE: ${String(posting.requiredPpe)}` : null,
+      (() => {
+        // Empty arrays / blank strings used to render a bare "Required PPE:"
+        // (seen on the first production claim sheet, 2026-09-06).
+        const ppe = Array.isArray(posting?.requiredPpe)
+          ? posting.requiredPpe.map((v: unknown) => String(v ?? '').trim()).filter(Boolean).join(', ')
+          : String(posting?.requiredPpe ?? '').trim();
+        return ppe ? `Required PPE: ${ppe}` : null;
+      })(),
     ].filter(Boolean) as string[];
 
     return {
@@ -3355,9 +3362,6 @@ const JobPostingDetail: React.FC = () => {
                   borderRadius: '999px',
                   px: 2,
                   fontWeight: 700,
-                  ...(claimEnabled
-                    ? { backgroundColor: '#111', color: '#fff', '&:hover': { backgroundColor: '#000' } }
-                    : {}),
                   // Greg 2026-09-06: two identical Apply buttons in one
                   // desktop viewport read as a mistake. The sticky sidebar
                   // card already carries Apply on md+, so the header button
@@ -4238,9 +4242,6 @@ const JobPostingDetail: React.FC = () => {
                   fontWeight: 600,
                   borderRadius: '999px',
                   px: 2.5,
-                  ...(claimEnabled
-                    ? { backgroundColor: '#111', color: '#fff', '&:hover': { backgroundColor: '#000' } }
-                    : {}),
                 }}
               >
                 {claimEnabled ? t('jobs.claimShift') : t('jobs.applyForJob')}

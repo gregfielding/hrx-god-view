@@ -15,6 +15,7 @@ import CalendarMonthIcon from '@mui/icons-material/CalendarMonthOutlined';
 import PaymentsIcon from '@mui/icons-material/PaymentsOutlined';
 import PersonIcon from '@mui/icons-material/PersonOutline';
 import { t } from '../../i18n';
+import { useAuth } from '../../contexts/AuthContext';
 
 const TABS = [
   { key: 'nav.home', path: '/c1/workers/dashboard', match: ['/c1/workers/dashboard'], icon: HomeIcon },
@@ -29,6 +30,10 @@ const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, 
 const WorkerBottomTabs: React.FC = () => {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  // Profile tab shows the worker's own photo when they have one (app parity:
+  // worker_shell_scaffold's _ProfileNavIcon — Greg 2026-09-06, "my avatar is
+  // on my profile page but not in the menu"). Falls back to the person icon.
+  const { avatarUrl } = useAuth();
   return (
     <nav
       aria-label={t('nav.openMenu')}
@@ -67,7 +72,23 @@ const WorkerBottomTabs: React.FC = () => {
               fontFamily: FONT,
             }}
           >
-            <Icon sx={{ fontSize: 24 }} />
+            {key === 'nav.myAccount' && avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt=""
+                aria-hidden="true"
+                style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  boxSizing: 'border-box',
+                  border: active ? '2px solid #111' : '1px solid #e6e6e3',
+                }}
+              />
+            ) : (
+              <Icon sx={{ fontSize: 24 }} />
+            )}
             <span style={{ fontSize: 11, fontWeight: active ? 650 : 500, letterSpacing: '0.01em' }}>
               {t(key)}
             </span>

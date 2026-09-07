@@ -588,21 +588,17 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                   Past
                 </Button>
               ) : claimEnabled && onClaimShift ? (
-                // Claim Shift — black (the standard primary CTA; green is
-                // reserved for the commitment moment inside the sheet).
+                // Claim Shift — green like Apply (Greg 2026-09-06 after the
+                // first production claim: the row CTA is the GO action, so
+                // it reads green; the sheet's confirm is green too).
                 // Covers both a fresh row and a re-apply row: the server
                 // overwrites a worker-cancelled day doc on re-claim.
                 <Button
                   variant="contained"
+                  color="success"
                   disabled={disabled || isFull}
                   onClick={() => onClaimShift(shift.shiftId, item.type === 'day' ? item.date : undefined)}
-                  sx={{
-                    minWidth: 160,
-                    fontWeight: 700,
-                    backgroundColor: '#111',
-                    color: '#fff',
-                    '&:hover': { backgroundColor: '#000' },
-                  }}
+                  sx={{ minWidth: 160, fontWeight: 700 }}
                 >
                   {isFull ? t('jobs.shiftFull') : t('jobs.claimShift')}
                 </Button>

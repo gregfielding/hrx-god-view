@@ -436,3 +436,9 @@ matches assignments and applications BY DAY. Spots: the server keeps
 offers, per-day counts + per-day targets); web `resolveShiftSpots` and the
 app's `_liveSpots` derive "X spots left" / a disabled **Full** row from it,
 falling back to the headcount when a shift doc has no liveFill yet.
+
+**Profile-tab avatar (web caught up 2026-09-06):** the app's
+`_ProfileNavIcon` already showed the worker's photo in the bottom nav; web
+`WorkerBottomTabs` now does too (`useAuth().avatarUrl`, ink ring when
+active, person icon fallback). Greg spotted it on the first Claim Shift
+test ("my avatar is on my profile page but not in the menu").
