@@ -60,6 +60,36 @@ export const handleInboundSms = onRequest(
 
       logger.info(`Inbound SMS received: ${messageSid} from ${fromNumber} to ${toNumber}`);
 
+      // Raw audit copy BEFORE any routing (2026-09-06, portal-worker /
+      // Natalie Brooks line +1 312 663 8247): the pipeline below drops
+      // messages from senders that are not known users (e.g. a portal's
+      // verification-code short code), so keep every inbound verbatim in
+      // `sms_inbound_raw/{MessageSid}` for the worker + ops to read.
+      // Fail-open: never let this block STOP/HELP compliance handling.
+      try {
+        if (messageSid) {
+          await db
+            .collection('sms_inbound_raw')
+            .doc(String(messageSid))
+            .set(
+              {
+                messageSid: String(messageSid),
+                from: String(fromNumber ?? ''),
+                to: String(toNumber ?? ''),
+                body: String(messageBody ?? ''),
+                accountSid: accountSid ? String(accountSid) : null,
+                numMedia: Number(request.body?.NumMedia ?? 0) || 0,
+                receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+                // Firestore TTL field (enable a TTL policy on `expiresAt`): 30 days.
+                expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 30 * 24 * 60 * 60 * 1000),
+              },
+              { merge: true },
+            );
+        }
+      } catch (rawErr: any) {
+        logger.warn('[sms_inbound_raw] write failed (non-blocking)', { err: rawErr?.message || String(rawErr) });
+      }
+
       // Validate required fields
       if (!fromNumber || !messageBody) {
         logger.error('Missing required fields in Twilio webhook');
