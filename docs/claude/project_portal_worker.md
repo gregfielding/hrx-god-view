@@ -89,7 +89,14 @@ claims roles[T]=Admin/7, users doc mirrors Deborah/Greg shape (securityLevel
 '7' + `recruiter:true` + `crm_sales:true` at top level AND in
 tenantIds[T]; `isAutomationPersona:true` marker; avatar URL set). Script:
 `functions/.scratch/invite-natalie-brooks.ts` (idempotent, --write). Flex
-agency user invited as Admin. **Phone BOUGHT 2026-09-06 (Greg approved, via Claude-in-Chrome in the
+agency user invited as Admin (login = email-first, then a PASSWORD page
+"Signing in as …" — confirmed 2026-09-06; no code step). Fieldglass
+supplier user invited 2026-09-06: username n.brooks@c1staffing.com, role
+Administrator [Primary], supervisor Greg; registration goes through
+`user_register_form.do?personId=…` + a one-time emailed registration code
+(Greg completes it — password entry). ☠️ Activation/reset links must be
+opened in a browser with NO existing Flex session (Incognito) — in Greg's
+Chrome the link just lands on his own Jobs page. **Phone BOUGHT 2026-09-06 (Greg approved, via Claude-in-Chrome in the
 Twilio console): +1 312 663 8247**, SID `PNadc75695090f91f3f5d65065209fad28`,
 friendly name "Natalie Brooks (automation)", $1.15/mo. SMS webhook →
 `https://us-central1-hrx1-d3beb.cloudfunctions.net/handleInboundSms` (POST),
