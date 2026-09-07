@@ -231,6 +231,54 @@ our job orders as changes happen in Fieldglass? … then same for Flex."
   detection; retire the Sync Sodexo button to a manual override; Slack
   digest of each pass's summary (closed/halted/candidate-in-mind/attention).
 
+## Clock-in watch + Timesheet Grid punch feed (2026-09-07, Greg)
+
+Greg: "when workers clock in, their in-times should be entered in their
+timesheet grid row, then clock-outs at the end of the day" + the plus-15
+"are you coming?" text (Daniel's confirmations dashboard, automated).
+- **Worker**: `scheduleSyncsDue` has a third plan entry `flex_timesheets`
+  — `indeed_flex_sync` with `{includeRosters:false, includeTimesheets:true,
+  timesheetDaysBack:1, reason:'clock_in_watch'}` every
+  `PORTAL_FLEX_TIMESHEETS_EVERY_MS` (10 min) inside
+  `PORTAL_TIMESHEET_WATCH_HOURS` (5-24 Central), keyed
+  `timesheets__<10-min bucket>`, priority 120. A timesheets-only pass
+  skips the jobs list entirely (the timesheets view's own entries call
+  supplies the Authorization header for the replay). First live pass:
+  27 rows in 20s, no extraction cost.
+- **Functions** (`functions/src/integrations/indeedFlex/timesheetGridFeed.ts`,
+  called from `reconcileFlexTimesheets` after the snapshot batch; result in
+  the ingest response as `gridFeed`): for every verdict that resolved to an
+  assignment and has a punch → get-or-create
+  `timesheet_entries/{assignmentId}_{workDate}` via the new exported
+  `createDraftTimesheetEntryCore` (extracted from the callable; throws
+  `DraftEntryError` for not-found / not-scheduled days, which the feed
+  counts as `notScheduled` instead of forcing a row) → writes
+  `actualStartTime` / `actualEndTime` (HH:mm = substring of the
+  offset-bearing ISO, i.e. venue wall time) and one unpaid `breaks[]` entry
+  (`source:'indeed_flex'`). `flexPunch{applied,…}` on the entry records
+  what we wrote; a field is overwritten ONLY if empty or equal to our last
+  applied value (recruiter hand-edits win, later Flex corrections replace
+  only ours); non-draft rows are skipped; `actualHoursOverride` never set.
+  A clock-in also stamps `assignment.cortConfirmation.state='checked_in'`
+  (`checkedInVia.channel='indeed_flex_timesheet'`) unless the state is
+  already checked_in/cancelled/no_show — the real attendance signal the
+  muted T+30 no-show probe was waiting for. Tests:
+  `__tests__/integrations/indeedFlex/timesheetGridFeed.test.ts`.
+  **Needs deploy of `indeedFlexTimesheetIngest`** (Greg).
+- **Natalie's own SMS line is blocked on A2P** — see
+  [[reference_twilio_messaging_state]]: no approved 10DLC campaign on the
+  account (both 2025 campaigns failed); HRX sends only via the verified
+  toll-free 888. Options there; decision pending.
+- Remaining plan: "Late, no clock-in" status on WorkerConfirmationsDashboard
+  + a `assignment_late_checkin_15m` cadence step (HERE/CANCEL replies reuse
+  cadenceReplyHandler) → CANCEL/no-show ⇒ page recruiter + Natalie asks in
+  #indeedflex_c1staffing (C0B8ACFEU21, Slack Connect with Indeed Flex)
+  whether they want a same-day replacement, with the worker's reliability
+  summary (repeat NCNS / early tenure ⇒ offer permanent replacement) →
+  unmute the T+30 probe for Flex-linked assignments only (careers
+  included — this is not gig-only). ☠️ A failed clock-in link looks exactly
+  like a no-show (Jahon Walker, 2026-08-31) — always ask, never declare.
+
 ## Next slices (in order)
 
 1. **Bot accounts + secrets (Greg)**: dedicated Flex agency user + Fieldglass

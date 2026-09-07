@@ -46,6 +46,7 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 
 import { verifyExtensionKey, resolvePortalWorker, findHrxShiftForFlexJob, HrxShiftRef } from './portalIngest';
+import { applyFlexPunchesToGrid, type GridFeedSummary } from './timesheetGridFeed';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -420,6 +421,31 @@ export async function reconcileFlexTimesheets(
   }
   if (inBatch > 0) await batch.commit();
 
+  // Clock punches → Timesheet Grid rows + real check-ins on the assignment
+  // (2026-09-07). Only verdicts that resolved to an HRX assignment qualify.
+  let gridFeed: GridFeedSummary | null = null;
+  try {
+    gridFeed = await applyFlexPunchesToGrid(
+      db,
+      verdicts
+        .filter((v) => v.matchStatus === 'ok' && v.assignmentId && v.userId)
+        .map((v) => ({
+          tenantId,
+          assignmentId: v.assignmentId as string,
+          userId: v.userId as string,
+          workDate: v.entry.workDate,
+          flexEntryId: v.entry.flexEntryId,
+          clockIn: v.entry.clockIn,
+          clockOut: v.entry.clockOut,
+          breakSeconds: v.entry.breakSeconds,
+          breakPaid: v.entry.breakPaid,
+          flexStatus: v.entry.status,
+        })),
+    );
+  } catch (err) {
+    logger.warn('[reconcileFlexTimesheets] grid feed failed (non-fatal)', { tenantId, err: err instanceof Error ? err.message : String(err) });
+  }
+
   // Attention window (Greg 2026-08-01): mismatches older than 7 days are
   // history, not to-dos — snapshot them, but don't nag about them.
   const cutoff = new Date(capturedAt - 7 * 86400000).toISOString().slice(0, 10);
@@ -444,6 +470,7 @@ export async function reconcileFlexTimesheets(
     /** Non-ok rows older than the 7-day window — recorded, not actionable. */
     staleProblems: verdicts.filter((v) => v.matchStatus !== 'ok' && !recent(v)).length,
     problems,
+    gridFeed,
   };
 
   // Rolling health doc for the Scheduling Health tile (PI-11): last capture

@@ -44,6 +44,10 @@ export interface WorkerConfig {
    */
   fieldglassSyncEveryMs: number;
   indeedFlexSyncEveryMs: number;
+  /** Clock-in watch: timesheets-only Flex pass (cheap, no extraction). 0 disables. */
+  indeedFlexTimesheetsEveryMs: number;
+  /** Local-hour window for the clock-in watch (shifts run early and late). */
+  timesheetWatchHours: { start: number; end: number };
   /** Local-hour window [start, end) in `syncTimezone` when scheduled syncs may be enqueued. */
   syncHours: { start: number; end: number };
   syncTimezone: string;
@@ -113,18 +117,20 @@ export function loadConfig(): WorkerConfig {
     hrxBaseUrl: (process.env.HRX_BASE_URL || 'https://us-central1-hrx1-d3beb.cloudfunctions.net').replace(/\/+$/, ''),
     fieldglassSyncEveryMs: int('PORTAL_FG_SYNC_EVERY_MS', 60 * 60_000),
     indeedFlexSyncEveryMs: int('PORTAL_FLEX_SYNC_EVERY_MS', 60 * 60_000),
+    indeedFlexTimesheetsEveryMs: int('PORTAL_FLEX_TIMESHEETS_EVERY_MS', 10 * 60_000),
+    timesheetWatchHours: hoursWindow(process.env.PORTAL_TIMESHEET_WATCH_HOURS, { start: 5, end: 24 }),
     syncHours: hoursWindow(process.env.PORTAL_SYNC_HOURS, { start: 6, end: 21 }),
     syncTimezone: process.env.PORTAL_SYNC_TZ || 'America/Chicago',
   };
 }
 
 /** Is `now` inside the scheduled-sync window (local hours in syncTimezone)? */
-export function withinSyncHours(c: WorkerConfig, now = new Date()): boolean {
+export function withinSyncHours(c: WorkerConfig, now = new Date(), window = c.syncHours): boolean {
   const hour = Number(
     new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: c.syncTimezone }).format(now),
   );
   const h = hour === 24 ? 0 : hour;
-  return h >= c.syncHours.start && h < c.syncHours.end;
+  return h >= window.start && h < window.end;
 }
 
 /** Safe-to-log view (no tokens). */
@@ -144,6 +150,7 @@ export function describeConfig(c: WorkerConfig): Record<string, unknown> {
     hrxBaseUrl: c.hrxBaseUrl,
     fieldglassSyncEveryMs: c.fieldglassSyncEveryMs,
     indeedFlexSyncEveryMs: c.indeedFlexSyncEveryMs,
+    indeedFlexTimesheetsEveryMs: c.indeedFlexTimesheetsEveryMs,
     syncHours: `${c.syncHours.start}-${c.syncHours.end} ${c.syncTimezone}`,
   };
 }

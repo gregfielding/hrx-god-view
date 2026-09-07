@@ -45,7 +45,7 @@ class Worker {
   private lastActionFinishedAt = 0;
   private lastKeepAliveAt = new Map<PortalProvider, number>();
   private lastSweepAt = 0;
-  private lastScheduledSyncAt = new Map<PortalProvider, number>();
+  private lastScheduledSyncAt = new Map<string, number>();
   private readonly startedAt = Date.now();
 
   constructor(private readonly config: WorkerConfig) {
@@ -196,28 +196,51 @@ class Worker {
    * restart) within the same window collapse onto one queue row.
    */
   private async scheduleSyncsDue(): Promise<void> {
-    const plan: Array<{ provider: PortalProvider; action: PortalActionType; everyMs: number }> = [
-      { provider: 'fieldglass', action: 'fieldglass_sync', everyMs: this.config.fieldglassSyncEveryMs },
-      { provider: 'indeed_flex', action: 'indeed_flex_sync', everyMs: this.config.indeedFlexSyncEveryMs },
+    const plan: Array<{
+      key: string;
+      provider: PortalProvider;
+      action: PortalActionType;
+      everyMs: number;
+      window: { start: number; end: number };
+      payload: Record<string, unknown>;
+      keyParts: string[];
+      priority: number;
+    }> = [
+      {
+        key: 'fieldglass_full', provider: 'fieldglass', action: 'fieldglass_sync', everyMs: this.config.fieldglassSyncEveryMs,
+        window: this.config.syncHours, payload: { reason: 'scheduled' }, keyParts: ['full', portalSyncBucket(Date.now())], priority: 150,
+      },
+      {
+        key: 'flex_full', provider: 'indeed_flex', action: 'indeed_flex_sync', everyMs: this.config.indeedFlexSyncEveryMs,
+        window: this.config.syncHours, payload: { reason: 'scheduled' }, keyParts: ['full', portalSyncBucket(Date.now())], priority: 150,
+      },
+      // Clock-in watch (2026-09-07): timesheets only, every 10 min, wide hours.
+      // Feeds clock-ins/outs into the Timesheet Grid + real check-ins.
+      {
+        key: 'flex_timesheets', provider: 'indeed_flex', action: 'indeed_flex_sync', everyMs: this.config.indeedFlexTimesheetsEveryMs,
+        window: this.config.timesheetWatchHours,
+        payload: { includeRosters: false, includeTimesheets: true, timesheetDaysBack: 1, reason: 'clock_in_watch' },
+        keyParts: ['timesheets', portalSyncBucket(Date.now(), 10)], priority: 120,
+      },
     ];
-    for (const { provider, action, everyMs } of plan) {
-      if (everyMs <= 0 || !this.adapters.has(provider)) continue;
-      const last = this.lastScheduledSyncAt.get(provider) ?? 0;
-      if (Date.now() - last < everyMs) continue;
-      if (!withinSyncHours(this.config)) continue;
-      this.lastScheduledSyncAt.set(provider, Date.now());
+    for (const item of plan) {
+      if (item.everyMs <= 0 || !this.adapters.has(item.provider)) continue;
+      const last = this.lastScheduledSyncAt.get(item.key) ?? 0;
+      if (Date.now() - last < item.everyMs) continue;
+      if (!withinSyncHours(this.config, new Date(), item.window)) continue;
+      this.lastScheduledSyncAt.set(item.key, Date.now());
       try {
         const res = await enqueuePortalAction(this.db, {
           tenantId: this.config.tenantId,
-          action,
-          payload: { reason: 'scheduled' },
+          action: item.action,
+          payload: item.payload,
           createdBy: { kind: 'system', id: `portal-worker:${this.config.workerId}` },
-          keyParts: ['full', portalSyncBucket(Date.now())],
-          priority: 150, // behind any targeted/manual work
+          keyParts: item.keyParts,
+          priority: item.priority, // behind any targeted/manual work
         });
-        log.info('scheduled sync', { provider, action, id: res.id, created: res.created, existingStatus: res.existingStatus ?? null });
+        log.info('scheduled sync', { key: item.key, id: res.id, created: res.created, existingStatus: res.existingStatus ?? null });
       } catch (err) {
-        log.warn('scheduled sync enqueue failed', { provider, err });
+        log.warn('scheduled sync enqueue failed', { key: item.key, err });
       }
     }
   }

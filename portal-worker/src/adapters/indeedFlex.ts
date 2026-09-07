@@ -258,6 +258,11 @@ export class IndeedFlexAdapter implements PortalAdapter {
 
     try {
       // 1. Jobs list → JobRefs (API body preferred, DOM links as fallback).
+      // A timesheets-only pass (clock-in watch) skips it entirely — the
+      // timesheets view's own entries call supplies the auth header.
+      const needJobs = includeRosters || wanted.size > 0;
+      let targets: JobRef[] = [];
+      if (needJobs) {
       ctx.progress('loading jobs list');
       await page.goto(JOBS_LIST_URL, { waitUntil: 'domcontentloaded' });
       await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
@@ -270,7 +275,7 @@ export class IndeedFlexAdapter implements PortalAdapter {
       summary.jobsListed = jobs.length;
       log.info('flex jobs list', { fromApi: this.jobsFromCaptures(captures).length, fromDom: domJobs.length, merged: jobs.length });
 
-      let targets = jobs;
+      targets = jobs;
       if (wanted.size > 0) {
         targets = jobs.filter((j) => wanted.has(j.jobId));
         for (const id of wanted) {
@@ -282,6 +287,7 @@ export class IndeedFlexAdapter implements PortalAdapter {
         targets = jobs.filter((j) => !/completed|cancel/i.test(j.status ?? ''));
       }
       targets = targets.slice(0, maxJobs);
+      }
 
       // 2. Each job: open the booked-workers view, wait for the roster call, ship the bundle.
       if (includeRosters) {
