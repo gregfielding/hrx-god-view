@@ -22,7 +22,8 @@ const ORIGIN = 'https://www.us.fieldglass.cloud.sap';
 
 export class FieldglassAdapter implements PortalAdapter {
   readonly provider = 'fieldglass' as const;
-  readonly homeUrl = `${ORIGIN}/`;
+  /** `/desktop.do` is the supplier home; the bare origin renders the sign-in form even with a live session (verified 2026-09-06). */
+  readonly homeUrl = `${ORIGIN}/desktop.do`;
 
   async isLoginWall(page: Page): Promise<boolean> {
     const user = page.locator('input[name="username"]');
