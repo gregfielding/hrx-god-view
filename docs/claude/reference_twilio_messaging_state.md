@@ -31,6 +31,26 @@ Account "My first Twilio account" (Greg), verified via Claude-in-Chrome 2026-09-
   messages that mix OTP ("Your one-time passcode is 1234"), links and
   marketing-ish copy with NO opt-out language — a classic rejection profile.
 
+## New campaign SUBMITTED 2026-09-07 (Greg chose "do it right")
+
+Registered via Claude-in-Chrome on the empty service
+**MG2dd6557d05d9be9044c996fa568a8a39** ("Low Volume Mixed A2P Messaging
+Service"), brand C1 Staffing LLC, use case Low Volume Mixed ($15 vetting +
+$1.50/mo), status **In progress** (review = days to weeks; Twilio emails
+Greg if anything is wrong). Content: staffing-agency description, 5 samples
+all "C1 Staffing: … Reply STOP to opt out" (shift confirm YES/NO, plus-15
+clock-in check HERE/NO, shift offer, onboarding reminder w/ hrxone.com
+link, recruiter reply), consent flow = signup checkbox + verified phone +
+https://hrxone.com/consent, privacy https://hrxone.com/sms-privacy, opt-in
+keywords START/UNSTOP/OPTIN, links yes / phone numbers no / lending no /
+age-gated no. Deliberate differences from the live cadence: samples say
+NO (not CANCEL — CANCEL is a Twilio default opt-out keyword) and no OTP
+sample (Verify is separate). **When approved**: add +1 312 663 8247 to
+this service's Sender Pool, set its inbound request URL to
+`twilioInboundSmsWebhook` (same as C1 Messaging), then point Natalie's
+sends at this MG SID. Until then Natalie texts through the 888 (C1
+Messaging) with her signature.
+
 ## What this means
 
 - Sending from ANY local (10DLC) number on this account is unregistered
