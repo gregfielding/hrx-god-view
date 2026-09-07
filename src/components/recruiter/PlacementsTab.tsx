@@ -366,6 +366,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     status: string;
     startDate: string;
     offerSentAt?: number;
+    /** `assignment.acquisition` — 'claimed' for Claim Shift bookings. */
+    acquisition?: string;
     confirmedAt?: number;
     noShowRiskPredictionV1?: {
       score?: number;
@@ -1832,6 +1834,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             startDate,
             offerSentAt,
             confirmedAt,
+            acquisition: typeof data?.acquisition === 'string' ? String(data.acquisition).trim().toLowerCase() : undefined,
             noShowRiskPredictionV1,
           });
         });
@@ -1852,6 +1855,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     assignmentIdByUserId,
     assignmentStartDateByUserId,
     assignmentOfferSentAtByUserId,
+    assignmentAcquisitionByUserId,
     assignmentConfirmedAtByUserId,
     assignmentNoShowRiskByUserId,
   } = useMemo(() => {
@@ -1874,6 +1878,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     const startDateByUser = new Map<string, string>();
     const offerSentAtByUser = new Map<string, number>();
     const confirmedAtByUser = new Map<string, number>();
+    const acquisitionByUser = new Map<string, string>();
     const noShowByUser = new Map<
       string,
       { band: string; score: number; reasons: string[]; recommendedAction: string }
@@ -1893,6 +1898,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       if (r.startDate) startDateByUser.set(r.userId, r.startDate);
       if (r.offerSentAt != null) offerSentAtByUser.set(r.userId, r.offerSentAt);
       if (r.confirmedAt != null) confirmedAtByUser.set(r.userId, r.confirmedAt);
+      if (r.acquisition) acquisitionByUser.set(r.userId, r.acquisition);
       const p = r.noShowRiskPredictionV1;
       if (
         p &&
@@ -1926,6 +1932,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       assignmentIdByUserId: idByUser,
       assignmentStartDateByUserId: startDateByUser,
       assignmentOfferSentAtByUserId: offerSentAtByUser,
+      assignmentAcquisitionByUserId: acquisitionByUser,
       assignmentConfirmedAtByUserId: confirmedAtByUser,
       assignmentNoShowRiskByUserId: noShowByUser,
     };
@@ -2332,6 +2339,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           assignmentStartDate: effectiveStartDate,
           assignmentOfferSentAt: assignmentOfferSentAtByUserId.get(userId),
           assignmentConfirmedAt: assignmentConfirmedAtByUserId.get(userId),
+          assignmentAcquisition: assignmentAcquisitionByUserId.get(userId),
         };
       });
       const list = await Promise.all(userPromises);
@@ -2359,6 +2367,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     assignmentIdByUserId,
     assignmentStartDateByUserId,
     assignmentOfferSentAtByUserId,
+    assignmentAcquisitionByUserId,
     assignmentConfirmedAtByUserId,
     pendingAssignmentCancels,
     placementJobFitByUserId,

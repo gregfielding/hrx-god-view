@@ -628,8 +628,15 @@ export async function resolveApplicationForAssignment(args: {
   assignmentId: string;
   jobPostId?: string;
   entityId?: string | null;
+  /**
+   * `source` stamped when this call has to CREATE the application (default
+   * 'manual'). Claim Shift passes 'claim' so a later cancel knows the doc
+   * exists only because of the claim and can delete it (claims/claimRelease).
+   */
+  createSource?: string;
 }) {
   const { tenantId, jobOrderId, shiftId, userId, createdBy, assignmentId, jobPostId, entityId } = args;
+  const createSource = args.createSource || 'manual';
   const applicationsRef = db.collection(`tenants/${tenantId}/applications`);
 
   const [byShiftSnap, byShiftIdsSnap, byUserJobSnap] = await Promise.all([
@@ -681,7 +688,7 @@ export async function resolveApplicationForAssignment(args: {
     status: 'accepted',
     shiftId,
     shiftIds: [shiftId],
-    source: 'manual',
+    source: createSource,
     assignmentId,
     entityId: entityId ?? null,
     candidate: false,
@@ -1829,6 +1836,47 @@ export const respondToAssignment = onCall(
     },
     { merge: true },
   );
+  // Claim Shift release (Greg, 2026-09-06): a worker backing out of a
+  // CLAIMED shift releases the claim — the claim-created application is
+  // deleted (or this day dropped from a pre-existing one) so the board row
+  // returns to Claim Shift and the recruiter pool forgets the request. The
+  // assignment stays worker-cancelled for the reliability record.
+  if (String(assignment.acquisition || '').trim().toLowerCase() === 'claimed') {
+    const { planClaimRelease } = await import('./claims/claimRelease');
+    const appSnap = applicationRef ? await applicationRef.get() : null;
+    const plan = planClaimRelease({
+      application: appSnap?.exists ? (appSnap.data() as Record<string, unknown>) : null,
+      shiftId: String(assignment.shiftId || ''),
+      dayKey: toDateOnly(assignment.startDate),
+    });
+    const batch = db.batch();
+    batch.set(
+      assignmentRef,
+      {
+        claimReleasedAt: now,
+        claimReleasedBy: 'worker',
+        claimReleasePlan: plan.action + ':' + plan.reason,
+        applicationId: admin.firestore.FieldValue.delete(),
+      },
+      { merge: true },
+    );
+    if (applicationRef && plan.action === 'delete') batch.delete(applicationRef);
+    if (applicationRef && plan.action === 'update') {
+      batch.set(
+        applicationRef,
+        {
+          ...plan.patch,
+          updatedAt: now,
+          updatedBy: uid,
+          statusChangeReason: 'claim_released',
+          ...(plan.patch.status === 'withdrawn' ? { withdrawnAt: now, withdrawnBy: uid } : {}),
+        },
+        { merge: true },
+      );
+    }
+    await batch.commit();
+    return { success: true, status: cancelStatus, claimReleased: true, plan: plan.action };
+  }
   if (applicationRef) {
     const appSnap = await applicationRef.get();
     const appData = appSnap.exists ? (appSnap.data() as Record<string, any>) : {};
@@ -2643,6 +2691,60 @@ export const placementsCancelAssignment = onCall(
     },
     { merge: true },
   );
+
+  // Claim Shift release (Greg, 2026-09-06): a CLAIMED assignment is not a
+  // recruiter placement. The worker grabbed one shift-day and never applied
+  // to the JO, so on cancel we release the claim instead of reverting them
+  // to "Placed" — no placement doc, the claim-created application is
+  // deleted (or this day is dropped from a pre-existing one), and the
+  // assignment doc is KEPT as cancelled for the cancel-policy audit trail.
+  // See claims/claimRelease.ts.
+  if (String(assignmentData.acquisition || '').trim().toLowerCase() === 'claimed') {
+    const { planClaimRelease } = await import('./claims/claimRelease');
+    const appSnap = applicationRef ? await applicationRef.get() : null;
+    const plan = planClaimRelease({
+      application: appSnap?.exists ? (appSnap.data() as Record<string, unknown>) : null,
+      shiftId,
+      dayKey: placementDayKey,
+    });
+    const batch = db.batch();
+    batch.set(
+      assignmentRef,
+      {
+        claimReleasedAt: admin.firestore.FieldValue.serverTimestamp(),
+        claimReleasedBy: 'recruiter',
+        claimReleasePlan: plan.action + ':' + plan.reason,
+        applicationId: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    if (applicationRef && plan.action === 'delete') batch.delete(applicationRef);
+    if (applicationRef && plan.action === 'update') {
+      batch.set(
+        applicationRef,
+        {
+          ...plan.patch,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          statusChangeReason: 'claim_released',
+          ...(plan.patch.status === 'withdrawn'
+            ? { withdrawnAt: admin.firestore.FieldValue.serverTimestamp(), withdrawnBy: request.auth!.uid }
+            : {}),
+        },
+        { merge: true },
+      );
+    }
+    await batch.commit();
+    logger.info('[claimRelease] recruiter cancel released claim', {
+      tenantId,
+      assignmentId,
+      userId,
+      shiftId,
+      dayKey: placementDayKey,
+      plan,
+    });
+    return { success: true, mode: 'claim_released', plan: plan.action };
+  }
 
   // Firestore requires ALL reads in a transaction to precede ALL writes —
   // doing `tx.get(applicationRef)` after `tx.delete(assignmentRef)` /

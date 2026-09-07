@@ -432,6 +432,8 @@ export async function claimShiftForWorker(args: ClaimShiftArgs): Promise<ClaimSh
       assignmentId,
       jobPostId: posting.id,
       entityId: onboardingConfig.entityId,
+      // A cancel later deletes a claim-created application (claimRelease).
+      createSource: 'claim',
     });
     await Promise.all([
       assignmentRef.set({ applicationId, updatedAt: now }, { merge: true }),

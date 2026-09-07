@@ -93,6 +93,21 @@ designed; the fix on the worker side is a solo headshot.
   index that doesn't exist). The recruiter-facing `assignmentsCount` /
   `status:'filled'` automation is unchanged (still proposed/confirmed/active
   only, shift-level).
+- **Cancel = claim RELEASE (Greg, 2026-09-06 evening, after the first
+  production claim)**: a recruiter red-X (`placementsCancelAssignment`) on a
+  MANUAL placement keeps today's behavior (assignment deleted → "Placed"
+  again, application back to submitted so the pool keeps the worker). On a
+  CLAIMED assignment (`acquisition:'claimed'`) both the recruiter X and the
+  worker's own cancel (`respondToAssignment` worker_cancel) release the
+  claim instead: no placement doc, the claim-created application (`source:
+  'claim'`, or legacy `workerClaimConfirmation` with nothing else) is
+  DELETED, a pre-existing application just loses this day/shift (withdrawn
+  if nothing is left — never a live "Shift Requested"), and the ASSIGNMENT
+  doc is kept (cancelled / worker-cancelled + `claimReleasedAt/By/Plan`) as
+  the cancel-policy audit trail. Board row returns to Claim Shift; the pool
+  forgets the request. Pure planner + 6 tests: `claims/claimRelease.ts`.
+  Placements tile now reads "Claimed {time}" (no "Offer sent", no Confirm
+  chip) for claimed assignments.
 - **Not yet built**: tier windows ON, tier cron / earn-back, worker-visible
   tier, cancel-sheet tier-consequence copy (the sheet shows the >24h/<24h
   hint text only).

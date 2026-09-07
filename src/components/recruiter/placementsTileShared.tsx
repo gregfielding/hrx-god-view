@@ -156,6 +156,12 @@ export interface Worker {
   assignmentEndDate?: string;
   /** When the offer (or last reminder) was sent; ms since epoch for display */
   assignmentOfferSentAt?: number;
+  /**
+   * How the assignment came to be. 'claimed' = worker booked it via Claim
+   * Shift (born confirmed — no offer was ever sent, so the tile reads
+   * "Claimed" and hides the Confirm chip). Undefined for recruiter offers.
+   */
+  assignmentAcquisition?: string;
   /** When status is confirmed, ms when the worker confirmed (accepted) the assignment */
   assignmentConfirmedAt?: number;
   /** Master recruiter score (same source as Users table / profile header). */
