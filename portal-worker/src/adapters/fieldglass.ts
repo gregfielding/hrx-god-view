@@ -92,19 +92,35 @@ export class FieldglassAdapter implements PortalAdapter {
       await page.goto(this.homeUrl, { waitUntil: 'domcontentloaded' });
       await page.waitForTimeout(1_500);
     }
-    const user = page.locator('input[name="username"]');
-    await user.waitFor({ state: 'visible', timeout: 15_000 });
-    await user.fill(creds.username);
-    await page.locator('input[name="password"]').fill(creds.password);
-    const submit = page.getByRole('button', { name: /sign in/i });
-    if ((await submit.count()) > 0) await submit.first().click();
-    else await page.locator('input[name="password"]').press('Enter');
-    await page.waitForLoadState('domcontentloaded');
-    await page.waitForTimeout(3_000);
-
-    if (await this.isLoginWall(page)) {
+    // Submit and wait for a DEFINITE outcome (home / error / form again).
+    // A fixed 3s wait misread a slow post-login redirect as a rejection
+    // (2026-09-07: blank form, no error text); an empty form with no error
+    // gets one retry before we escalate.
+    let outcome: 'home' | 'error' | 'wall' = 'wall';
+    let errorText = '';
+    for (let attempt = 0; attempt < 2 && outcome === 'wall'; attempt += 1) {
+      const user = page.locator('input[name="username"]');
+      await user.waitFor({ state: 'visible', timeout: 15_000 });
+      await page.waitForTimeout(attempt === 0 ? 500 : 2_000);
+      await user.fill(creds.username);
+      await page.locator('input[name="password"]').fill(creds.password);
+      const submit = page.getByRole('button', { name: /sign in/i });
+      if ((await submit.count()) > 0) await submit.first().click();
+      else await page.locator('input[name="password"]').press('Enter');
+      const r = await this.awaitLoginOutcome(page, 25_000);
+      outcome = r.outcome;
+      errorText = r.errorText;
+      if (outcome === 'wall') log.warn('fieldglass sign-in form reappeared without an error — retrying once', { attempt });
+    }
+    if (outcome === 'error') {
       const shot = await ctx.screenshot('fieldglass-login-rejected');
-      throw new PortalActionFailure('LOGIN_FAILED', 'Fieldglass rejected the bot credentials', { screenshot: shot });
+      throw new PortalActionFailure('LOGIN_FAILED', `Fieldglass rejected the bot credentials: ${errorText.slice(0, 160)}`, { screenshot: shot });
+    }
+    if (outcome === 'wall') {
+      const shot = await ctx.screenshot('fieldglass-login-wall-again');
+      throw new PortalActionFailure('LOGIN_FAILED', 'Fieldglass sign-in form reappeared twice without an error (slow redirect or session conflict)', {
+        screenshot: shot,
+      });
     }
     // Positive proof first: the supplier home banner ("Hi, Natalie / Welcome to
     // SAP Fieldglass.") or the left nav. Verified 2026-09-06.
@@ -126,6 +142,34 @@ export class FieldglassAdapter implements PortalAdapter {
       });
     }
     log.info('fieldglass login ok (no banner detected, not a login wall)', { url: page.url(), headings: headings.slice(0, 120) });
+  }
+
+  /** Poll until the sign-in resolves: the supplier home, an error banner, or the bare form again. */
+  private async awaitLoginOutcome(page: Page, timeoutMs: number): Promise<{ outcome: 'home' | 'error' | 'wall'; errorText: string }> {
+    const deadline = Date.now() + timeoutMs;
+    let sawFormAgain = 0;
+    while (Date.now() < deadline) {
+      await page.waitForTimeout(500);
+      const url = page.url();
+      const wall = await this.isLoginWall(page).catch(() => false);
+      if (!wall && (url.includes('desktop.do') || (await page.getByText(/Welcome to SAP Fieldglass/i).count().catch(() => 0)) > 0)) {
+        return { outcome: 'home', errorText: '' };
+      }
+      if (!wall && !url.includes('fieldglass.cloud.sap/?') && Date.now() > deadline - timeoutMs / 2) {
+        // Somewhere inside the app that is not home (e.g. an interstitial) — let the caller inspect.
+        return { outcome: 'home', errorText: '' };
+      }
+      if (wall) {
+        const text = (await page.locator('body').innerText().catch(() => '')).slice(0, 3000);
+        const m = /(username or password is incorrect[^\n]*|account (?:is|has been) (?:locked|disabled)[^\n]*|too many[^\n]*attempts[^\n]*)/i.exec(text);
+        if (m) return { outcome: 'error', errorText: m[1] };
+        const username = await page.locator('input[name="username"]').inputValue().catch(() => '');
+        // Our filled value is gone → the page reloaded the form (post-submit) with no error.
+        if (username === '') sawFormAgain += 1;
+        if (sawFormAgain >= 6) return { outcome: 'wall', errorText: '' };
+      }
+    }
+    return { outcome: 'wall', errorText: '' };
   }
 
   async keepAlive(ctx: AdapterContext): Promise<void> {
