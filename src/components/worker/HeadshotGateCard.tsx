@@ -120,21 +120,46 @@ const HeadshotGateCard: React.FC<Props> = ({ uid, gate, onUploaded, onDismiss })
         {gate.message}
       </Typography>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+        {/* Label-wrapped inputs: the browser opens the picker from the
+            user's own click on the label, no scripted input.click() —
+            which is the pattern that silently did nothing inside the claim
+            sheet on Greg's first production test (2026-09-06). */}
         <Button
+          component="label"
           variant="contained"
           startIcon={<PhotoCamera />}
-          onClick={() => cameraRef.current?.click()}
           disabled={uploading}
         >
           {t('apply.takePhoto')}
+          <input
+            ref={cameraRef}
+            type="file"
+            accept="image/*"
+            capture="user"
+            hidden
+            onChange={(e) => {
+              void handleFile(e.target.files?.[0]);
+              e.target.value = '';
+            }}
+          />
         </Button>
         <Button
+          component="label"
           variant="outlined"
           startIcon={<Upload />}
-          onClick={() => fileRef.current?.click()}
           disabled={uploading}
         >
           {t('apply.uploadPhoto')}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              void handleFile(e.target.files?.[0]);
+              e.target.value = '';
+            }}
+          />
         </Button>
         {uploading && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -148,27 +173,6 @@ const HeadshotGateCard: React.FC<Props> = ({ uid, gate, onUploaded, onDismiss })
           {error}
         </Typography>
       )}
-      <input
-        ref={cameraRef}
-        type="file"
-        accept="image/*"
-        capture="user"
-        style={{ display: 'none' }}
-        onChange={(e) => {
-          void handleFile(e.target.files?.[0]);
-          e.target.value = '';
-        }}
-      />
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        style={{ display: 'none' }}
-        onChange={(e) => {
-          void handleFile(e.target.files?.[0]);
-          e.target.value = '';
-        }}
-      />
     </Alert>
   );
 };
