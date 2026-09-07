@@ -17,6 +17,7 @@
 import * as admin from 'firebase-admin';
 
 import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
+import { RECURRING_DIVISION_RE } from './payrollCostReport';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -54,7 +55,10 @@ export async function pushRevenueAccountReclass(
   const clRes = (await qboQuery(tenantId, 'SELECT Id, FullyQualifiedName FROM Class MAXRESULTS 1000')) as Record<string, any>;
   const classes: Array<Record<string, any>> = clRes.QueryResponse?.Class ?? clRes.Class ?? [];
   const clsById = new Map(classes.map((c) => [String(c.Id), String(c.FullyQualifiedName)]));
-  const isRecurringFamily = (fqn: string): boolean => /^sodexo$|^indeed flex/i.test(fqn);
+  // Recurring family per Tabitha's matrix, ratified by Greg 2026-09-06
+  // (supersedes the 9/1 Sodexo+Flex-only rule): these clients' revenue
+  // BELONGS in 4200, so they are excluded from the 4200→4100 reclass.
+  const isRecurringFamily = (fqn: string): boolean => RECURRING_DIVISION_RE.test(fqn);
 
   // events-family dollars posted via 4200-mapped items, bucketed by month + class
   const byMonth = new Map<string, Map<string, number>>();

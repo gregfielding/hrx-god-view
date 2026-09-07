@@ -22,7 +22,7 @@
 import * as admin from 'firebase-admin';
 
 import { qboQuery, qboEntityCreate } from '../integrations/quickbooks/qboAuth';
-import { ACCOUNT_CLASS_RULES } from './payrollCostReport';
+import { ACCOUNT_CLASS_RULES, divisionKindForClassFqn, fetchQboDivisions } from './payrollCostReport';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -96,6 +96,18 @@ export async function pushScreeningAllocations(
     accts.find((a) => /recruitment/i.test(String(a.Name)));
   if (!recruitAcct) throw new Error('5310 Background & Drug Screening account not found');
   const RECRUIT = String(recruitAcct.Id);
+  // Divisions per class family (Tabitha matrix, Greg 2026-09-06); the
+  // National/overhead bucket is unattributable → Corp/Unalloc. if present.
+  const divisions = await fetchQboDivisions(tenantId);
+  const divisionRefForLeaf = (leaf: string, cls?: Record<string, any>): Record<string, string> | undefined => {
+    if (leaf === OVERHEAD_CLASS) {
+      return divisions.corp ? { value: divisions.corp.Id, name: divisions.corp.Name } : undefined;
+    }
+    const d = divisionKindForClassFqn(String(cls?.FullyQualifiedName ?? leaf)) === 'recurring'
+      ? divisions.recurring
+      : divisions.event;
+    return { value: d.Id, name: d.Name };
+  };
 
   // ── screens + assignment index ──
   const bcSnap = await db.collection('backgroundChecks').get();
@@ -252,6 +264,7 @@ export async function pushScreeningAllocations(
     const origCls = origLine?.AccountBasedExpenseLineDetail?.ClassRef;
     const lines: Array<Record<string, unknown>> = splits.map((sp) => {
       const cls = classFor(sp.leaf);
+      const divRef = divisionRefForLeaf(sp.leaf, cls);
       return {
         DetailType: 'JournalEntryLineDetail',
         Amount: sp.amount,
@@ -260,6 +273,7 @@ export async function pushScreeningAllocations(
           PostingType: 'Debit',
           AccountRef: { value: RECRUIT },
           ...(cls ? { ClassRef: { value: String(cls.Id), name: String(cls.FullyQualifiedName) } } : {}),
+          ...(divRef ? { DepartmentRef: divRef } : {}),
         },
       };
     });

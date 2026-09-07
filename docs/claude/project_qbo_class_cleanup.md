@@ -679,12 +679,27 @@ Her full revenue tagging matrix (record of truth for future classing):
 - 4300 Other — anything not fitting 4100/4200, confirm with Vicki
 - 4900 Refunds & Discounts — negative income, tagged to customer class
 
-⚠️ OPEN CONFLICT (needs Greg/Vicki ruling): Greg 2026-09-01 said 4200 is
-ONLY Sodexo + Indeed Flex, so the reclass moved Proof of Pudding
-($326,220), Contigo ($100,182), Black Caviar ($56,981), G6 ($11,275) —
-~$494.7K — out of 4200 into 4100. Tabitha's matrix says those are 4200.
-If her matrix wins: extend `isRecurringFamily` in
-revenueAccountReclass.ts to include those five classes (+ Western Group
-Packaging, C1 MedStaff when they appear) and rerun — self-truing rewrites
-all months. AEG / RS3-Events / 812 Mgmt / Western Group are not active
-QBO classes yet (nothing to do until they exist).
+RESOLVED 2026-09-06 — Greg ratified Tabitha's matrix ("you have
+instructions for which clients (and payroll) belong to 4100 and 4200"),
+superseding the 9/1 Sodexo+Flex-only rule. Shipped same day:
+- `RECURRING_DIVISION_RE` + `divisionKindForClassFqn` +
+  `fetchQboDivisions` exported from payrollCostReport.ts — ONE family
+  rule shared by all four JE writers (revenue reclass, wire allocations,
+  allocationTrueUp, WC alloc, screening).
+- Revenue reclass rerun with the expanded family: all 9 months
+  rewritten; Proof of Pudding ($326,220), Contigo ($100,182), Black
+  Caviar ($56,981), G6 ($11,275) — $494,658.13 — returned to 4200.
+- Division stamped on every classed DEBIT line of every tagged JE:
+  [revrc:] 136 lines, [wcalloc:] 58, [wire:] 437 (102 JEs via
+  trueUpAllocationJes + 2 stragglers the matcher misses — TW Alloc doc
+  prefix, legacy-tag EV Alloc 0519 — via scratch), [screen:] 52.
+  Verified 0 missing. WC 7140 credit → Corp/Unalloc. Screening credit
+  lines mirror the ORIGINAL purchase's class and stay division-untagged
+  ON PURPOSE (they must net against the untagged purchase in the same
+  P&L-by-Division column — 4 National credits are the expected residue).
+- allocationTrueUp now rewrites a JE whose classed debits lack
+  divisions, so future wire JEs stay tagged; wcAllocations/revenue
+  reclass have the same missing-division rewrite trigger.
+- AEG / RS3-Events / 812 Mgmt / Western Group Packaging are not active
+  QBO classes yet — the regex already covers Western Group + MedStaff
+  for when they appear.

@@ -436,6 +436,9 @@ export const savePayrollVenueMapping = onCall(
       );
       if (!acct5010) throw new HttpsError('failed-precondition', 'Account 5010 (Direct Labor) not found.');
       const ACCT = String(acct5010.Id);
+      const divisions = await fetchQboDivisions(tenantId);
+      const divForFqn = (fqn: string): { Id: string; Name: string } =>
+        divisionKindForClassFqn(fqn) === 'recurring' ? divisions.recurring : divisions.event;
       const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class MAXRESULTS 1000')) as Record<string, any>;
       const classIdByFqn = new Map<string, string>(
         ((clsRes.QueryResponse?.Class ?? clsRes.Class ?? []) as Array<Record<string, any>>).map((c) => [
@@ -541,7 +544,12 @@ export const savePayrollVenueMapping = onCall(
             DetailType: 'JournalEntryLineDetail',
             Amount: Math.round(s.amount * 100) / 100,
             Description: `Everee wire ${w.fundingDate} ${w.entityName} — ${s.class}`,
-            JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: ACCT }, ClassRef: { value: cid, name: s.qboClass } },
+            JournalEntryLineDetail: {
+              PostingType: 'Debit',
+              AccountRef: { value: ACCT },
+              ClassRef: { value: cid, name: s.qboClass },
+              DepartmentRef: { value: divForFqn(String(s.qboClass)).Id, name: divForFqn(String(s.qboClass)).Name },
+            },
           });
         }
         if (unresolved > 0.005) {
@@ -1705,6 +1713,40 @@ export async function maybeRunWeeklyClassificationHealth(
       { merge: true },
     );
   }
+}
+
+/**
+ * Division (QBO Department) family rule — Tabitha's revenue matrix
+ * (email 2026-09-04) as ratified by Greg 2026-09-06 ("you have
+ * instructions for which clients (and payroll) belong to 4100 and
+ * 4200"): the RECURRING family is Sodexo, the Indeed Flex family, Proof
+ * of Pudding (RS3-Hosp), G6, Contigo, Black Caviar, Western Group
+ * Packaging, and C1 MedStaff; every other client class is EVENT-kind.
+ * The same split drives revenue accounts (4100/4200) and the Division
+ * stamped on payroll-side JE lines.
+ */
+export const RECURRING_DIVISION_RE =
+  /^(sodexo|indeed flex|proof of (the )?pudding|g6\b|contigo|black caviar|medstaff|c1 medstaff|western group)/i;
+
+export const divisionKindForClassFqn = (fqn: string): 'recurring' | 'event' =>
+  RECURRING_DIVISION_RE.test(fqn.trim()) ? 'recurring' : 'event';
+
+/** Fetch the three QBO Departments ("Divisions" in this file). */
+export async function fetchQboDivisions(tenantId: string): Promise<{
+  event: { Id: string; Name: string };
+  recurring: { Id: string; Name: string };
+  corp?: { Id: string; Name: string };
+}> {
+  const res = (await qboQuery(tenantId, 'SELECT * FROM Department MAXRESULTS 200')) as Record<string, any>;
+  const deps: Array<Record<string, any>> = res.QueryResponse?.Department ?? res.Department ?? [];
+  const find = (re: RegExp): { Id: string; Name: string } | undefined => {
+    const d = deps.find((x) => x.Active !== false && re.test(String(x.Name)));
+    return d ? { Id: String(d.Id), Name: String(d.Name) } : undefined;
+  };
+  const event = find(/event/i);
+  const recurring = find(/recurring/i);
+  if (!event || !recurring) throw new Error('Event-based/Recurring divisions not found in QBO');
+  return { event, recurring, corp: find(/corp/i) };
 }
 
 export const ACCOUNT_CLASS_RULES: Array<{ re: RegExp; leaf: string }> = [

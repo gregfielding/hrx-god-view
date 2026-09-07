@@ -22,7 +22,7 @@
 import * as admin from 'firebase-admin';
 
 import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
-import { ACCOUNT_CLASS_RULES } from './payrollCostReport';
+import { ACCOUNT_CLASS_RULES, divisionKindForClassFqn, fetchQboDivisions } from './payrollCostReport';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -63,6 +63,13 @@ export async function pushWcAllocations(
   const fieldAcct = accts.find((a) => /workers'? comp.*field/i.test(String(a.Name)));
   const internalAcct = accts.find((a) => /workers'? comp.*internal/i.test(String(a.Name)));
   if (!fieldAcct || !internalAcct) throw new Error('WC field/internal accounts not found');
+  // Divisions per class family (Tabitha matrix, Greg 2026-09-06); the
+  // 7140 credit is the internal-staff side → Corp/Unalloc. when present.
+  const divisions = await fetchQboDivisions(tenantId);
+  const divForLeaf = (leaf: string, cls?: Record<string, any>): { Id: string; Name: string } =>
+    divisionKindForClassFqn(String(cls?.FullyQualifiedName ?? leaf)) === 'recurring'
+      ? divisions.recurring
+      : divisions.event;
 
   // account-kind mappings + JO index + date splits (same shape as screening)
   const mapSnap = await db.collection(`tenants/${tenantId}/qbo_class_mappings`).get().catch(() => null);
@@ -164,11 +171,16 @@ export async function pushWcAllocations(
     const prior = existing.get(month);
     if (prior) {
       let net = 0;
+      let missingDivision = false;
       for (const l of (prior.Line ?? []) as Array<Record<string, any>>) {
         const d = l.JournalEntryLineDetail;
-        if (d?.PostingType === 'Debit') net += num(l.Amount);
+        if (!d) continue;
+        // Debits always get a division; the credit only when Corp exists.
+        const wantsDivision = d.PostingType === 'Debit' || Boolean(divisions.corp);
+        if (wantsDivision && !d.DepartmentRef?.value) missingDivision = true;
+        if (d.PostingType === 'Debit') net += num(l.Amount);
       }
-      if (Math.abs(round2(net) - total) <= 1) {
+      if (Math.abs(round2(net) - total) <= 1 && !missingDivision) {
         results.push({ month, amount: total, status: 'already_allocated' });
         continue;
       }
@@ -197,13 +209,18 @@ export async function pushWcAllocations(
           PostingType: 'Debit',
           AccountRef: { value: String(fieldAcct.Id) },
           ...(x.cls ? { ClassRef: { value: String(x.cls.Id), name: String(x.cls.FullyQualifiedName) } } : {}),
+          DepartmentRef: { value: divForLeaf(x.leaf, x.cls).Id, name: divForLeaf(x.leaf, x.cls).Name },
         },
       }));
     lines.push({
       DetailType: 'JournalEntryLineDetail',
       Amount: total,
       Description: `WC premium reclass — field share out of 7140 (${month})`,
-      JournalEntryLineDetail: { PostingType: 'Credit', AccountRef: { value: String(internalAcct.Id) } },
+      JournalEntryLineDetail: {
+        PostingType: 'Credit',
+        AccountRef: { value: String(internalAcct.Id) },
+        ...(divisions.corp ? { DepartmentRef: { value: divisions.corp.Id, name: divisions.corp.Name } } : {}),
+      },
     });
     if (prior) {
       // eslint-disable-next-line no-await-in-loop

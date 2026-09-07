@@ -15,7 +15,7 @@
 import * as admin from 'firebase-admin';
 
 import { qboQuery, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
-import { buildWireJournal } from './payrollCostReport';
+import { buildWireJournal, divisionKindForClassFqn, fetchQboDivisions } from './payrollCostReport';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -42,6 +42,14 @@ export async function trueUpAllocationJes(
   const classIdByFqn = new Map<string, string>(
     ((clsRes.QueryResponse?.Class ?? clsRes.Class ?? []) as Array<Record<string, any>>).map((c) => [String(c.FullyQualifiedName), String(c.Id)]),
   );
+  // Divisions per class family (Tabitha matrix, Greg 2026-09-06); a JE
+  // whose classed debit lines are missing divisions is rewritten even
+  // when the split itself is unchanged (one-time backfill rides here).
+  const divisions = await fetchQboDivisions(tenantId);
+  const divRefForFqn = (fqn: string): Record<string, string> => {
+    const d = divisionKindForClassFqn(fqn) === 'recurring' ? divisions.recurring : divisions.event;
+    return { value: d.Id, name: d.Name };
+  };
   let start = 1;
   const jes: Array<Record<string, any>> = [];
   for (;;) {
@@ -108,12 +116,16 @@ export async function trueUpAllocationJes(
       rem -= 1;
     }
     const want = floored.filter((x) => x.cents > 0).map((x) => ({ cls: x.cls, amt: x.cents / 100 }));
-    const have = ((je.Line ?? []) as Array<Record<string, any>>)
-      .filter((l) => l.JournalEntryLineDetail?.PostingType === 'Debit')
+    const haveLines = ((je.Line ?? []) as Array<Record<string, any>>)
+      .filter((l) => l.JournalEntryLineDetail?.PostingType === 'Debit');
+    const have = haveLines
       .map((l) => ({ cls: l.JournalEntryLineDetail.ClassRef?.name ?? null, amt: Number(l.Amount) || 0 }));
+    const missingDivision = haveLines.some(
+      (l) => l.JournalEntryLineDetail.ClassRef?.value && !l.JournalEntryLineDetail.DepartmentRef?.value,
+    );
     const key = (arr: Array<{ cls: string | null; amt: number }>): string =>
       arr.map((x) => `${x.cls}|${x.amt.toFixed(2)}`).sort().join(';');
-    if (key(want) === key(have)) {
+    if (key(want) === key(have) && !missingDivision) {
       unchanged += 1;
       continue;
     }
@@ -125,7 +137,12 @@ export async function trueUpAllocationJes(
       Amount: x.amt,
       Description: x.cls ? `Payroll allocation — ${x.cls}` : 'Payroll allocation — unattributed remainder',
       JournalEntryLineDetail: x.cls
-        ? { PostingType: 'Debit', AccountRef: { value: ACCT_5010 }, ClassRef: { value: classIdByFqn.get(x.cls), name: x.cls } }
+        ? {
+            PostingType: 'Debit',
+            AccountRef: { value: ACCT_5010 },
+            ClassRef: { value: classIdByFqn.get(x.cls), name: x.cls },
+            DepartmentRef: divRefForFqn(x.cls),
+          }
         : { PostingType: 'Debit', AccountRef: { value: ACCT_5010 } },
     }));
     for (const l of (je.Line ?? []) as Array<Record<string, any>>) {
