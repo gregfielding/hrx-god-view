@@ -52,19 +52,26 @@ can read, she closes her own loops, and she says plainly what she cannot do.
 ## Phase 3 — proactive
 7. ✅ Morning brief (7:00 CT weekdays, `natalieMorningBrief`): unaccepted Flex
    requests, Fieldglass changes overnight, today's unconfirmed shifts, late
-   check-ins with no answer yesterday, portal health — posted as her to the
-   brief channel (`app_config/natalie.briefChannelId`, default #dev).
+   check-ins with no answer yesterday, unread email needing a human, portal
+   health — posted as her to `app_config/natalie.briefChannelId` (default
+   **#recruiting**). First one posted 2026-09-07 13:47 PT (manual run via
+   `gcloud scheduler jobs run firebase-schedule-natalieMorningBrief-us-central1`).
+   Known gap: "unaccepted" is judged from HRX's `external_shift_requests`
+   only — a request a human accepted in the portal still shows until the
+   Flex sync marks it (cross-check against the portal jobs list is next).
 8. ✅ Weekly "what I did" (Mondays in the same function): counts from
    `natalie_actions` + asks + syncs + no-shows caught + things she couldn't do.
 9. ✅ Worker replies relay: inbound SMS from a worker with an active
    late/no-show/cancel state is relayed by Natalie to the recruiter thread.
 
 ## Phase 4 — full channels (need one-time grants from Greg)
-10. ⏳ Email: Natalie's Gmail via HRX's existing Google connect (sign in to
-    hrxone.com as her → Settings → Connect Gmail). Then the inbox triage that
-    runs for Greg runs for her, and she can draft/send replies to Flex /
-    Fieldglass / worker emails as herself. (Alternative later: Workspace
-    domain-wide delegation, no browser step.)
+10. ⏳ Email: code shipped (`natalie/natalieMailbox.ts` — tenant grant at
+    `tenants/{t}/integrations/natalieMailbox`, OAuth purpose `natalieMailbox`
+    on the shared `gmailOAuthCallback`; tools `read_inbox` / `send_email`;
+    the brief lists unread non-automated threads). One-time step: open the
+    consent URL in `functions/.scratch/natalie-gmail-consent-url.txt` in a
+    window signed into Google as n.brooks@ and click Allow; the callback
+    refuses any other account.
 11. ⏳ Texting from her own number: waits for the 10DLC campaign approval
     (submitted 2026-09-07); then move Natalie's sends to +1 312 663 8247.
 12. ⏳ Mac mini (9/22): move the portal worker off Greg's laptop.
