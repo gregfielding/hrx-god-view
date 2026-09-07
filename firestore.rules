@@ -926,7 +926,12 @@ service cloud.firestore {
         // Internal team (security level 5, 6, 7) can add notes to any user in their tenant
         function targetUserTenantId() {
           let target = get(/databases/$(database)/documents/users/$(userId)).data;
-          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+          // Guard both keys with `in`: reading a field the target doc lacks (e.g. a
+          // worker with no `activeTenantId`) throws in rules and surfaces to staff as
+          // "Missing or insufficient permissions" (Rosa, tier change, 2026-09-07).
+          return ('activeTenantId' in target && target.activeTenantId != null)
+            ? target.activeTenantId
+            : (('tenantId' in target) ? target.tenantId : null);
         }
         allow read, create, update, delete: if isAuthenticated() && (
           targetUserTenantId() != null && hasSecurityLevel(targetUserTenantId(), 5)
@@ -964,7 +969,12 @@ service cloud.firestore {
       match /activityLogs/{logId} {
         function activityTargetTenantId() {
           let target = get(/databases/$(database)/documents/users/$(userId)).data;
-          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+          // Guard both keys with `in`: reading a field the target doc lacks (e.g. a
+          // worker with no `activeTenantId`) throws in rules and surfaces to staff as
+          // "Missing or insufficient permissions" (Rosa, tier change, 2026-09-07).
+          return ('activeTenantId' in target && target.activeTenantId != null)
+            ? target.activeTenantId
+            : (('tenantId' in target) ? target.tenantId : null);
         }
         allow read, write: if isAuthenticated() && request.auth.uid == userId;
         allow read, write: if isHRX();
@@ -993,7 +1003,12 @@ service cloud.firestore {
       match /certification_records/{recordId} {
         function certTargetTenantId() {
           let target = get(/databases/$(database)/documents/users/$(userId)).data;
-          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+          // Guard both keys with `in`: reading a field the target doc lacks (e.g. a
+          // worker with no `activeTenantId`) throws in rules and surfaces to staff as
+          // "Missing or insufficient permissions" (Rosa, tier change, 2026-09-07).
+          return ('activeTenantId' in target && target.activeTenantId != null)
+            ? target.activeTenantId
+            : (('tenantId' in target) ? target.tenantId : null);
         }
         allow read, write: if isAuthenticated() && request.auth.uid == userId;
         allow read, write: if isHRX();
@@ -1016,7 +1031,12 @@ service cloud.firestore {
         // Internal team (securityLevel >= 5) can read/write; user can read their own.
         function targetTenantId() {
           let target = get(/databases/$(database)/documents/users/$(userId)).data;
-          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+          // Guard both keys with `in`: reading a field the target doc lacks (e.g. a
+          // worker with no `activeTenantId`) throws in rules and surfaces to staff as
+          // "Missing or insufficient permissions" (Rosa, tier change, 2026-09-07).
+          return ('activeTenantId' in target && target.activeTenantId != null)
+            ? target.activeTenantId
+            : (('tenantId' in target) ? target.tenantId : null);
         }
         allow read: if isAuthenticated() && (
           request.auth.uid == userId ||
@@ -1033,7 +1053,12 @@ service cloud.firestore {
       match /category_score_events/{eventId} {
         function targetTenantId() {
           let target = get(/databases/$(database)/documents/users/$(userId)).data;
-          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+          // Guard both keys with `in`: reading a field the target doc lacks (e.g. a
+          // worker with no `activeTenantId`) throws in rules and surfaces to staff as
+          // "Missing or insufficient permissions" (Rosa, tier change, 2026-09-07).
+          return ('activeTenantId' in target && target.activeTenantId != null)
+            ? target.activeTenantId
+            : (('tenantId' in target) ? target.tenantId : null);
         }
         allow read: if isAuthenticated() && (
           request.auth.uid == userId ||
@@ -1047,7 +1072,12 @@ service cloud.firestore {
       match /category_score_event_keys/{keyId} {
         function targetTenantId() {
           let target = get(/databases/$(database)/documents/users/$(userId)).data;
-          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+          // Guard both keys with `in`: reading a field the target doc lacks (e.g. a
+          // worker with no `activeTenantId`) throws in rules and surfaces to staff as
+          // "Missing or insufficient permissions" (Rosa, tier change, 2026-09-07).
+          return ('activeTenantId' in target && target.activeTenantId != null)
+            ? target.activeTenantId
+            : (('tenantId' in target) ? target.tenantId : null);
         }
         allow read: if isAuthenticated() && (
           request.auth.uid == userId ||
@@ -1062,7 +1092,12 @@ service cloud.firestore {
         // Internal team (securityLevel >= 5) can read/write; user can read their own (optional).
         function targetTenantId() {
           let target = get(/databases/$(database)/documents/users/$(userId)).data;
-          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+          // Guard both keys with `in`: reading a field the target doc lacks (e.g. a
+          // worker with no `activeTenantId`) throws in rules and surfaces to staff as
+          // "Missing or insufficient permissions" (Rosa, tier change, 2026-09-07).
+          return ('activeTenantId' in target && target.activeTenantId != null)
+            ? target.activeTenantId
+            : (('tenantId' in target) ? target.tenantId : null);
         }
         allow read: if isAuthenticated() && (
           request.auth.uid == userId ||
@@ -2889,7 +2924,9 @@ service cloud.firestore {
     // trigger exists), which is why the doc-based branches lead.
     function isPlatformStaff() {
       let u = getUser();
-      let home = u != null ? (u.activeTenantId != null ? u.activeTenantId : u.tenantId) : null;
+      let home = u != null
+        ? (('activeTenantId' in u && u.activeTenantId != null) ? u.activeTenantId : (('tenantId' in u) ? u.tenantId : null))
+        : null;
       let rootLevel = (u != null && u.securityLevel != null)
         ? (u.securityLevel is string ? int(u.securityLevel) : u.securityLevel)
         : null;
