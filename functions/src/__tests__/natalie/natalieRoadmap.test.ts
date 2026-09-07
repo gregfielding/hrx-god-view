@@ -46,7 +46,7 @@ describe('renderBriefFallback', () => {
   it('renders counts without the model', () => {
     const facts: BriefFacts = {
       dateLabel: 'Monday, Sep 8', isMonday: true, unacceptedFlexRequests: [{}, {}], fieldglassLast24h: { passes: 3, updated: 2, closed: 1, created: 0, failures: 0, lastAt: null },
-      todayShifts: { total: 40, unconfirmed: [{}], flexLinked: 12 }, yesterdayLateNoAnswer: [{}], yesterdayNoShows: 1, portal: {},
+      todayShifts: { total: 40, unconfirmed: [{}], flexLinked: 12 }, yesterdayLateNoAnswer: [{}], yesterdayNoShows: 1, portal: {}, emailNeedingReply: [],
     };
     const t = renderBriefFallback(facts);
     expect(t).toContain('*Morning brief — Monday, Sep 8*');

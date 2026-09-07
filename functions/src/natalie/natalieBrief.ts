@@ -11,6 +11,7 @@ import { NATALIE_SLACK_USER_TOKEN, postAsNatalie } from '../messaging/slackAsNat
 import { recordNatalieAction } from './natalieAudit';
 import { C1_TENANT_ID } from './natalieTools';
 import { NATALIE_MODEL } from './natalieAgent';
+import { readInbox } from './natalieMailbox';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -40,6 +41,7 @@ export interface BriefFacts {
   yesterdayLateNoAnswer: unknown[];
   yesterdayNoShows: number;
   portal: unknown;
+  emailNeedingReply: unknown[];
   weekly?: Record<string, number>;
 }
 
@@ -123,7 +125,15 @@ export async function gatherBriefFacts(tenantId: string): Promise<BriefFacts> {
     if (asks) weekly.replacement_asks_posted = asks.docs.filter((d) => (toDate(d.get('postedAt'))?.getTime() ?? 0) >= since.toMillis()).length;
   }
 
-  return { dateLabel: today.label, isMonday, unacceptedFlexRequests, fieldglassLast24h: fg, todayShifts: { total: todayAsg.size, unconfirmed, flexLinked }, yesterdayLateNoAnswer, yesterdayNoShows, portal, weekly };
+  let emailNeedingReply: unknown[] = [];
+  try {
+    const inbox = await readInbox(tenantId, { query: 'in:inbox is:unread newer_than:2d', max: 20 });
+    emailNeedingReply = inbox.items.filter((i) => !i.automated).slice(0, 8).map((i) => ({ from: i.from, subject: i.subject, preview: i.preview.slice(0, 160) }));
+  } catch {
+    emailNeedingReply = [];
+  }
+
+  return { dateLabel: today.label, isMonday, unacceptedFlexRequests, fieldglassLast24h: fg, todayShifts: { total: todayAsg.size, unconfirmed, flexLinked }, yesterdayLateNoAnswer, yesterdayNoShows, portal, emailNeedingReply, weekly };
 }
 
 /** Deterministic fallback if the model is unavailable. */
@@ -137,7 +147,7 @@ export function renderBriefFallback(f: BriefFacts): string {
   return lines.join('\n');
 }
 
-const BRIEF_SYSTEM = `You are Natalie Brooks, C1 Staffing's recruiting assistant, writing the team's morning brief in Slack. You are given facts as JSON. Write a short, scannable brief in Slack mrkdwn (*bold*, "•" bullets, <url|text> links; no headers, no tables). Lead with what needs a human today (unaccepted Flex requests, unconfirmed shifts, yesterday's no-answers), then a one-line portal health note. Name workers by the label given; link assignments as <https://hrxone.com/assignments/{assignmentId}|job>. If a list is empty, say so in three words or fewer, don't invent items. Aim for 8–14 lines. On Mondays add a 3–5 line "Last week I…" section from the weekly counts (plain words, no jargon). No sign-off.`;
+const BRIEF_SYSTEM = `You are Natalie Brooks, C1 Staffing's recruiting assistant, writing the team's morning brief in Slack. You are given facts as JSON. Write a short, scannable brief in Slack mrkdwn (*bold*, "•" bullets, <url|text> links; no headers, no tables). Lead with what needs a human today (unaccepted Flex requests, unconfirmed shifts, yesterday's no-answers), then a one-line portal health note. Name workers by the label given; link ONLY items that carry an assignmentId, as <https://hrxone.com/assignments/{assignmentId}|job>. Flex requests have no HRX link — write their Flex job id in plain text (e.g. 545618) and link the list once as <https://hrxone.com/shifts/log|Flex request log>. Unread emails: sender and subject only. If a list is empty, say so in three words or fewer, don't invent items. Aim for 8–14 lines. On Mondays add a 3–5 line "Last week I…" section from the weekly counts (plain words, no jargon). No sign-off.`;
 
 export async function composeBrief(facts: BriefFacts): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;

@@ -346,6 +346,13 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
       return;
     }
 
+    // Natalie's mailbox (n.brooks@) — tokens go to tenants/{tid}/integrations/natalieMailbox.
+    if (parsedState?.purpose === 'natalieMailbox') {
+      const { handleNatalieMailboxOAuth } = await import('./natalie/natalieMailbox');
+      await handleNatalieMailboxOAuth(code, parsedState, res);
+      return;
+    }
+
     const { userId } = parsedState;
 
     // DIAGNOSTIC: log the exact values being sent to Google's /token endpoint so we can
