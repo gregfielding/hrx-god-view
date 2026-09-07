@@ -425,8 +425,13 @@ on Assignment Details with a CONFIRMED assignment (`acquisition:'claimed'` →
 `gig_claimed` messaging track). Typed refusals: web `formatClaimShiftError`,
 app `ClaimShiftBlock.tryParse` (+ the existing headshot gate sheet). Spec +
 server details: docs/claude/project_tier_system_claim_shift_spec.md.
-**APP GAP:** `gigShiftRowsProvider` renders ONE row per shift doc, so on a
-multi-day gig the app can only claim (and apply to) the START day — web
-renders one row per `dateSchedule` day. Fix = expand multi-day shifts into
-per-day rows in the provider (row.dayKey per day) and pass `date` to the
-claim; `GigShiftRow.multiDay` already marks those shifts.
+**Per-day rows + live spots SHIPPED later 2026-09-06 (both sides):**
+`gigShiftRowsProvider` now expands a multi-day gig into one row per
+`dateSchedule` day with hours (web ShiftSelector parity) — apply writes
+`applyDates` for that day (quick-apply `applyDays`), claim sends the day,
+withdraw is day-scoped, and row state (submitted / offered / confirmed)
+matches assignments and applications BY DAY. Spots: the server keeps
+`shift.liveFill` (shiftFillAutomation — every live assignment incl. pending
+offers, per-day counts + per-day targets); web `resolveShiftSpots` and the
+app's `_liveSpots` derive "X spots left" / a disabled **Full** row from it,
+falling back to the headcount when a shift doc has no liveFill yet.

@@ -2602,7 +2602,12 @@ const JobPostingDetail: React.FC = () => {
       const multi = s.dateSchedule && s.endDate && s.endDate !== s.shiftDate;
       if (multi) {
         const days = getDateScheduleEntriesWithHours(s.dateSchedule, s.shiftDate, s.endDate).map((d) => d.date);
-        const free = days.find((d) => !shiftStatuses[`${sid}__${d}`] && !appliedShifts.includes(`${sid}__${d}`));
+        const free = days.find(
+          (d) =>
+            !shiftStatuses[`${sid}__${d}`] &&
+            !appliedShifts.includes(`${sid}__${d}`) &&
+            (s.spotsRemainingByDay?.[d] ?? 1) > 0,
+        );
         if (free) return { shiftId: sid, date: free };
         continue;
       }

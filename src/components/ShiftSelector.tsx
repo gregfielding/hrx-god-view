@@ -255,7 +255,15 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
     // Recruiter declined this worker from this shift (per-shift decline) →
     // terminal "Not Accepted" state. They remain an applicant for other shifts.
     const isDeclined = shiftStatus === 'declined';
-    const isFull = shift.spotsRemaining <= 0;
+    // Spots for THIS row: a multi-day day row has its own live count
+    // (`spotsRemainingByDay`, server-maintained); otherwise the shift's.
+    // Falls back to the day's headcount when no live count exists yet.
+    const rowSpotsRemaining: number =
+      item.type === 'day'
+        ? shift.spotsRemainingByDay?.[item.date] ??
+          Math.max(0, (item.workersNeeded ?? shift.staffNeeded ?? 1) + (item.overstaff ?? 0))
+        : shift.spotsRemaining;
+    const isFull = rowSpotsRemaining <= 0;
 
     // Resolve the assignmentId backing this row so the confirmed-state
     // "View Details" button can deep-link to /c1/workers/assignments/{id}.
@@ -329,14 +337,15 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                       // showing spot counts with the toggle off (2026-07-06,
                       // Domino's KY Production Associate report).
                       if (!showSpots) return null;
-                      const workers = item.workersNeeded ?? 1;
-                      const over = item.overstaff ?? 0;
-                      const total = workers + over;
-                      if (total < 1) return null;
+                      // Live per-day remaining when the server has it,
+                      // else the day's headcount (pre-liveFill docs).
+                      const total = rowSpotsRemaining;
+                      if (total < 0) return null;
                       return (
                         <Chip
                           size="small"
                           variant="outlined"
+                          color={total <= 2 ? 'warning' : 'default'}
                           label={`${total} spot${total !== 1 ? 's' : ''} left`}
                         />
                       );

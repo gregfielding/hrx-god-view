@@ -27,9 +27,9 @@ Assignment Details.
   `{ success, status:'confirmed', assignmentId, alreadyClaimed, remaining, dayKey }`.
 - **Unit of claim = one shift-day.** Doc id `${shiftId}__${uid}__${day}`
   doubles as the idempotency key (a retry / double tap returns the same
-  assignment with `alreadyClaimed: true`). Multi-day gigs: web claims any
-  day row; the APP renders one row per shift doc and claims the START day
-  only (tracked gap in the punch list).
+  assignment with `alreadyClaimed: true`). Multi-day gigs: both web and
+  app render one row per day and claim that day (app per-day rows shipped
+  later the same day).
 - **Capacity is transactional**: the transaction reads + writes the SHIFT
   doc (`claimStats[day]`), so two claims for the last spot serialize; the
   loser recounts and gets `shift_filled`. Per-day capacity =
@@ -65,11 +65,19 @@ Assignment Details.
   app `ClaimShiftBlock.tryParse`, `runClaimShiftFlow` /
   `ClaimShiftBottomSheet`, `AppStrings.claim*`, repository `claimShift`,
   `JobPostingModel.claimShiftEnabled`.
+- **Spots remaining (BUILT later 2026-09-06)**: `shift.liveFill`
+  (`functions/src/shifts/shiftLiveFill.ts`, written by shiftFillAutomation
+  on every assignment create/update/delete and on dateSchedule/headcount
+  edits): `{ total, byDay, target, targetByDay }` over ALL live statuses
+  (pending offers hold a spot — same set the claim transaction counts).
+  Web `resolveShiftSpots` → `spotsRemaining` / `spotsRemainingByDay`; app
+  `GigShiftRow.spotsRemaining` → disabled "Full". Backfilled for shifts on
+  active postings (`functions/.scratch/backfill_live_fill.ts`). The
+  recruiter-facing `assignmentsCount` / `status:'filled'` automation is
+  unchanged (still proposed/confirmed/active only).
 - **Not yet built**: tier windows ON, tier cron / earn-back, worker-visible
   tier, cancel-sheet tier-consequence copy (the sheet shows the >24h/<24h
-  hint text only), client-side `spotsRemaining` (still the stub — the
-  server is the capacity truth; a filled row surfaces as the
-  `shift_filled` message until refresh).
+  hint text only).
 
 **⚠️ Read [[project_tiered_shift_access]] FIRST — its "✅ AGREED SPEC"
 (Greg + Danny + Rosa + Mark, 2026-08-31) already settles the tier model:
@@ -226,8 +234,8 @@ Not re-opened here. The parts this build consumes:
    penalized no-shows or a lighter weight. (Sheet copy says "inside 24
    hours counts against your reliability" — nothing enforces it yet.)
 5. Where the worker sees their tier (Profile, per messaging decision 4).
-6. ~~Multi-day gigs: claim per day or whole run?~~ → BUILT per day
-   (web); app claims the start day only until it renders per-day rows.
+6. ~~Multi-day gigs: claim per day or whole run?~~ → BUILT per day on
+   both web and app.
 7. NEW: when to flip `CLAIM_TIER_WINDOWS_ENABLED` (needs the publish clock
    — `postedAt` is stamped when a post goes active — and the notification
    waves from the agreed spec).
