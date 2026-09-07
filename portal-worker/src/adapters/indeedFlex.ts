@@ -24,7 +24,7 @@
  * Booking (`book_worker`) is NOT implemented yet.
  */
 import type { Page, Response } from 'playwright';
-import type { AcceptJobRequestPayload, CapturePagePayload, IndeedFlexSyncPayload, PortalActionDoc, SmokeTestPayload } from '../../../shared/portalActions.ts';
+import type { AcceptJobRequestPayload, BookWorkerPayload, CapturePagePayload, IndeedFlexSyncPayload, PortalActionDoc, SmokeTestPayload } from '../../../shared/portalActions.ts';
 import { enqueuePortalAction } from '../enqueue.ts';
 import { isBrowserGone, PortalActionFailure } from '../errors.ts';
 import { HrxApiError, ingestFlexPortalCapture, ingestFlexTimesheets, type FlexPortalEnvelope } from '../hrxApi.ts';
@@ -198,11 +198,9 @@ export class IndeedFlexAdapter implements PortalAdapter {
       case 'capture_page':
         return this.capturePage(ctx, (action.payload ?? {}) as CapturePagePayload);
       case 'book_worker':
+        return this.bookWorker(ctx, (action.payload ?? {}) as BookWorkerPayload);
       case 'unbook_worker':
-        throw new PortalActionFailure(
-          'NOT_IMPLEMENTED',
-          `${action.action} is not implemented for Indeed Flex yet (adapter slice pending)`,
-        );
+        throw new PortalActionFailure('NOT_IMPLEMENTED', 'unbook_worker is not implemented for Indeed Flex yet');
       default:
         throw new PortalActionFailure('INVALID_PAYLOAD', `action ${action.action} does not belong to Indeed Flex`);
     }
@@ -391,6 +389,130 @@ export class IndeedFlexAdapter implements PortalAdapter {
       summary.followUpSyncError = err instanceof Error ? err.message.slice(0, 200) : String(err);
     }
     return { ...summary, confirmed: true };
+  }
+
+  // --- book_worker ------------------------------------------------------------
+  //
+  // Observed 2026-09-07 (job 545617): job-details?workers=available lists the
+  // agency's worker pool with a search box (filters by name) and one "Book"
+  // button per row; the Booked workers tab (?workers=booked) shows who is on
+  // the job. Shift checkboxes at the top (name = flex shift id) select which
+  // days a booking applies to; all are checked by default.
+
+  private async bookWorker(ctx: AdapterContext, payload: BookWorkerPayload): Promise<Record<string, unknown>> {
+    const jobId = String(payload.flexJobId ?? '').trim();
+    const name = String(payload.workerName ?? '').trim();
+    if (!/^\d+$/.test(jobId)) throw new PortalActionFailure('INVALID_PAYLOAD', 'book_worker needs a numeric flexJobId');
+    if (!name && !payload.flexWorkerId) throw new PortalActionFailure('INVALID_PAYLOAD', 'book_worker needs workerName or flexWorkerId');
+    const { page } = ctx;
+    const startedAt = Date.now();
+
+    // Resolve the job's detail URL from the jobs list (platform/role/venue ids live in the row link).
+    ctx.progress(`book ${name || payload.flexWorkerId} on ${jobId}: loading jobs list`);
+    await page.goto(JOBS_LIST_URL, { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
+    if (await this.isLoginWall(page)) throw new PortalActionFailure('LOGIN_REQUIRED', 'jobs list redirected to sign-in');
+    await this.dismissSurvey(page);
+    await this.scrollToLoadAll(page);
+    const dom = await this.jobsFromDom(page);
+    const job = dom.find((j) => j.jobId === jobId);
+    if (!job) throw new PortalActionFailure('SELECTOR_MISSING', `job ${jobId} is not on the jobs list`);
+    const u = new URL(this.detailUrl(job, null));
+    u.searchParams.set('workers', 'available');
+    await page.goto(u.toString(), { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
+    await page.waitForTimeout(1_500);
+    await this.dismissSurvey(page);
+
+    // Restrict to the requested shifts when given (checkbox name = flex shift id).
+    if (payload.flexShiftIds?.length) {
+      const all = page.locator('input[type="checkbox"][name="SELECT_ALL"]');
+      if ((await all.count()) > 0 && (await all.isChecked())) await all.uncheck().catch(() => undefined);
+      for (const sid of payload.flexShiftIds) {
+        const box = page.locator(`input[type="checkbox"][name="${sid}"]`);
+        if ((await box.count()) > 0) await box.check().catch(() => undefined);
+      }
+    }
+
+    // Search the pool by name.
+    const search = page.getByRole('textbox').first();
+    if ((await search.count()) === 0) throw new PortalActionFailure('SELECTOR_MISSING', 'no search box on the available-workers view');
+    await search.fill(name || String(payload.flexWorkerId));
+    await page.waitForTimeout(2_500);
+    const rowText = await page.locator('body').innerText().catch(() => '');
+    const results = /(\d+)\s+results?/.exec(rowText)?.[1] ?? null;
+    const bookButtons = page.getByRole('button', { name: /^book$/i });
+    const nBook = await bookButtons.count();
+    if (nBook === 0) {
+      const shot = await ctx.screenshot(`flex-book-${jobId}-no-match`);
+      throw new PortalActionFailure('PORTAL_REJECTED', `"${name}" is not in the agency's Flex worker pool for job ${jobId} (${results ?? 0} results) — add them in Flex first (Workers → Add worker)`, { screenshot: shot });
+    }
+    // Pick the row whose text contains every word of the name (case-insensitive).
+    const words = name.toLowerCase().split(/\s+/).filter(Boolean);
+    let target = bookButtons.first();
+    let chosenRow = '';
+    for (let i = 0; i < nBook; i += 1) {
+      const btn = bookButtons.nth(i);
+      const row = btn.locator('xpath=ancestor::tr[1] | xpath=ancestor::*[@role="row"][1]').first();
+      const text = ((await row.count()) > 0 ? await row.innerText().catch(() => '') : '').replace(/\s+/g, ' ');
+      if (words.every((w) => text.toLowerCase().includes(w))) { target = btn; chosenRow = text; break; }
+      if (i === 0) chosenRow = text;
+    }
+    if (nBook > 1 && !words.every((w) => chosenRow.toLowerCase().includes(w))) {
+      const shot = await ctx.screenshot(`flex-book-${jobId}-ambiguous`);
+      throw new PortalActionFailure('PORTAL_REJECTED', `${nBook} pool workers matched "${name}" and none matched every word — give the full name`, { screenshot: shot });
+    }
+    const shotBefore = await ctx.screenshot(`flex-book-${jobId}-before`);
+    if (payload.dryRun) {
+      return { jobId, workerName: name, matchedRow: chosenRow.slice(0, 200), results, dryRun: true, booked: false, screenshotBefore: shotBefore ?? null, elapsedMs: Date.now() - startedAt };
+    }
+
+    ctx.progress(`book ${name} on ${jobId}: clicking Book`);
+    await target.click();
+    await page.waitForTimeout(1_500);
+    // Any confirmation dialog: capture its text and press its affirmative button.
+    let dialogText: string | null = null;
+    const dialog = page.getByRole('dialog').or(page.locator('[role="alertdialog"]'));
+    if ((await dialog.count()) > 0) {
+      dialogText = (await dialog.first().innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 600);
+      const confirm = dialog.getByRole('button', { name: /^(book|confirm|yes|book worker|continue)$/i }).first();
+      if ((await confirm.count()) > 0) {
+        await confirm.click();
+        await page.waitForTimeout(1_500);
+      }
+    }
+    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => undefined);
+    const shotAfter = await ctx.screenshot(`flex-book-${jobId}-after`);
+    const afterText = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
+    const portalError = /something went wrong|could not|unable to|not eligible|already booked|conflict/i.exec(afterText)?.[0] ?? null;
+
+    // Verify on the Booked workers tab.
+    ctx.progress(`book ${name} on ${jobId}: verifying`);
+    const b = new URL(page.url());
+    b.searchParams.set('workers', 'booked');
+    await page.goto(b.toString(), { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => undefined);
+    await page.waitForTimeout(1_500);
+    const bookedText = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
+    const verified = words.length > 0 && words.every((w) => bookedText.toLowerCase().includes(w));
+    const counts = /(\d+)\s*\/\s*(\d+)/.exec(bookedText.slice(bookedText.indexOf('Workers booked')))?.slice(1, 3) ?? null;
+    const summary = { jobId, workerName: name, matchedRow: chosenRow.slice(0, 200), dialogText, verified, bookedCounts: counts, screenshotBefore: shotBefore ?? null, screenshotAfter: shotAfter ?? null, elapsedMs: Date.now() - startedAt };
+    if (!verified) {
+      throw new PortalActionFailure('PORTAL_REJECTED', `Book click did not put "${name}" on job ${jobId}'s booked list${portalError ? ` (portal said: ${portalError})` : ''}${dialogText ? ` — dialog: ${dialogText.slice(0, 160)}` : ''}`, summary);
+    }
+    log.info('flex book: booked', { jobId, name, counts });
+    try {
+      const sync = await enqueuePortalAction(ctx.db, {
+        tenantId: ctx.config.tenantId,
+        action: 'indeed_flex_sync',
+        payload: { flexJobIds: [jobId], includeTimesheets: false, force: true, reason: `book_worker:${jobId}` },
+        createdBy: { kind: 'system', id: `portal-worker:${ctx.config.workerId}` },
+        priority: 20,
+        force: true,
+      });
+      (summary as Record<string, unknown>).followUpSyncId = sync.id;
+    } catch { /* non-fatal */ }
+    return { ...summary, booked: true };
   }
 
   // --- capture_page (adapter-building explorer) ------------------------------

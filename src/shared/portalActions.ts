@@ -162,6 +162,8 @@ export interface BookWorkerPayload {
   workerName?: string;
   /** Specific Flex shift ids to book; omit for every open shift on the job. */
   flexShiftIds?: string[];
+  /** Walk to the Book button and screenshot without clicking it. */
+  dryRun?: boolean;
 }
 
 export type UnbookWorkerPayload = BookWorkerPayload;
