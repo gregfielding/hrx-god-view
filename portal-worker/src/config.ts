@@ -103,7 +103,7 @@ export function loadConfig(): WorkerConfig {
     leaseMs: int('PORTAL_LEASE_MS', 10 * 60_000),
     actionMinGapMs: int('PORTAL_ACTION_MIN_GAP_MS', 3_000),
     actionTimeoutMs: int('PORTAL_ACTION_TIMEOUT_MS', 4 * 60_000),
-    syncActionTimeoutMs: int('PORTAL_SYNC_ACTION_TIMEOUT_MS', 90 * 60_000),
+    syncActionTimeoutMs: int('PORTAL_SYNC_ACTION_TIMEOUT_MS', 4 * 60 * 60_000),
     slack: {
       botToken: process.env.SLACK_BOT_TOKEN || null,
       channelId: process.env.SLACK_ALERT_CHANNEL_ID || null,

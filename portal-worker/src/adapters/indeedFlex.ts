@@ -17,7 +17,7 @@
  */
 import type { Page, Response } from 'playwright';
 import type { IndeedFlexSyncPayload, PortalActionDoc, SmokeTestPayload } from '../../../shared/portalActions.ts';
-import { PortalActionFailure } from '../errors.ts';
+import { isBrowserGone, PortalActionFailure } from '../errors.ts';
 import { HrxApiError, ingestFlexPortalCapture, ingestFlexTimesheets, type FlexPortalEnvelope } from '../hrxApi.ts';
 import { log } from '../logger.ts';
 import type { PortalCredentials } from '../secrets.ts';
@@ -315,12 +315,16 @@ export class IndeedFlexAdapter implements PortalAdapter {
             }
           } catch (err) {
             if (err instanceof PortalActionFailure && err.code === 'LOGIN_REQUIRED') throw err;
+            if (isBrowserGone(err)) {
+              await state.save();
+              throw new PortalActionFailure('BROWSER_CRASH', `browser closed mid-sync after ${summary.rostersIngested} ingested`, { partial: summary });
+            }
             summary.rosterFailures += 1;
             entry.error = err instanceof HrxApiError ? `${err.code}: ${err.message}` : err instanceof Error ? err.message.slice(0, 200) : String(err);
             log.warn('flex job sync failed', { jobId: job.jobId, error: entry.error });
           }
           summary.items.push(entry);
-          if (i % 10 === 9) await state.save();
+          if (i % 3 === 2) await state.save();
           if (i < targets.length - 1) await sleep(JOB_PACING_MS);
         }
       }

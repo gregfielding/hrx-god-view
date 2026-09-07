@@ -17,7 +17,7 @@
  */
 import type { Page } from 'playwright';
 import type { FieldglassSyncPayload, PortalActionDoc, SmokeTestPayload } from '../../../shared/portalActions.ts';
-import { PortalActionFailure } from '../errors.ts';
+import { isBrowserGone, PortalActionFailure } from '../errors.ts';
 import { fetchFieldglassQueue, ingestFieldglassPage, HrxApiError } from '../hrxApi.ts';
 import { log } from '../logger.ts';
 import type { PortalCredentials } from '../secrets.ts';
@@ -352,6 +352,12 @@ export class FieldglassAdapter implements PortalAdapter {
           entry.jobOrder = joAction || null;
         }
       } catch (err) {
+        if (isBrowserGone(err)) {
+          // Shutdown/crash: stop here so the worker can release the action
+          // instead of "succeeding" with 90 fast failures (2026-09-07).
+          await state.save();
+          throw new PortalActionFailure('BROWSER_CRASH', `browser closed mid-sync after ${summary.ok} ok / ${i} visited`, { partial: summary });
+        }
         const failure = err instanceof PortalActionFailure ? err : null;
         if (failure?.code === 'LOGIN_REQUIRED') {
           consecutiveLoginWalls += 1;
@@ -370,7 +376,7 @@ export class FieldglassAdapter implements PortalAdapter {
       summary.items.push(entry);
       if (i < list.length - 1) await sleep(ITEM_PACING_MS);
       // Persist progress every 10 items so a crash keeps most of the work.
-      if (i % 10 === 9) await state.save();
+      if (i % 3 === 2) await state.save();
     }
     await state.save();
     const { items: detail, ...rest } = summary;

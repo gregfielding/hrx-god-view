@@ -32,6 +32,11 @@ export function classifyError(err: unknown): { code: PortalActionErrorCode; mess
   return { code: 'UNKNOWN', message };
 }
 
+/** True when the error means the browser/page is gone (shutdown, crash) — a loop must stop, not continue. */
+export function isBrowserGone(err: unknown): boolean {
+  return classifyError(err).code === 'BROWSER_CRASH';
+}
+
 /** Wrap a promise with a hard timeout that rejects as TIMEOUT. */
 export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
