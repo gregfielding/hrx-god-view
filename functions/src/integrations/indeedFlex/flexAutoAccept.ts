@@ -45,9 +45,14 @@ export interface FlexAutoAcceptCandidate {
   event?: { jobId?: string; headcount?: number; workDate?: string; endDate?: string; venueName?: string };
 }
 
-export type FlexAutoAcceptDecision =
-  | { accept: true; dryRun: boolean; flexJobId: string; headcount: number | null }
-  | { accept: false; reason: string };
+export interface FlexAutoAcceptDecision {
+  accept: boolean;
+  /** Why it was skipped (only when accept is false). */
+  reason?: string;
+  dryRun?: boolean;
+  flexJobId?: string;
+  headcount?: number | null;
+}
 
 /** Pure policy — unit-tested; `todayIso` is YYYY-MM-DD (UTC is fine: the date gate is coarse). */
 export function decideFlexAutoAccept(
@@ -113,9 +118,9 @@ export async function maybeEnqueueFlexAccept(
   try {
     const cfg = await loadFlexAutoAcceptConfig(db, tenantId);
     const decision = decideFlexAutoAccept(cfg, row, new Date().toISOString().slice(0, 10));
-    if (!decision.accept) {
+    if (!decision.accept || !decision.flexJobId) {
       logger.info('[flexAutoAccept] skipped', { tenantId, requestId: row.requestId, reason: decision.reason });
-      return { enqueued: false, reason: decision.reason };
+      return { enqueued: false, reason: decision.reason ?? 'no job id' };
     }
     const res = await enqueuePortalAction(db, {
       tenantId,
