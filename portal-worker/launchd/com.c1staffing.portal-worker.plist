@@ -24,7 +24,10 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>cd /Users/c1/Projects/hrx-god-view/portal-worker &amp;&amp; exec npm start</string>
+    <!-- exec the worker process DIRECTLY (not `npm start`): launchd signals only the
+         main PID, and killing an `npm` wrapper orphans the node child, which then keeps
+         running the old code alongside the restarted worker (2026-09-07). -->
+    <string>cd /Users/c1/Projects/hrx-god-view/portal-worker &amp;&amp; exec ./node_modules/.bin/tsx src/index.ts</string>
   </array>
 
   <key>WorkingDirectory</key>
