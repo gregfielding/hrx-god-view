@@ -33,6 +33,9 @@ import {
   Checkroom as CheckroomIcon,
   Engineering as EngineeringIcon,
   CalendarMonth as CalendarMonthIcon,
+  PersonPinCircle as PersonPinCircleIcon,
+  Sms as SmsIcon,
+  Call as CallIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db, functions } from '../firebase';
@@ -106,6 +109,14 @@ interface AssignmentDetails {
   /** Bilingual staff instruction text (worker-facing): section -> { en, es }. Fallback to staffInstructions.*.text */
   staffInstructions_i18n?: Record<string, { en?: string; es?: string }>;
   checkInInstructions?: string;
+  /**
+   * Day-of on-site contact (assignment → shift → job order chain), the same
+   * resolution the app's assignment detail and the T-2h logistics text use.
+   * Web parity shipped 2026-09-06 (was app-only).
+   */
+  onsiteContactName?: string;
+  onsiteContactPhone?: string;
+  onsiteContactRole?: string;
   /** Job order "Uniform Requirements" (pack selection e.g. Business Casual); string or array joined for display */
   uniformRequirements?: string;
   /** Job order "Custom Uniform Requirements" (free text); used on Assignment Info card only */
@@ -940,6 +951,9 @@ const AssignmentDetails: React.FC = () => {
       const assignmentStaffI18n: StaffInstructionI18nMap = normalizeStaffInstructionI18nMap(sourceData.staffInstructions_i18n);
       let shiftCheckInInstructions = '';
       let shiftUniformRequirements = '';
+      let shiftOnsiteContactName = '';
+      let shiftOnsiteContactPhone = '';
+      let shiftOnsiteContactRole = '';
       let shiftCustomUniformRequirements = '';
       let shiftPpeRequirements = '';
       let shiftPhysicalRequirements = '';
@@ -993,6 +1007,9 @@ const AssignmentDetails: React.FC = () => {
             shiftStaff = normalizeStaffInstructionMap(shiftData.staffInstructions);
             shiftStaffI18n = normalizeStaffInstructionI18nMap(shiftData.staffInstructions_i18n);
             shiftCheckInInstructions = typeof shiftData.checkInInstructions === 'string' ? shiftData.checkInInstructions : '';
+            shiftOnsiteContactName = typeof shiftData.onsiteContactName === 'string' ? shiftData.onsiteContactName : '';
+            shiftOnsiteContactPhone = typeof shiftData.onsiteContactPhone === 'string' ? shiftData.onsiteContactPhone : '';
+            shiftOnsiteContactRole = typeof shiftData.onsiteContactRole === 'string' ? shiftData.onsiteContactRole : '';
             shiftUniformRequirements = typeof shiftData.uniformRequirements === 'string'
               ? shiftData.uniformRequirements
               : Array.isArray(shiftData.uniformRequirements)
@@ -1071,6 +1088,16 @@ const AssignmentDetails: React.FC = () => {
         jobOrderData.checkInInstructions ||
         ''
       ).trim();
+      // On-site contact: assignment → shift → job order (app + cadence parity).
+      const resolvedOnsiteContactName = String(
+        sourceData.onsiteContactName || shiftOnsiteContactName || jobOrderData.onsiteContactName || '',
+      ).trim();
+      const resolvedOnsiteContactPhone = String(
+        sourceData.onsiteContactPhone || shiftOnsiteContactPhone || jobOrderData.onsiteContactPhone || '',
+      ).trim();
+      const resolvedOnsiteContactRole = String(
+        sourceData.onsiteContactRole || shiftOnsiteContactRole || jobOrderData.onsiteContactRole || '',
+      ).trim();
       
       // Parse dates: prefer assignment (shift) start/end when present
       let startDate: Date | undefined;
@@ -1139,6 +1166,9 @@ const AssignmentDetails: React.FC = () => {
         staffInstructions: resolvedStaff,
         staffInstructions_i18n: resolvedStaffI18n,
         checkInInstructions: resolvedCheckInInstructions,
+        onsiteContactName: resolvedOnsiteContactName || undefined,
+        onsiteContactPhone: resolvedOnsiteContactPhone || undefined,
+        onsiteContactRole: resolvedOnsiteContactRole || undefined,
         uniformRequirements: sourceData.uniformRequirements ||
           shiftUniformRequirements ||
           (Array.isArray(jobOrderData.uniformRequirements) ? jobOrderData.uniformRequirements.filter(Boolean).join(', ') : (typeof jobOrderData.uniformRequirements === 'string' ? jobOrderData.uniformRequirements : undefined)),
@@ -1625,6 +1655,55 @@ const AssignmentDetails: React.FC = () => {
             </Card>
           );
         })()}
+
+        {/* Day-of on-site contact (assignment → shift → JO chain) — who to
+            find on arrival. App parity: assignment_detail_screen.dart renders
+            the same card with Text / Call rows. */}
+        {(assignment.onsiteContactName || assignment.onsiteContactPhone) && (
+          <Card sx={{ mb: 2 }}>
+            <CardContent>
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                <PersonPinCircleIcon fontSize="small" color="action" />
+                <Typography variant="h6">{t('assignment.onsiteContact')}</Typography>
+              </Stack>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                {t('assignment.onsiteContactHint')}
+              </Typography>
+              {assignment.onsiteContactName && (
+                <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                  {assignment.onsiteContactName}
+                </Typography>
+              )}
+              {assignment.onsiteContactRole && (
+                <Typography variant="body2" color="text.secondary">
+                  {assignment.onsiteContactRole}
+                </Typography>
+              )}
+              {assignment.onsiteContactPhone && (
+                <Stack direction="row" spacing={1} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<SmsIcon />}
+                    href={`sms:${assignment.onsiteContactPhone}`}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    {t('assignment.textContact')} · {assignment.onsiteContactPhone}
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<CallIcon />}
+                    href={`tel:${assignment.onsiteContactPhone}`}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    {t('assignment.callContact')}
+                  </Button>
+                </Stack>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Staff Instructions: one card per section; show i18n text by preferred language, fallback to legacy .text */}
         {(() => {

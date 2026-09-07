@@ -375,9 +375,10 @@ call on the day-of hero and an On-site contact card on Assignment
 Details. Parking/entrance/check-in text already existed as
 `staffInstructions` (account → location → JO → shift → assignment) —
 nothing new needed there; venue-level defaults are edited on
-AccountLocationDetail. STILL WEB-SIDE GAP: the worker-facing web
-assignment view doesn't render the structured on-site contact (app
-does). Bag-policy convention: use `staffInstructions.other` for now.
+AccountLocationDetail. Web-side gap CLOSED 2026-09-06: AssignmentDetails
+renders the same "On-site contact" card (name / role / phone with Text +
+Call links; assignment → shift → JO chain, i18n `assignment.onsiteContact*`).
+Bag-policy convention: use `staffInstructions.other` for now.
 
 **T-2h logistics push SHIPPED 2026-09-03** (hrx-god-view daeb0af1,
 deployed dispatchScheduledWorkerReminders +
