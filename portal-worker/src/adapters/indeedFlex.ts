@@ -445,6 +445,16 @@ export class IndeedFlexAdapter implements PortalAdapter {
       jobs = this.mergeJobRefs(jobs, domJobs);
       summary.jobsListed = jobs.length;
       log.info('flex jobs list', { fromApi: this.jobsFromCaptures(captures).length, fromDom: domJobs.length, merged: jobs.length });
+      // Publish the portal's own view of every job (status New / In Progress /
+      // Completed, client) so HRX can tell an accepted request from one still
+      // waiting — Natalie's brief and list_flex_requests read this doc.
+      try {
+        const byJob: Record<string, unknown> = {};
+        for (const j of jobs) byJob[j.jobId] = { status: j.status ?? null, client: j.client ?? null, title: j.title ?? null, seenAt: new Date().toISOString() };
+        await ctx.db.collection('tenants').doc(ctx.config.tenantId).collection('portal_state').doc('indeed_flex_jobs').set({ jobs: byJob, count: jobs.length, updatedAt: new Date().toISOString(), workerId: ctx.config.workerId }, { merge: true });
+      } catch (err) {
+        log.warn('flex jobs list publish failed', { error: err instanceof Error ? err.message : String(err) });
+      }
 
       targets = jobs;
       if (wanted.size > 0) {

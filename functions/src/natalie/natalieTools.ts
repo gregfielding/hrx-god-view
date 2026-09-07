@@ -320,6 +320,7 @@ async function requestPortalSync(ctx: NatalieToolContext, input: { provider: 'fi
 async function listFlexRequests(tenantId: string, days: number): Promise<unknown> {
   const since = admin.firestore.Timestamp.fromMillis(Date.now() - Math.max(1, Math.min(days || 3, 30)) * 86400000);
   const snap = await db.collection(`tenants/${tenantId}/external_shift_requests`).where('createdAt', '>=', since).orderBy('createdAt', 'desc').limit(40).get();
+  const portalJobs = ((await db.doc(`tenants/${tenantId}/portal_state/indeed_flex_jobs`).get()).get('jobs') ?? {}) as Record<string, { status?: string | null; client?: string | null }>;
   return snap.docs.map((d) => {
     const r = d.data() as Record<string, unknown>;
     const ev = (r.event ?? {}) as Record<string, unknown>;
@@ -338,6 +339,8 @@ async function listFlexRequests(tenantId: string, days: number): Promise<unknown
       match: r.matchConfidence,
       account: s(r.matchedAccountName) || null,
       acceptedInPortal: pa.actionId ? { actionId: pa.actionId, dryRun: pa.dryRun === true, queuedAt: pa.enqueuedAt } : null,
+      /** Status on the Flex jobs list at the last sync: New = still waiting for a Respond; In Progress = accepted (by anyone); Completed/Cancelled = over. */
+      portalStatus: portalJobs[s(ev.jobId)]?.status ?? null,
     };
   });
 }

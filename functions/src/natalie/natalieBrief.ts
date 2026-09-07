@@ -52,15 +52,19 @@ export async function gatherBriefFacts(tenantId: string): Promise<BriefFacts> {
 
   // Flex requests in the last 36h that nobody accepted.
   const reqs = await db.collection(`tenants/${tenantId}/external_shift_requests`).where('createdAt', '>=', admin.firestore.Timestamp.fromMillis(Date.now() - 36 * 3600_000)).orderBy('createdAt', 'desc').limit(60).get();
+  // The portal's own view of each job (published by the Flex sync): a request
+  // someone accepted by hand shows In Progress / Completed there.
+  const portalJobs = ((await db.doc(`tenants/${tenantId}/portal_state/indeed_flex_jobs`).get()).get('jobs') ?? {}) as Record<string, { status?: string | null }>;
   const unacceptedFlexRequests = reqs.docs
     .map((d) => d.data() as Record<string, unknown>)
     .filter((r) => r.eventType === 'new_request' && r.status === 'needs_review')
     .map((r) => {
       const ev = (r.event ?? {}) as Record<string, unknown>;
       const pa = (r.portalAccept ?? {}) as Record<string, unknown>;
-      return { flexJobId: ev.jobId, venue: ev.venueName, role: ev.roleName, date: ev.workDate, headcount: ev.headcount, match: r.matchConfidence, account: r.matchedAccountName ?? null, acceptQueued: Boolean(pa.actionId) && pa.dryRun !== true, dryRunOnly: pa.dryRun === true };
+      const portalStatus = portalJobs[String(ev.jobId ?? '')]?.status ?? null;
+      return { flexJobId: ev.jobId, venue: ev.venueName, role: ev.roleName, date: ev.workDate, headcount: ev.headcount, match: r.matchConfidence, account: r.matchedAccountName ?? null, acceptQueued: Boolean(pa.actionId) && pa.dryRun !== true, dryRunOnly: pa.dryRun === true, portalStatus };
     })
-    .filter((r) => !r.acceptQueued);
+    .filter((r) => !r.acceptQueued && !(r.portalStatus && /in progress|completed|cancel/i.test(r.portalStatus)));
 
   // Fieldglass activity in the last 24h from succeeded syncs.
   const acts = await db.collection(`tenants/${tenantId}/portal_actions`).where('updatedAt', '>=', admin.firestore.Timestamp.fromMillis(Date.now() - 24 * 3600_000)).limit(120).get();
