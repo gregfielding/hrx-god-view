@@ -359,6 +359,13 @@ PORTAL_REJECTED with screenshots) → enqueue a targeted
 changes (`kill <tsx pid>`; launchd relaunches) — an old worker claims new
 action types and fails them INVALID_PAYLOAD; re-enqueue with `--force`.
 
+**Rehearsal verified 2026-09-07 15:05 PT**: dry-run accept for Flex request
+546477 (OnTrac Denver, 12 heads) walked jobs list → Respond → allocation
+page, read 12/12, screenshotted, and stopped before Confirm in 45s. An
+earlier attempt timed out 3× on `input[type=number]` `.nth(1)` — a hidden
+second number input on the allocation page; the adapter now skips
+non-visible/non-editable inputs and never blocks on fill (5s cap).
+
 **Producer** (`functions/src/integrations/indeedFlex/flexAutoAccept.ts`):
 `maybeEnqueueFlexAccept` runs from `onShiftRequestCreatedMatch` and the
 `linkVenueToAccount` re-match when a `new_request` lands `exact`. Policy
