@@ -79,13 +79,26 @@ async function slack<T = Record<string, unknown>>(token: string, method: string,
   return (await res.json()) as T & { ok: boolean; error?: string };
 }
 
-const nameCache = new Map<string, string>();
-async function userName(token: string, id: string): Promise<string> {
-  if (nameCache.has(id)) return nameCache.get(id)!;
-  const r = await slack<{ user?: { real_name?: string; name?: string; profile?: { display_name?: string; first_name?: string } } }>(token, 'users.info', { user: id });
-  const n = r.ok ? r.user?.profile?.first_name || r.user?.real_name || r.user?.profile?.display_name || r.user?.name || id : id;
-  nameCache.set(id, n);
-  return n;
+const userCache = new Map<string, { name: string; teamId: string | null; isBot: boolean }>();
+async function userInfo(token: string, id: string): Promise<{ name: string; teamId: string | null; isBot: boolean }> {
+  if (userCache.has(id)) return userCache.get(id)!;
+  const r = await slack<{ user?: { real_name?: string; name?: string; team_id?: string; is_bot?: boolean; is_stranger?: boolean; profile?: { display_name?: string; first_name?: string; team?: string } } }>(token, 'users.info', { user: id });
+  const u = r.ok ? r.user : undefined;
+  const info = {
+    name: u?.profile?.first_name || u?.real_name || u?.profile?.display_name || u?.name || id,
+    teamId: u?.team_id || u?.profile?.team || null,
+    isBot: Boolean(u?.is_bot),
+  };
+  userCache.set(id, info);
+  return info;
+}
+
+let homeTeamId: string | null = null;
+async function natalieTeamId(token: string): Promise<string | null> {
+  if (homeTeamId) return homeTeamId;
+  const r = await slack<{ team_id?: string }>(token, 'auth.test', {});
+  homeTeamId = r.ok ? r.team_id ?? null : null;
+  return homeTeamId;
 }
 
 async function loadState(): Promise<InboxState> {
@@ -190,7 +203,17 @@ export async function pollNatalieInbox(token: string): Promise<{ answered: numbe
     if (answered >= MAX_MESSAGES_PER_TICK || Date.now() - started > TICK_BUDGET_MS) { skipped += 1; continue; }
     const key = `${p.channel}__${p.threadTs}`;
     const askedBy = p.message.user!;
-    const askedByName = await userName(token, askedBy);
+    const who = await userInfo(token, askedBy);
+    const askedByName = who.name;
+    // Only C1 Staffing's own members: in Slack Connect channels (e.g. the
+    // Indeed Flex team's) an outside user can @mention her — never hand
+    // internal HRX data to another workspace.
+    const home = await natalieTeamId(token);
+    if (who.isBot || (home && who.teamId && who.teamId !== home)) {
+      logger.info('[natalie] ignoring message from outside the workspace', { channel: p.channel, askedBy, teamId: who.teamId });
+      skipped += 1;
+      continue;
+    }
     const text = cleanText(p.message.text ?? '', NATALIE_SLACK_USER_ID);
     const history = await loadThread(key);
     const turn: NatalieTurn = { role: 'user', text, by: askedBy, byName: askedByName, ts: p.message.ts };

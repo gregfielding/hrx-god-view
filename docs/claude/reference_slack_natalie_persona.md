@@ -67,6 +67,13 @@ heartbeat, failures), `request_portal_sync`, `list_flex_requests`,
 `job_order_fill_status`, `send_worker_sms` (signed Natalie). She says so when
 asked to do something she can't yet (book in Flex, submit to Fieldglass).
 
+**Verified live 2026-09-07 11:59 PT**: Greg @mentioned her in #dev; 62s
+later she answered in-thread with the real last-pass numbers for both
+portals and the stuck smoke-test rows. Her intro/how-to post is in #dev
+(ts 1788807644.485229). Guard: messages from users outside the C1 workspace
+(Slack Connect partners) or bots are ignored — she never hands HRX data to
+the Indeed Flex team's users even when they @mention her.
+
 **DM scopes still missing**: her token has channels/groups history but not
 `im:history, im:read, mpim:history, mpim:read`, so DMs are skipped
 (`users.conversations` falls back to channel types) until she re-authorizes
