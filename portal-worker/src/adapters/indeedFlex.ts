@@ -284,20 +284,37 @@ export class IndeedFlexAdapter implements PortalAdapter {
     }
 
     // 3. Headcount per day (portal default = requested). Only touch it when asked.
-    const inputs = page.locator('input[type="number"]');
+    // One "Accepted workers" number input per day row. The portal defaults it
+    // to the requested headcount; only touch it when the caller asked for a
+    // different number, and never block on an input that isn't editable
+    // (2026-09-07: a hidden/readonly second input made `fill` time out for
+    // 30s × 3 attempts and sent request 546477 to needs_human).
+    const inputs = page.locator('input[type="number"][aria-label*="ccepted"], input[type="number"]');
     const dayRows = await inputs.count();
-    const before: Array<{ accepted: string; requested: string | null }> = [];
+    const before: Array<{ accepted: string; requested: string | null; note?: string }> = [];
     for (let i = 0; i < dayRows; i += 1) {
       const inp = inputs.nth(i);
+      const visible = await inp.isVisible().catch(() => false);
+      const editable = visible && (await inp.isEditable().catch(() => false));
+      const current = await inp.inputValue().catch(() => '');
       const requested = await inp.evaluate((el) => {
         const t = el.parentElement?.parentElement?.textContent ?? '';
-        return /\/\s*(\d+)/.exec(t)?.[1] ?? null;
+        return /\/\s*(\d+)/.exec(t)?.[1] ?? (el as HTMLInputElement).max ?? null;
       }).catch(() => null);
-      if (wantHeadcount != null) {
-        await inp.fill(String(wantHeadcount));
-        await inp.evaluate((el) => el.dispatchEvent(new Event('change', { bubbles: true }))).catch(() => undefined);
+      if (!visible) continue;
+      let note: string | undefined;
+      if (wantHeadcount != null && String(wantHeadcount) !== current) {
+        if (!editable) note = 'not editable — left portal default';
+        else {
+          try {
+            await inp.fill(String(wantHeadcount), { timeout: 5_000 });
+            await inp.evaluate((el) => el.dispatchEvent(new Event('change', { bubbles: true }))).catch(() => undefined);
+          } catch {
+            note = 'fill failed — left portal default';
+          }
+        }
       }
-      before.push({ accepted: await inp.inputValue().catch(() => ''), requested });
+      before.push({ accepted: await inp.inputValue().catch(() => current), requested, ...(note ? { note } : {}) });
     }
     const shotBefore = await ctx.screenshot(`flex-accept-${jobId}-before-confirm`);
     const summary: Record<string, unknown> = {
