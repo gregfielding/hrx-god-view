@@ -1,11 +1,19 @@
 import type { Page } from 'playwright';
 import type { PortalActionDoc, PortalProvider } from '../../../shared/portalActions.ts';
+import type { WorkerConfig } from '../config.ts';
+import type { Firestore } from '../firebase.ts';
 import type { PortalCredentials } from '../secrets.ts';
 
 export interface AdapterContext {
   page: Page;
+  config: WorkerConfig;
+  db: Firestore;
   /** Capture the current page; returns a human-openable URL/path when it works. */
   screenshot: (label: string) => Promise<string | undefined>;
+  /** HRX courier key for this provider's ingest endpoints (null when not provisioned). */
+  extensionKey: () => Promise<string | null>;
+  /** Progress note for logs / heartbeat while a long action runs. */
+  progress: (note: string) => void;
 }
 
 /**

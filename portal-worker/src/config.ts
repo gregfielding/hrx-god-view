@@ -28,11 +28,32 @@ export interface WorkerConfig {
   actionMinGapMs: number;
   /** Per-action hard timeout for the browser work. */
   actionTimeoutMs: number;
+  /** Timeout for the long-running *_sync passes (dozens of pages, each with a server-side extraction). */
+  syncActionTimeoutMs: number;
   slack: { botToken: string | null; channelId: string | null };
   /** Secret Manager names are `${secretPrefix}-${provider}-username|password`. */
   secretPrefix: string;
   /** Milliseconds a single worker will run before exiting for a clean restart (launchd relaunches). */
   maxUptimeMs: number;
+  /** HRX Cloud Functions origin for the courier endpoints (enrichment queue/ingest, Flex ingest). */
+  hrxBaseUrl: string;
+  /**
+   * Recurring full sync passes, one per provider. 0 disables. The worker
+   * enqueues a `<provider>_sync` action on this cadence (deduped by time
+   * bucket, so several workers share one run) inside `syncHours`.
+   */
+  fieldglassSyncEveryMs: number;
+  indeedFlexSyncEveryMs: number;
+  /** Local-hour window [start, end) in `syncTimezone` when scheduled syncs may be enqueued. */
+  syncHours: { start: number; end: number };
+  syncTimezone: string;
+}
+
+function hoursWindow(raw: string | undefined, fallback: { start: number; end: number }) {
+  if (!raw) return fallback;
+  const m = /^(\d{1,2})-(\d{1,2})$/.exec(raw.trim());
+  if (!m) throw new Error(`PORTAL_SYNC_HOURS must look like "6-20", got ${JSON.stringify(raw)}`);
+  return { start: Number(m[1]), end: Number(m[2]) };
 }
 
 function int(name: string, fallback: number): number {
@@ -82,13 +103,28 @@ export function loadConfig(): WorkerConfig {
     leaseMs: int('PORTAL_LEASE_MS', 10 * 60_000),
     actionMinGapMs: int('PORTAL_ACTION_MIN_GAP_MS', 3_000),
     actionTimeoutMs: int('PORTAL_ACTION_TIMEOUT_MS', 4 * 60_000),
+    syncActionTimeoutMs: int('PORTAL_SYNC_ACTION_TIMEOUT_MS', 90 * 60_000),
     slack: {
       botToken: process.env.SLACK_BOT_TOKEN || null,
       channelId: process.env.SLACK_ALERT_CHANNEL_ID || null,
     },
     secretPrefix: process.env.PORTAL_SECRET_PREFIX || 'portal-worker',
     maxUptimeMs: int('PORTAL_MAX_UPTIME_MS', 12 * 60 * 60_000),
+    hrxBaseUrl: (process.env.HRX_BASE_URL || 'https://us-central1-hrx1-d3beb.cloudfunctions.net').replace(/\/+$/, ''),
+    fieldglassSyncEveryMs: int('PORTAL_FG_SYNC_EVERY_MS', 60 * 60_000),
+    indeedFlexSyncEveryMs: int('PORTAL_FLEX_SYNC_EVERY_MS', 60 * 60_000),
+    syncHours: hoursWindow(process.env.PORTAL_SYNC_HOURS, { start: 6, end: 21 }),
+    syncTimezone: process.env.PORTAL_SYNC_TZ || 'America/Chicago',
   };
+}
+
+/** Is `now` inside the scheduled-sync window (local hours in syncTimezone)? */
+export function withinSyncHours(c: WorkerConfig, now = new Date()): boolean {
+  const hour = Number(
+    new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: c.syncTimezone }).format(now),
+  );
+  const h = hour === 24 ? 0 : hour;
+  return h >= c.syncHours.start && h < c.syncHours.end;
 }
 
 /** Safe-to-log view (no tokens). */
@@ -105,5 +141,9 @@ export function describeConfig(c: WorkerConfig): Record<string, unknown> {
     leaseMs: c.leaseMs,
     keepAliveMs: c.keepAliveMs,
     slackConfigured: Boolean(c.slack.botToken && c.slack.channelId),
+    hrxBaseUrl: c.hrxBaseUrl,
+    fieldglassSyncEveryMs: c.fieldglassSyncEveryMs,
+    indeedFlexSyncEveryMs: c.indeedFlexSyncEveryMs,
+    syncHours: `${c.syncHours.start}-${c.syncHours.end} ${c.syncTimezone}`,
   };
 }

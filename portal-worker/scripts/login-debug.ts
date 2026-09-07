@@ -11,9 +11,9 @@ import type { PortalProvider } from '../../shared/portalActions.ts';
 import { buildAdapters } from '../src/adapters/index.ts';
 import { BrowserManager } from '../src/browser.ts';
 import { loadConfig } from '../src/config.ts';
-import { initFirebase } from '../src/firebase.ts';
+import { db as getDb, initFirebase } from '../src/firebase.ts';
 import { log } from '../src/logger.ts';
-import { getPortalCredentials } from '../src/secrets.ts';
+import { getExtensionKey, getPortalCredentials } from '../src/secrets.ts';
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -30,8 +30,16 @@ async function main() {
   const adapter = buildAdapters([provider]).get(provider)!;
   const page = await browser.page(provider);
   const shot = (label: string) => browser.screenshot(provider, `login-debug-${label}`);
+  const ctx = {
+    page,
+    config,
+    db: getDb(),
+    screenshot: shot,
+    extensionKey: () => getExtensionKey(config, provider),
+    progress: (note: string) => log.info('progress', { note }),
+  };
 
-  const loggedIn = await adapter.checkSession({ page, screenshot: shot });
+  const loggedIn = await adapter.checkSession(ctx);
   log.info('session check', { provider, loggedIn, url: page.url() });
   await shot('00-after-session-check');
   if (loggedIn) {
@@ -48,7 +56,7 @@ async function main() {
     if (f === page.mainFrame()) log.info('navigated', { url: f.url() });
   });
   try {
-    await adapter.login({ page, screenshot: shot }, creds);
+    await adapter.login(ctx, creds);
     log.info('login OK', { url: page.url() });
     await shot('99-logged-in');
   } catch (err) {

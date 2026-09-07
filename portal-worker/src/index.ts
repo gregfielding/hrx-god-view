@@ -9,10 +9,11 @@
  * per-provider keep-alive (keeps portal sessions warm), and a max-uptime
  * exit so launchd restarts the process on a schedule.
  */
-import type { PortalActionError, PortalProvider } from '../../shared/portalActions.ts';
+import { portalSyncBucket, type PortalActionError, type PortalActionType, type PortalProvider } from '../../shared/portalActions.ts';
 import { buildAdapters, type AdapterContext, type PortalAdapter } from './adapters/index.ts';
 import { BrowserManager } from './browser.ts';
-import { describeConfig, loadConfig, type WorkerConfig } from './config.ts';
+import { describeConfig, loadConfig, withinSyncHours, type WorkerConfig } from './config.ts';
+import { enqueuePortalAction } from './enqueue.ts';
 import { classifyError, PortalActionFailure, withTimeout } from './errors.ts';
 import { db as getDb, initFirebase, type Firestore } from './firebase.ts';
 import { Heartbeat } from './heartbeat.ts';
@@ -28,7 +29,7 @@ import {
   sweepExpiredLeases,
   type ClaimedAction,
 } from './queue.ts';
-import { forgetPortalCredentials, getPortalCredentials } from './secrets.ts';
+import { forgetPortalCredentials, getExtensionKey, getPortalCredentials } from './secrets.ts';
 import { SlackNotifier } from './slack.ts';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -44,6 +45,7 @@ class Worker {
   private lastActionFinishedAt = 0;
   private lastKeepAliveAt = new Map<PortalProvider, number>();
   private lastSweepAt = 0;
+  private lastScheduledSyncAt = new Map<PortalProvider, number>();
   private readonly startedAt = Date.now();
 
   constructor(private readonly config: WorkerConfig) {
@@ -81,6 +83,8 @@ class Worker {
       this.lastSweepAt = Date.now();
       await sweepExpiredLeases(this.db, this.config.tenantId, this.config.workerId);
     }
+
+    await this.scheduleSyncsDue();
 
     const sinceLast = Date.now() - this.lastActionFinishedAt;
     if (sinceLast < this.config.actionMinGapMs) return;
@@ -121,7 +125,8 @@ class Worker {
       await markRunning(ref, doc, this.config.workerId);
       const ctx = await this.context(doc.provider);
       await withTimeout(this.ensureSession(adapter, ctx), this.config.actionTimeoutMs, 'session');
-      const result = await withTimeout(adapter.execute(ctx, doc), this.config.actionTimeoutMs, `action ${doc.action}`);
+      const timeoutMs = doc.action.endsWith('_sync') ? this.config.syncActionTimeoutMs : this.config.actionTimeoutMs;
+      const result = await withTimeout(adapter.execute(ctx, doc), timeoutMs, `action ${doc.action}`);
       await markSucceeded(ref, doc, this.config.workerId, result);
       this.heartbeat.bump('succeeded');
       log.info('action succeeded', { id, result });
@@ -131,7 +136,9 @@ class Worker {
       const screenshotUrl =
         (details?.screenshot as string | undefined) ?? (await this.browser.screenshot(doc.provider, `${doc.action}-${code}`));
       await this.finishWithError(claimed, { code, message, screenshotUrl });
-      if (code === 'BROWSER_CRASH') await this.browser.reset(doc.provider);
+      // A timed-out adapter promise is still running against the page —
+      // tear the context down so it dies instead of fighting the next action.
+      if (code === 'BROWSER_CRASH' || code === 'TIMEOUT') await this.browser.reset(doc.provider);
     } finally {
       clearInterval(lease);
       this.current = null;
@@ -160,7 +167,49 @@ class Worker {
 
   private async context(provider: PortalProvider): Promise<AdapterContext> {
     const page = await this.browser.page(provider);
-    return { page, screenshot: (label) => this.browser.screenshot(provider, label) };
+    return {
+      page,
+      config: this.config,
+      db: this.db,
+      screenshot: (label) => this.browser.screenshot(provider, label),
+      extensionKey: () => getExtensionKey(this.config, provider),
+      progress: (note) => {
+        this.heartbeat.setBusyNote(note);
+        log.debug('progress', { provider, note });
+      },
+    };
+  }
+
+  /**
+   * Recurring full sync passes (`fieldglass_sync` / `indeed_flex_sync`).
+   * The action id carries a 15-minute bucket, so two workers (or a worker
+   * restart) within the same window collapse onto one queue row.
+   */
+  private async scheduleSyncsDue(): Promise<void> {
+    const plan: Array<{ provider: PortalProvider; action: PortalActionType; everyMs: number }> = [
+      { provider: 'fieldglass', action: 'fieldglass_sync', everyMs: this.config.fieldglassSyncEveryMs },
+      { provider: 'indeed_flex', action: 'indeed_flex_sync', everyMs: this.config.indeedFlexSyncEveryMs },
+    ];
+    for (const { provider, action, everyMs } of plan) {
+      if (everyMs <= 0 || !this.adapters.has(provider)) continue;
+      const last = this.lastScheduledSyncAt.get(provider) ?? 0;
+      if (Date.now() - last < everyMs) continue;
+      if (!withinSyncHours(this.config)) continue;
+      this.lastScheduledSyncAt.set(provider, Date.now());
+      try {
+        const res = await enqueuePortalAction(this.db, {
+          tenantId: this.config.tenantId,
+          action,
+          payload: { reason: 'scheduled' },
+          createdBy: { kind: 'system', id: `portal-worker:${this.config.workerId}` },
+          keyParts: ['full', portalSyncBucket(Date.now())],
+          priority: 150, // behind any targeted/manual work
+        });
+        log.info('scheduled sync', { provider, action, id: res.id, created: res.created, existingStatus: res.existingStatus ?? null });
+      } catch (err) {
+        log.warn('scheduled sync enqueue failed', { provider, err });
+      }
+    }
   }
 
   /**

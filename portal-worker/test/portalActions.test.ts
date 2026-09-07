@@ -5,10 +5,45 @@ import {
   defaultPortalActionKeyParts,
   nextStatusAfterError,
   portalActionRetryDelayMs,
+  portalSyncBucket,
   providerForAction,
   sanitizePortalActionIdPart,
 } from '../../shared/portalActions.ts';
+import { withinSyncHours, type WorkerConfig } from '../src/config.ts';
 import { classifyError, PortalActionFailure } from '../src/errors.ts';
+import { hashPageText, normalizePageText } from '../src/syncState.ts';
+
+describe('sync actions', () => {
+  it('buckets full passes into 15-minute windows', () => {
+    const t = Date.UTC(2026, 8, 7, 1, 17, 42);
+    assert.equal(portalSyncBucket(t), '2026-09-07T01-15');
+    assert.equal(portalSyncBucket(t + 13 * 60_000), '2026-09-07T01-30');
+  });
+
+  it('keys targeted syncs on their posting set and full passes on the bucket', () => {
+    assert.deepEqual(defaultPortalActionKeyParts('fieldglass_sync', { postingIds: ['SDXOJP2', 'SDXOJP1'] }), ['targeted', 'SDXOJP1+SDXOJP2']);
+    const full = defaultPortalActionKeyParts('fieldglass_sync', {});
+    assert.equal(full[0], 'full');
+    assert.match(String(full[1]), /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}$/);
+    assert.equal(providerForAction('fieldglass_sync'), 'fieldglass');
+    assert.equal(providerForAction('indeed_flex_sync'), 'indeed_flex');
+  });
+
+  it('hashes page text ignoring whitespace and clock lines', () => {
+    const a = 'Job Posting  SDXOJP1\n\n  Rate: $18.00\n10:32 AM\n';
+    const b = 'Job Posting SDXOJP1\nRate: $18.00\n11:05 AM';
+    assert.equal(normalizePageText(a), 'Job Posting SDXOJP1\nRate: $18.00');
+    assert.equal(hashPageText(a), hashPageText(b));
+    assert.notEqual(hashPageText(a), hashPageText(a.replace('$18.00', '$19.00')));
+  });
+
+  it('respects the local sync-hours window', () => {
+    const cfg = { syncHours: { start: 6, end: 21 }, syncTimezone: 'America/Chicago' } as WorkerConfig;
+    // 2026-09-07 12:00Z = 07:00 CDT (inside); 2026-09-07 03:00Z = 22:00 CDT the day before (outside)
+    assert.equal(withinSyncHours(cfg, new Date(Date.UTC(2026, 8, 7, 12, 0))), true);
+    assert.equal(withinSyncHours(cfg, new Date(Date.UTC(2026, 8, 7, 3, 0))), false);
+  });
+});
 
 describe('portal action ids', () => {
   it('builds a deterministic, Firestore-safe id', () => {

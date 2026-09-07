@@ -28,7 +28,20 @@ export type PortalActionType =
   /** Fieldglass: submit a candidate (job seeker) to a posting. */
   | 'submit_candidate'
   /** Fieldglass: withdraw a submitted candidate from a posting. */
-  | 'withdraw_candidate';
+  | 'withdraw_candidate'
+  /**
+   * Fieldglass: the "Sync Sodexo" pass — HRX pending queue + worklist scan,
+   * open each posting's detail page, ship its text to
+   * fieldglassEnrichmentIngest (which updates/creates the JO, closes or
+   * halts it). Replaces the Chrome-extension button.
+   */
+  | 'fieldglass_sync'
+  /**
+   * Indeed Flex: the courier pass — jobs list + each job's detail/roster +
+   * timesheets, replayed to indeedFlexPortalIngest / indeedFlexTimesheetIngest.
+   * Replaces the Chrome-extension passive capture.
+   */
+  | 'indeed_flex_sync';
 
 export const PORTAL_ACTION_TYPES: readonly PortalActionType[] = [
   'smoke_test',
@@ -36,6 +49,8 @@ export const PORTAL_ACTION_TYPES: readonly PortalActionType[] = [
   'unbook_worker',
   'submit_candidate',
   'withdraw_candidate',
+  'fieldglass_sync',
+  'indeed_flex_sync',
 ];
 
 /** Which provider each action type belongs to (smoke_test is universal). */
@@ -44,6 +59,8 @@ export const PORTAL_ACTION_PROVIDER: Record<Exclude<PortalActionType, 'smoke_tes
   unbook_worker: 'indeed_flex',
   submit_candidate: 'fieldglass',
   withdraw_candidate: 'fieldglass',
+  fieldglass_sync: 'fieldglass',
+  indeed_flex_sync: 'indeed_flex',
 };
 
 export type PortalActionStatus =
@@ -154,12 +171,45 @@ export interface WithdrawCandidatePayload {
   candidateName?: string;
 }
 
+export interface FieldglassSyncPayload {
+  /** Only these postings (targeted sync, e.g. from a revision email). Omit for the full pass. */
+  postingIds?: string[];
+  /** Include HRX's "still needs enrichment" queue (default true on a full pass). */
+  includeHrxQueue?: boolean;
+  /** Scan the supplier worklist for every open posting (default true on a full pass). */
+  scanWorklist?: boolean;
+  /** Re-ingest even when the page text is unchanged since the last sync. */
+  force?: boolean;
+  /** Safety cap on postings visited in one run (default 120). */
+  maxPostings?: number;
+  /** Why this run exists — 'scheduled' | 'revision_email' | 'manual' | … (audit only). */
+  reason?: string;
+}
+
+export interface IndeedFlexSyncPayload {
+  /** Only these Flex job ids. Omit for every job on the jobs list. */
+  flexJobIds?: string[];
+  /** Capture the booked-worker roster per job (default true). */
+  includeRosters?: boolean;
+  /** Capture the timesheets view for the window (default true). */
+  includeTimesheets?: boolean;
+  /** Timesheet window in days back from today (default 7). */
+  timesheetDaysBack?: number;
+  /** Also visit jobs the list shows as Completed (default false — their rosters are frozen). */
+  includeCompleted?: boolean;
+  force?: boolean;
+  maxJobs?: number;
+  reason?: string;
+}
+
 export type PortalActionPayloadMap = {
   smoke_test: SmokeTestPayload;
   book_worker: BookWorkerPayload;
   unbook_worker: UnbookWorkerPayload;
   submit_candidate: SubmitCandidatePayload;
   withdraw_candidate: WithdrawCandidatePayload;
+  fieldglass_sync: FieldglassSyncPayload;
+  indeed_flex_sync: IndeedFlexSyncPayload;
 };
 
 export interface PortalActionLease {
@@ -227,7 +277,7 @@ export interface PortalWorkerDoc {
   lastHeartbeatAt: unknown;
   stoppedAt?: unknown | null;
   status: 'starting' | 'idle' | 'busy' | 'stopped';
-  busyWith?: { actionId: string; provider: PortalProvider; action: PortalActionType; since: string } | null;
+  busyWith?: { actionId: string; provider: PortalProvider; action: PortalActionType; since: string; note?: string } | null;
   sessions: Partial<Record<PortalProvider, PortalWorkerSessionInfo>>;
   counters: { succeeded: number; failed: number; needsHuman: number };
 }
@@ -341,8 +391,27 @@ export function defaultPortalActionKeyParts<A extends PortalActionType>(
       const p = payload as WithdrawCandidatePayload;
       return [p.postingId, p.fieldglassJobSeekerId || p.candidateName];
     }
+    case 'fieldglass_sync': {
+      // Targeted syncs key on their posting set; a full pass keys on a time
+      // bucket so several producers/workers collapse onto one row per window.
+      const p = payload as FieldglassSyncPayload;
+      if (p.postingIds?.length) return ['targeted', p.postingIds.slice().sort().join('+')];
+      return ['full', portalSyncBucket(Date.now())];
+    }
+    case 'indeed_flex_sync': {
+      const p = payload as IndeedFlexSyncPayload;
+      if (p.flexJobIds?.length) return ['targeted', p.flexJobIds.slice().sort().join('+')];
+      return ['full', portalSyncBucket(Date.now())];
+    }
     case 'smoke_test':
     default:
       return [];
   }
+}
+
+/** 15-minute bucket label (UTC) used to dedupe full sync passes, e.g. 2026-09-07T01-15. */
+export function portalSyncBucket(nowMs: number, bucketMinutes = 15): string {
+  const ms = bucketMinutes * 60 * 1000;
+  const d = new Date(Math.floor(nowMs / ms) * ms);
+  return d.toISOString().slice(0, 16).replace(':', '-');
 }

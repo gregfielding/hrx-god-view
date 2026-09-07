@@ -48,6 +48,11 @@ export class Heartbeat {
     this.busyWith = { actionId, provider, action, since: new Date().toISOString() };
   }
 
+  /** Progress note for long actions (shows in the worker doc / status CLI). */
+  setBusyNote(note: string): void {
+    if (this.busyWith) this.busyWith = { ...this.busyWith, note: note.slice(0, 120) };
+  }
+
   setIdle(): void {
     this.status = 'idle';
     this.busyWith = null;

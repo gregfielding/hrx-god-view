@@ -77,6 +77,27 @@ export async function getPortalCredentials(
   return creds;
 }
 
+/**
+ * Shared courier keys for HRX's extension endpoints (the same values as
+ * FIELDGLASS_EXTENSION_KEY / INDEED_FLEX_EXTENSION_KEY in functions env).
+ * env first, then Secret Manager `${secretPrefix}-<provider>-extension-key`.
+ */
+const keyCache = new Map<PortalProvider, string | null>();
+const KEY_ENV: Record<PortalProvider, string> = {
+  indeed_flex: 'INDEED_FLEX_EXTENSION_KEY',
+  fieldglass: 'FIELDGLASS_EXTENSION_KEY',
+};
+
+export async function getExtensionKey(config: WorkerConfig, provider: PortalProvider): Promise<string | null> {
+  if (keyCache.has(provider)) return keyCache.get(provider) ?? null;
+  let key = process.env[KEY_ENV[provider]] || null;
+  if (!key) key = await readSecret(config.projectId, `${config.secretPrefix}-${provider}-extension-key`);
+  if (key) redact(key);
+  else log.warn('no HRX extension key available — sync actions will escalate', { provider, env: KEY_ENV[provider] });
+  keyCache.set(provider, key);
+  return key;
+}
+
 /** Drop the cache so a rotated secret is picked up on the next login attempt. */
 export function forgetPortalCredentials(provider?: PortalProvider): void {
   if (provider) cache.delete(provider);
