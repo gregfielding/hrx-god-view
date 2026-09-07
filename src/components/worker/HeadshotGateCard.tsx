@@ -19,9 +19,14 @@ import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/ma
 import { PhotoCamera, Upload } from '@mui/icons-material';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { db, storage } from '../../firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions, storage } from '../../firebase';
 import { useT } from '../../i18n';
-import type { FormattedHeadshotGateError } from '../../utils/avatarVerification/formatHeadshotGateError';
+import {
+  formatHeadshotGateError,
+  type FormattedHeadshotGateError,
+} from '../../utils/avatarVerification/formatHeadshotGateError';
+import { downscaleImage } from '../../utils/downscaleImage';
 
 interface Props {
   uid: string;
@@ -31,7 +36,14 @@ interface Props {
   onDismiss?: () => void;
 }
 
-const MAX_BYTES = 5 * 1024 * 1024;
+// Pre-downscale cap only — the file is shrunk to a ≤1280px JPEG before
+// upload (see utils/downscaleImage). The old 5 MB cap refused phone photos
+// and large PNGs outright ("Image must be smaller than 5MB") and the photo
+// never reached Storage — Greg's first Claim Shift test, 2026-09-06.
+const MAX_BYTES = 25 * 1024 * 1024;
+
+/** Reasons the Accept/Claim gate blocks on (mirror of HEADSHOT_BLOCKING_REJECTION_REASONS). */
+const BLOCKING_REASONS = new Set(['no_face', 'multiple_faces', 'inappropriate', 'manual_override']);
 
 const HeadshotGateCard: React.FC<Props> = ({ uid, gate, onUploaded, onDismiss }) => {
   const t = useT();
@@ -53,18 +65,42 @@ const HeadshotGateCard: React.FC<Props> = ({ uid, gate, onUploaded, onDismiss })
     setUploading(true);
     setError(null);
     try {
+      const blob = await downscaleImage(file);
       const target = storageRef(storage, `avatars/${uid}.jpg`);
-      await uploadBytes(target, file, { contentType: file.type || 'image/jpeg' });
+      await uploadBytes(target, blob, { contentType: blob.type || 'image/jpeg' });
       const url = await getDownloadURL(target);
       await updateDoc(doc(db, 'users', uid), {
         avatar: url,
         'workerProfile.photoUrl': url,
         updatedAt: serverTimestamp(),
       });
+      // Force a fresh verdict on THIS file and wait for it. The user-doc
+      // trigger only re-verifies when the avatar URL string changes, and an
+      // overwrite of the same storage path can hand back the same URL —
+      // leaving the previous photo's rejection glued to the new picture.
+      // reverifyAvatar allows self-calls and returns the decision inline.
+      try {
+        const reverify = httpsCallable(functions, 'reverifyAvatar');
+        const res = await reverify({ userId: uid });
+        const verdict = (res.data || {}) as { status?: string; rejectionReason?: string | null };
+        if (verdict.status === 'rejected' && verdict.rejectionReason && BLOCKING_REASONS.has(verdict.rejectionReason)) {
+          const formatted = formatHeadshotGateError({
+            code: 'functions/failed-precondition',
+            details: { code: 'HEADSHOT_REJECTED', status: 'rejected', rejectionReason: verdict.rejectionReason },
+          });
+          setError(formatted?.message || t('apply.failedToUploadImage'));
+          return;
+        }
+      } catch (verifyErr) {
+        // Verification hiccup is not an upload failure — the server gate
+        // lets pending / errored records through, so continue.
+        console.warn('[HeadshotGateCard] reverify failed (continuing)', verifyErr);
+      }
       onUploaded(url);
     } catch (err) {
       console.error('[HeadshotGateCard] upload failed', err);
-      setError(t('apply.failedToUploadImage'));
+      const code = (err as { code?: string })?.code ? ` (${(err as { code?: string }).code})` : '';
+      setError(`${t('apply.failedToUploadImage')}${code}`);
     } finally {
       setUploading(false);
     }
