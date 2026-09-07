@@ -74,11 +74,13 @@ portals and the stuck smoke-test rows. Her intro/how-to post is in #dev
 (Slack Connect partners) or bots are ignored — she never hands HRX data to
 the Indeed Flex team's users even when they @mention her.
 
-**DM scopes still missing**: her token has channels/groups history but not
-`im:history, im:read, mpim:history, mpim:read`, so DMs are skipped
-(`users.conversations` falls back to channel types) until she re-authorizes
-with this URL (Incognito, signed in as Natalie; the callback page shows the
-code; run the exchange script; the check script keeps it only if it is hers):
+**DM scopes granted 2026-09-07 12:20 PT** (secret version 4: channels/groups/
+im/mpim history+read, users:read, chat:write, im:write) — DMs and group DMs
+to Natalie are answered too. Functions pin the secret version at deploy, so
+`natalieSlackInbox` + `dispatchScheduledWorkerReminders` were redeployed.
+To re-authorize again later, use this URL (Incognito, signed in as Natalie;
+the callback page shows the code; run the exchange script; the check script
+keeps the token only if it is hers):
 
 ```
 https://slack.com/oauth/v2/authorize?client_id=7582435419591.12004537233218&user_scope=chat:write,channels:read,groups:read,channels:history,groups:history,users:read,im:write,im:history,im:read,mpim:history,mpim:read&redirect_uri=https://hrxone.com/slack/oauth/callback
