@@ -59,6 +59,21 @@ Opt-in: start, unstop, yes. Help: help, info. Twilio's auto-replies to these
 do NOT show in the Messages log. Carrier blocks now surface in Slack via
 `ops_alerts` (channel configurable at `app_config/ops_alerts.slackChannelId`).
 
+## Natalie's line CANNOT receive verification codes (found 2026-09-07)
+
+Slack's "sign in with mobile number" sent two codes (short codes 78156 and
+22395) to +1 312 663 8247. Twilio marked both inbound messages **Failed,
+error 30038 "OTP message body filtered"**, redacted the body to
+`**verification code is:**`, and never called the webhook — Twilio blocks
+one-time passcodes delivered TO its own numbers (account-verification abuse
+prevention). This is not fixable by campaign registration; an exception
+needs a Twilio support ticket ("inbound OTP allow-list"), and even then
+per-sender. So for ANY portal / SaaS phone verification for Natalie
+(Slack, Indeed Flex, Fieldglass, Google) use her mailbox
+(n.brooks@c1staffing.com — Claude reads it) or Google SSO instead. Normal
+worker replies to her line are unaffected (`sms_inbound_raw` audit copy
++ routing).
+
 ## What this means
 
 - Sending from ANY local (10DLC) number on this account is unregistered
