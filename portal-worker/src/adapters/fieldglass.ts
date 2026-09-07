@@ -516,31 +516,38 @@ export class FieldglassAdapter implements PortalAdapter {
       .catch(() => 0);
     absorb(await this.linksOnPage(page));
 
-    // Scroll the virtualized table container until nothing new appears.
+    // Scroll the virtualized table until nothing new appears. SAP UI5 tables
+    // (sap.ui.table) keep their own scrollbar element (`.sapUiTableVSb`) and
+    // react to wheel events over the rows — neither native scrollTop on a
+    // wrapper nor window scrolling moves them (2026-09-07: 15/94 collected).
     let idle = 0;
     let pages = 1;
-    for (let i = 0; i < 120 && idle < 6; i += 1) {
+    for (let i = 0; i < 150 && idle < 8; i += 1) {
       if (total > 0 && links.length >= total) break;
-      const moved = await page.evaluate(() => {
-        const candidates = Array.from(document.querySelectorAll('div, table, section, main')).filter((el) => {
-          const e = el as HTMLElement;
-          const cs = getComputedStyle(e);
-          return e.scrollHeight > e.clientHeight + 40 && /(auto|scroll)/.test(cs.overflowY) && e.querySelector('a[href*="job_posting_detail.do"]');
-        }) as HTMLElement[];
-        const el = candidates.sort((a, b) => b.scrollHeight - a.scrollHeight)[0];
-        if (el) {
-          const before = el.scrollTop;
-          el.scrollTop = Math.min(el.scrollTop + el.clientHeight * 0.9, el.scrollHeight);
-          return el.scrollTop !== before;
-        }
-        const before = window.scrollY;
-        window.scrollBy(0, window.innerHeight * 0.9);
-        return window.scrollY !== before;
+      const before = links.length;
+      // 1) UI5 vertical scrollbar element, if present.
+      const viaVsb = await page.evaluate(() => {
+        const vsb = document.querySelector('.sapUiTableVSb, [id$="-vsb"], .sapUiTableVSbExternal') as HTMLElement | null;
+        if (!vsb) return false;
+        const prev = vsb.scrollTop;
+        vsb.scrollTop = prev + Math.max(200, vsb.clientHeight * 0.8);
+        return vsb.scrollTop !== prev;
       });
+      // 2) Wheel over the last visible row (works for UI5 and for plain overflow containers).
+      if (!viaVsb) {
+        const rows = page.locator('a[href*="job_posting_detail.do"]');
+        const n = await rows.count();
+        if (n > 0) {
+          const box = await rows.nth(n - 1).boundingBox().catch(() => null);
+          if (box) {
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+            await page.mouse.wheel(0, 500);
+          }
+        }
+      }
       await page.waitForTimeout(600);
-      const added = absorb(await this.linksOnPage(page));
-      idle = added === 0 && !moved ? idle + 1 : added === 0 ? idle + 1 : 0;
-      if (!moved && added === 0 && idle >= 2) break;
+      absorb(await this.linksOnPage(page));
+      idle = links.length === before ? idle + 1 : 0;
     }
 
     // Fallback: a real pager when the total is still short.
