@@ -83,11 +83,34 @@ can read, she closes her own loops, and she says plainly what she cannot do.
 12. ⏳ Mac mini (9/22): move the portal worker off Greg's laptop.
 
 ## Phase 5 — finish jobs end to end (portal adapters)
-13. 📋 `book_worker` in Indeed Flex (needs one observed booking flow in a
-    logged-in session) → "fill the Denver order with our best three".
+13. 🔧 `book_worker` in Indeed Flex — flow observed via the `capture_page`
+    explorer on job 545617 (job-details?workers=available: search box,
+    one "Book" per pool row, shift checkboxes named by flex shift id;
+    ?workers=booked lists the roster). Adapter written (search name → Book →
+    confirm dialog → verify on booked tab → follow-up sync); first dry run in
+    progress 2026-09-07 evening. Workers must already be in the agency's
+    Flex pool ("Add worker" → /o/workers/add is the next adapter).
 14. 📋 `submit_candidate` in Fieldglass (needs a Sodexo walkthrough with Greg).
-15. 📋 Two-way SMS threads: her line's inbound routed into HRX conversations,
-    summarized for the recruiter on request.
+15. ✅ (first half) SMS watches: when Natalie texts someone (offer or
+    confirmation check) the inbound webhook relays their reply into the
+    Slack thread she announced it in, and a YES to an offer places them on
+    the shift + confirms by text (`natalie_sms_watches`, `natalieFill.ts`).
+    📋 Full two-way threads in HRX conversations still to do.
+
+## Fill-an-order play (shipped 2026-09-07 night, first run on OnTrac Denver)
+`candidates_for_job_order` (applicants with interview score/reliability +
+workers within 15/30/60 mi via the Worker Reach radius resolver) →
+`offer_shift` (text from C1 signed Natalie, YES auto-places) →
+`place_worker` → `worker_reach_blast` (Auto Messaging tab's radius blast)
+→ `book_worker` in Flex. Lessons from the first run: (1) daily Flex
+requests for the same site are one continuing order — reopen the JO and
+let applyShiftRequest create one shift per request (poNumber = Flex job id);
+(2) running the blast from a local script needs
+`admin.firestore().settings({ ignoreUndefinedProperties: true })` or every
+SMS fails after its daily slot is claimed (fixed by releasing
+`shiftInviteSmsCooldown/{uid}` and re-running; 97 texts + 192 pushes went
+out at 15 mi, the pushes twice); (3) the Flex venue clock-in link is
+per-venue (venueId=9204), not per order, so the same QR works every day.
 
 ## Operating notes
 - Everything she posts is under her user token; the MCP Slack connector in
