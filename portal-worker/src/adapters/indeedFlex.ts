@@ -453,8 +453,7 @@ export class IndeedFlexAdapter implements PortalAdapter {
     let chosenRow = '';
     for (let i = 0; i < nBook; i += 1) {
       const btn = bookButtons.nth(i);
-      const row = btn.locator('xpath=ancestor::tr[1] | xpath=ancestor::*[@role="row"][1]').first();
-      const text = ((await row.count()) > 0 ? await row.innerText().catch(() => '') : '').replace(/\s+/g, ' ');
+      const text = (await btn.evaluate((el) => (el.closest('tr, [role="row"], li') as HTMLElement | null)?.innerText ?? '').catch(() => '')).replace(/\s+/g, ' ');
       if (words.every((w) => text.toLowerCase().includes(w))) { target = btn; chosenRow = text; break; }
       if (i === 0) chosenRow = text;
     }
