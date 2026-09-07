@@ -58,15 +58,26 @@ export class FieldglassAdapter implements PortalAdapter {
       const shot = await ctx.screenshot('fieldglass-login-rejected');
       throw new PortalActionFailure('LOGIN_FAILED', 'Fieldglass rejected the bot credentials', { screenshot: shot });
     }
-    // First-login interstitials (terms of use, password expiry) need a person.
-    const text = (await page.locator('body').innerText().catch(() => '')).slice(0, 3000);
-    if (/terms of use|accept|password (has )?expired|change your password/i.test(text) && /accept|expired/i.test(text)) {
+    // Positive proof first: the supplier home banner ("Hi, Natalie / Welcome to
+    // SAP Fieldglass.") or the left nav. Verified 2026-09-06.
+    const homeOk =
+      (await page.getByText(/Welcome to SAP Fieldglass/i).count()) > 0 ||
+      (await page.getByRole('link', { name: /^My Items$/i }).count()) > 0;
+    if (homeOk) {
+      log.info('fieldglass login ok');
+      return;
+    }
+    // First-login interstitials (terms of use, forced password change) need a
+    // person. Look at HEADINGS only — the footer says "Terms of Use" and the
+    // cookie banner says "Accept" on every page, which is not an interstitial.
+    const headings = (await page.locator('h1, h2, h3').allInnerTexts().catch(() => [] as string[])).join(' | ');
+    if (/terms of use|password/i.test(headings)) {
       const shot = await ctx.screenshot('fieldglass-login-interstitial');
-      throw new PortalActionFailure('LOGIN_FAILED', 'Fieldglass shows a post-login interstitial (terms / password)', {
+      throw new PortalActionFailure('LOGIN_FAILED', `Fieldglass shows a post-login interstitial: ${headings.slice(0, 120)}`, {
         screenshot: shot,
       });
     }
-    log.info('fieldglass login ok');
+    log.info('fieldglass login ok (no banner detected, not a login wall)', { url: page.url(), headings: headings.slice(0, 120) });
   }
 
   async keepAlive(ctx: AdapterContext): Promise<void> {
