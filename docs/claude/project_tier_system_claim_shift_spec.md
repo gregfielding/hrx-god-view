@@ -68,13 +68,21 @@ Assignment Details.
 - **Spots remaining (BUILT later 2026-09-06)**: `shift.liveFill`
   (`functions/src/shifts/shiftLiveFill.ts`, written by shiftFillAutomation
   on every assignment create/update/delete and on dateSchedule/headcount
-  edits): `{ total, byDay, target, targetByDay }` over ALL live statuses
-  (pending offers hold a spot — same set the claim transaction counts).
-  Web `resolveShiftSpots` → `spotsRemaining` / `spotsRemainingByDay`; app
-  `GigShiftRow.spotsRemaining` → disabled "Full". Backfilled for shifts on
-  active postings (`functions/.scratch/backfill_live_fill.ts`). The
-  recruiter-facing `assignmentsCount` / `status:'filled'` automation is
-  unchanged (still proposed/confirmed/active only).
+  edits): `{ total, byDay, target, targetByDay, remaining, remainingByDay }`
+  over ALL live statuses (pending offers hold a spot — same set the claim
+  transaction counts). **Clients read `remaining` / `remainingByDay`, never
+  recompute**: for dateSchedule gigs `remaining` is the BEST day (any free
+  day → row not full; day rows use `remainingByDay`); otherwise it counts
+  only the shift's OWN `shiftDate` — the first dry run showed a 2-headcount
+  weekly shift reading Full from one hire on Aug 18 plus one on Aug 25, so
+  a recurring shift's other occurrences never fill it. Web
+  `resolveShiftSpots` → `spotsRemaining` / `spotsRemainingByDay`; app
+  `GigShiftRow.spotsRemaining` → disabled "Full". Backfilled 189 shifts on
+  active postings 2026-09-06 (`functions/.scratch/backfill_live_fill.ts`,
+  per-tenant queries — a collection-group query on posting status needs an
+  index that doesn't exist). The recruiter-facing `assignmentsCount` /
+  `status:'filled'` automation is unchanged (still proposed/confirmed/active
+  only, shift-level).
 - **Not yet built**: tier windows ON, tier cron / earn-back, worker-visible
   tier, cancel-sheet tier-consequence copy (the sheet shows the >24h/<24h
   hint text only).
