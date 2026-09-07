@@ -491,9 +491,22 @@ export class FieldglassAdapter implements PortalAdapter {
     const seen = new Set<string>();
     const links: WorklistLink[] = [];
     let pages = 0;
+    const perPage: number[] = [];
     for (let p = 0; p < 25; p += 1) {
       pages += 1;
-      const found = await this.linksOnPage(page);
+      // SAP renders the list via XHR: read only once the link count has been
+      // stable for two consecutive polls (2026-09-07: 94 vs 15 links between
+      // runs because page 1 was read mid-render).
+      let found = await this.linksOnPage(page);
+      let stable = 0;
+      for (let poll = 0; poll < 20 && stable < 2; poll += 1) {
+        await page.waitForTimeout(750);
+        const again = await this.linksOnPage(page);
+        if (again.length === found.length && again.length > 0) stable += 1;
+        else stable = 0;
+        found = again;
+      }
+      perPage.push(found.length);
       let newOnPage = 0;
       for (const link of found) {
         const k = detailKey(link.url);
@@ -516,14 +529,20 @@ export class FieldglassAdapter implements PortalAdapter {
         (await next.getAttribute('aria-disabled').catch(() => null)) === 'true';
       if (disabled) break;
       try {
+        const prevFirst = found[0]?.url ?? '';
         await next.click({ timeout: 5_000 });
-        await page.waitForTimeout(2_500);
+        // Wait for the list to actually change (XHR re-render), up to ~9s.
+        for (let poll = 0; poll < 12; poll += 1) {
+          await page.waitForTimeout(750);
+          const now = await this.linksOnPage(page);
+          if (now.length > 0 && now[0].url !== prevFirst) break;
+        }
       } catch {
         break;
       }
     }
-    log.info('fieldglass worklist scanned', { links: links.length, pages });
-    if (links.length === 0) await ctx.screenshot('fieldglass-worklist-empty');
+    log.info('fieldglass worklist scanned', { links: links.length, pages, perPage });
+    await ctx.screenshot(links.length === 0 ? 'fieldglass-worklist-empty' : 'fieldglass-worklist-lastpage');
     return { links, pages };
   }
 }
