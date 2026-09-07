@@ -28,6 +28,14 @@ file is a two-person shot the Vision verifier rejected as `multiple_faces`
 (a blocking reason by policy), so the sheet showed the inline uploader.
 No assignment was written (gates run before the transaction). Working as
 designed; the fix on the worker side is a solo headshot.
+**Upload path PROVEN 2026-09-06 21:37 PT** (Claude drove Greg's admin
+session with a manual-override rejection on the record): gate card rendered,
+both file inputs sit inside `<label>`s and a label click reaches the input,
+the injected file hit Storage (new token) → the account's verdict flipped
+to approved on that file 4s later → the sheet resubmitted and the claim
+landed 13s after the upload (assignment confirmed / acquisition claimed).
+Note: an ADMIN account claiming is bounced to /dashboard afterwards by the
+role router; worker accounts land on Assignment Details.
 
 - **Endpoint**: `respondToAssignment` with `decision: 'claim'` +
   `{ tenantId, jobOrderId, shiftId, date?, jobPostId?, channel, acknowledgements }`
