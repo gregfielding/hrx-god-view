@@ -131,6 +131,16 @@ class Worker {
       this.heartbeat.bump('succeeded');
       log.info('action succeeded', { id, result });
     } catch (err) {
+      if (this.stopping) {
+        // We pulled the browser out from under the adapter on purpose —
+        // hand the action back untouched instead of counting an attempt.
+        await releaseForShutdown(ref, doc, this.config.workerId).catch((e) => log.warn('release failed', { e }));
+        this.current = null;
+        log.info('action released for shutdown', { id });
+        clearInterval(lease);
+        this.heartbeat.setIdle();
+        return;
+      }
       const { code, message } = classifyError(err);
       const details = err instanceof PortalActionFailure ? err.details : undefined;
       const screenshotUrl =
@@ -270,6 +280,11 @@ class Worker {
     if (this.stopping) return;
     this.stopping = true;
     log.info('stop requested', { signal, inFlight: this.current?.id ?? null });
+    // Abort any in-flight browser work immediately: closing the contexts
+    // makes the adapter's next page call throw, execute() sees `stopping`
+    // and releases the action. Without this a 90-minute sync pass would
+    // hold up the restart.
+    if (this.current) await this.browser.closeAll();
   }
 
   private async shutdown(): Promise<void> {

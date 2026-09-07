@@ -48,23 +48,26 @@ interface WorklistLink {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** Absolute detail URL on the canonical host with only the identifying params, no fragment. */
+/**
+ * Absolute detail URL with the fragment stripped and every query param kept.
+ * ☠️ Do NOT drop params: worklist links carry `eType=sql&startFlow=true`
+ * (and base64 ids with '+'); without them the detail page renders no
+ * posting (2026-09-07, 94/94 failed). Dedupe with `detailKey`, not here.
+ */
 export function canonicalDetailUrl(url: string): string {
   try {
     const u = new URL(url, ORIGIN);
     u.hash = '';
-    u.hostname = 'www.us.fieldglass.cloud.sap';
-    u.protocol = 'https:';
-    const keep = new URLSearchParams();
-    for (const k of ['id', 'buyerCode']) {
-      const v = u.searchParams.get(k);
-      if (v) keep.set(k, v);
-    }
-    u.search = keep.toString() ? `?${keep.toString()}` : '';
     return u.toString();
   } catch {
     return url;
   }
+}
+
+/** Dedupe key for a detail link: the raw `id` query value when present, else the URL. */
+export function detailKey(url: string): string {
+  const m = /[?&]id=([^&#]+)/.exec(url);
+  return m ? decodeURIComponent(m[1]) : canonicalDetailUrl(url);
 }
 
 export class FieldglassAdapter implements PortalAdapter {
@@ -222,13 +225,13 @@ export class FieldglassAdapter implements PortalAdapter {
     // so a posting id must be resolved to a real link: HRX's request row
     // (email deep link / last sync URL), else the worklist row that shows
     // the number, else the portal's search box.
-    const items = new Map<string, SyncItem>(); // keyed by canonical URL
+    const items = new Map<string, SyncItem>(); // keyed by the link's id param
     const knownIds = new Set<string>();
     const add = (item: SyncItem) => {
-      const k = canonicalDetailUrl(item.url);
+      const k = detailKey(item.url);
       if (item.postingId && knownIds.has(item.postingId) && item.source !== 'targeted') return;
       if (!items.has(k)) {
-        items.set(k, { ...item, url: k });
+        items.set(k, { ...item, url: canonicalDetailUrl(item.url) });
         if (item.postingId) knownIds.add(item.postingId);
       }
     };
@@ -487,8 +490,9 @@ export class FieldglassAdapter implements PortalAdapter {
       const found = await this.linksOnPage(page);
       let newOnPage = 0;
       for (const link of found) {
-        if (seen.has(link.url)) continue;
-        seen.add(link.url);
+        const k = detailKey(link.url);
+        if (seen.has(k)) continue;
+        seen.add(k);
         links.push(link);
         newOnPage += 1;
       }
