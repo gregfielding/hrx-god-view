@@ -120,6 +120,20 @@ served at https://hrxone.com/brand/natalie-brooks-512.jpg after the next
 hosting deploy; use it for the Google profile photo, Slack app icon, and
 the signature block.
 
+## Milestone 2026-09-06 (late): BOTH portal logins succeed unattended
+
+`smoke_test` succeeded for indeed_flex (worker logged in as Natalie →
+/jobs) and fieldglass (→ /desktop.do "Home - Fieldglass") on greg-macbook
+with creds from `portal-worker/.env`. Facts learned: Flex 2nd step is a
+password page (submit via the Continue button; `filledLen` logged);
+Fieldglass home is `/desktop.do` — the bare origin renders the sign-in form
+even with a live session; its cookies are session-scoped (do NOT survive a
+browser restart → the worker re-logs-in after every launchd restart, ~4s);
+the SAP footer/cookie banner contains "Terms of Use"/"Accept" on every
+page, so interstitial detection must look at headings only. `npm run
+login -- --provider=X` = per-step-screenshot login debugger on a separate
+profile. Set-password/reset links MUST be opened in Incognito.
+
 ## Next slices (in order)
 
 1. **Bot accounts + secrets (Greg)**: dedicated Flex agency user + Fieldglass
