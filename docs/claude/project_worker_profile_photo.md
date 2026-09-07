@@ -128,3 +128,20 @@ CTA, or we recreate the June dead end.
   button" sizing is what halved uploads.
 - The `profile-pictures/{timestamp}-{filename}` flat path has no uid; counting
   per-worker uploads needs the user doc's `avatar` URL, not Storage.
+
+**Literal dotted field swept 2026-09-06.** 3,665 user docs carried a
+TOP-LEVEL field literally named `workerProfile.photoUrl` (a dotted key
+written by pre-2026-08-25 `setDoc(..., {merge:true})` callers — updateDoc
+treats dots as paths, setDoc+merge treats them as literal names; see the
+header of src/utils/workerReadinessWriteModel.ts). Readers had grown
+tolerant (`userData['workerProfile.photoUrl']` in workerTierScoring and the
+avatar backfills), which is how it hid. Every affected doc had the
+canonical `avatar` set, so `functions/.scratch/sweep_literal_photo_field.ts`
+deleted only the literal field (FieldPath-addressed — a dotted string key
+would be re-parsed as a nested path) in 200-doc batches with a pause; the
+nested `workerProfile.photoUrl` was deliberately left alone because the
+readiness triggers watch it and 3.3k phantom "photo changed" recomputes
+weren't worth it. Zero remain. All current writers use updateDoc.
+Manual-flag gate copy is now neutral ("Your photo needs a retake…") on
+web (`avatarVerification.rejection.manual_override`) and app — the flag can
+come from the system, not only a recruiter.
