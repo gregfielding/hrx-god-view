@@ -163,3 +163,17 @@ was redeployed" on every already_fixed verdict; check
 `gcloud functions describe <fn> --format='value(updateTime)'` against the
 fix commit time before trusting it. Follow-up: no regression test covers
 the submit-side dyn_pos_* allowed-id set.
+
+## Background checks — where the truth lives (2026-09-07)
+`users.backgroundCheck` / `backgroundCheckStatus` DO NOT EXIST (Natalie read
+them and told Greg every applicant was null). The recruiter UI reads the
+latest top-level `backgroundChecks` doc with `candidateId == uid` (AccuSource),
+and rolls up per-service-line verdicts (`providerServiceOrderStatus.{id}.
+adjudication.verdict ?? autoVerdict`; completed SSN-locator/lab lines with no
+verdict count as PASSED, other completed lines NEEDS_REVIEW; canceled lines
+and `order:` webhook echoes duplicating a named line are dropped): any FAILED
+→ Failed, any NEEDS_REVIEW → action needed, any PENDING → in progress, else
+Cleared. `backgroundSummary()` in natalieFill.ts mirrors this and feeds
+`worker_status.backgroundCheck` and `candidates_for_job_order` scoring
+(FAILED = −100). `users.comfortablePassBackground` is only the applicant's
+willingness attestation, not a result.

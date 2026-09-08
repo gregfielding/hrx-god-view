@@ -275,6 +275,8 @@ async function workerStatus(tenantId: string, userId: string): Promise<unknown> 
   } catch {
     notes = [];
   }
+  const { backgroundSummary } = await import('./natalieFill');
+  const backgroundCheck = await backgroundSummary(tenantId, userId);
   return {
     worker: {
       name: `${s(x.firstName)} ${s(x.lastName)}`.trim(),
@@ -285,6 +287,7 @@ async function workerStatus(tenantId: string, userId: string): Promise<unknown> 
       phoneInvalid: x.phoneInvalid === true,
       profileLink: `https://hrxone.com/users/${userId}`,
     },
+    backgroundCheck,
     notes,
     upcoming,
     recent,

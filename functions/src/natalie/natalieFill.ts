@@ -120,9 +120,80 @@ export interface Candidate {
   appliedToThisOrder: boolean;
   alreadyOnOrder: boolean;
   backgroundCleared: boolean | null;
+  background: string;
   score: number;
   reasons: string[];
   profileLink: string;
+}
+
+export interface BackgroundSummary {
+  /** passed | failed | needs_review | in_progress | canceled | error | none */
+  status: string;
+  detail: string;
+  package: string | null;
+  orderedAt: string | null;
+  reportAt: string | null;
+  checkId: string | null;
+  link: string | null;
+}
+
+/**
+ * Background-check status the way the recruiter UI sees it: the latest
+ * AccuSource record in top-level `backgroundChecks` (candidateId == uid),
+ * judged by per-service-line adjudication verdicts (manual verdict wins over
+ * autoVerdict). `users.backgroundCheck*` fields do not exist — never read them.
+ */
+export async function backgroundSummary(tenantId: string, userId: string): Promise<BackgroundSummary> {
+  const none: BackgroundSummary = { status: 'none', detail: 'no background check ordered in HRX', package: null, orderedAt: null, reportAt: null, checkId: null, link: null };
+  let docs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+  try {
+    const q = await db.collection('backgroundChecks').where('candidateId', '==', userId).limit(20).get();
+    docs = q.docs.filter((d) => !d.get('tenantId') || s(d.get('tenantId')) === tenantId);
+  } catch {
+    return { ...none, detail: 'background check lookup failed' };
+  }
+  if (!docs.length) return none;
+  docs.sort((a, b) => (b.get('createdAt')?.toMillis?.() ?? 0) - (a.get('createdAt')?.toMillis?.() ?? 0));
+  const d = docs[0];
+  const x = d.data() as Record<string, unknown>;
+  // Mirror src/utils/accusourceScreeningLineItems + computePackageRollup:
+  // manual verdict wins over autoVerdict; a completed line with no verdict is
+  // PASSED for SSN-locator/lab lines and NEEDS_REVIEW otherwise; canceled lines
+  // and `order:` webhook echoes that duplicate a named line are dropped.
+  const complete = (st: string) => /complete|closed|clear|^pass$/i.test(st);
+  type Line = { id: string; name: string; status: string; verdict: string };
+  const raw: Line[] = Object.entries((x.providerServiceOrderStatus ?? {}) as Record<string, Record<string, unknown>>).map(([id, l]) => {
+    const adj = (l.adjudication ?? {}) as Record<string, unknown>;
+    const name = s(l.serviceName) || s(l.jurisdiction) || id;
+    const status = s(l.status) || 'Pending';
+    let verdict = s(adj.verdict) || s(adj.autoVerdict) || 'PENDING';
+    if (verdict === 'PENDING' && complete(status)) verdict = /social security|ssn|drug|lab /i.test(name) || l.labName != null ? 'PASSED' : 'NEEDS_REVIEW';
+    return { id, name, status, verdict };
+  });
+  const named = raw.filter((l) => !l.id.startsWith('order:'));
+  const lines = raw.filter((l) => !/cancel/i.test(l.status) && (!l.id.startsWith('order:') || !named.some((n) => n.name.toLowerCase() === l.name.toLowerCase() && n.status.toLowerCase() === l.status.toLowerCase())));
+  const count = (v: string) => lines.filter((k) => k.verdict === v).length;
+  const hrxStatus = s(x.hrxStatus);
+  let status: string;
+  let detail: string;
+  const listed = (v: string) => lines.filter((l) => l.verdict === v).map((l) => l.name).join(', ');
+  if (x.markedCompleteOutsideHrx === true && !count('FAILED')) { status = 'passed'; detail = 'marked complete outside HRX by a recruiter'; }
+  else if (count('FAILED')) { status = 'failed'; detail = `FAILED: ${listed('FAILED')}`; }
+  else if (count('NEEDS_REVIEW')) { status = 'needs_review'; detail = `recruiter must review: ${listed('NEEDS_REVIEW')}`; }
+  else if (hrxStatus === 'canceled') { status = 'canceled'; detail = 'order canceled'; }
+  else if (hrxStatus === 'error') { status = 'error'; detail = 'vendor error on the order'; }
+  else if (count('PENDING')) { status = 'in_progress'; detail = `still pending: ${listed('PENDING')}${s(x.orderMode) === 'partial_profile' && x.profileCompleted !== true ? ' (applicant has not completed the AccuSource profile)' : ''}`; }
+  else if (lines.length) { status = 'passed'; detail = `cleared — ${lines.map((l) => l.name).join(', ')}`; }
+  else { status = 'in_progress'; detail = `${hrxStatus || 'ordered'}, no service lines yet`; }
+  return {
+    status,
+    detail,
+    package: s(x.requestedPackageName) || null,
+    orderedAt: tsToIso(x.createdAt),
+    reportAt: tsToIso(x.providerFinalReportAt ?? x.completedAt),
+    checkId: d.id,
+    link: `https://hrxone.com/users/${userId}?tab=background`,
+  };
 }
 
 async function enrich(tenantId: string, userId: string, appliedToThisOrder: boolean, onOrder: Set<string>): Promise<Candidate | null> {
@@ -152,8 +223,8 @@ async function enrich(tenantId: string, userId: string, appliedToThisOrder: bool
     else if (cort.state === 'cancelled' || /cancel/.test(st)) cancels += 1;
     else completed += 1;
   }
-  const bg = (u.backgroundCheck ?? u.backgroundCheckStatus ?? null) as unknown;
-  const backgroundCleared = bg == null ? null : /clear|pass|complete/i.test(JSON.stringify(bg));
+  const bgSummary = await backgroundSummary(tenantId, userId);
+  const backgroundCleared = bgSummary.status === 'none' ? null : bgSummary.status === 'passed';
   const phoneOk = Boolean(phoneE164(u)) && u.smsOptIn !== false && u.smsBlockedSystem !== true && u.phoneInvalid !== true;
   const reasons: string[] = [];
   let score = 0;
@@ -166,7 +237,9 @@ async function enrich(tenantId: string, userId: string, appliedToThisOrder: bool
   if (noShows) reasons.push(`${noShows} no-show${noShows === 1 ? '' : 's'}`);
   score -= cancels * 8;
   if (cancels) reasons.push(`${cancels} cancel${cancels === 1 ? '' : 's'}`);
-  if (backgroundCleared) { score += 10; reasons.push('background cleared'); }
+  if (backgroundCleared) { score += 10; reasons.push('background passed'); }
+  else if (bgSummary.status === 'failed') { score -= 100; reasons.push('background FAILED'); }
+  else if (bgSummary.status !== 'none') reasons.push(`background ${bgSummary.status.replace('_', ' ')}`);
   const tier = (u.workerTiers as Record<string, unknown> | undefined)?.global ?? null;
   if (Number(tier) === 1) { score += 8; reasons.push('Tier 1'); }
   if (!phoneOk) { score -= 100; reasons.push('cannot be texted'); }
@@ -186,6 +259,7 @@ async function enrich(tenantId: string, userId: string, appliedToThisOrder: bool
     appliedToThisOrder,
     alreadyOnOrder,
     backgroundCleared,
+    background: bgSummary.status,
     score,
     reasons,
     profileLink: `https://hrxone.com/users/${userId}`,
