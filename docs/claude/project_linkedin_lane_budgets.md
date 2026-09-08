@@ -41,3 +41,46 @@ deliberately rescues, plus one unknown needing live verification. A blanket CPC
 exclusion would kill real buyers. The employer decides, not the credential; see
 the standing rule that recruiting titles are only excluded when the *employer* is
 itself a staffing firm.
+
+## New connections now enter the daily queue by script (2026-09-08)
+
+**The gap.** New LinkedIn connections do not sync to the CRM — there is no
+deployed ingestion, and the book is a one-shot 2026-08-12 archive load. The
+accept lane keys on `linkedinOutreach.acceptedAt`, and *only* the session's
+STEP 2 sweep sets it. So a connection the sweep misses never enters the daily
+message queue at all — it is not "queued later", it is invisible. Greg's manual
+invite lane accepts far more per day than the CRM-tracked lane, which is exactly
+why this leaks.
+
+**The fix.** `functions/.scratch/linkedin-sync-connections.ts` (+ the scraper
+`linkedin-scrape-connections.js`) replaces the dated one-offs
+(`linkedin-create-accepts-<date>.ts`) with one reusable sweep that runs EVERY
+session **before** `linkedin-build-manifest.ts`. It matches by normalized
+linkedInUrl, else name+company; stamps `acceptedAt` + `linkedinConnection` on
+existing contacts (never overwriting an existing acceptedAt, never touching
+`messagedAt`/`excluded`); and creates missing contacts with `createdAt`,
+jobTitle, companyName and `leadSource: 'linkedin_manual_invite_accept'`.
+
+Two deliberate behaviours, do not "simplify" them:
+- It will **not** invent a company when the headline has no " at " / " @ "
+  separator. A blank company is correct; a guessed one produces "coverage at
+  Director of Facilities" — the worst failure mode in this lane.
+- It never re-stamps an existing `acceptedAt`, so re-running is idempotent and
+  cannot resurrect an already-messaged contact into the accept lane.
+
+**Two footguns found while building it:**
+- The connections page **lazy-loads**. An unscrolled page silently under-reports,
+  so scroll past `lastSessionAt` before scraping. A by-hand read on 2026-09-08
+  missed Kris Sprague (connected that day); the scripted sweep caught him.
+- `javascript_tool` truncates output at ~1000 chars. Assign rows to
+  `window.__rows` once, then pull `.slice(0,10)`, `.slice(10,20)`, … and
+  assemble locally — a single big JSON dump comes back silently cut off.
+
+## linkedin-stamp-from-manifest.ts takes COMMAS, not spaces
+
+`--sent id1,id2,id3`. Passing space-separated ids stamps only the FIRST one and
+silently ignores the rest (`arg()` reads a single argv slot), and the run still
+prints a confident "DONE — 1 stamped". That recreates the 2026-09-07 unstamped-
+send incident: the unstamped contacts requeue and get double-messaged the next
+day. Always check the printed `stamping sent: N` matches the number of ids you
+passed.
