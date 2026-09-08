@@ -252,7 +252,9 @@ export const natalieSlackInbox = onSchedule(
     timeZone: 'UTC',
     region: 'us-central1',
     memory: '512MiB',
-    timeoutSeconds: 60,
+    // 540s: the outbox drains run scheduled Worker Reach blasts (200 texts + pushes ≈ 6–9 min);
+    // at 60s Cloud Run killed the 2026-09-08 09:33 MT re-run after 62 of 190 texts.
+    timeoutSeconds: 540,
     maxInstances: 1,
     secrets: [NATALIE_SLACK_USER_TOKEN, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN, GITHUB_NATALIE_TOKEN],
   },
