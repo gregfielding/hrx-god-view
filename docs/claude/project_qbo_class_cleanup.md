@@ -744,14 +744,14 @@ Code (this commit):
 
 **Rerun procedure (Greg, from the laptop — needs deploy first):**
 1. `git pull`, then `firebase deploy --only functions:savePayrollVenueMapping,functions:reconcileTimesheetBatchesCron`
-2. Dry run, from `functions/`:
-   `DOTENV_CONFIG_PATH=.env.hrx1-d3beb npx ts-node -r dotenv/config -e "import('./src/payroll/revenueAccountReclass').then(m=>m.pushRevenueAccountReclass('BCiP2bQ9CgVOCTfV6MhD',true)).then(r=>console.log(JSON.stringify(r,null,1)))"`
+2. Dry run, from `functions/` (runner: `scripts/qboReclassRerun.ts`):
+   `DOTENV_CONFIG_PATH=.env.hrx1-d3beb npx ts-node -r dotenv/config -P tsconfig.scripts.json scripts/qboReclassRerun.ts dry`
    Expect 9 months `would_true_up`; Jun–Aug 4200 debits should sum back
-   to the 9/2 split (4100 $1,641,271.24 / 4200 $126,622.68 for Jun–Aug).
-3. Same with `false` to write. Then true-up dry run
-   (`allocationTrueUp` → `trueUpAllocationJes(tenant,true)`): expect
-   `skippedHuman` = Tabitha's 17 July docs, `patched` = ours whose
-   Proof/Contigo/BC/G6 lines flip Recurring→Event-based; write.
+   to the 9/2 split (4100 $1,641,271.24 / 4200 $126,622.68 for Jun–Aug);
+   true-up `skippedHuman` = Tabitha's 17 July docs, `patched` = ours whose
+   Proof/Contigo/BC/G6 lines flip Recurring→Event-based.
+3. Same command with `write`. A second `dry` must show every month
+   `already_reclassed` and true-up `patched 0`.
 4. Hand Tabitha a before/after P&L by account AND by Division. Her 17
    July JEs: our 9/6 rewrite is NOT reversible from code — pre-rewrite
    copies exist only if the 9/6 session snapshotted them under
