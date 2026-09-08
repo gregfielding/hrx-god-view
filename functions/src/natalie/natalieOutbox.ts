@@ -8,6 +8,8 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { postAsNatalie } from '../messaging/slackAsNatalie';
 import { recordNatalieAction } from './natalieAudit';
+import Anthropic from '@anthropic-ai/sdk';
+import { NATALIE_MODEL } from './natalieAgent';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -158,10 +160,82 @@ async function drainRelays(token: string): Promise<number> {
   return posted;
 }
 
-export async function drainNatalieOutbox(token: string): Promise<{ followups: number; escalations: number; relays: number }> {
-  const out = { followups: 0, escalations: 0, relays: 0 };
+const DEV_CHANNEL = 'C08U7U0FL03';
+
+/**
+ * Worker-reported technical problems (natalie_tech_issues, written by the
+ * inbound SMS webhook): gather evidence from HRX, have Claude write a short
+ * diagnosis + suggested fix, post it to #dev as Natalie, acknowledge the
+ * worker by text, and leave the row 'triaged' for a Claude Code session (or
+ * the scheduled routine) to fix and close.
+ */
+async function drainTechIssues(token: string): Promise<number> {
+  const snap = await db.collection('natalie_tech_issues').where('status', '==', 'open').limit(5).get();
+  let posted = 0;
+  for (const d of snap.docs) {
+    const t = d.data() as Record<string, unknown>;
+    const tenantId = s(t.tenantId) || 'BCiP2bQ9CgVOCTfV6MhD';
+    const uid = s(t.userId);
+    const evidence: Record<string, unknown> = { reported: t.text, lastOutbound: t.lastOutbound ?? null };
+    if (uid) {
+      try {
+        const u = (await db.collection('users').doc(uid).get()).data() ?? {};
+        evidence.user = { name: `${s(u.firstName)} ${s(u.lastName)}`.trim(), interviewStatus: u.interviewStatus ?? null, createdAt: tsToDate(u.createdAt)?.toISOString() ?? null, lastActiveAt: tsToDate(u.lastActiveAt ?? u.updatedAt)?.toISOString() ?? null, platform: u.lastPlatform ?? u.appVersion ?? null };
+        const logs = await db.collection(`tenants/${tenantId}/messageLogs`).where('userId', '==', uid).orderBy('createdAt', 'desc').limit(8).get();
+        evidence.recentMessages = logs.docs.map((m) => ({ at: tsToDate(m.get('createdAt'))?.toISOString(), dir: m.get('direction'), type: m.get('messageTypeId'), text: s(m.get('contentSent')).slice(0, 160) }));
+        const apps = await db.collection(`tenants/${tenantId}/applications`).where('userId', '==', uid).limit(5).get();
+        evidence.applications = apps.docs.map((a) => ({ jobOrderId: a.get('jobOrderId'), status: a.get('status'), prescreenOutcome: a.get('workerAiPrescreenReminderLastOutcome') ?? null, prescreenSentAt: tsToDate(a.get('workerAiPrescreenReminderSentAt'))?.toISOString() ?? null }));
+        const ivs = await db.collection('users').doc(uid).collection('interviews').orderBy('createdAt', 'desc').limit(2).get().catch(() => null);
+        evidence.interviews = ivs ? ivs.docs.map((i) => ({ at: tsToDate(i.get('createdAt'))?.toISOString(), score: i.get('score10') ?? i.get('score') ?? null, questions: Array.isArray(i.get('questions')) ? (i.get('questions') as unknown[]).length : null })) : [];
+      } catch (err) {
+        evidence.evidenceError = err instanceof Error ? err.message : String(err);
+      }
+    }
+    let diagnosis = '';
+    try {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (apiKey) {
+        const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 60_000 });
+        const res = await client.beta.messages.create({
+          model: NATALIE_MODEL,
+          max_tokens: 800,
+          system: 'You are the on-call engineer for HRX, a staffing platform (React web app, Firebase Cloud Functions, Firestore, Twilio SMS). A worker texted a problem. From the evidence JSON, write for #dev in Slack mrkdwn: one line stating the most likely cause (name the feature/function if the evidence points to one, e.g. the worker AI prescreen submit, the jobs-board link, phone login), one line on confidence, and 1–3 bullet next steps for an engineer with a Claude Code session (what to check in the repo or logs). If a known recent fix likely covers it, say so. Under 120 words. No preamble.',
+          thinking: { type: 'adaptive' },
+          output_config: { effort: 'low' },
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default',
+          messages: [{ role: 'user', content: JSON.stringify(evidence).slice(0, 12_000) }],
+        } as Anthropic.Beta.MessageCreateParamsNonStreaming & { fallbacks: string });
+        diagnosis = res.content.filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text').map((b) => b.text).join('\n').trim();
+      }
+    } catch (err) {
+      logger.warn('[natalie] tech issue diagnosis failed', { err: String(err) });
+    }
+    const who = s(t.workerName) || `…${s(t.phoneE164).slice(-4)}`;
+    const text = `:wrench: *Worker-reported problem* — ${who}${uid ? ` (<https://hrxone.com/users/${uid}|profile>)` : ''} texted: "${s(t.text).slice(0, 300)}"\n${t.lastOutbound ? `Last thing we sent them: ${s((t.lastOutbound as Record<string, unknown>).messageTypeId)} — "${s((t.lastOutbound as Record<string, unknown>).text).slice(0, 140)}"\n` : ''}${diagnosis ? `\n${diagnosis}\n` : ''}\nI've told them we're on it. Reply here when it's fixed and I'll text them (issue \`${d.id}\`).`;
+    const res = await postAsNatalie(token, { channel: DEV_CHANNEL, text });
+    if (!res.ok) { logger.warn('[natalie] tech issue post failed', { error: res.error }); continue; }
+    // Acknowledge the worker by text (once).
+    if (uid && s(t.phoneE164)) {
+      try {
+        const { sendWorkerMessageInternal } = await import('../twilio');
+        await sendWorkerMessageInternal(s(t.phoneE164), "Thanks for letting us know — that sounds like a problem on our side. I've flagged it to our tech team and I'll text you as soon as it's fixed. — Natalie, C1 Staffing", { tenantId, userId: uid, source: 'system', messageTypeId: 'natalie_tech_ack', systemContext: true } as never);
+      } catch (err) {
+        logger.warn('[natalie] tech ack text failed', { err: String(err) });
+      }
+    }
+    await d.ref.update({ status: 'triaged', diagnosis, slack: { channel: DEV_CHANNEL, ts: res.ts ?? null }, triagedAt: admin.firestore.FieldValue.serverTimestamp() });
+    await recordNatalieAction({ tenantId, kind: 'tech_issue', summary: `Flagged a worker-reported problem to #dev: "${s(t.text).slice(0, 80)}"`, userId: uid || null, slack: { channel: DEV_CHANNEL, ts: res.ts } });
+    posted += 1;
+  }
+  return posted;
+}
+
+export async function drainNatalieOutbox(token: string): Promise<{ followups: number; escalations: number; relays: number; techIssues: number }> {
+  const out = { followups: 0, escalations: 0, relays: 0, techIssues: 0 };
   try { out.followups = await drainFollowups(token); } catch (e) { logger.warn('[natalie] followup drain failed', { err: String(e) }); }
   try { out.escalations = await drainEscalations(token); } catch (e) { logger.warn('[natalie] escalation drain failed', { err: String(e) }); }
   try { out.relays = await drainRelays(token); } catch (e) { logger.warn('[natalie] relay drain failed', { err: String(e) }); }
+  try { out.techIssues = await drainTechIssues(token); } catch (e) { logger.warn('[natalie] tech issue drain failed', { err: String(e) }); }
   return out;
 }

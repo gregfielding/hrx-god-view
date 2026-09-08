@@ -239,7 +239,7 @@ export async function pollNatalieInbox(token: string): Promise<{ answered: numbe
   }
   await saveState(state);
   const outbox = await drainNatalieOutbox(token);
-  if (outbox.followups || outbox.escalations || outbox.relays) logger.info('[natalie] outbox drained', outbox);
+  if (outbox.followups || outbox.escalations || outbox.relays || outbox.techIssues) logger.info('[natalie] outbox drained', outbox);
   return { answered, skipped };
 }
 

@@ -130,6 +130,42 @@ export const handleInboundSms = onRequest(
         logger.warn('[natalie_sms_watch] relay failed (non-blocking)', { err: watchErr?.message || String(watchErr) });
       }
 
+      // Tech-issue detection (Greg 2026-09-07: "when Natalie hears back of a
+      // technical problem… automatically investigate and fix"): a worker
+      // describing something broken becomes a `natalie_tech_issues` row that
+      // (1) Natalie posts to #dev with context, (2) the scheduled Claude Code
+      // routine investigates/fixes, (3) Natalie closes the loop by text.
+      try {
+        const body = String(messageBody ?? '');
+        const TECH_RE = /\b(won'?t|will not|doesn'?t|does not|can'?t|cannot|couldn'?t|unable to)\s+(save|load|open|submit|log ?in|sign ?in|work|send|upload|click|access)|\b(error|bug|glitch|broken|crash(ed|es)?|not working|isn'?t working|keeps? (saying|loading)|link (is )?(dead|expired|not working)|page (is )?blank|404|stuck)\b/i;
+        if (fromNumber && body && TECH_RE.test(body) && !/^\s*(stop|help|start|unstop|yes|no)\s*$/i.test(body)) {
+          const fromE164 = String(fromNumber).startsWith('+') ? String(fromNumber) : `+${String(fromNumber).replace(/\D/g, '')}`;
+          const uq = await db.collection('users').where('phoneE164', '==', fromE164).limit(1).get();
+          const uid = uq.empty ? null : uq.docs[0].id;
+          const ud = uq.empty ? {} : (uq.docs[0].data() as Record<string, unknown>);
+          const tenantId = (typeof ud.activeTenantId === 'string' && ud.activeTenantId) || (typeof ud.tenantId === 'string' && ud.tenantId) || 'BCiP2bQ9CgVOCTfV6MhD';
+          let lastOutbound: Record<string, unknown> | null = null;
+          if (uid) {
+            const lo = await db.collection(`tenants/${tenantId}/messageLogs`).where('userId', '==', uid).where('direction', '==', 'outbound').orderBy('createdAt', 'desc').limit(1).get().catch(() => null);
+            if (lo && !lo.empty) lastOutbound = { messageTypeId: lo.docs[0].get('messageTypeId') ?? null, text: String(lo.docs[0].get('contentSent') ?? '').slice(0, 300), at: lo.docs[0].get('createdAt') ?? null };
+          }
+          await db.collection('natalie_tech_issues').add({
+            tenantId,
+            userId: uid,
+            workerName: uid ? `${String(ud.firstName ?? '')} ${String(ud.lastName ?? '')}`.trim() : null,
+            phoneE164: fromE164,
+            text: body.slice(0, 500),
+            lastOutbound,
+            messageSid: messageSid ? String(messageSid) : null,
+            status: 'open',
+            source: 'sms',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      } catch (techErr: any) {
+        logger.warn('[natalie_tech_issue] detection failed (non-blocking)', { err: techErr?.message || String(techErr) });
+      }
+
       // Validate required fields
       if (!fromNumber || !messageBody) {
         logger.error('Missing required fields in Twilio webhook');
