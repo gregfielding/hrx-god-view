@@ -56,7 +56,7 @@ async function main(): Promise<void> {
     console.log('patched docs:', (t.patchedDocs ?? []).join(', '));
     if ((t.skippedDrift ?? []).length) console.log('drift (credit ≠ wire, left alone):', JSON.stringify(t.skippedDrift));
   }
-  console.log('\nRemember: the weekly job stays PAUSED until tenants/{t}/settings/qbo_automation.jeWritersEnabled = true.');
+  console.log('\nWeekly writers switch: scripts/qboJeWriters.ts status|on|off (currently controlled by tenants/{t}/settings/qbo_automation.jeWritersEnabled).');
 }
 
 main().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });

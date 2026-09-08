@@ -8,6 +8,11 @@
  *     Prints income, direct labor, labor %, COGS, gross margin, opex, net,
  *     plus the internal payroll lines (7010/7020/7040/7110/7120/7131/7140).
  *
+ *   changes <since> [periodStart] [periodEnd]
+ *     Every P&L-affecting transaction dated inside the period that was
+ *     created or edited on/after <since> (QBO MetaData), with its account
+ *     lines — answers "why did the Jun–Aug P&L move since the 9/2 print".
+ *
  *   detail <acct-prefixes> <start> <end>
  *     General-ledger dump for the accounts whose number/name starts with any
  *     of the comma-separated prefixes (e.g. 7010,7040,7110,7131,7140), for
@@ -168,14 +173,76 @@ async function cmdDetail(prefixes: string[], start: string, end: string): Promis
   for (const l of neg.slice(0, 40)) console.log(`${l.tx_date}\t${l.account}\t${l.txn_type} ${l.doc_num ?? ''}\t${l.name ?? ''}\t${money(amt(l))}\t${String(l.memo ?? '').slice(0, 60)}`);
 }
 
+/* ── what changed since a date ──────────────────────────────────────── */
+const PL_ACCT_RE = /^[4-9]\d{3}\b|^(Income|Expenses|Cost of Goods Sold|Uncategorized|Sodexo Rebates|Adjustments)/;
+
+async function cmdChanges(since: string, periodStart: string, periodEnd: string): Promise<void> {
+  const { qboQuery } = await import('../src/integrations/quickbooks/qboAuth');
+  const acctRes = (await qboQuery(TENANT, 'SELECT Id, Name, AcctNum, FullyQualifiedName, AccountType FROM Account MAXRESULTS 1000')) as Row;
+  const acctById = new Map<string, Row>(((acctRes.Account ?? []) as Row[]).map((a) => [String(a.Id), a]));
+  const label = (id: string): string => { const a = acctById.get(id); return a ? `${a.AcctNum ? a.AcctNum + ' ' : ''}${a.Name}` : `#${id}`; };
+  const isPl = (id: string): boolean => { const a = acctById.get(id); return Boolean(a) && /Income|Expense|Cost of Goods Sold/.test(String(a!.AccountType)); };
+  const entities = ['JournalEntry', 'Purchase', 'Bill', 'Deposit', 'Invoice', 'CreditMemo', 'VendorCredit', 'SalesReceipt', 'RefundReceipt'];
+  const sinceIso = `${since}T00:00:00-07:00`;
+  type Hit = { type: string; id: string; date: string; doc: string; name: string; created: string; updated: string; isNew: boolean; lines: Array<{ acct: string; amt: number }> };
+  const hits: Hit[] = [];
+  for (const ent of entities) {
+    let start = 1;
+    for (;;) {
+      let r: Row;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        r = (await qboQuery(TENANT, `SELECT * FROM ${ent} WHERE MetaData.LastUpdatedTime >= '${sinceIso}' STARTPOSITION ${start} MAXRESULTS 1000`)) as Row;
+      } catch (e) { console.error(`  (${ent}: ${String(e).slice(0, 120)})`); break; }
+      const rows: Row[] = (r[ent] ?? []) as Row[];
+      for (const t of rows) {
+        const date = String(t.TxnDate ?? '');
+        if (date < periodStart || date > periodEnd) continue;
+        const lines: Array<{ acct: string; amt: number }> = [];
+        for (const l of (t.Line ?? []) as Row[]) {
+          const amt = Number(l.Amount) || 0;
+          const je = l.JournalEntryLineDetail;
+          if (je) { const id = String(je.AccountRef?.value ?? ''); if (isPl(id)) lines.push({ acct: label(id), amt: je.PostingType === 'Credit' ? -amt : amt }); continue; }
+          const ab = l.AccountBasedExpenseLineDetail ?? l.DepositLineDetail;
+          if (ab) { const id = String(ab.AccountRef?.value ?? ''); if (isPl(id)) lines.push({ acct: label(id), amt: l.DepositLineDetail ? -amt : amt }); continue; }
+          if (l.SalesItemLineDetail && /Invoice|SalesReceipt/.test(ent)) lines.push({ acct: 'revenue (item-mapped)', amt: -amt });
+          if (l.SalesItemLineDetail && /CreditMemo|RefundReceipt/.test(ent)) lines.push({ acct: 'revenue (item-mapped)', amt: amt });
+        }
+        if (!lines.length) continue;
+        const created = String(t.MetaData?.CreateTime ?? '');
+        hits.push({ type: ent, id: String(t.Id), date, doc: String(t.DocNumber ?? ''), name: String(t.EntityRef?.name ?? t.CustomerRef?.name ?? t.VendorRef?.name ?? ''), created, updated: String(t.MetaData?.LastUpdatedTime ?? ''), isNew: created.slice(0, 10) >= since, lines });
+      }
+      if (rows.length < 1000) break;
+      start += 1000;
+    }
+  }
+  console.log(`\n=== P&L-affecting transactions dated ${periodStart}..${periodEnd} that were CREATED or EDITED since ${since}: ${hits.length} ===`);
+  console.log('(expense + / income − as P&L effect: positive = reduces profit)');
+  const byAcct = new Map<string, { created: number; edited: number; n: number }>();
+  for (const h of hits) for (const l of h.lines) {
+    const e = byAcct.get(l.acct) ?? { created: 0, edited: 0, n: 0 };
+    if (h.isNew) e.created += l.amt; else e.edited += l.amt;
+    e.n += 1; byAcct.set(l.acct, e);
+  }
+  console.log('\n--- by account: amount on NEW transactions | amount on EDITED transactions (current values; the pre-edit value is in the QBO audit log) ---');
+  for (const [k, v] of [...byAcct.entries()].sort()) console.log(`${k}\t${money(v.created)}\t${money(v.edited)}\t(${v.n} lines)`);
+  console.log('\n--- transactions (newest first) ---');
+  for (const h of hits.sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 150)) {
+    const ours = OUR_DOC_RE.test(h.doc) ? ' [automation]' : '';
+    console.log(`${h.updated.slice(0, 16)}\t${h.isNew ? 'NEW ' : 'EDIT'}\t${h.type}\t${h.date}\t${h.doc}${ours}\t${h.name}\t${h.lines.map((l) => `${l.acct.slice(0, 28)} ${money(l.amt)}`).join(' | ').slice(0, 160)}`);
+  }
+}
+
 async function main(): Promise<void> {
   const [cmd, a, b, c] = process.argv.slice(2);
   if (cmd === 'blocks') {
     await cmdBlocks(Number(a ?? new Date().getUTCFullYear()));
   } else if (cmd === 'detail' && a && b && c) {
     await cmdDetail(a.split(',').map((s) => s.trim()).filter(Boolean), b, c);
+  } else if (cmd === 'changes' && a) {
+    await cmdChanges(a, b ?? '2026-01-01', c ?? '2026-12-31');
   } else {
-    console.error('usage: qboReports.ts blocks [year] | detail <acct-prefixes> <start> <end>');
+    console.error('usage: qboReports.ts blocks [year] | detail <acct-prefixes> <start> <end> | changes <since YYYY-MM-DD> [periodStart] [periodEnd]');
     process.exit(2);
   }
 }
