@@ -13,6 +13,11 @@
  *     created or edited on/after <since> (QBO MetaData), with its account
  *     lines — answers "why did the Jun–Aug P&L move since the 9/2 print".
  *
+ *   wirecheck <start> <end>
+ *     Everee funding wires (API, via buildWireJournal) vs QBO "Everee"
+ *     purchases on 5010: unmatched on either side + same-amount pairs
+ *     (duplicate wires / missing labor).
+ *
  *   detail <acct-prefixes> <start> <end>
  *     General-ledger dump for the accounts whose number/name starts with any
  *     of the comma-separated prefixes (e.g. 7010,7040,7110,7131,7140), for
@@ -263,6 +268,54 @@ async function cmdChanges(since: string, periodStart: string, periodEnd: string)
   }
 }
 
+/* ── Everee wires vs QBO Everee purchases ───────────────────────────── */
+async function cmdWirecheck(start: string, end: string): Promise<void> {
+  const { qboQuery } = await import('../src/integrations/quickbooks/qboAuth');
+  const { buildWireJournal } = await import('../src/payroll/payrollCostReport');
+  const journal = (await buildWireJournal(TENANT, start, end, null)) as Row;
+  const wires = ((journal.wires ?? []) as Row[]).map((w) => ({ id: String(w.fundingId ?? ''), date: String(w.fundingDate ?? '').slice(0, 10), entity: String(w.entityName ?? ''), amount: Number(w.amount) || 0, matched: false }));
+  const acctRes = (await qboQuery(TENANT, 'SELECT Id, Name, AcctNum FROM Account MAXRESULTS 1000')) as Row;
+  const acct5010 = ((acctRes.Account ?? []) as Row[]).find((a) => String(a.AcctNum ?? '') === '5010' || /^5010/.test(String(a.Name ?? '')));
+  if (!acct5010) throw new Error('5010 not found');
+  const purchases: Array<{ id: string; date: string; doc: string; amount: number; created: string; matched: boolean }> = [];
+  let pos = 1;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = (await qboQuery(TENANT, `SELECT * FROM Purchase WHERE TxnDate >= '${start}' AND TxnDate <= '${end}' STARTPOSITION ${pos} MAXRESULTS 1000`)) as Row;
+    const rows: Row[] = (r.Purchase ?? []) as Row[];
+    for (const t of rows) {
+      if (!/everee/i.test(String(t.EntityRef?.name ?? ''))) continue;
+      const amt = ((t.Line ?? []) as Row[]).filter((l) => String(l.AccountBasedExpenseLineDetail?.AccountRef?.value ?? '') === String(acct5010.Id)).reduce((sum, l) => sum + (Number(l.Amount) || 0), 0);
+      if (amt <= 0) continue;
+      purchases.push({ id: String(t.Id), date: String(t.TxnDate), doc: String(t.DocNumber ?? ''), amount: Math.round(amt * 100) / 100, created: String(t.MetaData?.CreateTime ?? '').slice(0, 16), matched: false });
+    }
+    if (rows.length < 1000) break;
+    pos += 1000;
+  }
+  const days = (a: string, b: string): number => Math.abs(Date.parse(a) - Date.parse(b)) / 86400000;
+  // exact amount, nearest date within 7 days
+  for (const p of purchases.sort((a, b) => a.date.localeCompare(b.date))) {
+    const cands = wires.filter((w) => !w.matched && Math.abs(w.amount - p.amount) < 0.011 && days(w.date, p.date) <= 7).sort((a, b) => days(a.date, p.date) - days(b.date, p.date));
+    if (cands[0]) { cands[0].matched = true; p.matched = true; }
+  }
+  const tot = (xs: Array<{ amount: number }>): number => xs.reduce((s2, x) => s2 + x.amount, 0);
+  console.log(`\n=== Everee wires (API) vs QBO "Everee" purchases hitting 5010, ${start}..${end} ===`);
+  console.log(`Everee wires: ${wires.length} = ${money(tot(wires))}   QBO Everee→5010 purchases: ${purchases.length} = ${money(tot(purchases))}`);
+  console.log(`matched (same amount, within 7 days): ${purchases.filter((p) => p.matched).length} = ${money(tot(purchases.filter((p) => p.matched)))}`);
+  const up = purchases.filter((p) => !p.matched);
+  console.log(`\n--- QBO purchases with NO Everee wire behind them: ${up.length} = ${money(tot(up))} (duplicates or non-wire Everee charges) ---`);
+  for (const p of up) console.log(`${p.date}\t${money(p.amount)}\tdoc ${p.doc}\tcreated ${p.created}\tqbo #${p.id}`);
+  const uw = wires.filter((w) => !w.matched);
+  console.log(`\n--- Everee wires with NO QBO purchase: ${uw.length} = ${money(tot(uw))} (labor missing from 5010) ---`);
+  for (const w of uw) console.log(`${w.date}\t${money(w.amount)}\t${w.entity}\tfunding ${w.id}`);
+  const dups: string[] = [];
+  for (let i = 0; i < purchases.length; i++) for (let j = i + 1; j < purchases.length; j++) {
+    if (Math.abs(purchases[i].amount - purchases[j].amount) < 0.011 && days(purchases[i].date, purchases[j].date) <= 7) dups.push(`${purchases[i].date} & ${purchases[j].date}\t${money(purchases[i].amount)}\tqbo #${purchases[i].id} / #${purchases[j].id}`);
+  }
+  console.log(`\n--- QBO Everee purchases with the same amount within 7 days of each other: ${dups.length} ---`);
+  for (const d of dups) console.log(d);
+}
+
 async function main(): Promise<void> {
   const [cmd, a, b, c] = process.argv.slice(2);
   if (cmd === 'blocks') {
@@ -271,8 +324,10 @@ async function main(): Promise<void> {
     await cmdDetail(a.split(',').map((s) => s.trim()).filter(Boolean), b, c);
   } else if (cmd === 'changes' && a) {
     await cmdChanges(a, b ?? '2026-01-01', c ?? '2026-12-31');
+  } else if (cmd === 'wirecheck' && a && b) {
+    await cmdWirecheck(a, b);
   } else {
-    console.error('usage: qboReports.ts blocks [year] | detail <acct-prefixes> <start> <end> | changes <since YYYY-MM-DD> [periodStart] [periodEnd]');
+    console.error('usage: qboReports.ts blocks [year] | detail <acct-prefixes> <start> <end> | changes <since YYYY-MM-DD> [periodStart] [periodEnd] | wirecheck <start> <end>');
     process.exit(2);
   }
 }
