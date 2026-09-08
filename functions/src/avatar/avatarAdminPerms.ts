@@ -5,7 +5,7 @@
  *   - `reverifyAvatar`            — force-rerun Vision on a worker's current photo
  *   - `setAvatarVerificationDecision` — Phase 5 recruiter approve / reject / request reupload
  *
- * Rule: caller must be Manager (securityLevel 4) or Admin (5) AND share at least one tenant
+ * Rule: caller must be Manager (securityLevel 4) or higher AND share at least one tenant
  * with the target user. Self-edit isn't handled here — callers should short-circuit for
  * `callerUid === targetUid` before invoking if self-access should be allowed.
  */
@@ -31,11 +31,14 @@ export async function assertCallerCanManageAvatarTarget(
     throw new HttpsError('permission-denied', 'Caller profile not found.');
   }
   const caller = callerSnap.data() as Record<string, unknown>;
-  const callerLevel = String((caller as { securityLevel?: unknown }).securityLevel || '');
-  if (callerLevel !== '4' && callerLevel !== '5') {
+  // Manager (4), Admin (5) and the HRX super-admin levels above (6, 7). The
+  // original check was an exact '4' | '5' match, which locked out level-7
+  // accounts (Greg, cert review launch 2026-09-08).
+  const callerLevel = Number(String((caller as { securityLevel?: unknown }).securityLevel || '').trim());
+  if (!Number.isFinite(callerLevel) || callerLevel < 4) {
     throw new HttpsError(
       'permission-denied',
-      "Requires Manager or Admin permissions to change another user's headshot status.",
+      "Requires Manager or Admin permissions to change another user's verification status.",
     );
   }
 
