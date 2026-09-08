@@ -325,3 +325,82 @@ Decisions + state:
 - **Buttons**: Apply → **"Submitted"** post-apply (app tag shipped; web
   already said "Application Submitted"). "Under Review" only if it ever
   reflects a real recruiter action — no fake process states.
+
+## Pre-demand labor pool + per-account onboarding throttle (Greg 2026-09-07 — URGENT)
+
+Greg: "I'm okay building a qualified, interviewed, and onboarded labor
+pool — in fact it's urgent that we do so. Ideally you would do all of
+this before our human recruiters ever start working on the account."
+Driving example: anticipated OnTrac Dallas business → recruit ahead
+(Indeed + Craigslist ads, outreach to current Dallas workers), AI-bump
+the better applicants to Tier 2, then a PER-CHILD-ACCOUNT setting
+decides whether proactive onboarding spend (C1 Select onboarding +
+background package + E-Verify) reaches Tier 2 or stays Tier-1-only.
+This is also the answer to "who pays / when do we order screens" for
+credential-gated Claim Shift (CORT Rapid etc.): spend is governed by
+account ramp settings, not by individual claims.
+
+### The pipeline (account "ramp mode")
+
+1. **Intake**: posting ads (Indeed/Craigslist — manual today) + outreach
+   to existing workers in the metro (notification groups; Natalie SMS).
+2. **Qualify**: AI prescreen interview (EXISTS) → AI Tier Score (EXISTS,
+   `shared/workerTierScoring.ts`, agreed 8/31: promotes Tier 3→2 only,
+   be picky; screening completions already score points).
+3. **Onboard (the new trigger)**: today screening auto-orders ONLY on
+   assignment→confirmed (`screeningAutomationTrigger` + layered JO →
+   Location → Account package resolution, AccuSource ordering behind
+   env/tenant config + entity allowlist + dry-run + audit). Ramp mode
+   adds a SECOND trigger: account-driven, pre-assignment — for pool
+   members at/above the account's tier threshold, run C1 Select (Everee)
+   onboarding invite → I-9/E-Verify (sequenced AFTER onboarding — E-Verify
+   requires an actual hire, never speculative pre-employment) → account's
+   background package (OnTrac → "Sodexo Basic"; CORT → "CORT Rapid").
+4. **Recruiters inherit** a pool that is interviewed, tiered, and
+   onboarded before they start working the account.
+
+### Per-child-account settings (where the throttle lives)
+
+On the account (child-account granularity, e.g. OnTrac Dallas):
+- `rampMode: on | off` — master switch for proactive onboarding.
+- `onboardDownToTier: 1 | 2` — Greg's toggle: Tier-1-only, or extend the
+  spend to Tier 2.
+- `screeningPackage` — already resolvable via the automation's Account
+  layer; ramp mode reuses it.
+- Budget guards (NEW, required): `maxOrdersPerDay` + `campaignBudget` (or
+  max total orders) so a runaway pipeline can't order 400 screens; every
+  order rides the existing screening_automation_audit trail.
+
+### Credential-gated claiming (agreed direction, 2026-09-06 discussion)
+
+- Requirements on the posting/JO; worker credential wallet
+  ({package, passed, completedAt, expiresAt, source}) — server-side
+  evaluation EXISTS (`evaluateScreeningSatisfiedServer` +
+  `requestedEquivalencyKey`); user docs carry `backgroundCheckOrders[]`.
+- Claim button states: cleared → Claim Shift (instant); missing →
+  "Get qualified"; in-flight → "Screening in progress" (maps to the
+  existing `ineligible` gate / "Requirements needed" state).
+- Credentials are CLIENT-SCOPED (exact package match; equivalency table
+  later). Expiry per client policy so cleared workers degrade to "Get
+  qualified", never to a compliance no-show.
+- FCRA: pass/fail drives the button; the app says "not eligible", never
+  why; adverse action stays human.
+- Conditional claim (shift ≥N days out, spot held pending clearance,
+  auto-release to the pool at T−X) — DEFERRED: no waitlist state in the
+  agreed model; revisit only if cleared-pool fill rates disappoint.
+
+### Open questions (Friday)
+
+1. Tier threshold semantics confirmed as: ramp spend reaches Tier 2 when
+   toggled, else Tier-1-only? (Greg's words: "onboard Tier 2 or only
+   Tier 1".)
+2. Budget guard defaults (orders/day, campaign cap) + who gets the
+   "campaign spent $X this week" digest.
+3. Consent capture for pre-assignment screening orders (FCRA disclosure
+   ride the C1 Select onboarding? AccuSource applicant-entry flow?).
+4. Do AccuSource RESULTS land electronically on `backgroundCheckOrders[]`
+   (auto-populating the wallet) or is a human keying them?
+5. Ads: is Indeed/Craigslist posting staying manual, or does ramp mode
+   generate the ad copy + track source attribution?
+6. Metro targeting for outreach ("current Dallas people") — existing
+   notification groups, or a geo query?
