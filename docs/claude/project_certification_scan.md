@@ -143,6 +143,39 @@ Footguns found on the way:
   unchanged apart from the flag default. First real worker upload will
   prove it — watch `certification_scan.decided` in the function logs.
 
+## Incident 2026-09-08 — EducationStep crash from the status chip
+
+The worker-facing status chip added a `useEffect` whose dependency list read
+`certifications.length` ABOVE the `const certifications = …` line in
+`EducationStep.tsx`. That is a temporal-dead-zone ReferenceError on every
+render, so from the 17:11Z hosting deploy until the hotfix (commit
+`443da7c5`) the component crashed wherever it renders: the apply wizard's
+Education/Certifications step, the worker profile Certifications section,
+`WorkerProfileAccordions`, `JobReadinessFeed`, and the recruiter
+UserProfile Education + Qualifications tabs. `RootErrorBoundary` only
+logs to the console, so there is no count of affected sessions;
+applications in the window were 27 vs 5 the day before (most apply paths
+never render this step), new signups 5 vs 9.
+
+Why it shipped: the pre-deploy `npx tsc --noEmit` "0 errors" I trusted had
+run from `functions/` (the shell cwd had drifted), so it type-checked the
+functions project, not the web tree; and the CRA build's type-checker
+worker OOM-crashed (`RpcIpcMessagePortClosedError`) on the later deploy
+while webpack still emitted the bundle. Rules going forward:
+
+- **Run the web type check from the repo root, explicitly:**
+  `cd <repo root> && npx tsc --noEmit -p tsconfig.json` — and read the file
+  paths in the output, not just the count.
+- **A deploy chain must not continue past a failed rebase.** My chained
+  command compared HEAD to origin/main after `git rebase` failed with a
+  docs conflict; mid-rebase HEAD == origin/main, so the "unpushed=0"
+  gate passed and hosting deployed from the half-rebased tree (correct
+  code by luck — only the punch-list markdown conflicted). Gate on
+  `git status --porcelain` being empty AND no `.git/rebase-merge` dir.
+- Fix pattern for effects that depend on derived values: depend on the
+  prop (`value?.certifications?.length`), or declare the derived const
+  first.
+
 ## Poor photos + worker-typed fields (2026-09-08, later the same day)
 
 Greg: "Is there a way for the worker to input fields manually?" — yes, and
