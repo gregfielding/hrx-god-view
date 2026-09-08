@@ -146,3 +146,22 @@ code (Natalie's `schedule_blast` / `natalie_scheduled_actions` with
 messageLog `providerMessageId` starts with `SM`; (3) after a mock run,
 release `tenants/{t}/shiftInviteSmsCooldown/{uid}` for the affected pool
 before re-running.
+
+## 10DLC campaign #2 REJECTED — 30908 privacy policy (found 2026-09-08)
+The 2026-09-07 submission on MG2dd6557d05d9be9044c996fa568a8a39 (brand
+BNe4c984a6 is APPROVED/VERIFIED) came back `FAILED`, error 30908 "a compliant
+privacy policy can not be verified", field MESSAGE_FLOW. Two causes: (1)
+hrxone.com/sms-privacy and /consent are a JS-only SPA shell — curl returns a
+3.9 KB page with no policy text, so the reviewer saw nothing; (2) the notice
+said "do not sell or rent" but not the statement Twilio checks for. Fixed
+2026-09-08: `legal.smsPrivacy.s2P4` (en/es) adds "We do not share, sell, or
+provide your mobile phone number or your text messaging opt-in and consent
+data to third parties or affiliates for marketing or promotional purposes…",
+and static crawlable copies ship at https://hrxone.com/sms-privacy.html and
+https://hrxone.com/consent.html (generated from en.json into `public/`;
+regenerate when the locale copy changes). Resubmission script:
+`functions/.scratch/a2p-resubmit.cjs` (deletes the FAILED campaign on the
+service, POSTs the corrected one whose MessageFlow cites the .html URLs and
+quotes the non-sharing sentence). Twilio charges the $15 vetting fee again —
+Greg's call to run it. Natalie's 312 line stays receive-only (and cannot get
+OTPs, 30038) until a campaign is approved; her sends go via the 888.
