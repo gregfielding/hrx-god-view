@@ -810,3 +810,11 @@ docs/claude/reference_fiscal_blocks_2026.md. Tags gained a `/B<n>` suffix;
 legacy month tags are migrated in place on the next write. Deploy
 `savePayrollVenueMapping,reconcileTimesheetBatchesCron`, then
 `qboReclassRerun.ts dry` → `write` → `dry`.
+
+**8040 excluded from the QBO WC allocation (Greg 2026-09-08):** entries whose
+`workersCompCode` is 8040 (or `workersCompSource` says placeholder) carry the
+synthetic 2.35 rate but no premium is paid on them yet, so `wcAllocations.ts`
+skips them (reported as `excluded8040` in the result / runner). The carrier
+monthly report already parks 8040 in its placeholder group. The HRX payroll
+cost report still burdens gross at 2.35 for 8040 — a management estimate,
+untouched.

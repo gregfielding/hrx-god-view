@@ -130,16 +130,27 @@ export async function pushWcAllocations(
   // monthly and the block P&L both foot — see fiscalBlocks.ts
   const byMonth = new Map<string, Map<string, number>>();
   const segByKey = new Map<string, ReportSegment>();
+  // 8040 = the tenant's PLACEHOLDER class (carrier code/rate pending, synthetic
+  // 2.35). No premium is being paid on it, so it must NOT be allocated into
+  // 5100 (Greg 2026-09-08). The carrier report already parks it separately.
+  const excluded8040 = { entries: 0, gross: 0, premium: 0 };
   es.forEach((d) => {
     const e = d.data();
     if (!PAID.has(trim(e.status))) return;
     const rate = num(e.workersCompRate);
     if (!(rate > 0)) return;
+    const isPlaceholder = trim(e.workersCompCode) === '8040' || /placeholder/i.test(trim(e.workersCompSource));
     const gross =
       (num(e.totalRegularHours) + num(e.totalOTHours) + num(e.totalDoubleTimeHours)) * num(e.payRate) +
       num(e.tips) +
       num(e.bonusAmount);
     if (!(gross > 0)) return;
+    if (isPlaceholder) {
+      excluded8040.entries += 1;
+      excluded8040.gross = round2(excluded8040.gross + gross);
+      excluded8040.premium = round2(excluded8040.premium + (gross * rate) / 100);
+      return;
+    }
     const wd = trim(e.workDate);
     const seg = segmentFor(wd.slice(0, 10));
     const month = seg.key;
@@ -239,6 +250,7 @@ export async function pushWcAllocations(
       PrivateNote:
         `Workers' comp field premium (entry gross × matrix rate) reclassed 7140 → 5100 per class. ` +
         `Residual on 7140 = internal WC + carrier deposit/catch-up variance. ` +
+        `8040 placeholder class excluded (no premium paid yet). ` +
         `Segment ${seg.start}..${seg.end} (month ∩ block). [wcalloc:${seg.key}]`,
     };
     if (prior) {
@@ -250,5 +262,5 @@ export async function pushWcAllocations(
       await qboEntityCreate(tenantId, 'JournalEntry', { ...header, Line: lines });
     }
   }
-  return { ok: true, dryRun, months: results };
+  return { ok: true, dryRun, months: results, excluded8040 };
 }

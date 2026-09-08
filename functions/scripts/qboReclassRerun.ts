@@ -46,6 +46,8 @@ async function main(): Promise<void> {
     for (const m of (w.months ?? []) as Array<Record<string, any>>) {
       console.log(`${String(m.month).padEnd(12)} ${String(m.dates ?? '').padEnd(24)} ${String(m.status).padEnd(20)} total ${Number(m.amount ?? 0).toFixed(2)}`);
     }
+    const x = (w.excluded8040 ?? {}) as Record<string, number>;
+    console.log(`8040 placeholder class EXCLUDED (no premium paid yet): ${x.entries ?? 0} entries, gross ${Number(x.gross ?? 0).toFixed(2)}, would-have-been premium ${Number(x.premium ?? 0).toFixed(2)}`);
   }
   if (phase === 'both' || phase === 'trueup') {
     const { trueUpAllocationJes } = await import('../src/payroll/allocationTrueUp');
