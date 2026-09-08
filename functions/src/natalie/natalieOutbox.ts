@@ -380,6 +380,61 @@ async function drainScheduledActions(token: string): Promise<number> {
   return ran;
 }
 
+const FLEX_BOOKING_WINDOW_H = 4;
+function venueTz(venue: string): { tz: string; label: string } {
+  if (/denver|\bCO\b|colorado|utah|\bUT\b|arizona|\bAZ\b/i.test(venue)) return { tz: 'America/Denver', label: 'MT' };
+  if (/san francisco|\bCA\b|california|seattle|\bWA\b|oregon|\bOR\b|nevada|\bNV\b/i.test(venue)) return { tz: 'America/Los_Angeles', label: 'PT' };
+  if (/new york|\bNY\b|\bNJ\b|florida|\bFL\b|georgia|\bGA\b|\bPA\b|\bMA\b|\bNC\b|\bVA\b|\bOH\b|\bMI\b/i.test(venue)) return { tz: 'America/New_York', label: 'ET' };
+  return { tz: 'America/Chicago', label: 'CT' };
+}
+function fmtClock(d: Date, tz: string): string {
+  return d.toLocaleTimeString('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' });
+}
+
+/**
+ * Flex request notices (Greg 2026-09-08, after three OnTrac requests expired
+ * unseen): every new request, expiring/expired notice and headcount change
+ * that the email ingest turns into an external_shift_requests row is posted
+ * to Slack within a minute, with the book-by estimate. Flex revokes unbooked
+ * headcount ~4h after a request is posted; accepting alone does not hold it.
+ */
+async function drainFlexNotices(token: string): Promise<number> {
+  const cfg = (await db.doc('tenants/BCiP2bQ9CgVOCTfV6MhD/app_config/natalie').get()).data() as Record<string, unknown> | undefined;
+  const channel = s(cfg?.flexNoticeChannelId) || 'C0BF02MEKUP';
+  const since = admin.firestore.Timestamp.fromMillis(Date.now() - 3 * 3600_000);
+  const snap = await db.collection('tenants/BCiP2bQ9CgVOCTfV6MhD/external_shift_requests').where('createdAt', '>=', since).limit(60).get();
+  let posted = 0;
+  for (const d of snap.docs) {
+    const r = d.data() as Record<string, unknown>;
+    if (r.natalieNoticeAt || s(r.provider) !== 'indeed_flex') continue;
+    const ev = (r.event ?? {}) as Record<string, unknown>;
+    const kind = s(r.eventType) === 'info_notice' ? s(ev.noticeKind) : s(r.eventType);
+    if (!['new_request', 'booking_expiring', 'booking_expired', 'change_headcount'].includes(kind)) continue;
+    const venue = s(ev.venueName) || s(r.matchedAccountName) || 'unknown venue';
+    const { tz, label } = venueTz(`${venue} ${s(ev.venueAddress)}`);
+    const created = tsToDate(r.createdAt) ?? new Date();
+    const id = s(ev.jobId);
+    const account = s(r.matchedAccountName);
+    let text = '';
+    if (kind === 'new_request') {
+      const pa = (r.portalAccept ?? {}) as Record<string, unknown>;
+      const bookBy = new Date(created.getTime() + FLEX_BOOKING_WINDOW_H * 3600_000);
+      const accept = pa.actionId && pa.dryRun !== true ? "I've queued the accept." : pa.actionId ? `Auto-accept is in *dry run*, so nobody has accepted it — accept it in Flex or tell me "accept ${id}".` : `It didn't match an account I'm allowed to auto-accept — accept it in Flex or tell me "accept ${id}".`;
+      text = `New Flex request *#${id}*${account ? ` (${account})` : ''}: ${s(ev.roleName) || 'shift'} at ${venue}, ${s(ev.workDate)} ${s(ev.startTime)}–${s(ev.endTime)}, *${ev.headcount ?? '?'} workers*. ${accept} Flex revokes whatever isn't *booked* about ${FLEX_BOOKING_WINDOW_H}h after posting — book by ~${fmtClock(bookBy, tz)} ${label}.`;
+    } else if (kind === 'booking_expiring') {
+      text = `:warning: Flex says request *#${id}* is expiring soon — any headcount not booked in the next hour or so gets revoked. ${s(ev.summary)}`;
+    } else if (kind === 'booking_expired') {
+      text = `:x: Flex request *#${id}* expired unbooked — that headcount is gone; the client would have to re-post it. ${s(ev.summary)}`;
+    } else {
+      text = `Flex changed the booking at ${venue} on ${s(ev.workDate)}: *${ev.previousHeadcount ?? '?'} → ${ev.newHeadcount ?? '?'} workers*${Number(ev.newHeadcount) < Number(ev.previousHeadcount) ? ' (unfilled headcount revoked at the booking deadline)' : ''}.`;
+    }
+    const res = await postAsNatalie(token, { channel, text });
+    await d.ref.set({ natalieNoticeAt: admin.firestore.FieldValue.serverTimestamp(), natalieNoticeTs: res.ts ?? null, natalieNoticeError: res.error ?? null }, { merge: true });
+    if (res.ok) posted += 1;
+  }
+  return posted;
+}
+
 export async function drainNatalieOutbox(token: string): Promise<{ followups: number; escalations: number; relays: number; techIssues: number }> {
   const out = { followups: 0, escalations: 0, relays: 0, techIssues: 0 };
   try { out.followups = await drainFollowups(token); } catch (e) { logger.warn('[natalie] followup drain failed', { err: String(e) }); }
@@ -389,5 +444,6 @@ export async function drainNatalieOutbox(token: string): Promise<{ followups: nu
   try { await drainTechVerdicts(token); } catch (e) { logger.warn('[natalie] tech verdict drain failed', { err: String(e) }); }
   try { await drainBackgroundFollowups(token); } catch (e) { logger.warn('[natalie] background followup drain failed', { err: String(e) }); }
   try { await drainScheduledActions(token); } catch (e) { logger.warn('[natalie] scheduled action drain failed', { err: String(e) }); }
+  try { await drainFlexNotices(token); } catch (e) { logger.warn('[natalie] flex notice drain failed', { err: String(e) }); }
   return out;
 }

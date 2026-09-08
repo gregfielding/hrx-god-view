@@ -367,12 +367,19 @@ async function listFlexRequests(tenantId: string, days: number): Promise<unknown
   const since = admin.firestore.Timestamp.fromMillis(Date.now() - Math.max(1, Math.min(days || 3, 30)) * 86400000);
   const snap = await db.collection(`tenants/${tenantId}/external_shift_requests`).where('createdAt', '>=', since).orderBy('createdAt', 'desc').limit(40).get();
   const portalJobs = ((await db.doc(`tenants/${tenantId}/portal_state/indeed_flex_jobs`).get()).get('jobs') ?? {}) as Record<string, { status?: string | null; client?: string | null }>;
+  const expiredIds = new Set(snap.docs.map((d) => d.data() as Record<string, unknown>).filter((r) => r.eventType === 'info_notice' && s((r.event as Record<string, unknown>)?.noticeKind) === 'booking_expired').map((r) => s((r.event as Record<string, unknown>)?.jobId)));
   return snap.docs.map((d) => {
     const r = d.data() as Record<string, unknown>;
     const ev = (r.event ?? {}) as Record<string, unknown>;
     const pa = (r.portalAccept ?? {}) as Record<string, unknown>;
+    const createdMs = Date.parse(tsToIso(r.createdAt) ?? '') || Date.now();
+    const accepted = Boolean(pa.actionId) && pa.dryRun !== true;
+    const expired = r.eventType === 'new_request' && (expiredIds.has(s(ev.jobId)) || (!accepted && Date.now() - createdMs > 5 * 3600_000));
     return {
       receivedAt: tsToIso(r.createdAt),
+      /** Flex revokes unbooked headcount ~4h after posting. expired=true means the request is gone (confirmed by Flex's expiry email, or unaccepted for 5h+). */
+      expired,
+      bookByEstimate: r.eventType === 'new_request' ? new Date(createdMs + 4 * 3600_000).toISOString() : null,
       type: r.eventType,
       flexJobId: s(ev.jobId) || null,
       venue: s(ev.venueName) || null,
@@ -385,7 +392,7 @@ async function listFlexRequests(tenantId: string, days: number): Promise<unknown
       match: r.matchConfidence,
       account: s(r.matchedAccountName) || null,
       acceptedInPortal: pa.actionId ? { actionId: pa.actionId, dryRun: pa.dryRun === true, queuedAt: pa.enqueuedAt } : null,
-      /** Status on the Flex jobs list at the last sync: New = still waiting for a Respond; In Progress = accepted (by anyone); Completed/Cancelled = over. */
+      /** Status on the Flex jobs list at the last sync: New = still waiting for a Respond; In Progress = accepted (by anyone); Completed = over — for a future date that means Flex revoked the unbooked headcount at the deadline and only the booked workers remain. */
       portalStatus: portalJobs[s(ev.jobId)]?.status ?? null,
     };
   });

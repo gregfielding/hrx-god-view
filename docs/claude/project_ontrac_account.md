@@ -125,3 +125,25 @@ Section 2 per worker AT OnTrac BOOKING time (attestation asserts the
 I-9 is complete in its entirety, so booking flow = verify status
 Complete → enter E-Verify date → generate attestation). Same applies to
 drug screens (per-facility matrix) — screen at booking.
+
+## Flex request booking deadline (learned 2026-09-08 the hard way)
+Every OnTrac request on Indeed Flex carries a **booking deadline ≈ 4 hours
+after it is posted** (e.g. #545618 posted 6:10 AM MDT 9/7, "Request expired
+10:10 AM MDT"). At the deadline Flex revokes every allocation that is not
+*booked* — accepting the request does NOT hold headcount. Effects seen:
+- 9/9 (#545618, 7), 9/10 (#546479), 9/12 (#546478, 16) expired unaccepted
+  while auto-accept sat in dry-run → ~$3.7k potential earnings gone; the
+  job pages then return "This record does not exist".
+- 9/11 (#546477) and 9/13 (#546480), accepted + 2 booked each, were trimmed
+  overnight to `workers_requested = workers_provided = 2` ("Some of your
+  upcoming bookings have been changed", `change_headcount` 14 → 2) and the
+  jobs list shows them as *Completed* — i.e. "Completed" on a future job
+  means fully booked at the reduced headcount, not cancelled.
+- Expired requests cannot be reopened from the agency side; OnTrac must
+  re-post (or Flex support reinstates). Ask via Daniel's Flex contact.
+Play: accept within minutes (flip `app_config/indeed_flex.autoAcceptDryRun`
+to false — Greg's call), then BOOK pool workers immediately; unfilled
+headcount is lost at +4h regardless. Natalie now posts every new request /
+expiring / expired / headcount-change notice to #recruiting within a minute
+(`drainFlexNotices`), the brief separates "expired unbooked" from
+"unaccepted", and `list_flex_requests` carries `expired` + `bookByEstimate`.

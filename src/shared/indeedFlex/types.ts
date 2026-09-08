@@ -287,7 +287,7 @@ export interface IndeedFlexEventDailyDigestExpired extends IndeedFlexEventBase {
   type: 'daily_digest_expired';
   /** List of (jobId, venueName) pairs that expired. Both fields are
    *  optional — Indeed's digest sometimes lists venue alone. */
-  expiredJobs: Array<{ jobId?: string; venueName?: string }>;
+  expiredJobs: Array<{ jobId?: string; venueName?: string; companyName?: string; dateImpacted?: string; earningsMissed?: string; jobIdSuffix?: string }>;
 }
 
 /** PI-5 (2026-07-22): catch-all for actionable-but-informational

@@ -36,6 +36,8 @@ export interface BriefFacts {
   dateLabel: string;
   isMonday: boolean;
   unacceptedFlexRequests: unknown[];
+  expiredFlexRequests: unknown[];
+  headcountChanges: unknown[];
   fieldglassLast24h: unknown;
   todayShifts: { total: number; unconfirmed: unknown[]; flexLinked: number };
   yesterdayLateNoAnswer: unknown[];
@@ -55,14 +57,20 @@ export async function gatherBriefFacts(tenantId: string): Promise<BriefFacts> {
   // The portal's own view of each job (published by the Flex sync): a request
   // someone accepted by hand shows In Progress / Completed there.
   const portalJobs = ((await db.doc(`tenants/${tenantId}/portal_state/indeed_flex_jobs`).get()).get('jobs') ?? {}) as Record<string, { status?: string | null }>;
-  const unacceptedFlexRequests = reqs.docs
-    .map((d) => d.data() as Record<string, unknown>)
-    .filter((r) => r.eventType === 'new_request' && r.status === 'needs_review')
+  const allReqs = reqs.docs.map((d) => d.data() as Record<string, unknown>);
+  // Flex revokes unbooked headcount ~4h after posting; an expired request is a miss, not a to-do.
+  const expiredIds = new Set(allReqs.filter((r) => r.eventType === 'info_notice' && s((r.event as Record<string, unknown>)?.noticeKind) === 'booking_expired').map((r) => s((r.event as Record<string, unknown>)?.jobId)));
+  const isExpired = (r: Record<string, unknown>) => { const ev = (r.event ?? {}) as Record<string, unknown>; const pa = (r.portalAccept ?? {}) as Record<string, unknown>; const accepted = Boolean(pa.actionId) && pa.dryRun !== true; const age = Date.now() - (toDate(r.createdAt)?.getTime() ?? Date.now()); return expiredIds.has(s(ev.jobId)) || (!accepted && age > 5 * 3600_000); };
+  const expiredFlexRequests = allReqs.filter((r) => r.eventType === 'new_request' && isExpired(r)).map((r) => { const ev = (r.event ?? {}) as Record<string, unknown>; return { flexJobId: ev.jobId, venue: ev.venueName, date: ev.workDate, headcount: ev.headcount, account: r.matchedAccountName ?? null, confirmedExpired: expiredIds.has(s(ev.jobId)) }; });
+  const headcountChanges = allReqs.filter((r) => r.eventType === 'change_headcount').map((r) => { const ev = (r.event ?? {}) as Record<string, unknown>; return { venue: ev.venueName, date: ev.workDate, from: ev.previousHeadcount, to: ev.newHeadcount, account: r.matchedAccountName ?? null }; });
+  const unacceptedFlexRequests = allReqs
+    .filter((r) => r.eventType === 'new_request' && r.status === 'needs_review' && !isExpired(r))
     .map((r) => {
       const ev = (r.event ?? {}) as Record<string, unknown>;
       const pa = (r.portalAccept ?? {}) as Record<string, unknown>;
       const portalStatus = portalJobs[String(ev.jobId ?? '')]?.status ?? null;
-      return { flexJobId: ev.jobId, venue: ev.venueName, role: ev.roleName, date: ev.workDate, headcount: ev.headcount, match: r.matchConfidence, account: r.matchedAccountName ?? null, acceptQueued: Boolean(pa.actionId) && pa.dryRun !== true, dryRunOnly: pa.dryRun === true, portalStatus };
+      const bookBy = new Date((toDate(r.createdAt)?.getTime() ?? Date.now()) + 4 * 3600_000);
+      return { flexJobId: ev.jobId, venue: ev.venueName, role: ev.roleName, date: ev.workDate, headcount: ev.headcount, match: r.matchConfidence, account: r.matchedAccountName ?? null, acceptQueued: Boolean(pa.actionId) && pa.dryRun !== true, dryRunOnly: pa.dryRun === true, portalStatus, bookByEstimate: bookBy.toISOString(), bookByLabel: bookBy.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }) + ' CT' };
     })
     .filter((r) => !r.acceptQueued && !(r.portalStatus && /in progress|completed|cancel/i.test(r.portalStatus)));
 
@@ -137,13 +145,14 @@ export async function gatherBriefFacts(tenantId: string): Promise<BriefFacts> {
     emailNeedingReply = [];
   }
 
-  return { dateLabel: today.label, isMonday, unacceptedFlexRequests, fieldglassLast24h: fg, todayShifts: { total: todayAsg.size, unconfirmed, flexLinked }, yesterdayLateNoAnswer, yesterdayNoShows, portal, emailNeedingReply, weekly };
+  return { dateLabel: today.label, isMonday, unacceptedFlexRequests, expiredFlexRequests, headcountChanges, fieldglassLast24h: fg, todayShifts: { total: todayAsg.size, unconfirmed, flexLinked }, yesterdayLateNoAnswer, yesterdayNoShows, portal, emailNeedingReply, weekly };
 }
 
 /** Deterministic fallback if the model is unavailable. */
 export function renderBriefFallback(f: BriefFacts): string {
   const lines = [`*Morning brief — ${f.dateLabel}*`];
   lines.push(`• Flex requests waiting on an accept: ${f.unacceptedFlexRequests.length}`);
+  lines.push(`• Flex requests that expired unbooked (last 36h): ${f.expiredFlexRequests.length}; headcount changes: ${f.headcountChanges.length}`);
   const fg = f.fieldglassLast24h as { passes: number; updated: number; closed: number };
   lines.push(`• Fieldglass (24h): ${fg.passes} passes, ${fg.updated} updated, ${fg.closed} closed`);
   lines.push(`• Today: ${f.todayShifts.total} shifts, ${f.todayShifts.unconfirmed.length} unconfirmed`);
@@ -151,7 +160,7 @@ export function renderBriefFallback(f: BriefFacts): string {
   return lines.join('\n');
 }
 
-const BRIEF_SYSTEM = `You are Natalie Brooks, C1 Staffing's recruiting assistant, writing the team's morning brief in Slack. You are given facts as JSON. Write a short, scannable brief in Slack mrkdwn (*bold*, "•" bullets, <url|text> links; no headers, no tables). Lead with what needs a human today (unaccepted Flex requests, unconfirmed shifts, yesterday's no-answers), then a one-line portal health note. Name workers by the label given; link ONLY items that carry an assignmentId, as <https://hrxone.com/assignments/{assignmentId}|job>. Flex requests have no HRX link — write their Flex job id in plain text (e.g. 545618) and link the list once as <https://hrxone.com/shifts/log|Flex request log>. Unread emails: sender and subject only. If a list is empty, say so in three words or fewer, don't invent items. Aim for 8–14 lines. On Mondays add a 3–5 line "Last week I…" section from the weekly counts (plain words, no jargon). No sign-off.`;
+const BRIEF_SYSTEM = `You are Natalie Brooks, C1 Staffing's recruiting assistant, writing the team's morning brief in Slack. You are given facts as JSON. Write a short, scannable brief in Slack mrkdwn (*bold*, "•" bullets, <url|text> links; no headers, no tables). Lead with what needs a human today (unaccepted Flex requests — each with its book-by time, since Flex revokes unbooked headcount about 4 hours after posting — unconfirmed shifts, yesterday's no-answers). Then, if any, one line for Flex requests that EXPIRED unbooked in the last 36h (a miss to own, not a to-do: name the job ids, dates and headcount lost) and one line for headcount changes Flex made. Then a one-line portal health note. Name workers by the label given; link ONLY items that carry an assignmentId, as <https://hrxone.com/assignments/{assignmentId}|job>. Flex requests have no HRX link — write their Flex job id in plain text (e.g. 545618) and link the list once as <https://hrxone.com/shifts/log|Flex request log>. Unread emails: sender and subject only. If a list is empty, say so in three words or fewer, don't invent items. Aim for 8–14 lines. On Mondays add a 3–5 line "Last week I…" section from the weekly counts (plain words, no jargon). No sign-off.`;
 
 export async function composeBrief(facts: BriefFacts): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
