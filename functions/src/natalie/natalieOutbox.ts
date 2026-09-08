@@ -161,6 +161,15 @@ async function drainRelays(token: string): Promise<number> {
 }
 
 const DEV_CHANNEL = 'C08U7U0FL03';
+const GITHUB_REPO = 'gregfielding/hrx-god-view';
+
+async function github<T>(method: string, path: string, body?: unknown): Promise<T | null> {
+  const token = process.env.GITHUB_NATALIE_TOKEN;
+  if (!token) return null;
+  const res = await fetch(`https://api.github.com${path}`, { method, headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': 'hrx-natalie' }, body: body ? JSON.stringify(body) : undefined });
+  if (!res.ok) { logger.warn('[natalie] github call failed', { path, status: res.status }); return null; }
+  return (await res.json()) as T;
+}
 
 /**
  * Worker-reported technical problems (natalie_tech_issues, written by the
@@ -224,11 +233,54 @@ async function drainTechIssues(token: string): Promise<number> {
         logger.warn('[natalie] tech ack text failed', { err: String(err) });
       }
     }
-    await d.ref.update({ status: 'triaged', diagnosis, slack: { channel: DEV_CHANNEL, ts: res.ts ?? null }, triagedAt: admin.firestore.FieldValue.serverTimestamp() });
+    // GitHub issue → the scheduled "Natalie tech-issue fixer" routine picks it up.
+    let issueNumber: number | null = null;
+    const issue = await github<{ number: number; html_url: string }>('POST', `/repos/${GITHUB_REPO}/issues`, {
+      title: `Worker-reported: ${s(t.text).slice(0, 70)}`,
+      labels: ['natalie-tech'],
+      body: `**Reported by** ${who} via SMS on ${new Date().toISOString()}${uid ? ` — HRX user \`${uid}\`` : ''}\n\n> ${s(t.text).slice(0, 500)}\n\n**Last message we sent them:** ${t.lastOutbound ? `${s((t.lastOutbound as Record<string, unknown>).messageTypeId)} — "${s((t.lastOutbound as Record<string, unknown>).text).slice(0, 300)}"` : 'n/a'}\n\n**Initial diagnosis (Natalie):**\n${diagnosis || '_none_'}\n\n**Evidence:**\n\`\`\`json\n${JSON.stringify(evidence, null, 1).slice(0, 4000)}\n\`\`\`\n\nSlack thread: https://c1staffing.slack.com/archives/${DEV_CHANNEL}/p${String(res.ts ?? '').replace('.', '')}`,
+    });
+    if (issue) issueNumber = issue.number;
+    await d.ref.update({ status: 'triaged', diagnosis, slack: { channel: DEV_CHANNEL, ts: res.ts ?? null }, githubIssue: issueNumber, triagedAt: admin.firestore.FieldValue.serverTimestamp() });
     await recordNatalieAction({ tenantId, kind: 'tech_issue', summary: `Flagged a worker-reported problem to #dev: "${s(t.text).slice(0, 80)}"`, userId: uid || null, slack: { channel: DEV_CHANNEL, ts: res.ts } });
     posted += 1;
   }
   return posted;
+}
+
+/** Close the loop: when the fixer routine leaves a verdict on the issue, tell the worker and #dev. */
+async function drainTechVerdicts(token: string): Promise<number> {
+  if (!process.env.GITHUB_NATALIE_TOKEN) return 0;
+  const snap = await db.collection('natalie_tech_issues').where('status', '==', 'triaged').limit(10).get();
+  let closed = 0;
+  for (const d of snap.docs) {
+    const t = d.data() as Record<string, unknown>;
+    const n = Number(t.githubIssue);
+    if (!n) continue;
+    const comments = await github<Array<{ body: string; html_url: string }>>('GET', `/repos/${GITHUB_REPO}/issues/${n}/comments?per_page=20`);
+    const verdict = (comments ?? []).map((c) => c.body).find((b) => /^\[fixer\] verdict:/m.test(b));
+    if (!verdict) continue;
+    const kind = /verdict:\s*(fixed_in_pr\s*#?\d+|already_fixed|needs_human)/i.exec(verdict)?.[1] ?? 'unknown';
+    const workerNote = /what natalie should text the worker[^\n]*\n+([\s\S]{20,400}?)(\n\n|$)/i.exec(verdict)?.[1]?.trim() ?? null;
+    const slack = (t.slack ?? {}) as { channel?: string; ts?: string };
+    const text = /already_fixed/i.test(kind)
+      ? `Fixer verdict on issue #${n}: already fixed on main. ${workerNote ? 'Texting the worker now.' : ''}`
+      : /fixed_in_pr/i.test(kind)
+        ? `Fixer verdict on issue #${n}: fix opened as PR ${kind.replace(/fixed_in_pr\s*/i, '')}. Once it is merged and deployed, reply "deployed" in this thread and I'll text the worker.`
+        : `Fixer verdict on issue #${n}: needs a human. See the issue comment.`;
+    await postAsNatalie(token, { channel: slack.channel || DEV_CHANNEL, text, threadTs: slack.ts });
+    if (/already_fixed/i.test(kind) && workerNote && s(t.phoneE164)) {
+      try {
+        const { sendWorkerMessageInternal } = await import('../twilio');
+        await sendWorkerMessageInternal(s(t.phoneE164), workerNote, { tenantId: s(t.tenantId) || 'BCiP2bQ9CgVOCTfV6MhD', userId: s(t.userId) || undefined, source: 'system', messageTypeId: 'natalie_tech_resolved', systemContext: true } as never);
+      } catch (err) {
+        logger.warn('[natalie] tech resolution text failed', { err: String(err) });
+      }
+    }
+    await d.ref.update({ status: /already_fixed/i.test(kind) ? 'resolved' : /fixed_in_pr/i.test(kind) ? 'fix_pending_deploy' : 'needs_human', verdict: kind, workerNote, verdictAt: admin.firestore.FieldValue.serverTimestamp() });
+    closed += 1;
+  }
+  return closed;
 }
 
 export async function drainNatalieOutbox(token: string): Promise<{ followups: number; escalations: number; relays: number; techIssues: number }> {
@@ -237,5 +289,6 @@ export async function drainNatalieOutbox(token: string): Promise<{ followups: nu
   try { out.escalations = await drainEscalations(token); } catch (e) { logger.warn('[natalie] escalation drain failed', { err: String(e) }); }
   try { out.relays = await drainRelays(token); } catch (e) { logger.warn('[natalie] relay drain failed', { err: String(e) }); }
   try { out.techIssues = await drainTechIssues(token); } catch (e) { logger.warn('[natalie] tech issue drain failed', { err: String(e) }); }
+  try { await drainTechVerdicts(token); } catch (e) { logger.warn('[natalie] tech verdict drain failed', { err: String(e) }); }
   return out;
 }

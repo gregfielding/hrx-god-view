@@ -126,3 +126,30 @@ per-venue (venueId=9204), not per order, so the same QR works every day.
   function; true orphans (deployed but not referenced in src) as of tonight:
   firestoreAutoAssignFlexWorker, firestoreLogSettingCreated,
   firestoreLogSettingDeleted, firestoreLogUserGroupDeleted, voidOffCyclePayment.
+
+## Worker-reported problems → automatic fix loop (2026-09-07 night)
+1. `inboundSmsWebhook` flags texts that read like a technical problem
+   ("won't save", "error", "link not working", "can't log in"…) into
+   `natalie_tech_issues` (open) with the last outbound message as context.
+2. The inbox tick (`natalieOutbox.drainTechIssues`) gathers evidence (user,
+   recent messages, applications, interviews), has Claude write a one-line
+   diagnosis + next steps, posts it to #dev as Natalie, texts the worker
+   "flagged to our tech team, I'll text you when it's fixed", and — when
+   `GITHUB_NATALIE_TOKEN` is set — opens a GitHub issue labeled
+   `natalie-tech` with the same evidence (status → `triaged`).
+3. Cloud routine **"Natalie tech-issue fixer"** (claude.ai routine
+   `trig_01VGWBaWnnzwRQ2zmFHpQWdA`, every 2h, claude-opus-5, repo checkout,
+   Greg's claude.ai connectors incl. Slack) reads open `natalie-tech` issues,
+   investigates, opens a fix PR on `natalie/fix-issue-<n>`, and comments
+   `[fixer] verdict: fixed_in_pr #N | already_fixed | needs_human` with a
+   "What Natalie should text the worker" paragraph. It never deploys.
+4. `drainTechVerdicts` polls those comments: already_fixed → Natalie texts
+   the worker the paragraph and marks resolved; fixed_in_pr → posts in the
+   #dev thread ("reply 'deployed' and I'll text them"); needs_human → flags.
+   Merging + deploying the PR stays a human (or Claude Code session) step.
+One-time: create a fine-grained GitHub PAT (Issues: read/write on
+hrx-god-view) as Secret Manager `GITHUB_NATALIE_TOKEN`, then bind it on
+`natalieSlackInbox` (defineSecret) and redeploy.
+First case: Keaney Hicks, 2026-09-06 "won't let me save the answers" — the
+position-pack prescreen bug fixed the next day; Natalie texted him the fix
+and his link on 2026-09-07 22:05 PT.
