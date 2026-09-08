@@ -443,3 +443,14 @@ hosting deployed; curl 200 postflight.
 - Footgun fixed en route: the old UI switch wrote dot-keys into local
   state that nested reads never saw; `updateTierAutomation` batches
   fields into one updateDoc and merges the nested map.
+
+## Credential verification (built 2026-09-08)
+
+The "badges" conversation (Qwick/Instawork parity) produced the first
+concrete piece: uploaded certification cards are read by Claude and
+auto-decided or queued — see
+[project_certification_scan.md](project_certification_scan.md). Badge
+derivation (verified cert + passed screening package + onboarding →
+worker-level credentials that gate Claim Shift) is the next step and
+reuses `review.status == 'approved'` + `expirationDate` off these rows.
+

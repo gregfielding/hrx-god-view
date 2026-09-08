@@ -442,3 +442,20 @@ falling back to the headcount when a shift doc has no liveFill yet.
 `WorkerBottomTabs` now does too (`useAuth().avatarUrl`, ink ring when
 active, person icon fallback). Greg spotted it on the first Claim Shift
 test ("my avatar is on my profile page but not in the menu").
+
+**Certification scan status (web shipped 2026-09-08, app GAP):** web
+worker cert rows now carry a Verified / Under review / Needs a new photo
+chip (`EducationStep`, keys `profile.certStatus*`) fed by
+`users/{uid}/certification_records/{id}.review.status`, and every web
+upload creates that canonical row so the Claude scan runs
+(docs/claude/project_certification_scan.md). The app's
+`ProfileCertificationsDocumentsScreen` / `_certificationsWritePatch` still
+write only the legacy `certifications[]` (+ `workerProfile.credentials`)
+rows — app uploads are NOT scanned and show no status. App to-do: on
+upload, also create the canonical record (same shape as
+`createOrUpdateCertificationRecord.ts`: catalogEntryId via the manifest
+lookup, `review.status:'submitted'`, `recordStatus:'pending_review'`,
+`source:'worker_upload'`, `evidenceFileRefs[{storagePath,storageUrl,
+fileName}]`) and patch `certificationRecordId` onto the legacy row; then
+read `review.status` for the chip and honor the in-app
+`certification_verified` / `certification_reupload_request` notifications.
