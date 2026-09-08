@@ -288,14 +288,14 @@ async function sendReuploadNudge(params: {
   }
 }
 
-function resolveWorkerLanguage(userData: Record<string, unknown>): WorkerLanguage {
+export function resolveWorkerLanguage(userData: Record<string, unknown>): WorkerLanguage {
   const pref = String((userData as { preferredLanguage?: unknown }).preferredLanguage || '')
     .trim()
     .toLowerCase();
   return pref === 'es' ? 'es' : 'en';
 }
 
-function resolvePrimaryTenant(userData: Record<string, unknown>): string | null {
+export function resolvePrimaryTenant(userData: Record<string, unknown>): string | null {
   const direct = (userData as { tenantId?: unknown }).tenantId;
   if (typeof direct === 'string' && direct) return direct;
   const active = (userData as { activeTenantId?: unknown }).activeTenantId;
@@ -309,7 +309,7 @@ function resolvePrimaryTenant(userData: Record<string, unknown>): string | null 
  * flag and the `notificationSettings.smsNotifications` toggle. Either being true is enough;
  * both being falsy means we skip SMS (TCPA hygiene).
  */
-function extractSmsOptIn(userData: Record<string, unknown>): boolean {
+export function extractSmsOptIn(userData: Record<string, unknown>): boolean {
   const flat = (userData as { smsOptIn?: unknown }).smsOptIn;
   if (flat === true) return true;
   const settings = (userData as { notificationSettings?: { smsNotifications?: unknown } })

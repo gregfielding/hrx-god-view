@@ -53,6 +53,7 @@ import UpcomingFirstShiftsSection from '../components/workforce/csa/UpcomingFirs
 import RecentlyCompletedFirstShiftsSection from '../components/workforce/csa/RecentlyCompletedFirstShiftsSection';
 import PendingOnboardingCallsSection from '../components/workforce/csa/PendingOnboardingCallsSection';
 import HeadshotBypassesSection from '../components/workforce/csa/HeadshotBypassesSection';
+import CertificationReviewSection from '../components/workforce/csa/CertificationReviewSection';
 import type { WorkforceOutletContext } from './Workforce';
 
 const WorkforceEmployeeReadiness: React.FC = () => {
@@ -196,6 +197,7 @@ const WorkforceEmployeeReadiness: React.FC = () => {
           rejected headshot) can be cleared proactively before the next
           placement hits the same gate. */}
       <HeadshotBypassesSection tenantId={tenantId} />
+      <CertificationReviewSection tenantId={tenantId} />
 
 
       <Snackbar

@@ -905,7 +905,11 @@
     "sectionDirectDepositTitle": "Depósito directo",
     "sectionDirectDepositDescription": "La cuenta bancaria donde se deposita tu pago.",
     "sectionSsnTaxTitle": "SSN y formularios de impuestos",
-    "sectionSsnTaxDescription": "Termina la configuración de nómina o actualiza tus datos fiscales en el portal seguro."
+    "sectionSsnTaxDescription": "Termina la configuración de nómina o actualiza tus datos fiscales en el portal seguro.",
+    "certStatusVerified": "Verificado",
+    "certStatusUnderReview": "En revisión",
+    "certStatusNeedsPhoto": "Necesita una foto nueva",
+    "certStatusNeedsPhotoHint": "Sube una foto clara del certificado completo, sin reflejos ni recortes."
   },
   "apply": {
     "availableShifts": "Turnos disponibles",

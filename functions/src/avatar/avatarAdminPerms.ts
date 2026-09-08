@@ -63,3 +63,9 @@ export function toTenantIdSet(user: Record<string, unknown>): Set<string> {
   }
   return ids;
 }
+
+/**
+ * The same Manager/Admin-on-a-shared-tenant rule, under a name that fits the
+ * other worker-record reviews that reuse it (certification decisions, 2026-09-08).
+ */
+export const assertCallerCanManageWorkerTarget = assertCallerCanManageAvatarTarget;

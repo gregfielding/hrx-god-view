@@ -905,7 +905,11 @@
     "sectionDirectDepositTitle": "Direct deposit",
     "sectionDirectDepositDescription": "The bank account where your pay is deposited.",
     "sectionSsnTaxTitle": "SSN & tax forms",
-    "sectionSsnTaxDescription": "Finish payroll setup or update tax info in the secure payroll portal."
+    "sectionSsnTaxDescription": "Finish payroll setup or update tax info in the secure payroll portal.",
+    "certStatusVerified": "Verified",
+    "certStatusUnderReview": "Under review",
+    "certStatusNeedsPhoto": "Needs a new photo",
+    "certStatusNeedsPhotoHint": "Upload a clear photo of the whole certificate, no glare or cropping."
   },
   "apply": {
     "availableShifts": "Available Shifts",

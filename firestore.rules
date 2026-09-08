@@ -1164,6 +1164,16 @@ service cloud.firestore {
         }
       }
 
+      // --- CERTIFICATION REVIEW QUEUE (AI cert scan, 2026-09-08) ---
+      // Server-maintained mirror of worker certification_records awaiting a
+      // human decision (worker name + scan summary + evidence link). Reads
+      // for tenant staff (Manager+); all writes via the
+      // onCertificationRecordWrittenScan trigger / setCertificationReviewDecision.
+      match /certification_reviews/{reviewId} {
+        allow read: if isHRX() || isTenantAdmin(tenantId) || hasSecurityLevel(tenantId, 4);
+        allow write: if false;
+      }
+
       // --- DIVISIONS (Tenants) ---
       match /divisions/{divisionId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);

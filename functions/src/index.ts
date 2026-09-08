@@ -751,6 +751,9 @@ export { onWorkerI9SupportingDocumentExtract } from './onboarding/i9SupportingDo
 export { onUserAvatarChangedVerify } from './avatar/avatarVerificationTrigger';
 export { reverifyAvatar } from './avatar/reverifyAvatar';
 export { setAvatarVerificationDecision } from './avatar/setAvatarVerificationDecision';
+// Certification scan (Claude reads uploaded cards) + reviewer decision — 2026-09-08.
+export { onCertificationRecordWrittenScan } from './certifications/certificationScanTrigger';
+export { setCertificationReviewDecision } from './certifications/setCertificationReviewDecision';
 export { submitWorkerAiPrescreenInterview } from './workerAiPrescreen/submitWorkerAiPrescreenInterview';
 export { getWorkerAiPrescreenInterviewPlan } from './workerAiPrescreen/getWorkerAiPrescreenInterviewPlan';
 export { backfillPrescreenCategoryScores } from './workerAiPrescreen/backfillPrescreenCategoryScoresCallable';
