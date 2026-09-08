@@ -404,3 +404,42 @@ On the account (child-account granularity, e.g. OnTrac Dallas):
    generate the ad copy + track source attribution?
 6. Metro targeting for outreach ("current Dallas people") — existing
    notification groups, or a geo query?
+
+## ✅ RAMP THROTTLE SHIPPED overnight 2026-09-07→08 (Greg: "operational when I wake up")
+
+Commits b9444ca5 + follow-up (throttle card on all account types); functions
+(scheduledOrchestrator, onApplicationHiringSignalsChangedAutoOnboard) and
+hosting deployed; curl 200 postflight.
+
+- **Settings — account page → Cascading Data → "Applicant Auto-Onboarding"
+  card, on EVERY account type** (child overrides national; "Off (inherit)"
+  DELETES the fields so an untouched child keeps inheriting):
+  `tierAutomation.autoOnboardDownToTier` (0/1/2 — Off / Tier 1 only /
+  Tiers 1+2), `maxAutoOnboardsPerDay` (default 25), legacy
+  `autoOnboardTier2` kept in lockstep. Last-sweep stats line renders under
+  the budget field.
+- **Budget guard**: transactional per-day counter
+  `accounts/{policyAccountId}/ramp_counters/{YYYY-MM-DD}` on the account
+  whose config supplied the policy (national opt-in caps the whole family;
+  child override gets its own budget). Cap-skips are NOT stamped → retried
+  next day by the sweep.
+- **Hourly `tier_ramp_sweep`** rides scheduledOrchestrator
+  (ENABLE_TIER_RAMP_SWEEP, default on; ~2 account queries/tenant/hour when
+  nothing is opted in): backfills EXISTING applicants (submitted/waitlisted,
+  postings + JOs of the account family, chunked 'in' queries, caps logged),
+  auto-applies qualifying Tier 3→2 promotions scoped to ramp accounts'
+  pools (shared scorer, tenant threshold config, dismissed/approved
+  proposals respected), then funnels eligible applicants through the SAME
+  `maybeAutoOnboardTierTwoApplicant` path as the live trigger. Stamps
+  `tierAutomation.lastSweepAt/lastSweepStats`.
+- **Verified end-to-end on prod** with a synthetic account (created →
+  UI toggle → Firestore write confirmed → sweep picked it up → stats line
+  rendered → deleted). Live-config truth at ship time: screening automation
+  ENABLED, dryRun FALSE, real AccuSource ordering ON, allowlisted to
+  `c1_select_llc`; EVEREE_ENABLED=true; ACCUSOURCE production with
+  HRX_ONLY=false. **Flipping a real account = real spend immediately,
+  throttled by the daily budget.** Tenant tierAutomation mode remains
+  'propose' tenant-wide; ramp accounts get scoped automatic promotion.
+- Footgun fixed en route: the old UI switch wrote dot-keys into local
+  state that nested reads never saw; `updateTierAutomation` batches
+  fields into one updateDoc and merges the nested map.
