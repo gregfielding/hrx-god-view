@@ -4331,6 +4331,39 @@ export const getWorkersCompMonthlyReport = onCall(
     const emailMassPn = request.data?.emailMassPn as
       | { entityName?: unknown; filename?: unknown; xlsxBase64?: unknown }
       | undefined;
+    // Outbox variant (2026-09-08): send Mass PN workbooks staged in Cloud
+    // Storage (`wc_masspn_outbox/…`) — lets an admin/ops session build
+    // arbitrary coverage-request files server-side (e.g. the OnTrac
+    // all-locations prospect sheet) and have THIS deployed function mail
+    // them via the connected mailbox, without pushing megabytes of base64
+    // through a browser call. Books-gated like every other mode.
+    const emailFromStorage = request.data?.emailMassPnFromStorage as
+      | { items?: Array<{ entityName?: unknown; filename?: unknown; storagePath?: unknown }> }
+      | undefined;
+    if (emailFromStorage && Array.isArray(emailFromStorage.items)) {
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+      const client = await gmailClientFor(tenantId);
+      if (!client) {
+        throw new HttpsError('failed-precondition', 'No connected Gmail mailbox for this tenant.');
+      }
+      const bucket = admin.storage().bucket();
+      const sent: string[] = [];
+      for (const item of emailFromStorage.items.slice(0, 10)) {
+        const entityName = trim(item.entityName);
+        const filename = trim(item.filename).replace(/[^\w.\-]+/g, '-') || 'Mass-PN.xlsx';
+        const storagePath = trim(item.storagePath);
+        if (!entityName || !storagePath.startsWith('wc_masspn_outbox/')) {
+          throw new HttpsError('invalid-argument', 'entityName and a wc_masspn_outbox/ storagePath are required.');
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const [buf] = await bucket.file(storagePath).download();
+        if (buf.length > 1_500_000) throw new HttpsError('invalid-argument', 'Attachment too large.');
+        // eslint-disable-next-line no-await-in-loop
+        await sendMassPnEmail(client.gmail, client.fromEmail, entityName, filename, buf.toString('base64'));
+        sent.push(entityName);
+      }
+      return { ok: true, sentTo: INSOURCE_COVERAGE_CONTACT.email, sent };
+    }
     if (emailMassPn && typeof emailMassPn === 'object') {
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
       const entityName = trim(emailMassPn.entityName);
