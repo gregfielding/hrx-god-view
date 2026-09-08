@@ -133,3 +133,15 @@ as Greg to edit the app config.
   Natalie's home workspace; nothing is needed on the Indeed Flex side.
 - The MCP Slack connector in Claude sessions posts as GREG — never use it
   for Natalie's voice.
+
+## Conversation context comes from Slack, not the thread store (2026-09-08)
+Incident: in a DM Deborah answered "Yes please" to Natalie's own question and
+Natalie replied "what am I saying yes to?". History was keyed
+`natalie_slack_threads/{channel__threadTs}`, and in a DM every top-level
+message has its own ts → empty history each turn. Now
+`natalieSlackContext.buildSlackHistory` rebuilds the transcript from Slack on
+every answer: DM = last 40 DM messages both ways + replies of up to 4 threads
+in that window; channel = the thread + last 8 channel messages. Stored turns
+(DMs under `{channel}__dm`) only fill gaps; Slack wins on conflicts. The
+system prompt tells her a bare "yes / yes please / do it" answers her latest
+question. Needs `im:history` (+ `mpim:history`) on the user token — already granted.

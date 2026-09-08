@@ -32,6 +32,7 @@ export const NATALIE_SLACK_USER_ID = 'U0BV79X65R9';
 const GITHUB_NATALIE_TOKEN = defineSecret('GITHUB_NATALIE_TOKEN');
 const STATE_DOC = 'app_config/natalie_slack_inbox';
 const THREADS = 'natalie_slack_threads';
+import { buildSlackHistory, mergeTurns } from './natalieSlackContext';
 const TICK_BUDGET_MS = 50_000;
 const MAX_MESSAGES_PER_TICK = 6;
 const THREAD_ACTIVE_HOURS = 36;
@@ -219,7 +220,15 @@ export async function pollNatalieInbox(token: string): Promise<{ answered: numbe
       continue;
     }
     const text = cleanText(p.message.text ?? '', NATALIE_SLACK_USER_ID);
-    const history = await loadThread(key);
+    // DMs are one continuous conversation (stored under channel__dm); channels stay per thread.
+    // Either way the transcript comes from Slack itself, so "yes please" lands on her last question.
+    const histKey = p.isDm ? `${p.channel}__dm` : key;
+    const live = await buildSlackHistory(
+      (method, params) => slack(token, method, params),
+      async (uid) => (await userInfo(token, uid)).name,
+      { channel: p.channel, isDm: p.isDm, messageTs: p.message.ts, threadTs: p.threadTs, natalieId: NATALIE_SLACK_USER_ID, cleanText: (t) => cleanText(t, NATALIE_SLACK_USER_ID) },
+    );
+    const history = mergeTurns(await loadThread(histKey), live);
     const turn: NatalieTurn = { role: 'user', text, by: askedBy, byName: askedByName, ts: p.message.ts };
     try {
       const ans = await answerAsNatalie({ history, message: turn, ctx: { tenantId: C1_TENANT_ID, askedBySlackUserId: askedBy, askedByName, slack: { channel: p.channel, ts: p.message.ts, threadTs: p.isDm && p.threadTs === p.message.ts ? undefined : p.threadTs } } });
@@ -231,7 +240,7 @@ export async function pollNatalieInbox(token: string): Promise<{ answered: numbe
         continue;
       }
       const reply: NatalieTurn = { role: 'assistant', text: ans.text, by: 'natalie', ts: post.ts };
-      await appendThread(key, { channel: p.channel, threadTs: p.threadTs, isDm: p.isDm }, [turn, reply]);
+      await appendThread(histKey, { channel: p.channel, threadTs: p.threadTs, isDm: p.isDm }, [turn, reply]);
       if (threadTs) state.threads[key] = post.ts ?? p.message.ts;
       answered += 1;
       logger.info('[natalie] answered', { channel: p.channel, askedBy, tools: ans.toolCalls.map((t) => t.name), usage: ans.usage });
