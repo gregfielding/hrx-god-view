@@ -12,6 +12,7 @@ Account "My first Twilio account" (Greg), verified via Claude-in-Chrome 2026-09-
 | +1 312 500 4352 | Local | direct webhook → `handleInboundSms` | main inbound line; NOT on any messaging service, NOT A2P registered |
 | +1 415 429 3750 | Local | Low Volume Mixed service MG98999c80df5bb34ceeb0af83d9b206b3 (campaign FAILED) | Greg: may become a general company line |
 | +1 312 663 8247 | Local | direct webhook → `handleInboundSms` | Natalie Brooks (automation persona), bought 2026-09-06; inbound works, outbound unregistered |
+| +1 737 264 6753 | Local (Austin overlay; Twilio had zero 512 inventory 2026-09-08) | direct webhook → `handleInboundSms`, voice → demo.twilio.com welcome (same as 312) | "Natalie Brooks (automation) #2 — 737", bought 2026-09-08 (PN54f9b011…) as a spare configured identically to the 312; unregistered for A2P until the campaign is approved, then add to MG2dd6…'s sender pool with the 312 |
 
 ## Messaging services
 
