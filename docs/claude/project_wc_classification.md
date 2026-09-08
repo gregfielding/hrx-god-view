@@ -214,3 +214,11 @@ The 9/19 auto-send WILL FAIL unless reconnected first.
 New outbox mode shipped: getWorkersCompMonthlyReport
 `emailMassPnFromStorage` sends workbooks staged under wc_masspn_outbox/
 via the connected mailbox (books-gated) — useful once the grant is fixed.
+
+**RESOLVED same day (2026-09-08 ~9:40 AM PT):** Greg re-ran OAuth via the
+Sodexo panel's "Upgrade permissions" button (all scopes approved) →
+gmailClientFor verified live (read-only profile fetch OK). The 9/19
+auto-send, Submit to Eddie, reply desk, re-engagement, and inbox triage
+are all unblocked. Note the panel's "Sending as" chip does NOT validate
+the token — it only checks the stored record exists, so a dead grant
+looks connected until something sends.
