@@ -125,6 +125,7 @@ import type {
 } from '../types/recruiter/account';
 import type { AccountPositionPricing } from '../types/recruiter/account';
 import PageHeader from '../components/PageHeader';
+import WcCodeSelect from '../components/workersComp/WcCodeSelect';
 import UniversalBackButton from '../components/common/UniversalBackButton';
 import FavoriteButton from '../components/FavoriteButton';
 import HotToggle from '../components/HotToggle';
@@ -5227,21 +5228,35 @@ const RecruiterAccountDetails: React.FC = () => {
 
                   {!isNationalAccount ? (
                     <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        sx={{ flex: '1 1 200px', minWidth: 160 }}
-                        label="Workers Comp Class Code"
-                        value={row.workersCompCode ?? ''}
-                        onChange={(e) => {
-                          const v = e.target.value.trim();
-                          applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, {
-                            workersCompCode: v || undefined,
-                          });
-                        }}
-                        placeholder="e.g. 9015"
-                        helperText="From Settings > Onboarding Library > WC Class Codes"
-                      />
+                      <Box sx={{ flex: '1 1 200px', minWidth: 160 }}>
+                        {/* THE reusable WC picker (Greg 2026-08-05 "same
+                            component everywhere"; adopted here 2026-09-08):
+                            searchable dropdown of the codes rated for this
+                            worksite state + hiring entity, free-typing still
+                            allowed for unlisted codes. */}
+                        <WcCodeSelect
+                          tenantId={tenantId ?? ''}
+                          state={pricingStateCode}
+                          hiringEntityId={account.hiringEntityId ?? null}
+                          size="small"
+                          label="Workers Comp Class Code"
+                          value={row.workersCompCode ?? ''}
+                          onChange={(code, rate) => {
+                            applyPricingPositionPatch(row.jobTitle, pricingPositionsIndex, {
+                              workersCompCode: code.trim() || undefined,
+                              // Picking a rated code fills the rate; free
+                              // typing leaves the rate as entered.
+                              ...(rate != null ? { workersCompRate: rate } : {}),
+                            });
+                          }}
+                          placeholder="e.g. 9015"
+                          helperText={
+                            pricingStateCode
+                              ? `Codes rated for ${pricingStateCode} in Settings › Workers Comp Rates`
+                              : 'Set a worksite state to pick from rated codes'
+                          }
+                        />
+                      </Box>
                       <TextField
                         fullWidth
                         size="small"
