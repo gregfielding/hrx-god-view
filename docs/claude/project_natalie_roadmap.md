@@ -83,13 +83,18 @@ can read, she closes her own loops, and she says plainly what she cannot do.
 12. ⏳ Mac mini (9/22): move the portal worker off Greg's laptop.
 
 ## Phase 5 — finish jobs end to end (portal adapters)
-13. 🔧 `book_worker` in Indeed Flex — flow observed via the `capture_page`
-    explorer on job 545617 (job-details?workers=available: search box,
-    one "Book" per pool row, shift checkboxes named by flex shift id;
-    ?workers=booked lists the roster). Adapter written (search name → Book →
-    confirm dialog → verify on booked tab → follow-up sync); first dry run in
-    progress 2026-09-07 evening. Workers must already be in the agency's
-    Flex pool ("Add worker" → /o/workers/add is the next adapter).
+13. ✅ `book_worker` in Indeed Flex — live 2026-09-07 23:52 PT: Claudia
+    Vargas and Ezequiel Felix booked on 545617/546477/546480 (2/7, 2/12,
+    2/12 verified on the booked tab). Flow: job-details?workers=available →
+    search box → "Book" on the matching row → confirm dialog ("You are about
+    to book …") → Confirm → verify ?workers=booked → targeted sync. Flex
+    states eligibility blocks inside that dialog — Michelle Decker: "Ontrac
+    Attestation Form is required to book this shift. Please upload your
+    certificate to continue." — the adapter now fails with that sentence
+    (PORTAL_REJECTED) and Natalie relays it to Slack. Workers must be in the
+    agency's Flex pool ("Add worker" → /o/workers/add is the next adapter).
+    A YES to an offer, or `place_worker`, auto-queues the Flex booking when
+    the shift's PO number is a Flex job id (`bookInFlexIfLinked`).
 14. 📋 `submit_candidate` in Fieldglass (needs a Sodexo walkthrough with Greg).
 15. ✅ (first half) SMS watches: when Natalie texts someone (offer or
     confirmation check) the inbound webhook relays their reply into the

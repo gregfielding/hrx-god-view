@@ -474,6 +474,16 @@ export class IndeedFlexAdapter implements PortalAdapter {
     const dialog = page.getByRole('dialog').or(page.locator('[role="alertdialog"]'));
     if ((await dialog.count()) > 0) {
       dialogText = (await dialog.first().innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 600);
+      // Flex states eligibility problems inside the confirm dialog (e.g.
+      // "Ontrac Attestation Form is required to book this shift. Please
+      // upload your certificate to continue."). Surface that sentence as
+      // the failure instead of a generic "did not book" (2026-09-07).
+      const requirement = /([^.]*\b(required|must|not eligible|missing|expired|upload)[^.]*\.)/i.exec(dialogText)?.[1]?.trim();
+      if (requirement) {
+        const shot = await ctx.screenshot(`flex-book-${jobId}-blocked`);
+        await dialog.getByRole('button', { name: /cancel|close/i }).first().click({ timeout: 3_000 }).catch(() => undefined);
+        throw new PortalActionFailure('PORTAL_REJECTED', `Flex will not book ${name} on job ${jobId}: ${requirement}`, { screenshot: shot, dialogText, requirement });
+      }
       const confirm = dialog.getByRole('button', { name: /^(book|confirm|yes|book worker|continue)$/i }).first();
       if ((await confirm.count()) > 0) {
         await confirm.click();
