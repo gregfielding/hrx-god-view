@@ -165,3 +165,23 @@ service, POSTs the corrected one whose MessageFlow cites the .html URLs and
 quotes the non-sharing sentence). Twilio charges the $15 vetting fee again —
 Greg's call to run it. Natalie's 312 line stays receive-only (and cannot get
 OTPs, 30038) until a campaign is approved; her sends go via the 888.
+
+## Campaign #3 submitted 2026-09-08 20:05Z — in real review
+Resubmitted with `PrivacyPolicyUrl=https://hrxone.com/privacy.html` and
+`TermsAndConditionsUrl=https://hrxone.com/terms.html` (both static, en/es,
+with the non-sharing statement; terms.html carries an SMS program section).
+Campaign #2 (20:05Z-58s earlier) was auto-rejected in the same second with
+30882 TERMS_AND_CONDITIONS_URL + 30908 PRIVACY_POLICY_URL because those two
+API params were never sent — the vetting bot reads the params, not URLs
+buried in MessageFlow. #3 has stayed IN_PROGRESS past the instant-reject
+window; human review is days–weeks. Check with
+`functions/.scratch/a2p-status.cjs`. When APPROVED: add +1 312 663 8247 to
+MG2dd6557d05d9be9044c996fa568a8a39's sender pool, set its inbound URL to
+`handleInboundSms`, point Natalie's sends at that MG.
+
+Console "errors" seen the same day were unrelated to the campaign: 12200
+("Content is not allowed in prolog" — our webhooks answered `OK` instead of
+TwiML; fixed to `<Response></Response>` text/xml), one 11200 (an inbound
+MMS with no text got a 400 from `handleInboundSms` — fixed: attachments
+become `[sent N attachment(s)] <MediaUrl>`), and 30003/30005/30006/21610
+delivery failures from the Denver blasts (bad/unreachable numbers).
