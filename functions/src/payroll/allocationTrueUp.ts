@@ -162,11 +162,18 @@ export async function trueUpAllocationJes(
     );
     const key = (arr: Array<{ cls: string | null; amt: number }>): string =>
       arr.map((x) => `${x.cls}|${x.amt.toFixed(2)}`).sort().join(';');
+    const fingerprint = `${credit.toFixed(2)}|${wireTotal.toFixed(2)}|${key(want)}`;
     if (key(want) === key(have) && !missingDivision) {
       unchanged += 1;
+      // An unchanged read must still supersede the last observation —
+      // otherwise reads that alternate A, B, A would pair the two A's as
+      // "consecutive" (EV Alloc 0622, 2026-09-08) and patch on stale data.
+      if (lastObs.has(doc) && lastObs.get(doc) !== fingerprint) {
+        // eslint-disable-next-line no-await-in-loop
+        await obsCol.doc(doc).set({ fingerprint, wireTotal: round2(wireTotal), credit: round2(credit), observedAt: admin.firestore.FieldValue.serverTimestamp(), dryRun, unchanged: true }, { merge: true });
+      }
       continue;
     }
-    const fingerprint = `${credit.toFixed(2)}|${wireTotal.toFixed(2)}|${key(want)}`;
     const prev = lastObs.get(doc);
     if (prev !== fingerprint) {
       deferredUnstable.push({ doc, reason: prev ? 'read differs from previous run' : 'first observation', wireTotal: round2(wireTotal) });
