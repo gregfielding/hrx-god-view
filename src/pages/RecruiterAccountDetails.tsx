@@ -104,6 +104,7 @@ import {
   orderBy,
   limit,
   deleteDoc,
+  deleteField,
   setDoc,
   addDoc,
   onSnapshot,
@@ -4071,6 +4072,39 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   };
 
+  // Ramp throttle writes (Greg 2026-09-07): several tierAutomation.* fields
+  // land in ONE updateDoc, and local state merges the NESTED map (the
+  // dot-path spread in updateAccountField would strand a literal dotted key
+  // that the nested reads never see).
+  const updateTierAutomation = async (patch: Record<string, unknown>) => {
+    if (!accountId || !tenantId || !account) return;
+    setSaving(true);
+    try {
+      const ref = doc(db, p.recruiterAccount(tenantId, accountId));
+      const updates: Record<string, unknown> = {
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid ?? null,
+      };
+      for (const [k, v] of Object.entries(patch)) {
+        updates[`tierAutomation.${k}`] = v === null ? deleteField() : v;
+      }
+      await updateDoc(ref, updates);
+      setAccount((prev) => {
+        if (!prev) return null;
+        const nextTa: Record<string, unknown> = { ...(prev.tierAutomation ?? {}) };
+        for (const [k, v] of Object.entries(patch)) {
+          if (v === null) delete nextTa[k];
+          else nextTa[k] = v;
+        }
+        return { ...prev, tierAutomation: nextTa as any, updatedAt: new Date() as any };
+      });
+    } catch (err) {
+      console.error('RecruiterAccountDetails: tierAutomation update error', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const updateAccountField = async (field: string, value: unknown) => {
     if (!accountId || !tenantId || !account) return;
     setSaving(true);
@@ -5741,7 +5775,7 @@ const RecruiterAccountDetails: React.FC = () => {
             </Box>
           </Box>
         </Tooltip>
-        <Tooltip title="When a Tier 1 or Tier 2 worker applies to this account or any of its children, automatically start their onboarding (payroll invite + Everee) and order the account's default screening package. The hire itself stays a recruiter decision — this pre-onboards applicants so they're ready to work the moment you place them.">
+        <Tooltip title="Ramp throttle: automatically start onboarding (payroll invite + Everee provisioning) and order this account's default screening package for applicants at or above the selected tier — existing applicants are picked up by the hourly sweep, new applications onboard immediately. Tier 1 only keeps spend to proven workers; Tiers 1 + 2 extends it to AI-qualified applicants. The hire itself stays a recruiter decision.">
           <Box
             sx={{
               display: 'flex',
@@ -5752,24 +5786,83 @@ const RecruiterAccountDetails: React.FC = () => {
             }}
           >
             <Box component="span" sx={{ ...recordHeaderBodyTextSx }}>
-              Auto-Onboard Tier 2 Applicants:
+              Auto-Onboard Applicants:
             </Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
-              <Switch
-                size="small"
-                checked={account.tierAutomation?.autoOnboardTier2 === true}
-                disabled={saving}
-                onChange={(e) => updateAccountField('tierAutomation.autoOnboardTier2', e.target.checked)}
-                inputProps={{
-                  'aria-label': 'Toggle auto-onboarding for Tier 1 and Tier 2 applicants',
-                }}
-              />
-              <Box component="span" sx={{ color: 'text.primary', fontWeight: 500, fontSize: '0.875rem' }}>
-                {account.tierAutomation?.autoOnboardTier2 === true ? 'On' : 'Off'}
-              </Box>
-            </Box>
+            <Select
+              size="small"
+              value={
+                account.tierAutomation?.autoOnboardDownToTier ??
+                (account.tierAutomation?.autoOnboardTier2 === true ? 2 : 0)
+              }
+              disabled={saving}
+              onChange={(e) => {
+                const v = Number(e.target.value) as 0 | 1 | 2;
+                void updateTierAutomation({
+                  autoOnboardDownToTier: v,
+                  autoOnboardTier2: v > 0,
+                });
+              }}
+              inputProps={{ 'aria-label': 'Auto-onboard applicants down to tier' }}
+              sx={{ minWidth: 140 }}
+            >
+              <MenuItem value={0}>Off</MenuItem>
+              <MenuItem value={1}>Tier 1 only</MenuItem>
+              <MenuItem value={2}>Tiers 1 &amp; 2</MenuItem>
+            </Select>
           </Box>
         </Tooltip>
+        {(account.tierAutomation?.autoOnboardDownToTier ??
+          (account.tierAutomation?.autoOnboardTier2 === true ? 2 : 0)) > 0 && (
+          <>
+            <Tooltip title="Daily budget: the most auto-onboards (each one is real screening spend) this account family may start per day. Applicants skipped at the cap are retried automatically when the next day's budget opens. Default 25.">
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 2,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <Box component="span" sx={{ ...recordHeaderBodyTextSx }}>
+                  Max Auto-Onboards / Day:
+                </Box>
+                <TextField
+                  key={String(account.tierAutomation?.maxAutoOnboardsPerDay ?? 'default')}
+                  size="small"
+                  type="number"
+                  placeholder="25"
+                  defaultValue={account.tierAutomation?.maxAutoOnboardsPerDay ?? ''}
+                  disabled={saving}
+                  onBlur={(e) => {
+                    const n = Math.round(Number(e.target.value));
+                    const next = Number.isFinite(n) && n > 0 ? n : null;
+                    if (next !== (account.tierAutomation?.maxAutoOnboardsPerDay ?? null)) {
+                      void updateTierAutomation({ maxAutoOnboardsPerDay: next });
+                    }
+                  }}
+                  inputProps={{ min: 1, 'aria-label': 'Max auto-onboards per day' }}
+                  sx={{ width: 100 }}
+                />
+              </Box>
+            </Tooltip>
+            {account.tierAutomation?.lastSweepStats && (
+              <Box sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                Last sweep
+                {(() => {
+                  const at = account.tierAutomation?.lastSweepAt as
+                    | { toDate?: () => Date }
+                    | undefined;
+                  const d = typeof at?.toDate === 'function' ? at.toDate() : null;
+                  return d ? ` ${d.toLocaleString()}` : '';
+                })()}
+                : {account.tierAutomation.lastSweepStats.pooledApplications ?? 0} applicants
+                pooled · {account.tierAutomation.lastSweepStats.promoted ?? 0} promoted to Tier 2 ·{' '}
+                {account.tierAutomation.lastSweepStats.onboardsAttempted ?? 0} onboarding started
+              </Box>
+            )}
+          </>
+        )}
         <Tooltip
           title={
             account.autoCreateGigJobOrders === true

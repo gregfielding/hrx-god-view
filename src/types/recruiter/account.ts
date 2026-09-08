@@ -244,7 +244,23 @@ export interface RecruiterAccount {
    * from `tenants/{t}/settings/tierAutomation` (the tenant-wide promotion
    * scorecard) — same name, different doc, different shape.
    */
-  tierAutomation?: { autoOnboardTier2?: boolean };
+  tierAutomation?: {
+    /** Legacy boolean — kept in lockstep with autoOnboardDownToTier > 0. */
+    autoOnboardTier2?: boolean;
+    /** Ramp throttle (Greg 2026-09-07): 0 = off, 1 = Tier 1 only, 2 = Tiers 1+2. */
+    autoOnboardDownToTier?: 0 | 1 | 2;
+    /** Daily auto-onboard budget for this account family (default 25). */
+    maxAutoOnboardsPerDay?: number;
+    /** Hourly sweep may auto-apply qualifying Tier 3→2 promotions for this account's pool. */
+    autoPromoteApplicants?: boolean;
+    lastSweepAt?: unknown;
+    lastSweepStats?: {
+      pooledApplications?: number;
+      promoted?: number;
+      onboardsAttempted?: number;
+      truncated?: boolean;
+    };
+  };
   /**
    * National accounts only (F.4 — CC.A audit, locked 2026-04-30): default
    * job title used when this national's auto-create-gig-JO trigger spawns
