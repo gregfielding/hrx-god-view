@@ -50,7 +50,8 @@ type MarkCompletePayload = CreateBackgroundCheckInput & {
 };
 
 export const markAccusourceBackgroundCheckCompleteOutside = onCall(
-  { cors: true, memory: '256MiB', timeoutSeconds: 60 },
+  // 512MiB minimum — 256MiB OOMs on cold start (Daniel, 2026-09-08: bare 'internal' on Mark as Complete).
+  { cors: true, memory: '512MiB', timeoutSeconds: 60 },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
