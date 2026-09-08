@@ -43,7 +43,7 @@ export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: 'worker_status',
     description:
-      "Everything current about one worker: upcoming and recent assignments (job, site, start, confirmation state, check-in, no-show, cancellation), whether they were texted for a late check-in, recruiter notes, and their last few SMS exchanges. Needs the worker's HRX user id from find_worker.",
+      "Everything current about one worker: AccuSource background-check status (passed / needs_review / failed / in_progress / none, with detail), upcoming and recent assignments (job, site, start, confirmation state, check-in, no-show, cancellation), whether they were texted for a late check-in, recruiter notes, and their last few SMS exchanges. Needs the worker's HRX user id from find_worker.",
     input_schema: { type: 'object', properties: { userId: { type: 'string' } }, required: ['userId'] },
   },
   {
@@ -118,6 +118,18 @@ export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
     description:
       "Who could fill an order: applicants to the job order (interview score, reliability, background) plus reliable workers within 15/30/60 miles of the worksite, ranked with reasons, excluding people already on the order. Also returns the order's upcoming shifts with needed vs assigned. Use for 'anyone good for the OnTrac order?' or before offering shifts. Find the jobOrderId with job_order_fill_status.",
     input_schema: { type: 'object', properties: { jobOrderId: { type: 'string' }, radiusMiles: { type: 'number', enum: [15, 30, 60] }, limit: { type: 'number' } }, required: ['jobOrderId'] },
+  },
+  {
+    name: 'order_background_check',
+    description:
+      "Order an AccuSource background check for a worker (default: the job order's package, else Sodexo Basic Package 23923), text them the applicant form link, and follow up daily until they complete it. Use when a recruiter says to order/run a background on someone, or when a worker says YES to an order that requires one. Refuses if they already cleared it unless packageId is given. Needs userId; jobOrderId helps pick the package and account.",
+    input_schema: { type: 'object', properties: { userId: { type: 'string' }, jobOrderId: { type: 'string' }, packageId: { type: 'string', description: 'AccuSource package id, e.g. 23923 Sodexo Basic, 36841 Database Package' } }, required: ['userId'] },
+  },
+  {
+    name: 'schedule_blast',
+    description:
+      "Schedule a Worker Reach SMS blast for a job order at a future time (e.g. 'tomorrow 9am at 30 miles'). Runs itself and reports back in this thread. runAt must be ISO-8601 with an offset (America/Denver is -06:00 in September). radiusMiles 15, 30 or 60.",
+    input_schema: { type: 'object', properties: { jobOrderId: { type: 'string' }, radiusMiles: { type: 'number' }, runAt: { type: 'string' } }, required: ['jobOrderId', 'runAt'] },
   },
   {
     name: 'offer_shift',
@@ -637,6 +649,15 @@ export async function runNatalieTool(name: string, input: Record<string, unknown
       const jobOrderId = s(input.jobOrderId);
       const [cands, shifts] = await Promise.all([candidatesForJobOrder(ctx.tenantId, jobOrderId, { radiusMiles: Number(input.radiusMiles) || 15, limit: Number(input.limit) || 12 }), upcomingShifts(ctx.tenantId, jobOrderId, 10)]);
       return { ...cands, upcomingShifts: shifts };
+    }
+    case 'order_background_check': {
+      const { orderBackgroundCheck } = await import('./natalieFill');
+      return orderBackgroundCheck({ tenantId: ctx.tenantId, userId: s(input.userId), jobOrderId: s(input.jobOrderId) || null, packageId: s(input.packageId) || undefined, slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });
+    }
+    case 'schedule_blast': {
+      const { scheduleAction } = await import('./natalieFill');
+      const radius = [15, 30, 60].includes(Number(input.radiusMiles)) ? Number(input.radiusMiles) : 15;
+      return scheduleAction({ tenantId: ctx.tenantId, kind: 'worker_reach_blast', runAt: new Date(s(input.runAt)), params: { jobOrderId: s(input.jobOrderId), radiusMiles: radius }, slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });
     }
     case 'offer_shift':
       return offerShiftToWorker({ tenantId: ctx.tenantId, userId: s(input.userId), jobOrderId: s(input.jobOrderId), shiftId: s(input.shiftId), extra: s(input.extra) || undefined, askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack });

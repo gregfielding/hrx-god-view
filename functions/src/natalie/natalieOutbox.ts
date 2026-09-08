@@ -283,6 +283,103 @@ async function drainTechVerdicts(token: string): Promise<number> {
   return closed;
 }
 
+/**
+ * Background-check follow-ups: watches with `bgFollowup.active` — text the
+ * AccuSource form link once it exists, nudge every 24h (max 3), close out
+ * (and tell the Slack thread) when the applicant finishes or after 6 days.
+ */
+async function drainBackgroundFollowups(token: string): Promise<number> {
+  const snap = await db.collection('natalie_sms_watches').where('bgFollowup.active', '==', true).limit(50).get();
+  const { latestBackgroundCheckDoc, portalLinkText } = await import('./natalieFill');
+  const { sendWorkerMessageInternal } = await import('../twilio');
+  let touched = 0;
+  for (const d of snap.docs) {
+    const w = d.data() as Record<string, unknown>;
+    const f = (w.bgFollowup ?? {}) as Record<string, unknown>;
+    const tenantId = s(w.tenantId) || 'BCiP2bQ9CgVOCTfV6MhD';
+    const userId = s(w.userId) || d.id;
+    const slack = (w.slack ?? {}) as { channel?: string; ts?: string };
+    const who = s(w.workerName) || userId;
+    const startedAt = tsToDate(f.startedAt)?.getTime() ?? Date.now();
+    const ageH = (Date.now() - startedAt) / 3600_000;
+    const close = async (status: string, text: string) => {
+      await d.ref.set({ bgFollowup: { ...f, active: false, closedAt: admin.firestore.FieldValue.serverTimestamp(), closeReason: status } }, { merge: true });
+      if (slack.channel) await postAsNatalie(token, { channel: slack.channel, text, threadTs: slack.ts });
+      touched += 1;
+    };
+    const bgDoc = s(f.checkId) ? await db.collection('backgroundChecks').doc(s(f.checkId)).get() : await latestBackgroundCheckDoc(tenantId, userId);
+    if (!bgDoc || !bgDoc.exists) {
+      if (ageH > 0.5) await close('no_order', `Heads up: no AccuSource order exists for *${who}* even though I tried to start one — someone may need to order it from their profile.`);
+      continue;
+    }
+    const hrxStatus = s(bgDoc.get('hrxStatus'));
+    // partial_profile orders sit at awaiting_applicant until the worker finishes the form; any later hrxStatus means they did.
+    const done = bgDoc.get('profileCompleted') === true || ['submitted', 'in_progress', 'report_ready', 'drug_report_ready', 'completed'].includes(hrxStatus);
+    if (done || bgDoc.get('finalReportReady') === true) { await close('completed', `*${who}* completed the AccuSource form — their ${s(bgDoc.get('requestedPackageName')) || 'background check'} is now ${hrxStatus.replace(/_/g, ' ') || 'in progress'}.`); continue; }
+    if (['canceled', 'error'].includes(hrxStatus)) { await close(hrxStatus, `*${who}*'s background order is ${hrxStatus} — needs a human look: https://hrxone.com/users/${userId}`); continue; }
+    if (ageH > 6 * 24) { await close('gave_up', `*${who}* still hasn't completed the AccuSource form after 6 days and ${Number(f.nudges ?? 0)} reminders — parking it. https://hrxone.com/users/${userId}`); continue; }
+    const link = s(bgDoc.get('applicantPortalLink')) || s(bgDoc.get('applicantPortalUrl'));
+    if (!link) continue; // link not issued yet — check again next minute
+    const to = s(w.phoneE164);
+    if (!to) { await close('no_phone', `*${who}* has no usable phone, so I can't text the AccuSource form link — please send it manually: https://hrxone.com/users/${userId}`); continue; }
+    const lastNudge = tsToDate(f.lastNudgeAt)?.getTime() ?? 0;
+    const nudges = Number(f.nudges ?? 0);
+    const firstName = s(who).split(' ')[0];
+    if (f.linkTexted !== true) {
+      const r = await sendWorkerMessageInternal(to, portalLinkText(firstName, link, s(bgDoc.get('requestedPackageName')) || 'background check'), { tenantId, userId, source: 'system', messageTypeId: 'natalie_bg_portal_link', systemContext: true } as never);
+      await d.ref.set({ bgFollowup: { ...f, linkTexted: Boolean(r.success), lastNudgeAt: admin.firestore.FieldValue.serverTimestamp() } }, { merge: true });
+      if (r.success && slack.channel) await postAsNatalie(token, { channel: slack.channel, text: `Texted *${who}* their AccuSource form link (${s(bgDoc.get('requestedPackageName')) || 'background check'}). I'll remind them daily until it's done.`, threadTs: slack.ts });
+      touched += 1;
+      continue;
+    }
+    if (nudges < 3 && Date.now() - lastNudge > 24 * 3600_000) {
+      const hourMT = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Denver', hour: 'numeric', hour12: false }));
+      if (hourMT < 9 || hourMT > 19) continue; // daytime reminders only
+      const r = await sendWorkerMessageInternal(to, portalLinkText(firstName, link, s(bgDoc.get('requestedPackageName')) || 'background check', true), { tenantId, userId, source: 'system', messageTypeId: 'natalie_bg_reminder', systemContext: true } as never);
+      await d.ref.set({ bgFollowup: { ...f, nudges: nudges + 1, lastNudgeAt: admin.firestore.FieldValue.serverTimestamp(), lastNudgeOk: Boolean(r.success) } }, { merge: true });
+      touched += 1;
+    }
+  }
+  return touched;
+}
+
+/** Scheduled Natalie actions whose time has come (created by schedule_blast or seeded). */
+async function drainScheduledActions(token: string): Promise<number> {
+  const snap = await db.collection('natalie_scheduled_actions').where('status', '==', 'pending').limit(20).get();
+  let ran = 0;
+  for (const d of snap.docs) {
+    const a = d.data() as Record<string, unknown>;
+    const runAt = tsToDate(a.runAt);
+    if (!runAt || runAt.getTime() > Date.now()) continue;
+    const claimed = await db.runTransaction(async (tx) => {
+      const cur = await tx.get(d.ref);
+      if (cur.get('status') !== 'pending') return false;
+      tx.update(d.ref, { status: 'running', startedAt: admin.firestore.FieldValue.serverTimestamp() });
+      return true;
+    });
+    if (!claimed) continue;
+    const slack = (a.slack ?? {}) as { channel?: string; ts?: string };
+    const params = (a.params ?? {}) as Record<string, unknown>;
+    let text = '';
+    try {
+      if (a.kind === 'worker_reach_blast') {
+        const { workerReachBlast } = await import('./natalieFill');
+        const r = await workerReachBlast({ tenantId: s(a.tenantId), jobOrderId: s(params.jobOrderId), radiusMiles: Number(params.radiusMiles) || 15, askedByName: s(a.askedByName) || 'schedule', slack: slack.channel ? { channel: slack.channel, ts: slack.ts } : undefined });
+        text = `Scheduled Worker Reach blast ran for the order at ${Number(params.radiusMiles) || 15} miles: ${JSON.stringify(r).slice(0, 600)}`;
+      } else {
+        text = `Scheduled action ${s(a.kind)} is not supported yet.`;
+      }
+      await d.ref.update({ status: 'done', finishedAt: admin.firestore.FieldValue.serverTimestamp(), resultText: text });
+    } catch (err) {
+      text = `Scheduled ${s(a.kind).replace(/_/g, ' ')} failed: ${err instanceof Error ? err.message : String(err)}`;
+      await d.ref.update({ status: 'failed', finishedAt: admin.firestore.FieldValue.serverTimestamp(), lastError: text });
+    }
+    if (slack.channel) await postAsNatalie(token, { channel: slack.channel, text, threadTs: slack.ts });
+    ran += 1;
+  }
+  return ran;
+}
+
 export async function drainNatalieOutbox(token: string): Promise<{ followups: number; escalations: number; relays: number; techIssues: number }> {
   const out = { followups: 0, escalations: 0, relays: 0, techIssues: 0 };
   try { out.followups = await drainFollowups(token); } catch (e) { logger.warn('[natalie] followup drain failed', { err: String(e) }); }
@@ -290,5 +387,7 @@ export async function drainNatalieOutbox(token: string): Promise<{ followups: nu
   try { out.relays = await drainRelays(token); } catch (e) { logger.warn('[natalie] relay drain failed', { err: String(e) }); }
   try { out.techIssues = await drainTechIssues(token); } catch (e) { logger.warn('[natalie] tech issue drain failed', { err: String(e) }); }
   try { await drainTechVerdicts(token); } catch (e) { logger.warn('[natalie] tech verdict drain failed', { err: String(e) }); }
+  try { await drainBackgroundFollowups(token); } catch (e) { logger.warn('[natalie] background followup drain failed', { err: String(e) }); }
+  try { await drainScheduledActions(token); } catch (e) { logger.warn('[natalie] scheduled action drain failed', { err: String(e) }); }
   return out;
 }

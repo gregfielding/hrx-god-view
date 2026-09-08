@@ -487,7 +487,8 @@ export async function acceptOfferFromReply(watch: Record<string, unknown>, reply
     await recordNatalieAction({ tenantId, kind: 'offer_accepted', summary: `${s(watch.workerName) || 'Worker'} said YES — placed on ${offer.title} ${when}`, userId, jobOrderId: offer.jobOrderId, assignmentId: res.assignmentId });
     const slack = (watch.slack ?? undefined) as SlackRef | undefined;
     const flex = await bookInFlexIfLinked(tenantId, offer.jobOrderId, offer.shiftId, userId, { slack, askedByName: 'auto (YES reply)' }).catch((e) => ({ queued: false, reason: String(e) }));
-    return { placed: true, message: `placed on ${when}${flex.queued ? ', Flex booking queued' : ''}` };
+    const screening = await kickOffScreening({ tenantId, userId, jobOrderId: offer.jobOrderId, assignmentId: res.assignmentId, slack, background: bg }).catch((e) => ({ note: `screening kick-off failed: ${String(e)}` }));
+    return { placed: true, message: `placed on ${when}${flex.queued ? ', Flex booking queued' : ''}${screening.note ? `; ${screening.note}` : ''}` };
   }
   return { placed: false, message: res.error ?? 'could not place' };
 }
@@ -505,4 +506,185 @@ export async function workerReachBlast(input: { tenantId: string; jobOrderId: st
   });
   await recordNatalieAction({ tenantId: input.tenantId, kind: 'worker_reach_blast', askedBySlackUserId: input.askedBySlackUserId, askedByName: input.askedByName, slack: input.slack, input: { radiusMiles: radius, message: input.message ?? null }, result: { status: result.status, smsDelivered: result.smsDelivered, pushDelivered: result.pushDelivered }, summary: `Sent a ${radius}-mile Worker Reach blast for the order (${result.smsDelivered} texts, ${result.pushDelivered} pushes)`, jobOrderId: input.jobOrderId });
   return { sent: result.status === 'sent', radiusMiles: radius, ...result };
+}
+
+
+// ---------------------------------------------------------------------------
+// Background checks (Greg 2026-09-07: "if any of them want it, order the
+// Sodexo Basic package right away and follow up with them to make sure they
+// do it"). Ordering goes through the existing AccuSource path; the worker is
+// texted the applicant portal link (nothing else in HRX sends it) and the
+// watch carries `bgFollowup` which drainBackgroundFollowups nudges/closes.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_BG_PACKAGE = { id: '23923', name: 'Sodexo Basic Package' };
+
+async function resolveBackgroundPackage(tenantId: string, jobOrderId: string | null, explicitId?: string): Promise<{ id: string; name: string }> {
+  const catalog = (await db.doc('integrations_accusource/catalog').get().catch(() => null))?.get('packages') as Array<Record<string, unknown>> | undefined;
+  const byId = (id: string) => { const hit = (catalog ?? []).find((p) => s(p.id) === id); return hit ? { id, name: s(hit.name) || id } : null; };
+  if (explicitId) return byId(explicitId) ?? { id: explicitId, name: explicitId };
+  if (jobOrderId) {
+    const jo = (await db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`).get()).data() ?? {};
+    const id = s((jo as Record<string, unknown>).screeningPackageId);
+    if (id) return byId(id) ?? { id, name: s((jo as Record<string, unknown>).screeningPackageName) || id };
+  }
+  const cfg = (await db.doc(`tenants/${tenantId}/app_config/natalie`).get()).data() as Record<string, unknown> | undefined;
+  const cfgId = s((cfg?.defaultBackgroundPackage as Record<string, unknown> | undefined)?.id);
+  if (cfgId) return byId(cfgId) ?? { id: cfgId, name: s((cfg?.defaultBackgroundPackage as Record<string, unknown>).name) || cfgId };
+  return DEFAULT_BG_PACKAGE;
+}
+
+export async function latestBackgroundCheckDoc(tenantId: string, userId: string): Promise<FirebaseFirestore.QueryDocumentSnapshot | null> {
+  const q = await db.collection('backgroundChecks').where('candidateId', '==', userId).limit(20).get();
+  const docs = q.docs.filter((d) => !d.get('tenantId') || s(d.get('tenantId')) === tenantId);
+  docs.sort((a, b) => (b.get('createdAt')?.toMillis?.() ?? 0) - (a.get('createdAt')?.toMillis?.() ?? 0));
+  return docs[0] ?? null;
+}
+
+export function portalLinkText(firstName: string, link: string, packageName: string, reminder = false): string {
+  const name = firstName || 'there';
+  return reminder
+    ? `Hi ${name}, quick reminder from C1 Staffing: your background check form is still waiting. It takes about 5 minutes: ${link} — you can't be scheduled until it's done. Reply here if you get stuck. — Natalie`
+    : `Hi ${name}, C1 Staffing ordered your background check (${packageName}) so we can get you working. Please complete the short AccuSource form here: ${link} — it takes about 5 minutes. Reply if you have any trouble. — Natalie, C1 Staffing`;
+}
+
+/** Text the worker their AccuSource portal link (if known yet) and arm the follow-up watch. */
+export async function armBackgroundFollowup(input: { tenantId: string; userId: string; checkId: string | null; packageName: string; slack?: SlackRef; via: string }): Promise<{ linkTexted: boolean; note: string }> {
+  const { tenantId, userId } = input;
+  const u = (await db.collection('users').doc(userId).get()).data() as Record<string, unknown> | undefined;
+  const to = u ? phoneE164(u) : '';
+  let link: string | null = null;
+  if (input.checkId) {
+    const bgDoc = await db.collection('backgroundChecks').doc(input.checkId).get();
+    link = s(bgDoc.get('applicantPortalLink')) || s(bgDoc.get('applicantPortalUrl')) || null;
+  }
+  let linkTexted = false;
+  if (link && to && u?.smsOptIn !== false && u?.smsBlockedSystem !== true && u?.phoneInvalid !== true) {
+    try {
+      const { sendWorkerMessageInternal } = await import('../twilio');
+      const r = await sendWorkerMessageInternal(to, portalLinkText(s(u?.firstName), link, input.packageName), { tenantId, userId, source: 'system', messageTypeId: 'natalie_bg_portal_link', systemContext: true } as never);
+      linkTexted = Boolean(r.success);
+    } catch (err) {
+      logger.warn('[natalie] portal link text failed', { err: String(err) });
+    }
+  }
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await db.collection('natalie_sms_watches').doc(userId).set(
+    {
+      tenantId,
+      userId,
+      phoneE164: to || null,
+      workerName: `${s(u?.firstName)} ${s(u?.lastName)}`.trim(),
+      slack: input.slack ?? null,
+      status: 'active',
+      expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 7 * 86400000),
+      bgFollowup: { active: true, checkId: input.checkId, packageName: input.packageName, startedAt: now, linkTexted, lastNudgeAt: linkTexted ? now : null, nudges: 0, via: input.via },
+      createdAt: now,
+    },
+    { merge: true },
+  );
+  return { linkTexted, note: linkTexted ? 'texted them the AccuSource form link; I will follow up until it is done' : link ? 'form link exists but could not be texted' : 'AccuSource form link not issued yet; I will text it as soon as it appears' };
+}
+
+/**
+ * After a YES placement: run the assignment-confirmed screening automation
+ * (Natalie's assignments are born `confirmed`, so the Firestore update trigger
+ * never fires for them) and arm the follow-up. No-op when already cleared.
+ */
+export async function kickOffScreening(input: { tenantId: string; userId: string; jobOrderId: string; assignmentId: string; slack?: SlackRef; background?: BackgroundSummary }): Promise<{ note: string }> {
+  const { tenantId, userId, jobOrderId, assignmentId } = input;
+  const bg = input.background ?? (await backgroundSummary(tenantId, userId));
+  if (bg.status === 'passed') return { note: 'background already cleared' };
+  if (bg.status === 'failed') return { note: 'background FAILED — not re-ordering' };
+  if (bg.status === 'in_progress' || bg.status === 'needs_review') {
+    const existing = await latestBackgroundCheckDoc(tenantId, userId);
+    if (existing && existing.get('profileCompleted') !== true && (s(existing.get('applicantPortalLink')) || s(existing.get('applicantPortalUrl')))) {
+      const armed = await armBackgroundFollowup({ tenantId, userId, checkId: existing.id, packageName: s(existing.get('requestedPackageName')) || 'background check', slack: input.slack, via: 'existing_order' });
+      return { note: `background check already ordered but the form is not done — ${armed.note}` };
+    }
+    return { note: `background ${bg.status.replace('_', ' ')} (${bg.detail})` };
+  }
+  const before = await latestBackgroundCheckDoc(tenantId, userId);
+  const after = (await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).get()).data() as Record<string, unknown> | undefined;
+  if (!after) return { note: 'assignment not found for screening' };
+  const pkg = await resolveBackgroundPackage(tenantId, jobOrderId);
+  try {
+    const { runScreeningAutomationForConfirmedAssignment } = await import('../compliance/screeningAutomationTrigger');
+    await runScreeningAutomationForConfirmedAssignment({ tenantId, assignmentId, after });
+  } catch (err) {
+    logger.warn('[natalie] screening automation call failed', { err: String(err) });
+  }
+  let created = await latestBackgroundCheckDoc(tenantId, userId);
+  if (!created || (before && created.id === before.id)) {
+    // The automation declined (no package on the order, entity not allow-listed, dry run…) — order directly.
+    const direct = await orderBackgroundCheck({ tenantId, userId, jobOrderId, packageId: pkg.id, slack: input.slack, askedByName: 'auto (YES reply)' });
+    return { note: direct.ordered ? `ordered ${pkg.name}; ${direct.note}` : `could not order ${pkg.name}: ${direct.error}` };
+  }
+  const armed = await armBackgroundFollowup({ tenantId, userId, checkId: created.id, packageName: s(created.get('requestedPackageName')) || pkg.name, slack: input.slack, via: 'assignment_confirmed_automation' });
+  await recordNatalieAction({ tenantId, kind: 'background_ordered', summary: `Ordered ${s(created.get('requestedPackageName')) || pkg.name} for ${s(after.workerName) || userId} via the assignment-confirmed automation`, userId, jobOrderId, assignmentId });
+  return { note: `ordered ${s(created.get('requestedPackageName')) || pkg.name}; ${armed.note}` };
+}
+
+/** Order an AccuSource package for a worker directly (Slack tool or fallback). */
+export async function orderBackgroundCheck(input: { tenantId: string; userId: string; jobOrderId?: string | null; packageId?: string; slack?: SlackRef; askedByName?: string; askedBySlackUserId?: string }): Promise<{ ordered: boolean; checkId?: string; packageName?: string; note: string; error?: string }> {
+  const { tenantId, userId } = input;
+  const bg = await backgroundSummary(tenantId, userId);
+  if (bg.status === 'passed' && !input.packageId) return { ordered: false, note: '', error: `already cleared (${bg.detail}) — pass a packageId to order a different package anyway` };
+  if (bg.status === 'in_progress') {
+    const existing = await latestBackgroundCheckDoc(tenantId, userId);
+    if (existing && !input.packageId) {
+      const armed = await armBackgroundFollowup({ tenantId, userId, checkId: existing.id, packageName: s(existing.get('requestedPackageName')) || 'background check', slack: input.slack, via: 'existing_order' });
+      return { ordered: false, checkId: existing.id, note: `an order is already in flight (${bg.detail}); ${armed.note}`, error: 'already in progress' };
+    }
+  }
+  const u = (await db.collection('users').doc(userId).get()).data() as Record<string, unknown> | undefined;
+  if (!u) return { ordered: false, note: '', error: 'user not found' };
+  const pkg = await resolveBackgroundPackage(tenantId, input.jobOrderId ?? null, input.packageId);
+  const jo = input.jobOrderId ? ((await db.doc(`tenants/${tenantId}/job_orders/${input.jobOrderId}`).get()).data() as Record<string, unknown> | undefined) : undefined;
+  try {
+    const { createBackgroundCheckInternal } = await import('../integrations/accusource/createBackgroundCheck');
+    const result = await createBackgroundCheckInternal(
+      {
+        tenantId,
+        accountId: s(jo?.accountId) || undefined,
+        accountName: s(jo?.accountName) || undefined,
+        candidateId: userId,
+        candidateName: `${s(u.firstName)} ${s(u.lastName)}`.trim() || s(u.email) || userId,
+        jobOrderId: input.jobOrderId || undefined,
+        worksiteId: s(jo?.worksiteId) || undefined,
+        requestedPackageId: pkg.id,
+        requestedPackageName: pkg.name,
+        requestedServices: [],
+        candidate: { firstName: s(u.firstName), lastName: s(u.lastName), email: s(u.email), phone: s(u.phone) || s(u.phoneE164), dateOfBirth: (u.dateOfBirth ?? u.dob) as never },
+      } as never,
+      NATALIE_HRX_UID,
+      { type: 'automation' },
+    );
+    await db.collection('backgroundChecks').doc(result.backgroundCheckId).set({ automationSource: 'natalie', automationTenantId: tenantId, orderedByName: 'Natalie Brooks', orderedForName: input.askedByName ?? null }, { merge: true });
+    const armed = await armBackgroundFollowup({ tenantId, userId, checkId: result.backgroundCheckId, packageName: pkg.name, slack: input.slack, via: 'natalie_order' });
+    await recordNatalieAction({ tenantId, kind: 'background_ordered', askedBySlackUserId: input.askedBySlackUserId, askedByName: input.askedByName, slack: input.slack, input: { packageId: pkg.id }, result: { checkId: result.backgroundCheckId, linkTexted: armed.linkTexted }, summary: `Ordered ${pkg.name} (AccuSource) for ${`${s(u.firstName)} ${s(u.lastName)}`.trim()}`, userId, jobOrderId: input.jobOrderId ?? null });
+    return { ordered: true, checkId: result.backgroundCheckId, packageName: pkg.name, note: armed.note };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn('[natalie] background order failed', { err: msg });
+    return { ordered: false, note: '', error: msg };
+  }
+}
+
+/** Scheduled Natalie actions (e.g. "blast again tomorrow morning at 30 miles"). */
+export async function scheduleAction(input: { tenantId: string; kind: 'worker_reach_blast'; runAt: Date; params: Record<string, unknown>; slack?: SlackRef; askedByName?: string; askedBySlackUserId?: string }): Promise<{ scheduled: boolean; id?: string; runAt: string; error?: string }> {
+  if (Number.isNaN(input.runAt.getTime())) return { scheduled: false, runAt: '', error: 'invalid runAt' };
+  if (input.runAt.getTime() < Date.now() - 60_000) return { scheduled: false, runAt: input.runAt.toISOString(), error: 'runAt is in the past' };
+  const ref = await db.collection('natalie_scheduled_actions').add({
+    tenantId: input.tenantId,
+    kind: input.kind,
+    params: input.params,
+    runAt: admin.firestore.Timestamp.fromDate(input.runAt),
+    slack: input.slack ?? null,
+    askedByName: input.askedByName ?? null,
+    status: 'pending',
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await recordNatalieAction({ tenantId: input.tenantId, kind: 'schedule_action', askedBySlackUserId: input.askedBySlackUserId, askedByName: input.askedByName, slack: input.slack, input: { kind: input.kind, runAt: input.runAt.toISOString(), ...input.params }, summary: `Scheduled ${input.kind.replace(/_/g, ' ')} for ${input.runAt.toLocaleString('en-US', { timeZone: 'America/Denver' })} MT`, jobOrderId: s(input.params.jobOrderId) || null });
+  return { scheduled: true, id: ref.id, runAt: input.runAt.toISOString() };
 }

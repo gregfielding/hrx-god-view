@@ -177,3 +177,35 @@ Cleared. `backgroundSummary()` in natalieFill.ts mirrors this and feeds
 `worker_status.backgroundCheck` and `candidates_for_job_order` scoring
 (FAILED = −100). `users.comfortablePassBackground` is only the applicant's
 willingness attestation, not a result.
+
+## Fill play, part 2 — background checks + scheduling (2026-09-07 late)
+Greg: "if any of them want it, order the Sodexo Basic package right away and
+follow up with them to make sure they do it… another blast tomorrow at 30 mi."
+- `acceptOfferFromReply` (YES) → place → Flex book → `kickOffScreening`: runs
+  `runScreeningAutomationForConfirmedAssignment` directly (Natalie's
+  assignments are BORN confirmed, so the onDocumentUpdated trigger never
+  fires for them); if the automation declines (no package on the JO, entity
+  not allow-listed) it falls back to `orderBackgroundCheck` →
+  `createBackgroundCheckInternal(…, NATALIE_HRX_UID, {type:'automation'})`.
+  Automation orders in production are allowed because
+  `ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY=false` in the env file.
+- Package resolution: explicit packageId → JO `screeningPackageId` →
+  `app_config/natalie.defaultBackgroundPackage` → Sodexo Basic 23923. The
+  OnTrac Denver JO (Z4yQqi5VhOgULEeE30ha) is stamped 23923 + backgroundCheckRequired.
+- Nobody in HRX texts the applicant portal link (partial_profile orders sit at
+  `awaiting_applicant` until the worker finishes the AccuSource form), so
+  Natalie does: `armBackgroundFollowup` texts it (`natalie_bg_portal_link`)
+  and sets `natalie_sms_watches/{uid}.bgFollowup`; `drainBackgroundFollowups`
+  (every minute in natalieSlackInbox) texts the link when it appears, nudges
+  daily 9am–7pm MT (max 3, `natalie_bg_reminder`), and posts to the thread on
+  completion / no-phone / canceled / gave-up (6 days).
+- `natalie_scheduled_actions` (`{kind:'worker_reach_blast', runAt, params:{jobOrderId, radiusMiles}, slack, status}`)
+  run by `drainScheduledActions` (transaction-claimed); tool `schedule_blast`.
+  Seeded: 30-mile OnTrac blast 2026-09-08 09:00 MT (doc OiMijI9bhppH9s0NCKJN).
+- Guards: FAILED background → offer_shift refuses, YES reply is NOT placed
+  (`blocked_background`, action `offer_blocked_background`). Vida Rodriguez's
+  watch had its offer removed by hand tonight for this reason.
+- Missed-relay lesson: the watch code shipped 23:12Z but handleInboundSms was
+  only redeployed 05:04Z, so three replies (Claudia, Ezequiel ×2, Michelle ×2)
+  were silently unrelayed for ~6h. Deploy handleInboundSms in the same list
+  as natalieSlackInbox whenever natalieFill/inboundSmsWebhook change.
