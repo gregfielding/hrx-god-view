@@ -748,7 +748,7 @@ Code (this commit):
    `DOTENV_CONFIG_PATH=.env.hrx1-d3beb npx ts-node -r dotenv/config -P tsconfig.scripts.json scripts/qboReclassRerun.ts dry`
    Expect 9 months `would_true_up`; Jun–Aug 4200 debits should sum back
    to the 9/2 split (4100 $1,641,271.24 / 4200 $126,622.68 for Jun–Aug);
-   true-up `skippedHuman` = Tabitha's 17 July docs, `patched` = ours whose
+   true-up `skippedHuman` = Tabitha's `EV Pay Alloc` docs (19 as of 9/8), `patched` = ours whose
    Proof/Contigo/BC/G6 lines flip Recurring→Event-based.
 3. Same command with `write`. A second `dry` must show every month
    `already_reclassed` and true-up `patched 0`.
@@ -762,3 +762,42 @@ Known open: the Division of the ORIGINAL Everee wire purchases / AccuSource
 charges vs our untagged credit legs — if Tabitha tags those purchases with
 a Division, the credits need the same tag (they currently net in Not
 Specified by design). Ask her on Wednesday's call.
+
+### Rerun executed 2026-09-08 (evening) — P&L restored to the 9/2 figures
+
+Greg ran the runner from the laptop after deploying the fixed
+`savePayrollVenueMapping` + `reconcileTimesheetBatchesCron` from this branch.
+
+- Revenue reclass `write`: all 9 months (2026-01..09) `true_upd`. Jun–Aug
+  4200→4100 totals = 652,021.47 + 375,548.29 + 613,701.48 = **$1,641,271.24**,
+  exactly the 9/2 P&L 4100 line.
+- P&L Jun 1–Aug 31 pulled via the QBO connector immediately after the write:
+  **4100 = $1,641,271.24, 4200 (parent line) = $126,622.68** — both match the
+  9/2 baseline to the penny. Total income unchanged ($1,767,603.18). Before
+  the write (post-9/6 state) it was 4100 $1,433,262.60 / 4200 total
+  $334,400.46 — i.e. ~$208K had been pushed into 4200 by the 9/6 matrix.
+- True-up `write`: patched 1 (`EV Alloc 0813 EVT`), unchanged 84,
+  skippedHuman 19 (all of Tabitha's `EV Pay Alloc *` docs — 19, not 17: the
+  9/6 run rewrote 17, two more were never touched and are now guarded too).
+- **Dry/write mismatch, noted:** the `dry` minutes earlier predicted patched
+  3 (0730/0622/0813 EVT) + drift 1 (0624 EVT: credit 4,194.11 vs wire
+  3,736.83); the `write` saw 0730/0622/0624 as unchanged. Nothing in QBO
+  changed between the runs on our side; the wire totals come from
+  `buildWireJournal`, whose Firestore reads are `.get().catch(() => null)` —
+  a slow/failed read of a big collection (assignments, ledger) silently
+  yields a different journal. Harmless here (only our own EV Alloc docs are
+  ever touched, and the reclass JEs are verified by the P&L), but the
+  true-up should fail loudly instead of swallowing read errors before the
+  weekly job is re-enabled. TODO.
+- Runner arg note: `qboReclassRerun.ts write dry` (two args) runs nothing —
+  mode is arg 1, target (`reclass|trueup`) arg 2; use plain `dry`.
+
+Still open after this: Tabitha's 17 July `EV Pay Alloc` docs were rewritten
+on 9/6 (Division + split); restore from `functions/.scratch/backup_*.json`
+on Greg's laptop if present, else QBO Audit History per JE.
+
+**Greg 2026-09-08 (later): the rule is LAW, no sign-off gate.** Recurring =
+Sodexo + Indeed Flex only; everything else non-recurring, now and going
+forward. Writers re-enabled via `scripts/qboJeWriters.ts on` (status/off
+also there). The true-up read-failure TODO above is still open — the
+weekly run's blast radius is our own `EV Alloc`/`TW Alloc` docs only.
