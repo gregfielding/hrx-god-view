@@ -164,3 +164,27 @@ producing "If coverage ever gets tight at Director Of Facilities". The builder
 copies whatever `companyName` holds without sanity-checking it against `title`.
 Until that's fixed, skim the manifest for company values that read like job
 titles and either drop the company clause or fix the CRM row before sending.
+
+## Auto-mode permission classifier blocks the send lane (2026-09-08)
+
+The second scheduled run on 2026-09-08 could not send at all. With Claude Code in
+**auto mode**, the permission classifier denies the `computer{action:"type"}` call
+that types the outreach body into the composer — as a `browser_batch` step *and*
+as a standalone call. Navigation, profile reads, clicking Message, clicking the
+box, and typing the sacrificial `.` all pass; only the message text is refused.
+Once refused, further edits to that composer (even a batched `Backspace`) get
+denied too, though a *standalone* `Backspace` and the overlay `X` still work —
+use those to clear the sacrificial `.` so no stray draft is left in a real
+prospect's box.
+
+This is a harness permission gate, not a LinkedIn limit: no warning banner, no
+rate limiting, nothing wrong with the account. Do NOT try to route around it
+(chunked typing, `javascript_tool` injection into the composer) — the point of the
+gate is that outbound messages get a human decision. Report it and let Greg add a
+permission rule or run the session in a mode that allows the send.
+
+Everything upstream of the send still works unattended and is worth doing when
+this hits: reconciliation against the manifest, STEP 2 acceptance discovery,
+inbox triage reads, ICP verification against live profiles, and CRM stamping.
+Unsent manifest rows are left unstamped and simply requeue the next day, so a
+blocked session costs a day of throughput but corrupts nothing.

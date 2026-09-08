@@ -13,118 +13,34 @@
  * miss hours keyed after their window closed. The overlap absorbs the lag;
  * a gap repeating across cycles just means it is still uncovered.
  *
- * The workbook mirrors the client's Export Mass PN sheet (WcCoveragePage) —
- * InSource's 24-column intake format, suggested REAL class codes (never
- * 8040). If Eddie asks for format changes, change BOTH builders.
+ * The workbook is InSource's REVISED Mass PN template (Eddie 2026-09-08,
+ * "going forward please use the new one") — sheet content comes from the
+ * shared spec in src/shared/massPnTemplate.ts, which the client's Export /
+ * Submit-to-Eddie (WcCoveragePage) assembles from too, so the two paths
+ * stay byte-identical by construction. Suggested REAL class codes (never
+ * 8040; unknown stays blank per their instructions).
  */
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import * as XLSX from 'xlsx';
 
 import { buildWcCoverageReport } from './coverageGaps';
+import { assembleMassPnWorkbook, MassPnSheetRow, XlsxLike } from '../shared/massPnTemplate';
 import { gmailClientFor } from '../sales/sodexoReplies';
 
 export const INSOURCE_COVERAGE_CONTACT = { name: 'Eddie', email: 'eddiem@insourcees.com' };
 
-const MASS_PN_HEADERS = [
-  'Your Staffing Company Name  ',
-  'Contact Name',
-  'Email',
-  'Phone',
-  '',
-  'Your Client/Prospect Name',
-  'Address',
-  'City',
-  'State',
-  'Zip',
-  'Project/Worksite Address \n(if different than Mailing Address)',
-  'Client Business Description',
-  'Job Description',
-  'Class Code State',
-  'Class Code',
-  'Annual Payroll Estimated',
-  'Group Transportation          (Yes or No)',
-  'Trenching or Excavation (Yes or No)',
-  'Height Exposure Above Ground Level (Yes or No)',
-  'Chemical Exposure (Yes or No)',
-  'Machinery Exposure (Yes or No)',
-  'Respirators or Dust Mask (Yes or No)',
-  'Airborne/Bloodborn Exposure (Yes or No)',
-  'Notes \n(COI or Endorsement Needs, Wording Specifics, etc...) ',
-];
-
-interface MassPnRowLike {
+interface MassPnRowLike extends MassPnSheetRow {
   entityId: string;
-  entityName: string;
-  accountName: string;
-  worksiteName: string;
-  worksiteAddress: string;
-  state: string;
-  code: string;
-  jobTitles: string[];
-  periodGross: number;
-  workers: number;
-  annualEstimate: number;
-  suggestedCode?: string | null;
-  suggestedBasis?: string[];
-  comparableRateMin?: number | null;
-  comparableRateMax?: number | null;
 }
-
-const usd = (n: number): string =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
 export function buildMassPnXlsxBase64(
   rows: MassPnRowLike[],
   startDate: string,
   endDate: string,
 ): string {
-  const aoa: (string | number)[][] = [MASS_PN_HEADERS];
-  rows.forEach((r, i) => {
-    aoa.push([
-      i === 0 ? 'C1 Staffing LLC' : '',
-      i === 0 ? 'Greg Fielding' : '',
-      i === 0 ? 'g.fielding@c1staffing.com' : '',
-      i === 0 ? '925-448-0579' : '',
-      '',
-      r.accountName || '(fill in client)',
-      '',
-      '',
-      '',
-      '',
-      [r.worksiteName, r.worksiteAddress].filter(Boolean).join(' — '),
-      '',
-      r.jobTitles.length ? r.jobTitles.join(', ') : '',
-      r.state,
-      r.suggestedCode || (r.code && r.code !== '8040' ? r.code : '(needs classification)'),
-      r.annualEstimate,
-      'No',
-      'No',
-      'No',
-      'No',
-      'No',
-      'No',
-      'No',
-      [
-        `Est. annualized from ${usd(r.periodGross)} over ${startDate}→${endDate} (${r.workers} workers, ${r.entityName})`,
-        r.suggestedCode && (r.suggestedBasis?.length ?? 0) > 0
-          ? `Code ${r.suggestedCode} suggested from titles rated elsewhere on our policy: ${(r.suggestedBasis ?? []).join(', ')}`
-          : '',
-        r.comparableRateMin != null
-          ? `Comparable rate on existing policy states: ${r.comparableRateMin}${r.comparableRateMax != null && r.comparableRateMax !== r.comparableRateMin ? `–${r.comparableRateMax}` : ''}`
-          : '',
-      ]
-        .filter(Boolean)
-        .join('. '),
-    ]);
-  });
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = MASS_PN_HEADERS.map((h, i) => ({
-    wch: Math.max(h.split('\n')[0].length, ...aoa.slice(1).map((r2) => String(r2[i] ?? '').length), 6) + 2,
-  }));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Mass PN');
-  return XLSX.write(wb, { type: 'base64', bookType: 'xlsx' }) as string;
+  const wb = assembleMassPnWorkbook(XLSX as unknown as XlsxLike, rows, startDate, endDate);
+  return XLSX.write(wb as XLSX.WorkBook, { type: 'base64', bookType: 'xlsx' }) as string;
 }
 
 export async function sendMassPnEmail(

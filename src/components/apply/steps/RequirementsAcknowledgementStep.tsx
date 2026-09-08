@@ -14,6 +14,7 @@ import {
 } from '../../../utils/workerReadinessWriteModel';
 import { formatWorkerFacingScreeningPackage } from '../../../utils/backgroundChecks/formatWorkerFacingScreeningPackage';
 import { warnLegacyCertUsageDetected } from '../../../shared/certifications/certificationsLogging';
+import { tryDualWriteAfterLegacyCertification } from '../../../utils/certifications/tryDualWriteAfterLegacyCertification';
 
 type Props = {
   requirements: {
@@ -295,6 +296,16 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         uploadedAt: new Date(),
       } as any;
       await updateDoc(userRef, buildCertificationUploadWritePatch(arrayUnion(certObj)));
+
+      // Canonical row → the AI scan trigger reads the upload (2026-09-08).
+      // The legacy row cannot carry the id back (arrayUnion), which is fine:
+      // the scan and the review queue key off the canonical record alone.
+      await tryDualWriteAfterLegacyCertification({
+        uid,
+        certificationName: pendingCert,
+        legacyEvidence: { fileUrl: url, fileName: file.name },
+        source: 'worker_upload',
+      });
 
       // Mark requirement satisfied
       setUploaded(pendingCert);
