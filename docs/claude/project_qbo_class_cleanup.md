@@ -794,6 +794,10 @@ Greg ran the runner from the laptop after deploying the fixed
 
 Still open after this: Tabitha's 17 July `EV Pay Alloc` docs were rewritten
 on 9/6 (Division + split); restore from `functions/.scratch/backup_*.json`
-on Greg's laptop if present, else QBO Audit History per JE. Weekly writers
-stay PAUSED (`jeWritersEnabled` unset) until Tabitha confirms the P&L by
-Division and the true-up read-failure TODO above is fixed.
+on Greg's laptop if present, else QBO Audit History per JE.
+
+**Greg 2026-09-08 (later): the rule is LAW, no sign-off gate.** Recurring =
+Sodexo + Indeed Flex only; everything else non-recurring, now and going
+forward. Writers re-enabled via `scripts/qboJeWriters.ts on` (status/off
+also there). The true-up read-failure TODO above is still open — the
+weekly run's blast radius is our own `EV Alloc`/`TW Alloc` docs only.
