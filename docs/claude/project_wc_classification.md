@@ -176,3 +176,41 @@ Verified read-only post-fix: Select 96 inSync / 0 creates / 0 updates /
 (inboxChiefOfStaff triage) + morning brief carries a WC-filing reminder on
 days 1-4 of each month pointing at /reports/workers-comp (Claude drives the
 portal entry, Greg clicks Submit).
+
+## 2026-09-08 — Kickoff sends done; Eddie replied; ⚠️ Gmail grant DEAD
+
+Greg: "send today and then again on the 19th and every 2 weeks." SENT all
+three from his mailbox (via the Claude Gmail connector — see below): C1
+Select (3 rows), C1 Events (2 rows), and a NEW OnTrac all-locations
+request (107 deduped facilities, ~35 states, C1 Select, full JDs from the
+national account's jobDescriptionFromClient fields, $25k/location
+preliminary estimates; sheet delivered as a tokened Firebase Storage
+download link — 24-col files >29KB can't ride connector attachments).
+`wcMassPnAutoSubmit.lastSentAt` left anchored at 2026-09-05 so the
+nightly fires ~09-19 and every 14d after — DO NOT let a send today
+restamp it.
+
+**⚠️ The app's connected-mailbox OAuth grant is DEAD (invalid_grant, both
+server-side and local)**: nightly Mass PN auto-send, Submit to Eddie
+button, sodexo reply desk, re-engagement sender, inbox chief-of-staff —
+everything on gmailClientFor is broken until Greg reconnects the mailbox.
+The 9/19 auto-send WILL FAIL unless reconnected first.
+
+**Eddie replies (2026-09-08, 3 min after first send):**
+1. Entity attribution question → ANSWERED (per-entity emails now).
+2. Venuesmart WI row carried the MO corporate address → ANSWERED:
+   Wisconsin State Fair Park, 640 S 84th St, West Allis, WI 53214. The
+   coverage report resolves worksite from the ACCOUNT when the row
+   aggregates — builders should prefer the JO worksite address (fix with
+   the template migration).
+3. **REVISED Mass PN template attached** ("Revised- MASS PN - Prospect
+   Notification Template.xlsx", on thread 1a081b705f20774e) — "please use
+   the new one going forward." TODO per playbook: diff the new template
+   and update BOTH builders (WcCoveragePage buildMassPnWorkbooks +
+   massPnAutoSubmit buildMassPnXlsxBase64) in lockstep BEFORE the 9/19
+   auto-send. The Gmail MCP can't download attachments — pull it via
+   Greg's browser session or have Greg drop it in functions/.scratch/.
+
+New outbox mode shipped: getWorkersCompMonthlyReport
+`emailMassPnFromStorage` sends workbooks staged under wc_masspn_outbox/
+via the connected mailbox (books-gated) — useful once the grant is fixed.
