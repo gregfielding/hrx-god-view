@@ -5662,6 +5662,110 @@ const RecruiterAccountDetails: React.FC = () => {
     '&:hover': { boxShadow: 'none', bgcolor: 'background.paper' },
   };
 
+  /**
+   * Ramp throttle (Greg 2026-09-07) — renders on EVERY account type: a
+   * child's own setting overrides its national parent; "Off" DELETES the
+   * fields so an untouched child keeps inheriting. Backed by
+   * tier2AutoOnboard (new applications, instant) + the hourly
+   * tier_ramp_sweep (existing applicants, budget-capped retries).
+   */
+  const renderRampThrottleSection = () => {
+    const rampTier =
+      account.tierAutomation?.autoOnboardDownToTier ??
+      (account.tierAutomation?.autoOnboardTier2 === true ? 2 : 0);
+    return (
+      <Stack spacing={2.5}>
+        <Tooltip title="Automatically start onboarding (payroll invite + Everee provisioning) and order this account's default screening package for applicants at or above the selected tier — existing applicants are picked up by the hourly sweep, new applications onboard immediately. Tier 1 only keeps spend to proven workers; Tiers 1 + 2 extends it to AI-qualified applicants. The hire itself stays a recruiter decision. On a child account, Off inherits the national account's setting.">
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 2,
+              flexWrap: 'wrap',
+            }}
+          >
+            <Box component="span" sx={{ ...recordHeaderBodyTextSx }}>
+              Auto-Onboard Applicants:
+            </Box>
+            <Select
+              size="small"
+              value={rampTier}
+              disabled={saving}
+              onChange={(e) => {
+                const v = Number(e.target.value) as 0 | 1 | 2;
+                void updateTierAutomation(
+                  v > 0
+                    ? { autoOnboardDownToTier: v, autoOnboardTier2: true }
+                    : { autoOnboardDownToTier: null, autoOnboardTier2: null },
+                );
+              }}
+              inputProps={{ 'aria-label': 'Auto-onboard applicants down to tier' }}
+              sx={{ minWidth: 140 }}
+            >
+              <MenuItem value={0}>
+                {account.accountType === 'child' ? 'Off (inherit)' : 'Off'}
+              </MenuItem>
+              <MenuItem value={1}>Tier 1 only</MenuItem>
+              <MenuItem value={2}>Tiers 1 &amp; 2</MenuItem>
+            </Select>
+          </Box>
+        </Tooltip>
+        {rampTier > 0 && (
+          <>
+            <Tooltip title="Daily budget: the most auto-onboards (each one is real screening spend) this account family may start per day. Applicants skipped at the cap are retried automatically when the next day's budget opens. Default 25.">
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 2,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <Box component="span" sx={{ ...recordHeaderBodyTextSx }}>
+                  Max Auto-Onboards / Day:
+                </Box>
+                <TextField
+                  key={String(account.tierAutomation?.maxAutoOnboardsPerDay ?? 'default')}
+                  size="small"
+                  type="number"
+                  placeholder="25"
+                  defaultValue={account.tierAutomation?.maxAutoOnboardsPerDay ?? ''}
+                  disabled={saving}
+                  onBlur={(e) => {
+                    const n = Math.round(Number(e.target.value));
+                    const next = Number.isFinite(n) && n > 0 ? n : null;
+                    if (next !== (account.tierAutomation?.maxAutoOnboardsPerDay ?? null)) {
+                      void updateTierAutomation({ maxAutoOnboardsPerDay: next });
+                    }
+                  }}
+                  inputProps={{ min: 1, 'aria-label': 'Max auto-onboards per day' }}
+                  sx={{ width: 100 }}
+                />
+              </Box>
+            </Tooltip>
+            {account.tierAutomation?.lastSweepStats && (
+              <Box sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
+                Last sweep
+                {(() => {
+                  const at = account.tierAutomation?.lastSweepAt as
+                    | { toDate?: () => Date }
+                    | undefined;
+                  const d = typeof at?.toDate === 'function' ? at.toDate() : null;
+                  return d ? ` ${d.toLocaleString()}` : '';
+                })()}
+                : {account.tierAutomation.lastSweepStats.pooledApplications ?? 0} applicants
+                pooled · {account.tierAutomation.lastSweepStats.promoted ?? 0} promoted to Tier 2 ·{' '}
+                {account.tierAutomation.lastSweepStats.onboardsAttempted ?? 0} onboarding started
+              </Box>
+            )}
+          </>
+        )}
+      </Stack>
+    );
+  };
+
   /** National-account automation toggles + gig backfill — Cascading Data tab (same fields as edit modal). */
   const renderNationalAutomationsSection = () =>
     account.accountType === 'national' ? (
@@ -5775,94 +5879,6 @@ const RecruiterAccountDetails: React.FC = () => {
             </Box>
           </Box>
         </Tooltip>
-        <Tooltip title="Ramp throttle: automatically start onboarding (payroll invite + Everee provisioning) and order this account's default screening package for applicants at or above the selected tier — existing applicants are picked up by the hourly sweep, new applications onboard immediately. Tier 1 only keeps spend to proven workers; Tiers 1 + 2 extends it to AI-qualified applicants. The hire itself stays a recruiter decision.">
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 2,
-              flexWrap: 'wrap',
-            }}
-          >
-            <Box component="span" sx={{ ...recordHeaderBodyTextSx }}>
-              Auto-Onboard Applicants:
-            </Box>
-            <Select
-              size="small"
-              value={
-                account.tierAutomation?.autoOnboardDownToTier ??
-                (account.tierAutomation?.autoOnboardTier2 === true ? 2 : 0)
-              }
-              disabled={saving}
-              onChange={(e) => {
-                const v = Number(e.target.value) as 0 | 1 | 2;
-                void updateTierAutomation({
-                  autoOnboardDownToTier: v,
-                  autoOnboardTier2: v > 0,
-                });
-              }}
-              inputProps={{ 'aria-label': 'Auto-onboard applicants down to tier' }}
-              sx={{ minWidth: 140 }}
-            >
-              <MenuItem value={0}>Off</MenuItem>
-              <MenuItem value={1}>Tier 1 only</MenuItem>
-              <MenuItem value={2}>Tiers 1 &amp; 2</MenuItem>
-            </Select>
-          </Box>
-        </Tooltip>
-        {(account.tierAutomation?.autoOnboardDownToTier ??
-          (account.tierAutomation?.autoOnboardTier2 === true ? 2 : 0)) > 0 && (
-          <>
-            <Tooltip title="Daily budget: the most auto-onboards (each one is real screening spend) this account family may start per day. Applicants skipped at the cap are retried automatically when the next day's budget opens. Default 25.">
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 2,
-                  flexWrap: 'wrap',
-                }}
-              >
-                <Box component="span" sx={{ ...recordHeaderBodyTextSx }}>
-                  Max Auto-Onboards / Day:
-                </Box>
-                <TextField
-                  key={String(account.tierAutomation?.maxAutoOnboardsPerDay ?? 'default')}
-                  size="small"
-                  type="number"
-                  placeholder="25"
-                  defaultValue={account.tierAutomation?.maxAutoOnboardsPerDay ?? ''}
-                  disabled={saving}
-                  onBlur={(e) => {
-                    const n = Math.round(Number(e.target.value));
-                    const next = Number.isFinite(n) && n > 0 ? n : null;
-                    if (next !== (account.tierAutomation?.maxAutoOnboardsPerDay ?? null)) {
-                      void updateTierAutomation({ maxAutoOnboardsPerDay: next });
-                    }
-                  }}
-                  inputProps={{ min: 1, 'aria-label': 'Max auto-onboards per day' }}
-                  sx={{ width: 100 }}
-                />
-              </Box>
-            </Tooltip>
-            {account.tierAutomation?.lastSweepStats && (
-              <Box sx={{ color: 'text.secondary', fontSize: '0.75rem' }}>
-                Last sweep
-                {(() => {
-                  const at = account.tierAutomation?.lastSweepAt as
-                    | { toDate?: () => Date }
-                    | undefined;
-                  const d = typeof at?.toDate === 'function' ? at.toDate() : null;
-                  return d ? ` ${d.toLocaleString()}` : '';
-                })()}
-                : {account.tierAutomation.lastSweepStats.pooledApplications ?? 0} applicants
-                pooled · {account.tierAutomation.lastSweepStats.promoted ?? 0} promoted to Tier 2 ·{' '}
-                {account.tierAutomation.lastSweepStats.onboardsAttempted ?? 0} onboarding started
-              </Box>
-            )}
-          </>
-        )}
         <Tooltip
           title={
             account.autoCreateGigJobOrders === true
@@ -7956,6 +7972,15 @@ const RecruiterAccountDetails: React.FC = () => {
                 <CardContent sx={{ pt: 0 }}>{renderNationalAutomationsSection()}</CardContent>
               </Card>
             )}
+            <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
+              <CardHeader
+                title="Applicant Auto-Onboarding"
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+                subheader="Ramp throttle: pre-onboard qualified applicants (payroll + screening) before recruiters work the account. Child accounts inherit the national setting until set here."
+                subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
+              />
+              <CardContent sx={{ pt: 0 }}>{renderRampThrottleSection()}</CardContent>
+            </Card>
             <Card variant="outlined" elevation={0} sx={cascadingDataCardSx}>
               <CardHeader
                 title="Compliance Defaults"
