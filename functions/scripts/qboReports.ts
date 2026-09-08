@@ -113,37 +113,52 @@ async function cmdDetail(prefixes: string[], start: string, end: string): Promis
   const accts: Row[] = (acctRes.Account ?? []) as Row[];
   const wanted = accts.filter((a) => prefixes.some((p) => String(a.AcctNum ?? '').startsWith(p) || String(a.Name ?? '').startsWith(p) || String(a.FullyQualifiedName ?? '').startsWith(p)));
   if (!wanted.length) throw new Error(`no accounts match ${prefixes.join(',')}`);
-  console.log(`accounts: ${wanted.map((a) => `${a.AcctNum ?? ''} ${a.Name} (#${a.Id})`).join(' | ')}`);
-  const rep = await qboGet('reports/GeneralLedger', {
-    start_date: start,
-    end_date: end,
-    accounting_method: 'Accrual',
-    account: wanted.map((a) => String(a.Id)).join(','),
-    columns: 'tx_date,txn_type,doc_num,name,memo,klass_name,dept_name,split_acc,subt_nat_amount',
-  });
-  const cols: string[] = ((rep.Columns?.Column ?? []) as Row[]).map((c) => String(c.ColType || c.ColTitle));
+  const wantedIds = new Map<string, string>(wanted.map((a) => [String(a.Id), `${a.AcctNum ? a.AcctNum + ' ' : ''}${a.Name}`]));
+  console.log(`accounts: ${[...wantedIds.values()].join(' | ')}`);
+  // Read the transactions themselves (the GeneralLedger report ignores the
+  // account filter for this company — 2026-09-08). Every entity type that
+  // can carry a P&L account line.
+  const entities = ['JournalEntry', 'Purchase', 'Bill', 'Deposit', 'VendorCredit', 'CreditCardPayment'];
   const lines: Row[] = [];
-  const walk = (rows: Row[], acct: string): void => {
-    for (const r of rows) {
-      const here = r.Header?.ColData ? String(r.Header.ColData[0]?.value ?? acct) : acct;
-      if (r.ColData && !r.Header && r.type !== 'Section') {
-        const o: Row = { account: here };
-        (r.ColData as Row[]).forEach((c, i) => { o[cols[i] ?? `c${i}`] = c.value ?? ''; if (c.id) o[`${cols[i]}_id`] = c.id; });
-        if (o.tx_date) lines.push(o);
+  for (const ent of entities) {
+    let pos = 1;
+    for (;;) {
+      let r: Row;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        r = (await qboQuery(TENANT, `SELECT * FROM ${ent} WHERE TxnDate >= '${start}' AND TxnDate <= '${end}' STARTPOSITION ${pos} MAXRESULTS 1000`)) as Row;
+      } catch (e) { console.error(`  (${ent}: ${String(e).slice(0, 120)})`); break; }
+      const rows: Row[] = (r[ent] ?? []) as Row[];
+      for (const t of rows) {
+        const name = String(t.EntityRef?.name ?? t.VendorRef?.name ?? t.CustomerRef?.name ?? '');
+        for (const l of (t.Line ?? []) as Row[]) {
+          const je = l.JournalEntryLineDetail;
+          const ab = l.AccountBasedExpenseLineDetail ?? l.DepositLineDetail;
+          const acctId = String(je?.AccountRef?.value ?? ab?.AccountRef?.value ?? '');
+          if (!wantedIds.has(acctId)) continue;
+          const raw = Number(l.Amount) || 0;
+          const amt = je ? (je.PostingType === 'Credit' ? -raw : raw) : l.DepositLineDetail ? -raw : raw;
+          lines.push({
+            account: wantedIds.get(acctId), tx_date: String(t.TxnDate ?? ''), txn_type: ent, doc_num: String(t.DocNumber ?? ''),
+            name: name || String(je?.Entity?.EntityRef?.name ?? ab?.CustomerRef?.name ?? ''), memo: String(l.Description ?? t.PrivateNote ?? '').slice(0, 80),
+            klass_name: String(je?.ClassRef?.name ?? ab?.ClassRef?.name ?? ''), dept_name: String(je?.DepartmentRef?.name ?? t.DepartmentRef?.name ?? ''),
+            split_acc: '', amount: amt, txn_id: String(t.Id ?? ''), created: String(t.MetaData?.CreateTime ?? '').slice(0, 16), updated: String(t.MetaData?.LastUpdatedTime ?? '').slice(0, 16),
+          });
+        }
       }
-      if (r.Rows?.Row) walk(r.Rows.Row, here);
+      if (rows.length < 1000) break;
+      pos += 1000;
     }
-  };
-  walk(rep.Rows?.Row ?? [], '');
-  const amt = (l: Row): number => Number(l.subt_nat_amount ?? l.nat_amount ?? 0) || 0;
+  }
+  const amt = (l: Row): number => Number(l.amount) || 0;
 
   const dir = path.join(process.cwd(), '.scratch');
   fs.mkdirSync(dir, { recursive: true });
   const csvPath = path.join(dir, `qbo_gl_${start}_${end}.csv`);
   const esc = (v: unknown): string => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const hdr = ['account', 'tx_date', 'txn_type', 'doc_num', 'name', 'memo', 'klass_name', 'dept_name', 'split_acc', 'amount', 'txn_id'];
-  fs.writeFileSync(csvPath, [hdr.join(','), ...lines.map((l) => [l.account, l.tx_date, l.txn_type, l.doc_num, l.name, l.memo, l.klass_name, l.dept_name, l.split_acc, amt(l), l.txn_type_id ?? l.doc_num_id ?? ''].map(esc).join(','))].join('\n'));
-  console.log(`\n${lines.length} GL lines → ${csvPath}`);
+  const hdr = ['account', 'tx_date', 'txn_type', 'doc_num', 'name', 'memo', 'klass_name', 'dept_name', 'amount', 'txn_id', 'created', 'updated'];
+  fs.writeFileSync(csvPath, [hdr.join(','), ...lines.sort((a, b) => String(a.tx_date).localeCompare(String(b.tx_date))).map((l) => hdr.map((h) => esc(l[h])).join(','))].join('\n'));
+  console.log(`\n${lines.length} lines → ${csvPath}`);
 
   const sum = (key: (l: Row) => string): Map<string, number> => {
     const m = new Map<string, number>();
@@ -157,12 +172,11 @@ async function cmdDetail(prefixes: string[], start: string, end: string): Promis
   print('by account × month', sum((l) => `${l.account} | ${String(l.tx_date).slice(0, 7)}`));
   print('by account × source (txn type / doc prefix / payee)', sum((l) => {
     const doc = String(l.doc_num ?? '');
-    const src = OUR_DOC_RE.test(doc) ? `JE ${doc.replace(/\s+\d.*$/, '')} (automation)` : `${l.txn_type}${l.name ? ' / ' + l.name : ''}`;
+    const src = OUR_DOC_RE.test(doc) ? `JE ${doc.replace(/\s+\d.*$/, '')} (automation)` : `${l.txn_type}${doc ? ' "' + doc.replace(/\d+/g, '#') + '"' : ''}${l.name ? ' / ' + l.name : ''}`;
     return `${l.account} | ${src}`;
   }));
-  const ours = lines.filter((l) => OUR_DOC_RE.test(String(l.doc_num ?? '')));
-  console.log(`\n--- automation lines hitting these accounts: ${ours.length} (${money(ours.reduce((s, l) => s + amt(l), 0))}) ---`);
-  for (const l of ours.slice(0, 40)) console.log(`${l.tx_date}\t${l.account}\t${l.doc_num}\t${l.klass_name ?? ''}\t${money(amt(l))}`);
+  console.log('\n--- every line ≥ $500 (date, account, type/doc, payee, class, amount, created) ---');
+  for (const l of lines.filter((x) => Math.abs(amt(x)) >= 500)) console.log(`${l.tx_date}\t${String(l.account).slice(0, 26)}\t${l.txn_type} ${l.doc_num}\t${String(l.name).slice(0, 24)}\t${String(l.klass_name).slice(0, 22)}\t${money(amt(l))}\t${l.created}`);
   const seen = new Map<string, Row[]>();
   for (const l of lines) { const k = `${l.account}|${l.tx_date}|${amt(l).toFixed(2)}`; (seen.get(k) ?? seen.set(k, []).get(k)!).push(l); }
   const dups = [...seen.entries()].filter(([, v]) => v.length > 1 && Math.abs(amt(v[0])) >= 100);
@@ -170,7 +184,7 @@ async function cmdDetail(prefixes: string[], start: string, end: string): Promis
   for (const [k, v] of dups.slice(0, 40)) console.log(`${k}\t×${v.length}\t${v.map((l) => `${l.txn_type}${l.doc_num ? ' ' + l.doc_num : ''}${l.name ? ' / ' + l.name : ''}`).join(' ; ')}`);
   const neg = lines.filter((l) => amt(l) < -100);
   console.log(`\n--- credits ≥ $100 (reversals / reclass out): ${neg.length} ---`);
-  for (const l of neg.slice(0, 40)) console.log(`${l.tx_date}\t${l.account}\t${l.txn_type} ${l.doc_num ?? ''}\t${l.name ?? ''}\t${money(amt(l))}\t${String(l.memo ?? '').slice(0, 60)}`);
+  for (const l of neg.slice(0, 40)) console.log(`${l.tx_date}\t${l.account}\t${l.txn_type} ${l.doc_num}\t${l.name}\t${money(amt(l))}\t${String(l.memo).slice(0, 60)}`);
 }
 
 /* ── what changed since a date ──────────────────────────────────────── */
@@ -226,7 +240,23 @@ async function cmdChanges(since: string, periodStart: string, periodEnd: string)
   }
   console.log('\n--- by account: amount on NEW transactions | amount on EDITED transactions (current values; the pre-edit value is in the QBO audit log) ---');
   for (const [k, v] of [...byAcct.entries()].sort()) console.log(`${k}\t${money(v.created)}\t${money(v.edited)}\t(${v.n} lines)`);
-  console.log('\n--- transactions (newest first) ---');
+  const bySrc = new Map<string, { amt: number; n: number }>();
+  for (const h of hits) for (const l of h.lines) {
+    const doc = h.doc;
+    const src = OUR_DOC_RE.test(doc) ? `JE ${doc.replace(/\s+\d.*$/, '')} (automation)` : `${h.type}${doc ? ' "' + doc.replace(/\d+/g, '#') + '"' : ''}${h.name ? ' / ' + h.name : ''}`;
+    const k = `${l.acct} | ${h.isNew ? 'NEW ' : 'EDIT'} | ${src}`;
+    const e = bySrc.get(k) ?? { amt: 0, n: 0 };
+    e.amt += l.amt; e.n += 1; bySrc.set(k, e);
+  }
+  console.log('\n--- by account × NEW/EDIT × source (txn type / doc pattern / payee) ---');
+  for (const [k, v] of [...bySrc.entries()].sort()) console.log(`${k}\t${money(v.amt)}\t(${v.n} lines)`);
+  const dir = path.join(process.cwd(), '.scratch');
+  fs.mkdirSync(dir, { recursive: true });
+  const csvPath = path.join(dir, `qbo_changes_since_${since}_${periodStart}_${periodEnd}.csv`);
+  const esc = (v: unknown): string => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  fs.writeFileSync(csvPath, ['updated,new_or_edit,type,txn_date,doc,name,account,amount,txn_id', ...hits.flatMap((h) => h.lines.map((l) => [h.updated, h.isNew ? 'NEW' : 'EDIT', h.type, h.date, h.doc, h.name, l.acct, l.amt, h.id].map(esc).join(',')))].join('\n'));
+  console.log(`full list → ${csvPath}`);
+  console.log('\n--- transactions (newest first, first 150) ---');
   for (const h of hits.sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 150)) {
     const ours = OUR_DOC_RE.test(h.doc) ? ' [automation]' : '';
     console.log(`${h.updated.slice(0, 16)}\t${h.isNew ? 'NEW ' : 'EDIT'}\t${h.type}\t${h.date}\t${h.doc}${ours}\t${h.name}\t${h.lines.map((l) => `${l.acct.slice(0, 28)} ${money(l.amt)}`).join(' | ').slice(0, 160)}`);
