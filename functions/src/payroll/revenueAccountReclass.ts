@@ -27,6 +27,7 @@ import * as admin from 'firebase-admin';
 
 import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
 import { RECURRING_DIVISION_RE } from './payrollCostReport';
+import { resolvePriors, segmentDocSuffix, segmentFor, segmentTxnDate, type ReportSegment } from './fiscalBlocks';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -65,15 +66,20 @@ export async function pushRevenueAccountReclass(
   const isRecurringFamily = (fqn: string): boolean => RECURRING_DIVISION_RE.test(fqn);
 
   // events-family dollars posted via 4200-mapped items, bucketed by
-  // month + class + the invoice's Division (header DepartmentRef, '' = none)
+  // SEGMENT (calendar month ∩ fiscal block — so the monthly AND the block
+  // P&L are both exact) + class + the invoice's Division (header
+  // DepartmentRef, '' = none). Keys look like 2026-06/B7.
   const byMonth = new Map<string, Map<string, { clsId: string; deptId: string; amt: number }>>();
+  const segByKey = new Map<string, ReportSegment>();
   let start = 1;
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
     const r = (await qboQuery(tenantId, `SELECT * FROM Invoice WHERE TxnDate >= '2026-01-01' STARTPOSITION ${start} MAXRESULTS 1000`)) as Record<string, any>;
     const rows: Array<Record<string, any>> = r.QueryResponse?.Invoice ?? r.Invoice ?? [];
     for (const inv of rows) {
-      const month = String(inv.TxnDate).slice(0, 7);
+      const seg = segmentFor(String(inv.TxnDate).slice(0, 10));
+      const month = seg.key;
+      segByKey.set(seg.key, seg);
       const deptId = trim(inv.DepartmentRef?.value);
       for (const l of (inv.Line ?? []) as Array<Record<string, any>>) {
         const d = l.SalesItemLineDetail;
@@ -123,7 +129,13 @@ export async function pushRevenueAccountReclass(
   // its 4100/4200 legs equal the recomputed set exactly.
   const legKey = (acct: string, cls: string, dept: string, side: string, amt: number): string =>
     `${acct}|${cls}|${dept}|${side}|${Math.round(Math.abs(amt) * 100)}`;
+  const today = new Date().toISOString().slice(0, 10);
+  const { priors, orphans } = resolvePriors(existing, segByKey.values());
+  for (const o of orphans) {
+    results.push({ month: o.tag, amount: 0, status: 'stale_prior_delete_manually', docNumber: (o.je as Record<string, any>).DocNumber });
+  }
   for (const [month, m] of [...byMonth.entries()].sort()) {
+    const seg = segByKey.get(month)!;
     const splits = [...m.values()]
       .map((x) => ({ ...x, fqn: clsById.get(x.clsId) ?? x.clsId, amount: round2(x.amt) }))
       .filter((x) => Math.abs(x.amount) >= 0.01)
@@ -135,7 +147,7 @@ export async function pushRevenueAccountReclass(
       want.add(legKey(String(a4200.Id), x.clsId, x.deptId, debitSide ? 'Debit' : 'Credit', x.amount));
       want.add(legKey(String(a4100.Id), x.clsId, x.deptId, debitSide ? 'Credit' : 'Debit', x.amount));
     }
-    const prior = existing.get(month);
+    const prior = priors.get(month);
     if (prior) {
       const have = new Set<string>();
       for (const l of (prior.Line ?? []) as Array<Record<string, any>>) {
@@ -144,7 +156,7 @@ export async function pushRevenueAccountReclass(
         have.add(legKey(trim(d.AccountRef?.value), trim(d.ClassRef?.value), trim(d.DepartmentRef?.value), trim(d.PostingType), Number(l.Amount) || 0));
       }
       if (have.size === want.size && [...want].every((k) => have.has(k))) {
-        results.push({ month, amount: total, status: 'already_reclassed' });
+        results.push({ month, dates: `${seg.start}..${seg.end}`, amount: total, status: 'already_reclassed' });
         continue;
       }
     }
@@ -156,7 +168,7 @@ export async function pushRevenueAccountReclass(
     }
     const action = prior ? 'true_up' : 'create';
     results.push({
-      month, amount: total, status: dryRun ? `would_${action}` : `${action}d`, classes: splits.length,
+      month, dates: `${seg.start}..${seg.end}`, amount: total, status: dryRun ? `would_${action}` : `${action}d`, classes: splits.length,
       splits: splits.slice(0, 50).map((x) => ({ fqn: x.fqn, division: depNameById.get(x.deptId) ?? (x.deptId || '(none)'), amount: x.amount })),
     });
     if (dryRun) continue;
@@ -188,22 +200,23 @@ export async function pushRevenueAccountReclass(
         },
       });
     }
-    const prior2 = existing.get(month);
-    if (prior2) {
-      // eslint-disable-next-line no-await-in-loop
-      await qboEntityUpdate(tenantId, 'JournalEntry', { ...prior2, Line: lines, sparse: false });
-      continue;
-    }
-    // eslint-disable-next-line no-await-in-loop
-    await qboEntityCreate(tenantId, 'JournalEntry', {
-      DocNumber: `Rev Reclass ${month.slice(2).replace('-', '')}`,
-      TxnDate: `${month}-28` > new Date().toISOString().slice(0, 10) ? new Date().toISOString().slice(0, 10) : `${month}-28`,
+    const header = {
+      DocNumber: `Rev Reclass ${segmentDocSuffix(seg)}`,
+      TxnDate: segmentTxnDate(seg, today),
       PrivateNote:
         `Events-family revenue posted to 4200 via item mapping, moved to 4100 per rule ` +
         `(4200 = Sodexo + Indeed Flex family only — Greg 2026-09-01, official 2026-09-08). ` +
-        `Division mirrors the source invoice. [revrc:${month}]`,
-      Line: lines,
-    });
+        `Division mirrors the source invoice. Segment ${seg.start}..${seg.end} (month ∩ block, ` +
+        `so monthly and block P&Ls both foot). [revrc:${seg.key}]`,
+    };
+    if (prior) {
+      // legacy month-keyed JEs are re-dated + re-tagged to their first segment here
+      // eslint-disable-next-line no-await-in-loop
+      await qboEntityUpdate(tenantId, 'JournalEntry', { ...prior, ...header, Line: lines, sparse: false });
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await qboEntityCreate(tenantId, 'JournalEntry', { ...header, Line: lines });
   }
   return { ok: true, dryRun, months: results };
 }

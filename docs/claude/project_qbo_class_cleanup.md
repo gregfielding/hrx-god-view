@@ -801,3 +801,47 @@ Sodexo + Indeed Flex only; everything else non-recurring, now and going
 forward. Writers re-enabled via `scripts/qboJeWriters.ts on` (status/off
 also there). The true-up read-failure TODO above is still open — the
 weekly run's blast radius is our own `EV Alloc`/`TW Alloc` docs only.
+
+### Segment-dated JEs for the block calendar (2026-09-08, later)
+
+Greg: monthly P&L AND block P&L must both be exact. Revenue reclass + WC
+allocation JEs are now posted per segment (month ∩ block) — see
+docs/claude/reference_fiscal_blocks_2026.md. Tags gained a `/B<n>` suffix;
+legacy month tags are migrated in place on the next write. Deploy
+`savePayrollVenueMapping,reconcileTimesheetBatchesCron`, then
+`qboReclassRerun.ts dry` → `write` → `dry`.
+
+**8040 excluded from the QBO WC allocation (Greg 2026-09-08):** entries whose
+`workersCompCode` is 8040 (or `workersCompSource` says placeholder) carry the
+synthetic 2.35 rate but no premium is paid on them yet, so `wcAllocations.ts`
+skips them (reported as `excluded8040` in the result / runner). The carrier
+monthly report already parks 8040 in its placeholder group. The HRX payroll
+cost report still burdens gross at 2.35 for 8040 — a management estimate,
+untouched.
+
+**True-up stability guard (2026-09-08, after EV Alloc 0813/0730/0806 re-patched
+on every run):** `buildWireJournal` reads Everee `/payments` live and pages
+shift while Everee syncs, so a wire's total/split differs read-to-read; it
+also swallows a failed QBO class query (journal comes back all-unclassed).
+`trueUpAllocationJes` now (a) throws if no split in the journal resolved to
+a QBO class, and (b) rewrites a JE only when the current read's fingerprint
+(credit|wireTotal|split) equals the previous run's, recorded in
+`tenants/{t}/qbo_trueup_observations/{doc}` (dry runs record too). A doc
+whose exact split was already written but still compares as different is
+reported instead of rewritten (comparison bug, not data). Runner prints
+`deferred`.
+
+**Post-9/2 cost reconciled (2026-09-08 evening, `qboReports.ts changes`/`detail`/`wirecheck`):**
+the −$84K net-income swing vs the 9/2 print = Gusto 8/21 payroll JE entered
+9/4 ($24.5K sal + $11.3K comm + burden) + SEVEN Everee purchases on 5010
+($39,157.82) entered after 9/2 by the bank rec + small opex. Internal burden
+Jun–Aug = 7.5–7.9% of wages (normal; the YTD "4%" was Feb's −$11,099 and the
+Lone Oak months). 7120 401(k) stops after June — Human Interest charges are
+landing in 8100 (ask Tabitha). `wirecheck` cannot match 1:1 (a bank debit
+combines several Everee fundings, or is split 5010/5200 fees; 7/15 =
+22,046.12 + 206.72 exactly), but totals foot: Everee funded $1,410,505
+Jun–Aug vs QBO 5010 + 5200 = $1,402,475 (0.6% gap ≈ Aug 26–28 wires landing
+in Sept) and zero same-amount duplicates → the seven purchases were MISSING
+wires, not duplicates. Same session: two back-to-back buildWireJournal calls
+returned 4,194.11 and 3,736.83 for the 6/24 EVT wire — the flakiness the
+true-up guard now defends against.
