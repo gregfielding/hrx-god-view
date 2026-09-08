@@ -19,7 +19,8 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { resolveRadiusRecipientUids } from '../jobOrderAutoMessagingRadius';
 import { resolveWorksiteCoordinates, runJobOrderAutoMessagingForShift } from '../jobOrderAutoMessaging';
-import { NATALIE_DISPLAY_NAME, NATALIE_HRX_UID, recordNatalieAction, type SlackRef } from './natalieAudit';
+import { NATALIE_DISPLAY_NAME, NATALIE_HRX_UID, recordNatalieAction, registerFollowup, type SlackRef } from './natalieAudit';
+import { enqueuePortalAction } from '../integrations/portalActions/enqueuePortalAction';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -311,6 +312,35 @@ export async function placeWorkerOnShift(tenantId: string, jobOrderId: string, s
   return { placed: true, assignmentId };
 }
 
+/**
+ * When a shift is a Flex job (poNumber = Flex job id), book the worker into
+ * the Flex portal too, so they get the venue clock-in link and Flex's roster
+ * matches HRX. Queues `book_worker`; the outcome is posted back to Slack when
+ * a thread is given. Workers must already be in the agency's Flex pool.
+ */
+export async function bookInFlexIfLinked(tenantId: string, jobOrderId: string, shiftId: string, userId: string, opts: { slack?: SlackRef; askedByName?: string | null; askedBySlackUserId?: string | null } = {}): Promise<{ queued: boolean; actionId?: string; flexJobId?: string; reason?: string }> {
+  const loaded = await loadShift(tenantId, jobOrderId, shiftId);
+  if (!loaded) return { queued: false, reason: 'shift not found' };
+  const flexJobId = loaded.ref.poNumber && /^\d+$/.test(loaded.ref.poNumber) ? loaded.ref.poNumber : null;
+  if (!flexJobId) return { queued: false, reason: 'shift is not a Flex job' };
+  const u = (await db.collection('users').doc(userId).get()).data() as Record<string, unknown> | undefined;
+  const workerName = `${s(u?.firstName)} ${s(u?.lastName)}`.trim();
+  if (!workerName) return { queued: false, reason: 'worker has no name' };
+  const res = await enqueuePortalAction(db, {
+    tenantId,
+    action: 'book_worker',
+    payload: { flexJobId, workerName },
+    refs: { jobOrderId, shiftId, userId },
+    createdBy: { kind: 'system', id: `natalie:${opts.askedBySlackUserId ?? 'auto'}` },
+    priority: 12,
+    maxAttempts: 2,
+    force: true,
+  });
+  if (opts.slack) await registerFollowup({ tenantId, portalActionId: res.id, slack: opts.slack, askedByName: opts.askedByName ?? null, description: `book ${workerName} on Flex ${flexJobId}` });
+  await recordNatalieAction({ tenantId, kind: 'flex_book', askedBySlackUserId: opts.askedBySlackUserId ?? null, askedByName: opts.askedByName ?? null, slack: opts.slack, input: { flexJobId, workerName }, result: { actionId: res.id }, summary: `Queued Flex booking of ${workerName} on job ${flexJobId}`, userId, jobOrderId });
+  return { queued: true, actionId: res.id, flexJobId };
+}
+
 export function composeOffer(firstName: string, ref: ShiftRef, extra?: string): string {
   const when = `${fmtDate(ref.date)}, ${fmtTime(ref.startTime)}–${fmtTime(ref.endTime)}`;
   const pay = ref.payRate ? `, $${ref.payRate.toFixed(2)}/hr` : '';
@@ -372,7 +402,9 @@ export async function acceptOfferFromReply(watch: Record<string, unknown>, reply
     }
     await db.collection('natalie_sms_watches').doc(userId).set({ status: 'accepted', acceptedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
     await recordNatalieAction({ tenantId, kind: 'offer_accepted', summary: `${s(watch.workerName) || 'Worker'} said YES — placed on ${offer.title} ${when}`, userId, jobOrderId: offer.jobOrderId, assignmentId: res.assignmentId });
-    return { placed: true, message: `placed on ${when}` };
+    const slack = (watch.slack ?? undefined) as SlackRef | undefined;
+    const flex = await bookInFlexIfLinked(tenantId, offer.jobOrderId, offer.shiftId, userId, { slack, askedByName: 'auto (YES reply)' }).catch((e) => ({ queued: false, reason: String(e) }));
+    return { placed: true, message: `placed on ${when}${flex.queued ? ', Flex booking queued' : ''}` };
   }
   return { placed: false, message: res.error ?? 'could not place' };
 }

@@ -10,7 +10,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { enqueuePortalAction } from '../integrations/portalActions/enqueuePortalAction';
 import { NATALIE_DISPLAY_NAME, NATALIE_HRX_UID, recordNatalieAction, registerFollowup, type SlackRef } from './natalieAudit';
 import { readInbox, sendEmail } from './natalieMailbox';
-import { candidatesForJobOrder, offerShiftToWorker, placeWorkerOnShift, upcomingShifts, workerReachBlast } from './natalieFill';
+import { bookInFlexIfLinked, candidatesForJobOrder, offerShiftToWorker, placeWorkerOnShift, upcomingShifts, workerReachBlast } from './natalieFill';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -129,6 +129,12 @@ export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
     name: 'place_worker',
     description:
       'Put a worker on a shift in HRX right away (no offer text) — the same as a recruiter clicking Assign. Use when the person explicitly says to put someone on a shift. Needs userId, jobOrderId and shiftId.',
+    input_schema: { type: 'object', properties: { userId: { type: 'string' }, jobOrderId: { type: 'string' }, shiftId: { type: 'string' } }, required: ['userId', 'jobOrderId', 'shiftId'] },
+  },
+  {
+    name: 'book_in_flex',
+    description:
+      "Book a worker into the Indeed Flex portal for a shift that is a Flex job (the shift's PO number is the Flex job id), so they get the venue clock-in link and Flex's roster matches HRX. The worker must already be in C1's Flex worker pool. Use after place_worker, or when asked to 'book X in Flex'. Reports back in this thread when the portal worker finishes.",
     input_schema: { type: 'object', properties: { userId: { type: 'string' }, jobOrderId: { type: 'string' }, shiftId: { type: 'string' } }, required: ['userId', 'jobOrderId', 'shiftId'] },
   },
   {
@@ -634,8 +640,11 @@ export async function runNatalieTool(name: string, input: Record<string, unknown
     case 'place_worker': {
       const r = await placeWorkerOnShift(ctx.tenantId, s(input.jobOrderId), s(input.shiftId), s(input.userId), { source: 'natalie_slack_place', note: `Placed by Natalie (asked by ${ctx.askedByName} in Slack)` });
       await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'place_worker', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { jobOrderId: s(input.jobOrderId), shiftId: s(input.shiftId) }, result: r as Record<string, unknown>, summary: r.placed ? 'Placed the worker on the shift' : `Could not place the worker (${r.error ?? (r.already ? 'already on it' : 'unknown')})`, userId: s(input.userId), jobOrderId: s(input.jobOrderId), assignmentId: r.assignmentId || null });
-      return { ...r, hrxLink: r.assignmentId ? `https://hrxone.com/assignments/${r.assignmentId}` : null };
+      const flex = r.placed ? await bookInFlexIfLinked(ctx.tenantId, s(input.jobOrderId), s(input.shiftId), s(input.userId), { slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId }) : { queued: false, reason: 'not placed' };
+      return { ...r, hrxLink: r.assignmentId ? `https://hrxone.com/assignments/${r.assignmentId}` : null, flexBooking: flex };
     }
+    case 'book_in_flex':
+      return bookInFlexIfLinked(ctx.tenantId, s(input.jobOrderId), s(input.shiftId), s(input.userId), { slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });
     case 'worker_reach_blast':
       return workerReachBlast({ tenantId: ctx.tenantId, jobOrderId: s(input.jobOrderId), radiusMiles: Number(input.radiusMiles) || 30, message: s(input.message) || undefined, askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack });
     case 'read_inbox': {
