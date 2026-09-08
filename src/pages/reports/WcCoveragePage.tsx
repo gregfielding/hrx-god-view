@@ -39,6 +39,7 @@ import { httpsCallable } from 'firebase/functions';
 import { functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import PageHeader from '../../components/PageHeader';
+import { assembleMassPnWorkbook, XlsxLike } from '../../shared/massPnTemplate';
 
 const usd = (n: unknown): string =>
   Number(n ?? 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -78,8 +79,18 @@ interface MassPnRow {
   entityId: string;
   entityName: string;
   accountName: string;
+  /** Client HQ/mailing address — a candidate address whose state
+   *  contradicted the work state (see coverageGaps). */
+  accountStreet?: string;
+  accountCity?: string;
+  accountState?: string;
+  accountZip?: string;
   worksiteName: string;
   worksiteAddress: string;
+  worksiteStreet?: string;
+  worksiteCity?: string;
+  worksiteState?: string;
+  worksiteZip?: string;
   state: string;
   code: string;
   jobTitles: string[];
@@ -195,12 +206,14 @@ const WcCoveragePage: React.FC = () => {
   }, [tenantId]);
 
   /**
-   * InSource "Mass Prospect Notification" export (Greg 2026-08-25): the
-   * carrier's exact 24-column intake sheet, one row per worksite needing
-   * coverage — pre-filled from the carrier-ask gap cohorts (no-policy
-   * states, outside-window work, 8040 coverage-needed). Headers are copied
-   * VERBATIM from their template, line breaks included. Exposure flags
-   * default "No" per past submissions; review before sending.
+   * InSource "Mass Prospect Notification" export — the carrier's REVISED
+   * intake workbook (Eddie 2026-09-08, "going forward please use the new
+   * one"), one row per worksite needing coverage, pre-filled from the
+   * carrier-ask gap cohorts. Sheet content lives in the shared spec
+   * (src/shared/massPnTemplate.ts) that the 14-day auto-submit
+   * (functions massPnAutoSubmit) assembles from too, so the two paths stay
+   * byte-identical by construction. Exposure flags default "No" per past
+   * submissions; review before sending.
    */
   /** Per-entity Mass PN workbooks — shared by the Export download and the
    *  "Submit to Eddie" email so both produce byte-identical files. */
@@ -214,32 +227,6 @@ const WcCoveragePage: React.FC = () => {
   > => {
     if (!data || data.massPn.length === 0) return [];
     const XLSX = await import('xlsx');
-    const HEADERS = [
-      'Your Staffing Company Name  ',
-      'Contact Name',
-      'Email',
-      'Phone',
-      '',
-      'Your Client/Prospect Name',
-      'Address',
-      'City',
-      'State',
-      'Zip',
-      'Project/Worksite Address \n(if different than Mailing Address)',
-      'Client Business Description',
-      'Job Description',
-      'Class Code State',
-      'Class Code',
-      'Annual Payroll Estimated',
-      'Group Transportation          (Yes or No)',
-      'Trenching or Excavation (Yes or No)',
-      'Height Exposure Above Ground Level (Yes or No)',
-      'Chemical Exposure (Yes or No)',
-      'Machinery Exposure (Yes or No)',
-      'Respirators or Dust Mask (Yes or No)',
-      'Airborne/Bloodborn Exposure (Yes or No)',
-      'Notes \n(COI or Endorsement Needs, Wording Specifics, etc...) ',
-    ];
     // One FILE per entity (Greg 2026-09-05): each entity is its own InSource
     // client with its own policy — the carrier gets a separate request per
     // entity, so a combined sheet would just need manual splitting.
@@ -251,54 +238,12 @@ const WcCoveragePage: React.FC = () => {
     const out: Array<{ entityName: string; filename: string; wb: ReturnType<typeof XLSX.utils.book_new>; xlsx: typeof XLSX }> = [];
     for (const entityRows of byEntity.values()) {
       const entityName = entityRows[0].entityName;
-      const rows: (string | number)[][] = [HEADERS];
-      entityRows.forEach((r, i) => {
-        rows.push([
-        // A-D fill once (their sample pattern).
-        i === 0 ? 'C1 Staffing LLC' : '',
-        i === 0 ? 'Greg Fielding' : '',
-        i === 0 ? 'g.fielding@c1staffing.com' : '',
-        i === 0 ? '925-448-0579' : '',
-        '',
-        r.accountName || '(fill in client)',
-        '', // client mailing address — fill in
-        '',
-        '',
-        '',
-        [r.worksiteName, r.worksiteAddress].filter(Boolean).join(' — '),
-        '', // client business description — fill in
-        r.jobTitles.length ? r.jobTitles.join(', ') : '',
-        r.state,
-        // Ask for the REAL code — 8040 is our placeholder, not a requestable
-        // classification (Greg 2026-09-05).
-        r.suggestedCode || (r.code && r.code !== '8040' ? r.code : '(needs classification)'),
-        r.annualEstimate,
-        'No',
-        'No',
-        'No',
-        'No',
-        'No',
-        'No',
-        'No',
-        [
-          `Est. annualized from ${usd(r.periodGross)} over ${data.startDate}→${data.endDate} (${r.workers} workers, ${r.entityName})`,
-          r.suggestedCode && (r.suggestedBasis?.length ?? 0) > 0
-            ? `Code ${r.suggestedCode} suggested from titles rated elsewhere on our policy: ${(r.suggestedBasis ?? []).join(', ')}`
-            : '',
-          r.comparableRateMin != null
-            ? `Comparable rate on existing policy states: ${r.comparableRateMin}${r.comparableRateMax != null && r.comparableRateMax !== r.comparableRateMin ? `–${r.comparableRateMax}` : ''}`
-            : '',
-        ]
-          .filter(Boolean)
-          .join('. '),
-        ]);
-      });
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws['!cols'] = HEADERS.map((h, i) => ({
-        wch: Math.max(h.split('\n')[0].length, ...rows.slice(1).map((r2) => String(r2[i] ?? '').length), 6) + 2,
-      }));
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Mass PN');
+      const wb = assembleMassPnWorkbook(
+        XLSX as unknown as XlsxLike,
+        entityRows,
+        data.startDate,
+        data.endDate,
+      ) as ReturnType<typeof XLSX.utils.book_new>;
       out.push({
         entityName,
         filename: `Mass-Prospect-Notification_${entityName.replace(/\s+/g, '-')}_${data.startDate}_to_${data.endDate}.xlsx`,

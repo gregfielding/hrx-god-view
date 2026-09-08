@@ -31,6 +31,27 @@ const trim = (v: unknown): string => String(v ?? '').trim();
 const num = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+/** Structured site address from a JO / assignment / import-sidecar
+ *  worksiteAddress blob (writers disagree on field names). */
+interface SiteAddr {
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+}
+const addrFrom = (o: unknown): SiteAddr | null => {
+  const r = (o ?? null) as Record<string, unknown> | null;
+  if (!r) return null;
+  const street = trim(r.street) || trim(r.line1) || trim(r.address);
+  const city = trim(r.city);
+  const state = trim(r.state).toUpperCase();
+  const zip = trim(r.zip) || trim(r.zipCode) || trim(r.postalCode);
+  if (!street && !city) return null;
+  return { street, city, state, zip };
+};
+const joinAddr = (a: SiteAddr | null): string =>
+  a ? [a.street, a.city, a.state, a.zip].filter(Boolean).join(', ') : '';
+
 interface PolicyWindow {
   state: string;
   carrierName: string;
@@ -209,7 +230,7 @@ export async function buildWcCoverageReport(input: {
     hours: number;
     /** Import sidecar worksite (CSV rows carry venue only here). */
     sidecarName: string;
-    sidecarAddress: string;
+    sidecarAddr: SiteAddr | null;
     /** Filled during the aggregation loop for the Mass PN builder. */
     resolvedCode?: string;
     carrierAsk?: boolean; // no-policy / outside-window / 8040-coverage-needed
@@ -260,11 +281,7 @@ export async function buildWcCoverageReport(input: {
       if (!entryCode || entryCode === '8040' || policyGap) uncodedAsnIds.add(assignmentId);
     }
     const sidecarName = trim(((e.import ?? {}) as Record<string, unknown>).worksiteName);
-    const sidecarAddress = sidecar
-      ? [trim(sidecar.street) || trim(sidecar.line1), trim(sidecar.city), trim(sidecar.state), trim(sidecar.zip)]
-          .filter(Boolean)
-          .join(', ')
-      : '';
+    const sidecarAddr = addrFrom(sidecar);
     picked.push({
       entityId,
       state,
@@ -278,7 +295,7 @@ export async function buildWcCoverageReport(input: {
       total,
       hours: round2(reg + ot + dt),
       sidecarName,
-      sidecarAddress,
+      sidecarAddr,
     });
   });
 
@@ -394,7 +411,11 @@ export async function buildWcCoverageReport(input: {
      *  to a client only when all existing candidates share one top-level. */
     clueCandidates: Set<string>;
     worksiteName: string;
-    worksiteAddress: string;
+    worksiteAddr: SiteAddr | null;
+    /** A candidate address whose state CONTRADICTS the work state — almost
+     *  always the client's mailing/HQ address, which the revised Mass PN
+     *  template wants in its own columns (VenueSmart's MO HQ, 2026-09-08). */
+    mailingAddr: SiteAddr | null;
     state: string;
     code: string;
     jobTitles: Set<string>;
@@ -433,6 +454,9 @@ export async function buildWcCoverageReport(input: {
   const normSite = (s: string): string =>
     s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
   const joSiteIndex: Array<{ nameKey: string; streetKey: string; state: string; accountId: string }> = [];
+  /** JO worksite by id — the point of truth for row addresses (Eddie
+   *  2026-09-08: aggregate rows were showing account mailing addresses). */
+  const joById = new Map<string, { name: string; addr: SiteAddr | null }>();
   {
     const joAll = await db
       .collection(`tenants/${tenantId}/job_orders`)
@@ -440,13 +464,14 @@ export async function buildWcCoverageReport(input: {
       .get();
     joAll.forEach((s) => {
       const x = s.data() as Record<string, unknown>;
+      const addr = addrFrom(x.worksiteAddress);
+      joById.set(s.id, { name: trim(x.worksiteName), addr });
       const acct = trim(x.accountId) || trim(x.recruiterAccountId);
       if (!acct) return;
-      const wa = (x.worksiteAddress ?? {}) as Record<string, unknown>;
       const nameKey = normSite(trim(x.worksiteName));
-      const streetKey = normSite(trim(wa.street) || trim(wa.line1));
+      const streetKey = normSite(addr?.street ?? '');
       if (!nameKey && !streetKey) return;
-      joSiteIndex.push({ nameKey, streetKey, state: trim(wa.state).toUpperCase(), accountId: acct });
+      joSiteIndex.push({ nameKey, streetKey, state: addr?.state ?? '', accountId: acct });
     });
   }
   // Returns CANDIDATE account ids (street matches win over name matches).
@@ -474,24 +499,27 @@ export async function buildWcCoverageReport(input: {
   for (const p of picked) {
     if (!p.carrierAsk) continue;
     const a = p.assignmentId ? assignments.get(p.assignmentId) : undefined;
+    const jo = p.jobOrderId ? joById.get(p.jobOrderId) : undefined;
     const worksiteName =
-      trim(a?.worksiteName) || p.sidecarName || trim(a?.location) || '(worksite unknown)';
-    const wa = (a?.worksiteAddress ?? null) as Record<string, unknown> | null;
-    const worksiteAddress =
-      (wa
-        ? [trim(wa.street) || trim(wa.line1), trim(wa.city), trim(wa.state), trim(wa.zip)]
-            .filter(Boolean)
-            .join(', ')
-        : '') || p.sidecarAddress;
+      trim(a?.worksiteName) || jo?.name || p.sidecarName || trim(a?.location) || '(worksite unknown)';
+    // Address candidates in trust order: JO worksite → assignment denorm →
+    // import sidecar. The worksite is the first one that doesn't CONTRADICT
+    // the work state; a contradicting candidate is the client's mailing
+    // address, not the worksite (Eddie 2026-09-08: VenueSmart's MO HQ was
+    // riding a WI worksite row).
+    const candidates = [jo?.addr ?? null, addrFrom(a?.worksiteAddress), p.sidecarAddr].filter(
+      (c): c is SiteAddr => c != null,
+    );
+    const worksiteAddr =
+      candidates.find((c) => !p.state || !c.state || c.state === p.state) ?? null;
+    const mailingAddr = p.state
+      ? (candidates.find((c) => c.state !== '' && c.state !== p.state) ?? null)
+      : null;
     const accountId =
       trim(a?.recruiterAccountId) || p.entryAccountId || joAccounts.get(p.jobOrderId) || '';
     const clueCandidates = accountId
       ? []
-      : matchAccountBySiteClues(
-          worksiteName,
-          trim(wa?.street) || worksiteAddress.split(',')[0] || '',
-          p.state,
-        );
+      : matchAccountBySiteClues(worksiteName, candidates[0]?.street ?? '', p.state);
     if (accountId) accountIds.add(accountId);
     clueCandidates.forEach((id) => accountIds.add(id));
     const key = `${p.entityId}|${accountId}|${worksiteName}|${p.state}|${p.resolvedCode ?? ''}`;
@@ -501,7 +529,8 @@ export async function buildWcCoverageReport(input: {
         accountId,
         clueCandidates: new Set(clueCandidates),
         worksiteName,
-        worksiteAddress,
+        worksiteAddr,
+        mailingAddr,
         state: p.state,
         code: p.resolvedCode ?? '',
         jobTitles: new Set(),
@@ -514,7 +543,8 @@ export async function buildWcCoverageReport(input: {
     if (p.jobTitle && p.jobTitle !== '(no title)') m.jobTitles.add(p.jobTitle);
     m.gross = round2(m.gross + p.total);
     if (p.workerId) m.workers.add(p.workerId);
-    if (!m.worksiteAddress && worksiteAddress) m.worksiteAddress = worksiteAddress;
+    if (!m.worksiteAddr && worksiteAddr) m.worksiteAddr = worksiteAddr;
+    if (!m.mailingAddr && mailingAddr) m.mailingAddr = mailingAddr;
   }
   // Resolve names at the TOP-LEVEL account (Greg 2026-09-05): the carrier's
   // "Client/Prospect Name" is the standalone or national account, never a
@@ -642,7 +672,15 @@ export async function buildWcCoverageReport(input: {
           matchClientBySiteName(m.worksiteName) ||
           '',
         worksiteName: m.worksiteName,
-        worksiteAddress: m.worksiteAddress,
+        worksiteAddress: joinAddr(m.worksiteAddr),
+        worksiteStreet: m.worksiteAddr?.street ?? '',
+        worksiteCity: m.worksiteAddr?.city ?? '',
+        worksiteState: m.worksiteAddr?.state ?? '',
+        worksiteZip: m.worksiteAddr?.zip ?? '',
+        accountStreet: m.mailingAddr?.street ?? '',
+        accountCity: m.mailingAddr?.city ?? '',
+        accountState: m.mailingAddr?.state ?? '',
+        accountZip: m.mailingAddr?.zip ?? '',
         state: m.state,
         code: m.code,
         jobTitles: Array.from(m.jobTitles).slice(0, 4),

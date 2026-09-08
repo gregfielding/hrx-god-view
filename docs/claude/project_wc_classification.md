@@ -214,3 +214,37 @@ The 9/19 auto-send WILL FAIL unless reconnected first.
 New outbox mode shipped: getWorkersCompMonthlyReport
 `emailMassPnFromStorage` sends workbooks staged under wc_masspn_outbox/
 via the connected mailbox (books-gated) — useful once the grant is fixed.
+
+## 2026-09-08 PM — REVISED Mass PN template SHIPPED (both builders)
+
+The revised template (saved: functions/.scratch/"Revised- MASS PN -
+Prospect Notification Template.xlsx") reshapes the sheet: staffing-company
+block moves to columns A/B rows 1–13 (values A2/B2/A4/B4, submission +
+proposed-effective dates B6/B7), column C is a spacer, the data table is
+D–Y from ROW 2, the client MAILING address (E–H) is now separate from the
+WORKSITE address (I–L, each split street/city/state/zip), and a second
+"Important Instructions " sheet (trailing space theirs) carries their
+notes. Sheet content now lives in ONE shared module —
+**shared/massPnTemplate.ts** (mirrored src/shared/; functions/src/shared is
+a symlink to shared/) — and both builders (WcCoveragePage
+buildMassPnWorkbooks + massPnAutoSubmit buildMassPnXlsxBase64) assemble
+from it, so lockstep is structural; verified byte-identical client vs
+server on same inputs (xlsx 0.18.5 both sides — keep versions pinned
+together). Behavior changes: A2 = the ENTITY name (their instruction 4),
+unknown class code stays BLANK (their instruction 5 — was "(needs
+classification)"), worksite name rides the Notes column.
+
+**Worksite-address fix (Eddie's VenueSmart flag):** coverageGaps massPn
+rows now resolve addresses from candidates in trust order JO worksite →
+assignment denorm → import sidecar; the worksite is the first candidate
+not CONTRADICTING the work state, and a contradicting candidate (the MO
+HQ case) is emitted as the client MAILING address fields instead
+(accountStreet/City/State/Zip → columns E–H). Live dry run: the WI
+Venuesmart row now shows 640 South 84th Street, West Allis, WI 53214 —
+exactly the address Eddie supplied. Note: `accounts` docs carry NO address
+fields, so E–H only fill when a wrong-state candidate exists.
+
+Their instructions sheet says policies are NOT written in NH, NY, ND, OH,
+OR, WA, WY — rows for those states still go on the sheet (a real gap needs
+a human answer, and InSource will route to the agent); if Eddie objects,
+filter in shared/massPnTemplate.ts and note it here.
