@@ -23,6 +23,8 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 const trim = (v: unknown): string => String(v ?? '').trim();
+const db = admin.firestore();
+const round2 = (n: number): number => Math.round(n * 100) / 100;
 const ACCT_5010 = '73';
 
 export async function trueUpAllocationJes(
@@ -33,6 +35,15 @@ export async function trueUpAllocationJes(
   const today = new Date().toISOString().slice(0, 10);
   const journal = (await buildWireJournal(tenantId, '2026-05-01', today, null)) as Record<string, any>;
   const wireByTag = new Map<string, Record<string, any>>();
+  // buildWireJournal swallows a failed QBO class query ("classes just
+  // unresolved") — for the true-up that would mean rewriting every JE as
+  // unattributed. Refuse instead (Greg 2026-09-08, after the 0813/0730 flap).
+  const anyClassed = ((journal.wires ?? []) as Array<Record<string, any>>).some((w) =>
+    ((w.splits ?? []) as Array<Record<string, any>>).some((s) => s.qboClassExists === true),
+  );
+  if (!anyClassed) {
+    throw new Error('[trueUpAllocationJes] wire journal has no QBO-resolved classes (class query failed?) — refusing to true up');
+  }
   for (const w of (journal.wires ?? []) as Array<Record<string, any>>) {
     const ent = /events/i.test(String(w.entityName)) ? 'EVT' : /select/i.test(String(w.entityName)) ? 'SEL' : /workforce/i.test(String(w.entityName)) ? 'WF' : 'C1';
     const fid = trim(w.fundingId);
@@ -64,6 +75,21 @@ export async function trueUpAllocationJes(
   }
   let patched = 0;
   let unchanged = 0;
+  // Everee's /payments pages shift while it syncs, so a wire's total or
+  // split can differ read-to-read (2026-08-31 and 2026-09-08 incidents:
+  // EV Alloc 0813/0730/0806 re-patched on every run). A JE is only
+  // rewritten when the CURRENT read matches the PREVIOUS run's read for
+  // that doc (tenants/{t}/qbo_trueup_observations/{doc}); otherwise the
+  // read is recorded and the write deferred to the next run.
+  const obsCol = db.collection(`tenants/${tenantId}/qbo_trueup_observations`);
+  const obsSnap = await obsCol.get();
+  const lastObs = new Map<string, string>();
+  const lastPatched = new Map<string, string>();
+  obsSnap.forEach((d) => {
+    lastObs.set(d.id, trim(d.get('fingerprint')));
+    lastPatched.set(d.id, trim(d.get('patchedFingerprint')));
+  });
+  const deferredUnstable: Array<Record<string, unknown>> = [];
   const skippedDrift: Array<Record<string, unknown>> = [];
   const skippedHuman: string[] = [];
   const patchedDocs: string[] = [];
@@ -140,6 +166,21 @@ export async function trueUpAllocationJes(
       unchanged += 1;
       continue;
     }
+    const fingerprint = `${credit.toFixed(2)}|${wireTotal.toFixed(2)}|${key(want)}`;
+    const prev = lastObs.get(doc);
+    if (prev !== fingerprint) {
+      deferredUnstable.push({ doc, reason: prev ? 'read differs from previous run' : 'first observation', wireTotal: round2(wireTotal) });
+      // eslint-disable-next-line no-await-in-loop
+      await obsCol.doc(doc).set({ fingerprint, wireTotal: round2(wireTotal), credit: round2(credit), observedAt: admin.firestore.FieldValue.serverTimestamp(), dryRun }, { merge: true });
+      continue;
+    }
+    if (lastPatched.get(doc) === fingerprint) {
+      // We already wrote exactly this split and QBO still reads back as
+      // different → the have/want comparison is wrong for this doc, not the
+      // data. Never loop on it; surface it.
+      deferredUnstable.push({ doc, reason: 'already written with this exact split but still compares as different — comparison bug, investigate', wireTotal: round2(wireTotal) });
+      continue;
+    }
     patched += 1;
     patchedDocs.push(doc);
     if (dryRun) continue;
@@ -161,6 +202,8 @@ export async function trueUpAllocationJes(
     }
     // eslint-disable-next-line no-await-in-loop
     await qboEntityUpdate(tenantId, 'JournalEntry', { ...je, Line: newLines, sparse: false });
+    // eslint-disable-next-line no-await-in-loop
+    await obsCol.doc(doc).set({ patchedFingerprint: fingerprint, patchedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
   }
-  return { ok: true, dryRun, patched, unchanged, skippedDrift, skippedHuman, patchedDocs: patchedDocs.slice(0, 50) };
+  return { ok: true, dryRun, patched, unchanged, skippedDrift, skippedHuman, deferredUnstable, patchedDocs: patchedDocs.slice(0, 50) };
 }

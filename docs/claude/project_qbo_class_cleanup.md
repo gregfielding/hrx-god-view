@@ -818,3 +818,15 @@ skips them (reported as `excluded8040` in the result / runner). The carrier
 monthly report already parks 8040 in its placeholder group. The HRX payroll
 cost report still burdens gross at 2.35 for 8040 — a management estimate,
 untouched.
+
+**True-up stability guard (2026-09-08, after EV Alloc 0813/0730/0806 re-patched
+on every run):** `buildWireJournal` reads Everee `/payments` live and pages
+shift while Everee syncs, so a wire's total/split differs read-to-read; it
+also swallows a failed QBO class query (journal comes back all-unclassed).
+`trueUpAllocationJes` now (a) throws if no split in the journal resolved to
+a QBO class, and (b) rewrites a JE only when the current read's fingerprint
+(credit|wireTotal|split) equals the previous run's, recorded in
+`tenants/{t}/qbo_trueup_observations/{doc}` (dry runs record too). A doc
+whose exact split was already written but still compares as different is
+reported instead of rewritten (comparison bug, not data). Runner prints
+`deferred`.

@@ -53,7 +53,8 @@ async function main(): Promise<void> {
     const { trueUpAllocationJes } = await import('../src/payroll/allocationTrueUp');
     const t = (await trueUpAllocationJes(TENANT, dryRun)) as Record<string, any>;
     console.log(`\n=== allocation true-up (${mode}) ===`);
-    console.log(`patched ${t.patched}  unchanged ${t.unchanged}  skippedHuman ${(t.skippedHuman ?? []).length}  skippedDrift ${(t.skippedDrift ?? []).length}`);
+    console.log(`patched ${t.patched}  unchanged ${t.unchanged}  deferred ${(t.deferredUnstable ?? []).length}  skippedHuman ${(t.skippedHuman ?? []).length}  skippedDrift ${(t.skippedDrift ?? []).length}`);
+    console.log('deferred (read must match the previous run before a write):', JSON.stringify(t.deferredUnstable ?? []));
     console.log('skippedHuman (Tabitha, never rewritten):', (t.skippedHuman ?? []).join(', '));
     console.log('patched docs:', (t.patchedDocs ?? []).join(', '));
     if ((t.skippedDrift ?? []).length) console.log('drift (credit ≠ wire, left alone):', JSON.stringify(t.skippedDrift));
