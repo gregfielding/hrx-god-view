@@ -830,3 +830,18 @@ a QBO class, and (b) rewrites a JE only when the current read's fingerprint
 whose exact split was already written but still compares as different is
 reported instead of rewritten (comparison bug, not data). Runner prints
 `deferred`.
+
+**Post-9/2 cost reconciled (2026-09-08 evening, `qboReports.ts changes`/`detail`/`wirecheck`):**
+the −$84K net-income swing vs the 9/2 print = Gusto 8/21 payroll JE entered
+9/4 ($24.5K sal + $11.3K comm + burden) + SEVEN Everee purchases on 5010
+($39,157.82) entered after 9/2 by the bank rec + small opex. Internal burden
+Jun–Aug = 7.5–7.9% of wages (normal; the YTD "4%" was Feb's −$11,099 and the
+Lone Oak months). 7120 401(k) stops after June — Human Interest charges are
+landing in 8100 (ask Tabitha). `wirecheck` cannot match 1:1 (a bank debit
+combines several Everee fundings, or is split 5010/5200 fees; 7/15 =
+22,046.12 + 206.72 exactly), but totals foot: Everee funded $1,410,505
+Jun–Aug vs QBO 5010 + 5200 = $1,402,475 (0.6% gap ≈ Aug 26–28 wires landing
+in Sept) and zero same-amount duplicates → the seven purchases were MISSING
+wires, not duplicates. Same session: two back-to-back buildWireJournal calls
+returned 4,194.11 and 3,736.83 for the 6/24 EVT wire — the flakiness the
+true-up guard now defends against.
