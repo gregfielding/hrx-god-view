@@ -431,6 +431,8 @@ export async function offerShiftToWorker(input: { tenantId: string; userId: stri
   const to = phoneE164(u);
   if (!to) return { sent: false, error: 'no usable phone' };
   if (u.smsOptIn === false || u.smsBlockedSystem === true || u.phoneInvalid === true) return { sent: false, error: 'worker cannot be texted (opted out, blocked, or invalid number)' };
+  const bg = await backgroundSummary(tenantId, userId);
+  if (bg.status === 'failed') return { sent: false, error: `not offered — background check FAILED in HRX (${bg.detail}); a recruiter must decide` };
   const text = composeOffer(s(u.firstName) || 'there', loaded.ref, input.extra);
   const { sendWorkerMessageInternal } = await import('../twilio');
   const r = await sendWorkerMessageInternal(to, text, { tenantId, userId, source: 'system', messageTypeId: 'natalie_offer', systemContext: true } as never);
@@ -461,6 +463,13 @@ export async function acceptOfferFromReply(watch: Record<string, unknown>, reply
   const tenantId = s(watch.tenantId);
   const userId = s(watch.userId);
   if (!offer.shiftId || !tenantId || !userId) return { placed: false, message: 'watch has no offer' };
+  // Never auto-place someone whose AccuSource check FAILED (Greg 2026-09-07).
+  const bg = await backgroundSummary(tenantId, userId);
+  if (bg.status === 'failed') {
+    await db.collection('natalie_sms_watches').doc(userId).set({ status: 'blocked_background', blockedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    await recordNatalieAction({ tenantId, kind: 'offer_blocked_background', summary: `${s(watch.workerName) || 'Worker'} said YES but their background check is FAILED (${bg.detail}) — NOT placed; recruiter decision needed`, userId, jobOrderId: offer.jobOrderId });
+    return { placed: false, message: `NOT placed — background check FAILED in HRX (${bg.detail}); a recruiter needs to decide` };
+  }
   const res = await placeWorkerOnShift(tenantId, offer.jobOrderId, offer.shiftId, userId, { source: 'natalie_offer_accepted', note: `Accepted Natalie's text offer ("${replyText.slice(0, 60)}")` });
   const u = (await db.collection('users').doc(userId).get()).data() as Record<string, unknown> | undefined;
   const to = u ? phoneE164(u) : '';
