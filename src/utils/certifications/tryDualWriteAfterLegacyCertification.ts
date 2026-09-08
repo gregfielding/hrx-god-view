@@ -21,6 +21,7 @@ export async function tryDualWriteAfterLegacyCertification(params: {
   certificationName: string;
   issuerName?: string | null;
   expirationDate?: string | null;
+  certificateNumber?: string | null;
   legacyEvidence: LegacyEvidenceInput;
   source: CertificationSourcePhase1;
   existingCertificationRecordId?: string | null;
@@ -48,6 +49,7 @@ export async function tryDualWriteAfterLegacyCertification(params: {
       catalogEntryId,
       issuerName: params.issuerName ?? null,
       expirationDate: params.expirationDate ?? null,
+      certificateNumber: params.certificateNumber ?? null,
       evidenceFiles,
       source: params.source,
       catalogAllowsSelfAttestation: cat.allowsSelfAttestation,

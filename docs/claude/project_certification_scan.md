@@ -143,6 +143,27 @@ Footguns found on the way:
   unchanged apart from the flag default. First real worker upload will
   prove it — watch `certification_scan.decided` in the function logs.
 
+## Poor photos + worker-typed fields (2026-09-08, later the same day)
+
+Greg: "Is there a way for the worker to input fields manually?" — yes, and
+two changes shipped on top:
+
+- **Unreadable is no longer auto-rejected when the worker typed details.**
+  If the record carries issuer + expiration, or a certificate number, an
+  unreadable upload goes to the queue tagged "Photo unreadable" with the
+  typed values shown, so a person can accept a marginal photo instead of
+  bouncing the worker. With nothing typed it still auto-rejects at high
+  confidence (the re-upload ask). Rule: `typedDetails` in
+  `certificationVerdict.ts`.
+- **Certificate number field** on the worker's Add Certification dialog
+  (optional, EN/ES) → `certificateNumber` on the canonical row → shown to
+  the model as a hint and to the reviewer as "Worker typed: … no. X"; an
+  approve (auto or human) fills it from the card when the worker left it
+  blank. This is the key for issuer lookups later.
+
+Typed fields never verify a credential on their own: no evidence file →
+attestation-only, never scanned, never approved by the machine.
+
 ## Not built (next)
 
 - Issuer confirmation (ServSafe / TABC / StateFoodSafety / eFoodHandlers

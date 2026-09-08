@@ -461,3 +461,7 @@ read `review.status` for the chip and honor the in-app
 `certification_verified` / `certification_reupload_request` notifications.
 
 - [ ] 2026-09-08 — SMS privacy notice gained `legal.smsPrivacy.s2P4` (explicit "we do not share/sell mobile number or SMS consent data with third parties for marketing" — required by Twilio 10DLC review, error 30908). If the Flutter app renders the notice from its own copy, add the same paragraph (en + es).
+Follow-up 2026-09-08 (later): the web Add Certification dialog also
+takes an optional **certificate number** (`profile.certificateNumber*`
+keys) stored on the canonical row as `certificateNumber` — add the same
+field to the app's certification form when it gains canonical writes.

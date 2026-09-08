@@ -21,6 +21,8 @@ export type CreateOrUpdateCertificationRecordInput = {
   catalogEntryId: string;
   issuerName?: string | null;
   expirationDate?: string | null;
+  /** Worker-typed certificate number (optional). */
+  certificateNumber?: string | null;
   evidenceFiles: CertificationEvidenceFileRefV1[];
   source: CertificationSourcePhase1;
   /** From catalog (`allowsSelfAttestation`) — required for worker attestation defaults. */
@@ -59,6 +61,7 @@ export async function createOrUpdateCertificationRecord(
     catalogEntryId,
     issuer: issuerName ?? null,
     expirationDate: expirationNormalized,
+    certificateNumber: (input.certificateNumber ?? '').trim().slice(0, 80) || null,
     evidenceFileRefs: evidenceFiles.length > 0 ? evidenceFiles : undefined,
     review: {
       status: reviewStatus,

@@ -909,7 +909,10 @@
     "certStatusVerified": "Verified",
     "certStatusUnderReview": "Under review",
     "certStatusNeedsPhoto": "Needs a new photo",
-    "certStatusNeedsPhotoHint": "Upload a clear photo of the whole certificate, no glare or cropping."
+    "certStatusNeedsPhotoHint": "Upload a clear photo of the whole certificate, no glare or cropping.",
+    "certificateNumber": "Certificate number (optional)",
+    "certificateNumberPlaceholder": "As printed on the card",
+    "certificateNumberHint": "Helps us verify a card that is hard to read."
   },
   "apply": {
     "availableShifts": "Available Shifts",

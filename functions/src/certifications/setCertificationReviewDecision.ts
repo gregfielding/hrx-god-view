@@ -113,6 +113,7 @@ export const setCertificationReviewDecision = onCall<Req, Promise<Res>>({ cors: 
     else if (!record.issuer && record.aiVerification?.extracted?.issuer) patch.issuer = record.aiVerification.extracted.issuer;
     if (expirationFix !== undefined) patch.expirationDate = expirationFix;
     else if (!record.expirationDate && record.aiVerification?.extracted?.expirationDate) patch.expirationDate = record.aiVerification.extracted.expirationDate;
+    if (!record.certificateNumber && record.aiVerification?.extracted?.certificateNumber) patch.certificateNumber = record.aiVerification.extracted.certificateNumber;
   }
 
   const batch = db.batch();

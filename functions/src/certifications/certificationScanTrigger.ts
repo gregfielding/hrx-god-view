@@ -128,7 +128,7 @@ export const onCertificationRecordWrittenScan = onDocumentWritten(
       hasExpiration: entry?.hasExpiration ?? false,
       validityPeriodYears: (entry as { validityPeriodYears?: number | null } | null)?.validityPeriodYears ?? null,
     };
-    const claimed = { issuer: record.issuer ?? null, expirationDate: record.expirationDate ?? null };
+    const claimed = { issuer: record.issuer ?? null, expirationDate: record.expirationDate ?? null, certificateNumber: record.certificateNumber ?? null };
 
     let verdict: VerdictResult;
     let final: CertificationAiVerificationV1;
@@ -184,6 +184,7 @@ export const onCertificationRecordWrittenScan = onDocumentWritten(
       patch.recordStatus = 'active';
       if (verdict.fill.issuer && !record.issuer) patch.issuer = verdict.fill.issuer;
       if (verdict.fill.expirationDate) patch.expirationDate = verdict.fill.expirationDate;
+      if (verdict.fill.certificateNumber && !record.certificateNumber) patch.certificateNumber = verdict.fill.certificateNumber;
     } else if (verdict.verdict === 'auto_reject') {
       patch.review = { status: 'rejected', rejectionReason: verdict.reasonCode, decidedBy: 'system', decidedAt: now, note };
       patch.recordStatus = 'rejected';
@@ -247,7 +248,7 @@ async function ensureQueued(
     workerPhoneE164: String(user.phoneE164 || '').trim() || null,
     catalogEntryId: record.catalogEntryId,
     displayName: entry?.displayName ?? record.catalogEntryId,
-    claimed: { issuer: record.issuer ?? null, expirationDate: record.expirationDate ?? null },
+    claimed: { issuer: record.issuer ?? null, expirationDate: record.expirationDate ?? null, certificateNumber: record.certificateNumber ?? null },
     evidence: {
       storageUrl: evidence?.storageUrl ?? null,
       storagePath: evidence?.storagePath ?? null,

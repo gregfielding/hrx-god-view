@@ -60,7 +60,7 @@ interface QueueRow {
   workerName: string;
   displayName: string;
   catalogEntryId: string;
-  claimed: { issuer: string | null; expirationDate: string | null };
+  claimed: { issuer: string | null; expirationDate: string | null; certificateNumber: string | null };
   evidence: { storageUrl: string | null; fileName: string | null; mediaType: string | null };
   ai: {
     verdict: CertificationScanVerdict | null;
@@ -141,7 +141,11 @@ const CertificationReviewSection: React.FC<CertificationReviewSectionProps> = ({
             workerName: String(data.workerName || 'Worker'),
             displayName: String(data.displayName || data.catalogEntryId || 'Certification'),
             catalogEntryId: String(data.catalogEntryId || ''),
-            claimed: { issuer: data.claimed?.issuer ?? null, expirationDate: data.claimed?.expirationDate ?? null },
+            claimed: {
+              issuer: data.claimed?.issuer ?? null,
+              expirationDate: data.claimed?.expirationDate ?? null,
+              certificateNumber: data.claimed?.certificateNumber ?? null,
+            },
             evidence: {
               storageUrl: data.evidence?.storageUrl ?? null,
               fileName: data.evidence?.fileName ?? null,
@@ -251,9 +255,12 @@ const CertificationReviewSection: React.FC<CertificationReviewSectionProps> = ({
                     </TableCell>
                     <TableCell sx={CELL_SX}>
                       <Typography variant="body2">{r.displayName}</Typography>
-                      {(r.claimed.issuer || r.claimed.expirationDate) && (
+                      {(r.claimed.issuer || r.claimed.expirationDate || r.claimed.certificateNumber) && (
                         <Typography variant="caption" color="text.secondary" display="block">
-                          Worker typed: {[r.claimed.issuer, r.claimed.expirationDate && `exp ${r.claimed.expirationDate}`].filter(Boolean).join(' · ')}
+                          Worker typed:{' '}
+                          {[r.claimed.issuer, r.claimed.expirationDate && `exp ${r.claimed.expirationDate}`, r.claimed.certificateNumber && `no. ${r.claimed.certificateNumber}`]
+                            .filter(Boolean)
+                            .join(' · ')}
                         </Typography>
                       )}
                     </TableCell>

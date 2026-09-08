@@ -31,7 +31,7 @@ export type CertificationReviewQueueDoc = {
   workerPhoneE164: string | null;
   catalogEntryId: string;
   displayName: string;
-  claimed: { issuer: string | null; expirationDate: string | null };
+  claimed: { issuer: string | null; expirationDate: string | null; certificateNumber: string | null };
   evidence: { storageUrl: string | null; storagePath: string | null; fileName: string | null; mediaType: string | null };
   ai: {
     verdict: CertificationScanVerdict | null;

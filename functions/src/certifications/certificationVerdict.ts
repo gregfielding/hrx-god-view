@@ -28,7 +28,7 @@ export type VerdictInput = {
   /** Set when the scan never produced an extraction. */
   scanFailed?: { code: 'file_unsupported' | 'scan_error' } | null;
   catalog: VerdictCatalogEntry;
-  claimed: { issuer?: string | null; expirationDate?: string | null };
+  claimed: { issuer?: string | null; expirationDate?: string | null; certificateNumber?: string | null };
   workerName: string | null;
   /** YYYY-MM-DD in the tenant's frame of reference (UTC is fine). */
   todayISO: string;
@@ -38,7 +38,7 @@ export type VerdictResult = {
   verdict: CertificationScanVerdict;
   reasonCode: CertificationScanReasonCode;
   /** Written onto the record on auto-approve (document beats worker input). */
-  fill: { issuer?: string | null; expirationDate?: string | null };
+  fill: { issuer?: string | null; expirationDate?: string | null; certificateNumber?: string | null };
   /** Expiration off the card, or issue date + catalog validity when the card omits it. */
   effectiveExpiration: string | null;
   notes: string[];
@@ -98,14 +98,17 @@ export function decideCertificationVerdict(input: VerdictInput): VerdictResult {
   }
   const x = input.extraction;
   const high = x.confidence === 'high';
+  // Worker gave us enough to check by hand (issuer + expiration, or a
+  // certificate number): a poor photo goes to a person instead of bouncing.
+  const typedDetails = !!(input.claimed.issuer && input.claimed.expirationDate) || !!(input.claimed.certificateNumber && input.claimed.certificateNumber.trim());
 
   if (!x.documentReadable) {
     return {
-      verdict: high ? 'auto_reject' : 'needs_review',
+      verdict: high && !typedDetails ? 'auto_reject' : 'needs_review',
       reasonCode: 'unreadable',
       fill: noFill,
       effectiveExpiration: null,
-      notes: [x.reviewerNotes || 'Document could not be read.'],
+      notes: [x.reviewerNotes || 'Document could not be read.', ...(typedDetails ? ['Worker typed details — check them against the upload.'] : [])],
     };
   }
   if (!x.isCertificateOrCard) {
@@ -194,6 +197,7 @@ export function decideCertificationVerdict(input: VerdictInput): VerdictResult {
     fill: {
       issuer: (x.issuer && x.issuer.trim()) || input.claimed.issuer || null,
       expirationDate: effectiveExpiration ?? claimedExp ?? null,
+      certificateNumber: (x.certificateNumber && x.certificateNumber.trim()) || input.claimed.certificateNumber || null,
     },
     effectiveExpiration,
     notes,

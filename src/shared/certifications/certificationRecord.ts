@@ -41,6 +41,8 @@ export type CertificationRecordV1 = {
   issuer?: string | null;
   /** UTC calendar date YYYY-MM-DD when set. */
   expirationDate?: string | null;
+  /** Worker-typed (or scan-filled on approve) certificate / license number — key for issuer lookups. Added 2026-09-08. */
+  certificateNumber?: string | null;
   evidenceFileRefs?: CertificationEvidenceFileRefV1[];
   review: CertificationReviewStateV1;
   recordStatus: CertificationRecordStatus;

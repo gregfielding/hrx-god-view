@@ -70,13 +70,26 @@ describe('decideCertificationVerdict', () => {
     const r = decideCertificationVerdict(input({ claimed: { issuer: 'typed', expirationDate: '2028-01-01' } }));
     expect(r.verdict).to.equal('auto_approve');
     expect(r.reasonCode).to.equal('looks_valid');
-    expect(r.fill).to.deep.equal({ issuer: 'StateFoodSafety', expirationDate: '2029-01-10' });
+    expect(r.fill).to.deep.equal({ issuer: 'StateFoodSafety', expirationDate: '2029-01-10', certificateNumber: '12345' });
     expect(r.notes.join(' ')).to.contain('document kept');
   });
   it('derives expiration from issue date + catalog validity when the card omits it', () => {
     const r = decideCertificationVerdict(input({}, { expirationDate: null }));
     expect(r.verdict).to.equal('auto_approve');
     expect(r.effectiveExpiration).to.equal('2028-01-10');
+  });
+  it('unreadable but the worker typed issuer + expiration or a number → needs_review, never auto_reject', () => {
+    const a = decideCertificationVerdict(input({ claimed: { issuer: 'StateFoodSafety', expirationDate: '2029-01-10' } }, { documentReadable: false }));
+    expect(a.verdict).to.equal('needs_review');
+    expect(a.reasonCode).to.equal('unreadable');
+    const b = decideCertificationVerdict(input({ claimed: { certificateNumber: 'CA-1' } }, { documentReadable: false }));
+    expect(b.verdict).to.equal('needs_review');
+    const c = decideCertificationVerdict(input({ claimed: { issuer: 'only issuer' } }, { documentReadable: false }));
+    expect(c.verdict).to.equal('auto_reject');
+  });
+  it('approve fills the certificate number from the card, else from the worker', () => {
+    expect(decideCertificationVerdict(input()).fill.certificateNumber).to.equal('12345');
+    expect(decideCertificationVerdict(input({ claimed: { certificateNumber: 'typed-9' } }, { certificateNumber: null })).fill.certificateNumber).to.equal('typed-9');
   });
   it('unreadable with high confidence → auto_reject; medium → needs_review', () => {
     expect(decideCertificationVerdict(input({}, { documentReadable: false })).verdict).to.equal('auto_reject');

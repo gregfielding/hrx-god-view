@@ -909,7 +909,10 @@
     "certStatusVerified": "Verificado",
     "certStatusUnderReview": "En revisión",
     "certStatusNeedsPhoto": "Necesita una foto nueva",
-    "certStatusNeedsPhotoHint": "Sube una foto clara del certificado completo, sin reflejos ni recortes."
+    "certStatusNeedsPhotoHint": "Sube una foto clara del certificado completo, sin reflejos ni recortes.",
+    "certificateNumber": "Número de certificado (opcional)",
+    "certificateNumberPlaceholder": "Tal como aparece en la tarjeta",
+    "certificateNumberHint": "Nos ayuda a verificar una tarjeta difícil de leer."
   },
   "apply": {
     "availableShifts": "Turnos disponibles",
@@ -1979,6 +1982,7 @@
       "s2L5": "Solucionar errores de entrega y mejorar nuestro sistema de mensajería",
       "s2P2": "No vendemos ni alquilamos tu número telefónico ni datos de mensajería.",
       "s2P3": "No enviaremos marketing no relacionado a menos que te suscribas explícitamente por separado.",
+      "s2P4": "No compartimos, vendemos ni proporcionamos tu número de teléfono móvil ni tus datos de suscripción y consentimiento de mensajes de texto a terceros ni afiliados con fines de marketing o promoción. Los datos de suscripción y consentimiento para mensajes de texto no se compartirán con ningún tercero.",
       "s3Title": "3. Base legal y consentimiento",
       "s3P1": "Cuando la ley lo exige, nos basamos en tu consentimiento expreso para enviar Comunicaciones móviles.",
       "s3Intro": "El consentimiento normalmente se obtiene cuando:",

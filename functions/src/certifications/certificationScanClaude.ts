@@ -165,7 +165,7 @@ export type ScanResult = {
 export async function scanCertificationWithClaude(params: {
   fileBlock: Anthropic.Beta.BetaContentBlockParam;
   catalog: ScanCatalogContext;
-  claimed: { issuer?: string | null; expirationDate?: string | null };
+  claimed: { issuer?: string | null; expirationDate?: string | null; certificateNumber?: string | null };
   workerName: string | null;
   todayISO: string;
 }): Promise<ScanResult> {
@@ -181,6 +181,7 @@ export async function scanCertificationWithClaude(params: {
     `Worker's profile name: ${params.workerName || '(unknown)'}.`,
     claimed.issuer ? `Issuer the worker typed: ${claimed.issuer}.` : 'The worker did not type an issuer.',
     claimed.expirationDate ? `Expiration the worker typed: ${claimed.expirationDate}.` : 'The worker did not type an expiration.',
+    claimed.certificateNumber ? `Certificate number the worker typed: ${claimed.certificateNumber}. Report what is printed; note in reviewerNotes if it differs.` : '',
     'Read the attached file and produce the JSON object.',
   ].filter(Boolean);
 
