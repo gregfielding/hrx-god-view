@@ -130,3 +130,19 @@ Greg saw the Twilio log solid red. Deep dive (Claude, scratch
   signature, replies still route to `handleInboundSms`.
 - Do NOT add the 312 663 8247 number to C1 Messaging expecting compliance:
   a 10DLC number in a service without a campaign is still unregistered.
+
+## ☠️ Local scratch runs send MOCK SMS (found 2026-09-08)
+`smsProviderFactory` picks the provider from `SMS_PROVIDER` (Firebase param
+or env); unset → `MockSmsProvider`, which logs "[MOCK SMS] Would send…",
+writes a messageLog with `provider: 'mock'` / `providerMessageId: mock-…`
+and reports `success: true`. Scratch scripts run with `ts-node` from
+`functions/` do NOT load `.env.hrx1-d3beb`, so the 2026-09-07 23:30Z
+"97 texts" OnTrac re-run and the 2026-09-08 15:2xZ "190 texts" re-run were
+mocks — nobody was texted, but `tryClaimDailySmsSlot` still burned each
+worker's 24h shift-invite slot. Rules: (1) run blasts through the deployed
+code (Natalie's `schedule_blast` / `natalie_scheduled_actions` with
+`runAt = now`) — never locally; (2) if a local send is unavoidable, set
+`SMS_PROVIDER=twilio` plus the four TWILIO_* secrets in-process and verify a
+messageLog `providerMessageId` starts with `SM`; (3) after a mock run,
+release `tenants/{t}/shiftInviteSmsCooldown/{uid}` for the affected pool
+before re-running.
