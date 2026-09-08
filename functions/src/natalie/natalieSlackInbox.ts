@@ -17,6 +17,7 @@
 import * as admin from 'firebase-admin';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
+import { defineSecret } from 'firebase-functions/params';
 import { NATALIE_SLACK_USER_TOKEN, postAsNatalie } from '../messaging/slackAsNatalie';
 import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from '../messaging/twilioSecrets';
 import { answerAsNatalie, type NatalieTurn } from './natalieAgent';
@@ -27,6 +28,8 @@ if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
 
 export const NATALIE_SLACK_USER_ID = 'U0BV79X65R9';
+/** Fine-grained PAT (Issues: read/write on hrx-god-view) — natalieOutbox reads it from process.env. */
+const GITHUB_NATALIE_TOKEN = defineSecret('GITHUB_NATALIE_TOKEN');
 const STATE_DOC = 'app_config/natalie_slack_inbox';
 const THREADS = 'natalie_slack_threads';
 const TICK_BUDGET_MS = 50_000;
@@ -251,9 +254,10 @@ export const natalieSlackInbox = onSchedule(
     memory: '512MiB',
     timeoutSeconds: 60,
     maxInstances: 1,
-    secrets: [NATALIE_SLACK_USER_TOKEN, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+    secrets: [NATALIE_SLACK_USER_TOKEN, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN, GITHUB_NATALIE_TOKEN],
   },
   async () => {
+    if (!process.env.GITHUB_NATALIE_TOKEN) { try { process.env.GITHUB_NATALIE_TOKEN = GITHUB_NATALIE_TOKEN.value(); } catch { /* not bound */ } }
     const token = NATALIE_SLACK_USER_TOKEN.value() || process.env.NATALIE_SLACK_USER_TOKEN;
     if (!token) {
       logger.warn('[natalie] no NATALIE_SLACK_USER_TOKEN bound');
