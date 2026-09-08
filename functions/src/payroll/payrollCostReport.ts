@@ -1664,42 +1664,49 @@ export async function maybeRunWeeklyClassificationHealth(
           `\nReview + fix inline: ${PUBLIC_APP_ORIGIN}/reports/classification-audit`,
       );
     }
-    // Posted-JE true-up rides the weekly run: verification-page fixes
-    // reach QBO within the week without any push (Greg 2026-09-01).
-    try {
-      const { trueUpAllocationJes } = await import('./allocationTrueUp');
-      const tu = (await trueUpAllocationJes(tenantId, false)) as Record<string, any>;
-      if (Number(tu.patched) > 0 && postText) {
-        await postText(`🩹 Allocation true-up: re-split ${tu.patched} posted payroll JE(s) to current attribution.`);
+    // QBO JE writers are gated (Greg 2026-09-08): nothing below posts or
+    // rewrites a journal entry unless the tenant flag is on.
+    const writersOn = await qboJeWritersEnabled(tenantId);
+    if (!writersOn) {
+      console.info('[classificationHealth] QBO JE writers PAUSED (tenants/{t}/settings/qbo_automation.jeWritersEnabled !== true) — skipped true-up, revenue reclass, screening, WC');
+    } else {
+      // Posted-JE true-up rides the weekly run: verification-page fixes
+      // reach QBO within the week without any push (Greg 2026-09-01).
+      try {
+        const { trueUpAllocationJes } = await import('./allocationTrueUp');
+        const tu = (await trueUpAllocationJes(tenantId, false)) as Record<string, any>;
+        if (Number(tu.patched) > 0 && postText) {
+          await postText(`🩹 Allocation true-up: re-split ${tu.patched} posted payroll JE(s) to current attribution.`);
+        }
+      } catch (e) {
+        console.error('[classificationHealth] true-up failed', { error: String(e) });
       }
-    } catch (e) {
-      console.error('[classificationHealth] true-up failed', { error: String(e) });
-    }
-    // Revenue-account rule rides the weekly run too — one idempotent
-    // monthly 4200→4100 reclass JE per matured month (Greg 2026-09-01).
-    try {
-      const { pushRevenueAccountReclass } = await import('./revenueAccountReclass');
-      const rr = (await pushRevenueAccountReclass(tenantId, false)) as Record<string, any>;
-      const made = ((rr.months ?? []) as Array<Record<string, any>>).filter((x) => x.status === 'created');
-      if (made.length && postText) {
-        await postText(`🔀 Revenue reclass: posted ${made.length} monthly 4200→4100 entr${made.length === 1 ? 'y' : 'ies'} (events-family revenue).`);
+      // Revenue-account rule rides the weekly run too — one idempotent
+      // monthly 4200→4100 reclass JE per matured month (Greg 2026-09-01).
+      try {
+        const { pushRevenueAccountReclass } = await import('./revenueAccountReclass');
+        const rr = (await pushRevenueAccountReclass(tenantId, false)) as Record<string, any>;
+        const made = ((rr.months ?? []) as Array<Record<string, any>>).filter((x) => x.status === 'created');
+        if (made.length && postText) {
+          await postText(`🔀 Revenue reclass: posted ${made.length} monthly 4200→4100 entr${made.length === 1 ? 'y' : 'ies'} (events-family revenue).`);
+        }
+      } catch (e) {
+        console.error('[classificationHealth] revenue reclass failed', { error: String(e) });
       }
-    } catch (e) {
-      console.error('[classificationHealth] revenue reclass failed', { error: String(e) });
-    }
-    // Screening allocation rides the weekly run — idempotent per charge,
-    // mature charges only, ~$8/screen amounts (Greg 2026-09-01).
-    try {
-      const { pushScreeningAllocations } = await import('./screeningAllocations');
-      const scr = (await pushScreeningAllocations(tenantId, false)) as Record<string, any>;
-      const { pushWcAllocations } = await import('./wcAllocations');
-      const wc = (await pushWcAllocations(tenantId, false).catch((e) => ({ ok: false, error: String(e) }))) as Record<string, any>;
-      const created = ((scr.charges ?? []) as Array<Record<string, any>>).filter((c) => c.status === 'created');
-      if (created.length && postText) {
-        await postText(`🧾 Screening allocation: posted ${created.length} AccuSource reclass entr${created.length === 1 ? 'y' : 'ies'} (5010 → 5300 per class).`);
+      // Screening allocation rides the weekly run — idempotent per charge,
+      // mature charges only, ~$8/screen amounts (Greg 2026-09-01).
+      try {
+        const { pushScreeningAllocations } = await import('./screeningAllocations');
+        const scr = (await pushScreeningAllocations(tenantId, false)) as Record<string, any>;
+        const { pushWcAllocations } = await import('./wcAllocations');
+        const wc = (await pushWcAllocations(tenantId, false).catch((e) => ({ ok: false, error: String(e) }))) as Record<string, any>;
+        const created = ((scr.charges ?? []) as Array<Record<string, any>>).filter((c) => c.status === 'created');
+        if (created.length && postText) {
+          await postText(`🧾 Screening allocation: posted ${created.length} AccuSource reclass entr${created.length === 1 ? 'y' : 'ies'} (5010 → 5300 per class).`);
+        }
+      } catch (e) {
+        console.error('[classificationHealth] screening allocation failed', { error: String(e) });
       }
-    } catch (e) {
-      console.error('[classificationHealth] screening allocation failed', { error: String(e) });
     }
     await claimRef.set(
       { finishedAt: admin.firestore.FieldValue.serverTimestamp(), flagged: payrollFlags.length, unhealthyJos: unhealthyJos.length },
@@ -1716,17 +1723,36 @@ export async function maybeRunWeeklyClassificationHealth(
 }
 
 /**
- * Division (QBO Department) family rule — Tabitha's revenue matrix
- * (email 2026-09-04) as ratified by Greg 2026-09-06 ("you have
- * instructions for which clients (and payroll) belong to 4100 and
- * 4200"): the RECURRING family is Sodexo, the Indeed Flex family, Proof
- * of Pudding (RS3-Hosp), G6, Contigo, Black Caviar, Western Group
- * Packaging, and C1 MedStaff; every other client class is EVENT-kind.
- * The same split drives revenue accounts (4100/4200) and the Division
- * stamped on payroll-side JE lines.
+ * Division (QBO Department) family rule — OFFICIAL per Greg 2026-09-08:
+ * RECURRING = Sodexo and the Indeed Flex family ONLY. Every other client
+ * class is EVENT-kind (Proof of the Pudding, G6, Contigo, Black Caviar
+ * included — they are events business). Western Group Packaging and C1
+ * MedStaff never carried revenue and are not classes. This supersedes the
+ * 2026-09-06 run that adopted Tabitha's wider matrix (that run moved
+ * $494,658 back into 4200 and stamped those clients' payroll Recurring;
+ * both reverse on the next rerun). The same split drives the revenue
+ * accounts (4100/4200) and the Division stamped on payroll-side JE lines.
  */
-export const RECURRING_DIVISION_RE =
-  /^(sodexo|indeed flex|proof of (the )?pudding|g6\b|contigo|black caviar|medstaff|c1 medstaff|western group)/i;
+export const RECURRING_DIVISION_RE = /^(sodexo|indeed flex)/i;
+
+/**
+ * Kill switch for every automated QBO journal writer (Greg 2026-09-08,
+ * after the 9/6 Division rewrite skewed Tabitha's P&L by Division):
+ * the weekly health run only posts/rewrites JEs when
+ * tenants/{t}/settings/qbo_automation has jeWritersEnabled === true.
+ * Absent doc = PAUSED. The admin callable actions (pushRevenueAccountReclass,
+ * trueUpAllocations, pushWcAllocations, pushScreeningAllocations) stay
+ * available for explicit, dry-run-first reruns.
+ */
+export async function qboJeWritersEnabled(tenantId: string): Promise<boolean> {
+  try {
+    const snap = await db.doc(`tenants/${tenantId}/settings/qbo_automation`).get();
+    return snap.exists && snap.get('jeWritersEnabled') === true;
+  } catch (e) {
+    console.error('[qboJeWritersEnabled] read failed — treating as paused', { error: String(e) });
+    return false;
+  }
+}
 
 export const divisionKindForClassFqn = (fqn: string): 'recurring' | 'event' =>
   RECURRING_DIVISION_RE.test(fqn.trim()) ? 'recurring' : 'event';

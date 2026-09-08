@@ -7,7 +7,9 @@
  * health check and on demand from the callable — flag fixes made on the
  * verification page flow into QuickBooks without re-pushing anything.
  *
- * Safety: only JEs carrying [wire:...] tags are touched; a JE whose
+ * Safety: only OUR JEs (DocNumber "EV Alloc"/"TW Alloc") carrying
+ * [wire:...] tags are touched — human "EV Pay Alloc" entries are reported
+ * as skippedHuman and never rewritten; a JE whose
  * credit no longer matches its wire total (Everee drift) is skipped and
  * reported; lines are compared before writing so unchanged JEs are
  * untouched.
@@ -63,10 +65,19 @@ export async function trueUpAllocationJes(
   let patched = 0;
   let unchanged = 0;
   const skippedDrift: Array<Record<string, unknown>> = [];
+  const skippedHuman: string[] = [];
   const patchedDocs: string[] = [];
   for (const je of jes) {
     const doc = trim(je.DocNumber);
-    if (!/^EV (Pay )?Alloc/i.test(doc)) continue;
+    // Only OUR JEs ("EV Alloc MMDD ENT" / "TW Alloc …") are ever rewritten.
+    // Tabitha's month-end "EV Pay Alloc …" entries carry [wire:] tags for
+    // idempotency only — the 2026-09-06 division backfill overwrote her
+    // hand splits (Greg 2026-09-08: never again).
+    if (/^EV Pay Alloc/i.test(doc)) {
+      skippedHuman.push(doc);
+      continue;
+    }
+    if (!/^(EV|TW) Alloc\b/i.test(doc)) continue;
     const tags = [...trim(je.PrivateNote).matchAll(/\[wire:([^\]]+)\]/g)].map((m) => trim(m[1]));
     const wires = [...new Set(tags.map((t) => wireByTag.get(t)).filter(Boolean))] as Array<Record<string, any>>;
     if (!wires.length) continue;
@@ -151,5 +162,5 @@ export async function trueUpAllocationJes(
     // eslint-disable-next-line no-await-in-loop
     await qboEntityUpdate(tenantId, 'JournalEntry', { ...je, Line: newLines, sparse: false });
   }
-  return { ok: true, dryRun, patched, unchanged, skippedDrift, patchedDocs: patchedDocs.slice(0, 50) };
+  return { ok: true, dryRun, patched, unchanged, skippedDrift, skippedHuman, patchedDocs: patchedDocs.slice(0, 50) };
 }

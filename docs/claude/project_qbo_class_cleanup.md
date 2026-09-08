@@ -703,3 +703,62 @@ superseding the 9/1 Sodexo+Flex-only rule. Shipped same day:
 - AEG / RS3-Events / 812 Mgmt / Western Group Packaging are not active
   QBO classes yet — the regex already covers Western Group + MedStaff
   for when they appear.
+
+## ☠️ 9/6 division rewrite broke the P&L by Division — rule made official, writers paused (2026-09-08)
+
+Tabitha (9/8): "Revenue reclass — walk through the JEs posted by Claude,
+this will take additional work to fix." Greg: "Our P&Ls were correct
+BEFORE the 4100/4200 update." Greg's 9/2 P&L (Jun–Aug) = the correct
+baseline: 4100 $1,641,271.24 / 4200 $126,622.68 (Sodexo Rebates −230.86).
+
+What the 9/6 run actually did (three changes, one of which was asked for):
+1. Stamped Divisions on the 9 [revrc:] JEs **keyed off the ACCOUNT**
+   (debit 4200 → Recurring, credit 4100 → Event-based). A reclass between
+   accounts must never move dollars between Division columns; this one
+   pulled a negative out of Recurring and doubled Event-based. THE BUG.
+2. Adopted Tabitha's wider 4200 family (Proof/Contigo/Black Caviar/G6…)
+   → $494,658 moved back into 4200 across Jan–Sep. Wrong per Greg.
+3. Extended Division stamping to every tagged JE via trueUpAllocationJes,
+   which REWRITES debit lines to current attribution — that rewrite hit
+   Tabitha's 17 July "EV Pay Alloc" JEs and replaced her hand splits.
+
+**OFFICIAL RULE (Greg 2026-09-08): Recurring = Sodexo + Indeed Flex family
+ONLY. Everything else is Events (4100 / Event-based).** Western Group
+Packaging and C1 MedStaff never had revenue — no classes, not in the rule.
+Tabitha's 9/4 matrix is superseded; tell her + Vicki.
+
+Code (this commit):
+- `RECURRING_DIVISION_RE = /^(sodexo|indeed flex)/i` (payrollCostReport.ts)
+  — single source for 4100/4200 AND payroll-side Division.
+- revenueAccountReclass.ts: buckets by month+class+**invoice header
+  DepartmentRef**; both JE legs carry the invoice's own Division (none if
+  the invoice has none); exact leg-set comparison drives the rewrite;
+  `stale_prior_delete_manually` surfaces a month whose JE should go.
+- allocationTrueUp.ts: `EV Pay Alloc*` (Tabitha's) are NEVER rewritten —
+  reported as `skippedHuman`. Only `EV Alloc`/`TW Alloc` (ours) are touched.
+- **Kill switch**: `qboJeWritersEnabled(tenantId)` reads
+  `tenants/{t}/settings/qbo_automation.jeWritersEnabled`; absent/false =
+  PAUSED. The weekly health run skips true-up / revenue reclass /
+  screening / WC while paused. Explicit callable actions still work.
+  Flip to `true` only after the rerun is verified with Tabitha.
+
+**Rerun procedure (Greg, from the laptop — needs deploy first):**
+1. `git pull`, then `firebase deploy --only functions:savePayrollVenueMapping,functions:reconcileTimesheetBatchesCron`
+2. Dry run, from `functions/`:
+   `DOTENV_CONFIG_PATH=.env.hrx1-d3beb npx ts-node -r dotenv/config -e "import('./src/payroll/revenueAccountReclass').then(m=>m.pushRevenueAccountReclass('BCiP2bQ9CgVOCTfV6MhD',true)).then(r=>console.log(JSON.stringify(r,null,1)))"`
+   Expect 9 months `would_true_up`; Jun–Aug 4200 debits should sum back
+   to the 9/2 split (4100 $1,641,271.24 / 4200 $126,622.68 for Jun–Aug).
+3. Same with `false` to write. Then true-up dry run
+   (`allocationTrueUp` → `trueUpAllocationJes(tenant,true)`): expect
+   `skippedHuman` = Tabitha's 17 July docs, `patched` = ours whose
+   Proof/Contigo/BC/G6 lines flip Recurring→Event-based; write.
+4. Hand Tabitha a before/after P&L by account AND by Division. Her 17
+   July JEs: our 9/6 rewrite is NOT reversible from code — pre-rewrite
+   copies exist only if the 9/6 session snapshotted them under
+   functions/.scratch/ (check backup_*.json); otherwise she re-keys them.
+5. Only then set `jeWritersEnabled: true`.
+
+Known open: the Division of the ORIGINAL Everee wire purchases / AccuSource
+charges vs our untagged credit legs — if Tabitha tags those purchases with
+a Division, the credits need the same tag (they currently net in Not
+Specified by design). Ask her on Wednesday's call.
