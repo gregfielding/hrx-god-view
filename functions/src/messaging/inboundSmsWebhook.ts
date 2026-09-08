@@ -53,10 +53,17 @@ export const handleInboundSms = onRequest(
       const {
         From: fromNumber,
         To: toNumber,
-        Body: messageBody,
         MessageSid: messageSid,
         AccountSid: accountSid,
       } = request.body;
+      // MMS with no text (a worker sends a screenshot) used to 400 as "Missing required fields" — Twilio
+      // logged 11200 and the reply was lost (Akio Love, 2026-09-08). Represent the attachment as text.
+      let messageBody: string = String(request.body?.Body ?? '').trim();
+      const numMediaIn = Number(request.body?.NumMedia ?? 0) || 0;
+      if (!messageBody && numMediaIn > 0) {
+        const urls = Array.from({ length: numMediaIn }, (_, i) => String(request.body?.[`MediaUrl${i}`] ?? '')).filter(Boolean);
+        messageBody = `[sent ${numMediaIn} attachment${numMediaIn === 1 ? '' : 's'}] ${urls.join(' ')}`.trim();
+      }
 
       logger.info(`Inbound SMS received: ${messageSid} from ${fromNumber} to ${toNumber}`);
 
@@ -195,7 +202,7 @@ export const handleInboundSms = onRequest(
             tenantId: cadenceResult.tenantId,
             assignmentId: cadenceResult.assignmentId,
           });
-          response.status(200).send('OK');
+          response.status(200).type('text/xml').send('<Response></Response>');
           return;
         }
       } catch (cadenceErr: any) {
@@ -212,7 +219,7 @@ export const handleInboundSms = onRequest(
       if (keywordResult.handled) {
         logger.info(`Keyword ${keywordResult.keyword} handled for ${phoneE164}`);
         // Twilio expects 200 response
-        response.status(200).send('OK');
+        response.status(200).type('text/xml').send('<Response></Response>');
         return;
       }
 
@@ -220,11 +227,11 @@ export const handleInboundSms = onRequest(
       await handleRegularInboundMessage(phoneE164, toNumber, messageBody, messageSid);
 
       // Always respond 200 to Twilio
-      response.status(200).send('OK');
+      response.status(200).type('text/xml').send('<Response></Response>');
     } catch (error: any) {
       logger.error('Error handling inbound SMS webhook:', error);
       // Still respond 200 to Twilio to avoid retries
-      response.status(200).send('OK');
+      response.status(200).type('text/xml').send('<Response></Response>');
     }
   }
 );
