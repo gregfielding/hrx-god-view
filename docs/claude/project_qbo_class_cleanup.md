@@ -801,3 +801,12 @@ Sodexo + Indeed Flex only; everything else non-recurring, now and going
 forward. Writers re-enabled via `scripts/qboJeWriters.ts on` (status/off
 also there). The true-up read-failure TODO above is still open — the
 weekly run's blast radius is our own `EV Alloc`/`TW Alloc` docs only.
+
+### Segment-dated JEs for the block calendar (2026-09-08, later)
+
+Greg: monthly P&L AND block P&L must both be exact. Revenue reclass + WC
+allocation JEs are now posted per segment (month ∩ block) — see
+docs/claude/reference_fiscal_blocks_2026.md. Tags gained a `/B<n>` suffix;
+legacy month tags are migrated in place on the next write. Deploy
+`savePayrollVenueMapping,reconcileTimesheetBatchesCron`, then
+`qboReclassRerun.ts dry` → `write` → `dry`.

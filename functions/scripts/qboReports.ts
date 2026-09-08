@@ -44,28 +44,8 @@ async function qboGet(pathPart: string, params: Record<string, string>): Promise
   return json;
 }
 
-/* ── block calendar ─────────────────────────────────────────────────── */
-export function blocksForYear(year: number): Array<{ n: number; start: string; end: string; weeks: number }> {
-  const iso = (d: Date): string => d.toISOString().slice(0, 10);
-  const byMonth = new Map<string, Date[]>();
-  // first Sunday on/before Dec 28 of prior year, walk Sundays through Jan of next year
-  const d = new Date(Date.UTC(year - 1, 11, 28));
-  d.setUTCDate(d.getUTCDate() - d.getUTCDay());
-  for (; d <= new Date(Date.UTC(year + 1, 0, 10)); d.setUTCDate(d.getUTCDate() + 7)) {
-    const wed = new Date(d);
-    wed.setUTCDate(wed.getUTCDate() + 3);
-    const key = `${wed.getUTCFullYear()}-${String(wed.getUTCMonth() + 1).padStart(2, '0')}`;
-    (byMonth.get(key) ?? byMonth.set(key, []).get(key)!).push(new Date(d));
-  }
-  return [...byMonth.entries()]
-    .filter(([k]) => k.startsWith(`${year}-`))
-    .sort()
-    .map(([k, sundays]) => {
-      const end = new Date(sundays[sundays.length - 1]);
-      end.setUTCDate(end.getUTCDate() + 6);
-      return { n: Number(k.slice(5)), start: iso(sundays[0]), end: iso(end), weeks: sundays.length };
-    });
-}
+import { blocksForYear } from '../src/payroll/fiscalBlocks';
+export { blocksForYear };
 
 /* ── report row flattening ──────────────────────────────────────────── */
 function flattenPl(report: Row): Map<string, number> {

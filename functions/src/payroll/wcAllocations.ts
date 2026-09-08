@@ -22,6 +22,7 @@
 import * as admin from 'firebase-admin';
 
 import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
+import { resolvePriors, segmentDocSuffix, segmentFor, segmentTxnDate, type ReportSegment } from './fiscalBlocks';
 import { ACCOUNT_CLASS_RULES, divisionKindForClassFqn, fetchQboDivisions } from './payrollCostReport';
 
 if (!admin.apps.length) {
@@ -125,7 +126,10 @@ export async function pushWcAllocations(
     .collection(`tenants/${tenantId}/timesheet_entries`)
     .where('workDate', '>=', '2026-06-01')
     .get();
+  // keyed by SEGMENT (calendar month ∩ fiscal block, e.g. 2026-06/B7) so the
+  // monthly and the block P&L both foot — see fiscalBlocks.ts
   const byMonth = new Map<string, Map<string, number>>();
+  const segByKey = new Map<string, ReportSegment>();
   es.forEach((d) => {
     const e = d.data();
     if (!PAID.has(trim(e.status))) return;
@@ -137,7 +141,9 @@ export async function pushWcAllocations(
       num(e.bonusAmount);
     if (!(gross > 0)) return;
     const wd = trim(e.workDate);
-    const month = wd.slice(0, 7);
+    const seg = segmentFor(wd.slice(0, 10));
+    const month = seg.key;
+    segByKey.set(seg.key, seg);
     const prem = (gross * rate) / 100;
     const rawLeaf = leafForEntry(trim(e.jobOrderId), wd) ?? 'National';
     const leaf = WC_LEAF_ALIASES.find((a) => a.re.test(rawLeaf))?.leaf ?? rawLeaf;
@@ -162,13 +168,18 @@ export async function pushWcAllocations(
 
   const results: Array<Record<string, unknown>> = [];
   const today = new Date().toISOString().slice(0, 10);
+  const { priors, orphans } = resolvePriors(existing, segByKey.values());
+  for (const o of orphans) {
+    results.push({ month: o.tag, amount: 0, status: 'stale_prior_delete_manually', docNumber: (o.je as Record<string, any>).DocNumber });
+  }
   for (const [month, m] of [...byMonth.entries()].sort()) {
+    const seg = segByKey.get(month)!;
     const entries = [...m.entries()]
       .map(([leaf, amt]) => ({ leaf, cls: classFor(leaf), amt }))
       .filter((x) => x.amt >= 0.005);
     const total = round2(entries.reduce((s, x) => s + x.amt, 0));
     if (total < 0.01) continue;
-    const prior = existing.get(month);
+    const prior = priors.get(month);
     if (prior) {
       let net = 0;
       let missingDivision = false;
@@ -181,7 +192,7 @@ export async function pushWcAllocations(
         if (d.PostingType === 'Debit') net += num(l.Amount);
       }
       if (Math.abs(round2(net) - total) <= 1 && !missingDivision) {
-        results.push({ month, amount: total, status: 'already_allocated' });
+        results.push({ month, dates: `${seg.start}..${seg.end}`, amount: total, status: 'already_allocated' });
         continue;
       }
     }
@@ -195,7 +206,7 @@ export async function pushWcAllocations(
     }
     const action = prior ? 'true_up' : 'create';
     results.push({
-      month, amount: total, status: dryRun ? `would_${action}` : `${action}d`,
+      month, dates: `${seg.start}..${seg.end}`, amount: total, status: dryRun ? `would_${action}` : `${action}d`,
       splits: floored.filter((x) => x.cents > 0).map((x) => ({ leaf: x.leaf, amount: x.cents / 100, hasClass: Boolean(x.cls) })),
     });
     if (dryRun) continue;
@@ -222,20 +233,21 @@ export async function pushWcAllocations(
         ...(divisions.corp ? { DepartmentRef: { value: divisions.corp.Id, name: divisions.corp.Name } } : {}),
       },
     });
+    const header = {
+      DocNumber: `WC Alloc ${segmentDocSuffix(seg)}`,
+      TxnDate: segmentTxnDate(seg, today),
+      PrivateNote:
+        `Workers' comp field premium (entry gross × matrix rate) reclassed 7140 → 5100 per class. ` +
+        `Residual on 7140 = internal WC + carrier deposit/catch-up variance. ` +
+        `Segment ${seg.start}..${seg.end} (month ∩ block). [wcalloc:${seg.key}]`,
+    };
     if (prior) {
+      // legacy month-keyed JEs are re-dated + re-tagged to their first segment here
       // eslint-disable-next-line no-await-in-loop
-      await qboEntityUpdate(tenantId, 'JournalEntry', { ...prior, Line: lines, sparse: false });
+      await qboEntityUpdate(tenantId, 'JournalEntry', { ...prior, ...header, Line: lines, sparse: false });
     } else {
-      const txnDate = `${month}-28` > today ? today : `${month}-28`;
       // eslint-disable-next-line no-await-in-loop
-      await qboEntityCreate(tenantId, 'JournalEntry', {
-        DocNumber: `WC Alloc ${month.slice(2).replace('-', '')}`,
-        TxnDate: txnDate,
-        PrivateNote:
-          `Workers' comp field premium (entry gross × matrix rate) reclassed 7140 → 5100 per class. ` +
-          `Residual on 7140 = internal WC + carrier deposit/catch-up variance. [wcalloc:${month}]`,
-        Line: lines,
-      });
+      await qboEntityCreate(tenantId, 'JournalEntry', { ...header, Line: lines });
     }
   }
   return { ok: true, dryRun, months: results };

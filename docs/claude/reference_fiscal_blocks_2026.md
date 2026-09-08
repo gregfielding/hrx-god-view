@@ -42,16 +42,25 @@ Jan 1–3 2026 fall in block 12 of 2025 under this rule.
   saved reports, open Reports → Profit and Loss → set the block's dates →
   Save customization as `Block NN 2026`. Twelve saves, once.
 
-## ☠️ Known distortions in block view
+## Two views, both exact — how the automated JEs are dated (2026-09-08)
 
-Our automated month-end JEs are dated the LAST CALENDAR DAY of the month
-(`Rev Reclass`, `WC Alloc`, `Screen Alloc`). In a block that ends before
-month-end (e.g. block 6 ends Jun 27) they fall into the NEXT block, so:
-- 4100 vs 4200 split is wrong per block (block 6 showed all revenue in 4200);
-- 5100 field WC vs 7140 internal WC and 5310 screening shift a block.
-Total income, total COGS + opex, and net are unaffected. Use 5010 direct
-labor % for the margin signal. Fix (not done): date those JEs on the
-block's closing Saturday or post weekly.
+Greg wants BOTH a monthly P&L and a "Block N" P&L. So the automated
+month-level entries are posted per **segment = calendar month ∩ block**,
+dated the segment's last day (or today while open), tagged
+`[revrc:YYYY-MM/B<n>]` / `[wcalloc:YYYY-MM/B<n>]`, DocNumber
+`Rev Reclass MMYY B<n>` / `WC Alloc MMYY B<n>`. A month that straddles a
+block boundary gets two entries (June 2026: `2026-06/B6` Jun 1–27 and
+`2026-06/B7` Jun 28–30). Month totals and block totals both sum from whole
+entries. Code: `functions/src/payroll/fiscalBlocks.ts` (`segmentFor`,
+`resolvePriors`); writers: revenueAccountReclass.ts, wcAllocations.ts.
+Screening JEs were already dated per charge; wire (`EV Alloc`) JEs are
+dated per wire. Nothing else is month-lumped.
+
+Migration: the pre-9/8 month-keyed JEs (`[revrc:2026-06]`) are rewritten
+in place (lines, date, DocNumber, tag) into the month's first segment
+that has data; the remaining segments are created. A tagged JE whose
+month no longer has data is reported `stale_prior_delete_manually`.
+Runner: `scripts/qboReclassRerun.ts dry|write [reclass|wc|trueup]`.
 
 ## Jan–May (Lone Oak / TempWorks era) caveat
 
