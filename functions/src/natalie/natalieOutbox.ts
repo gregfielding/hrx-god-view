@@ -264,7 +264,7 @@ async function drainTechVerdicts(token: string): Promise<number> {
     const workerNote = /what natalie should text the worker[^\n]*\n+([\s\S]{20,400}?)(\n\n|$)/i.exec(verdict)?.[1]?.trim() ?? null;
     const slack = (t.slack ?? {}) as { channel?: string; ts?: string };
     const text = /already_fixed/i.test(kind)
-      ? `Fixer verdict on issue #${n}: already fixed on main. ${workerNote ? 'Texting the worker now.' : ''}`
+      ? `Fixer verdict on issue #${n}: already fixed on main. ${workerNote && s(t.phoneE164) ? 'Texting the worker now.' : workerNote ? 'No phone on the report, so no text sent.' : ''}`
       : /fixed_in_pr/i.test(kind)
         ? `Fixer verdict on issue #${n}: fix opened as PR ${kind.replace(/fixed_in_pr\s*/i, '')}. Once it is merged and deployed, reply "deployed" in this thread and I'll text the worker.`
         : `Fixer verdict on issue #${n}: needs a human. See the issue comment.`;

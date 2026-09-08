@@ -153,3 +153,13 @@ hrx-god-view) as Secret Manager `GITHUB_NATALIE_TOKEN`, then bind it on
 First case: Keaney Hicks, 2026-09-06 "won't let me save the answers" — the
 position-pack prescreen bug fixed the next day; Natalie texted him the fix
 and his link on 2026-09-07 22:05 PT.
+**Verified end-to-end 2026-09-07 22:14 PT** (token bound, deploy done):
+seeded issue #42 for Keaney's report → routine run posted `[fixer] verdict:
+already_fixed` in 148s (it uses GitHub MCP tools; there is no `gh` in the
+sandbox and no node_modules, so it cannot run jest — verdicts are by
+reading) → `drainTechVerdicts` marked the doc resolved and posted in #dev
+within the minute. Greg closed #42. The routine flags "confirm the function
+was redeployed" on every already_fixed verdict; check
+`gcloud functions describe <fn> --format='value(updateTime)'` against the
+fix commit time before trusting it. Follow-up: no regression test covers
+the submit-side dyn_pos_* allowed-id set.
