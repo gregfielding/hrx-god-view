@@ -332,6 +332,7 @@ const CertificationReviewSection: React.FC<CertificationReviewSectionProps> = ({
           onClose={() => setActive(null)}
           onSubmit={async (payload) => {
             setBusyId(active.row.id);
+            setError(null);
             try {
               const call = httpsCallable(functions, 'setCertificationReviewDecision');
               await call({

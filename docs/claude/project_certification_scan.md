@@ -100,6 +100,49 @@
   considered and parked (duplicate race with the web dual-write); the
   clean fix is the app writing canonical rows like the web does.
 
+## Verified in production (2026-09-08, Greg's gmail worker account)
+
+Four synthetic California food handler images were pushed through the real
+pipeline (scratch `functions/.scratch/cert_scan_test.ts` uploads to
+Storage + creates the canonical row exactly like the web dual-write):
+
+| Upload | Scan | Verdict | Record after | Worker notice |
+|---|---|---|---|---|
+| Clean card, holder "GREG FIELDING", worker typed exp 2028-01-01 | 12s, Opus 5, ~3.3k in / 440 out tokens | auto_approve `looks_valid` — model called "Greg" a short form of "Gregory" | approved / active, issuer + expiration **2029-01-10 filled from the card**, note records the typed-date discrepancy | in-app `certification_verified` |
+| Same card in "MARIA LOPEZ" | 12s | needs_review `name_mismatch` | still submitted; queue row present with holder/issuer/number/dates | none (human decides) |
+| Expired card (exp 2025-08-15) | 8s | auto_reject `expired` | rejected | in-app + SMS re-upload ask |
+| Course purchase receipt | 8s | auto_reject `not_a_certificate` | rejected | in-app + SMS (`smsOutboundRequests` queued) |
+
+Queue page: the Maria Lopez row rendered on /readiness/employee-readiness
+with the reason chip, confidence, model notes, every extracted field, and
+the "View upload" link; the Reject dialog pre-selected "Name does not
+match worker". Greg's Reject (with a note) through the callable: record
+`rejected / name_mismatch`, `decidedBy` = his uid, `previousAutoVerdict:
+needs_review` stashed, queue row deleted (live snapshot dropped it),
+activity log "Food Handler Card rejected by Greg Fielding (name_mismatch)
+— <note>", in-app `certification_reupload_request` notice, no SMS (plain
+Reject is in-app only; "New photo" is the one that texts). Test records
+were deleted from the account afterwards.
+
+Footguns found on the way:
+
+- **Eventarc warm-up gap:** one of four records created ~40s after the
+  trigger was first deployed never fired (no log line at all). Touching
+  the record (`updatedAt`) re-fired it and it decided in 8s. New
+  Firestore triggers can drop the first events for a minute or so —
+  re-touch, don't debug.
+- **Security level 7 was locked out of decisions:** the shared
+  `assertCallerCanManageAvatarTarget` check accepted exactly '4' | '5', so
+  Greg (level 7) got "Requires Manager or Admin permissions" on the queue
+  AND had been silently unable to approve/reject headshots. Fixed to
+  `>= 4` (commit 7eea3fbd) and `setAvatarVerificationDecision` /
+  `reverifyAvatar` were redeployed alongside.
+- The admin account is routed away from `/c1/workers/profile/*`, so the
+  browser-side worker upload (legacy row → dual-write → scan → chip) was
+  NOT exercised by hand this session; the dual-write code path itself is
+  unchanged apart from the flag default. First real worker upload will
+  prove it — watch `certification_scan.decided` in the function logs.
+
 ## Not built (next)
 
 - Issuer confirmation (ServSafe / TABC / StateFoodSafety / eFoodHandlers
