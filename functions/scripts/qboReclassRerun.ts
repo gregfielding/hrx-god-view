@@ -46,6 +46,13 @@ async function main(): Promise<void> {
     for (const c of (d.changes ?? []) as Array<Record<string, any>>) flips.set(`${c.from} → ${c.to}`, (flips.get(`${c.from} → ${c.to}`) ?? 0) + 1);
     console.log('by flip:', JSON.stringify([...flips.entries()]));
     if ((d.classMismatch ?? []).length) console.log(`class/customer family mismatches (header follows the CUSTOMER; review the line class): ${JSON.stringify(d.classMismatch)}`);
+    if (!dryRun && Number(d.changed) > 0 && phase === 'both') {
+      // QBO's query index lags updates (~1 min): a reclass read right after
+      // the re-tags sees stale headers (2026-09-08 — half of June's legs
+      // landed on the old Division). Stop here; rerun `write reclass` after.
+      console.log(`\n${d.changed} invoice(s) re-tagged. STOPPING before the reclass — QBO's query index lags updates. Wait a minute, then run: qboReclassRerun.ts write reclass`);
+      return;
+    }
   }
   if (phase === 'both' || phase === 'reclass') {
     const { pushRevenueAccountReclass } = await import('../src/payroll/revenueAccountReclass');

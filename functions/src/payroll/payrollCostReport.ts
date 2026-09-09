@@ -1704,18 +1704,26 @@ export async function maybeRunWeeklyClassificationHealth(
       }
       // Invoice Divisions first (Greg 2026-09-08): header Location = client
       // family, so the reclass legs below mirror corrected invoices.
+      let invoicesRetagged = 0;
       try {
         const { pushInvoiceDivisions } = await import('./invoiceDivisions');
         const idv = (await pushInvoiceDivisions(tenantId, false)) as Record<string, any>;
-        if (Number(idv.changed) > 0 && postText) {
-          await postText(`🏷️ Invoice Divisions: re-tagged ${idv.changed} invoice(s) to the client's Division (Sodexo/Flex → Recurring, else Event-based).`);
+        invoicesRetagged = Number(idv.changed) || 0;
+        if (invoicesRetagged > 0 && postText) {
+          await postText(`🏷️ Invoice Divisions: re-tagged ${invoicesRetagged} invoice(s) to the client's Division (Sodexo/Flex → Recurring, else Event-based). Revenue reclass re-trues on the next run.`);
         }
       } catch (e) {
         console.error('[classificationHealth] invoice divisions failed', { error: String(e) });
       }
       // Revenue-account rule rides the weekly run too — one idempotent
       // monthly 4200→4100 reclass JE per matured month (Greg 2026-09-01).
-      try {
+      // ☠️ QBO's query index lags entity updates by up to a minute: on
+      // 2026-09-08 a reclass run seconds after 242 invoice re-tags read
+      // stale headers and wrote half its June legs to the old Division.
+      // When invoices changed THIS run, let the reclass re-true next run.
+      if (invoicesRetagged > 0) {
+        console.info('[classificationHealth] invoices re-tagged this run — revenue reclass deferred to the next run (QBO query lag)');
+      } else try {
         const { pushRevenueAccountReclass } = await import('./revenueAccountReclass');
         const rr = (await pushRevenueAccountReclass(tenantId, false)) as Record<string, any>;
         const made = ((rr.months ?? []) as Array<Record<string, any>>).filter((x) => x.status === 'created');

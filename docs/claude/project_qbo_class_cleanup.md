@@ -928,3 +928,14 @@ write invdiv` → `write reclass` → `dry` (all `already_*`). Then deploy
 `savePayrollVenueMapping,reconcileTimesheetBatchesCron`. Until deployed,
 the weekly job still posts untagged credits (the true-up will then re-tag
 them on its second pass via the missing-division trigger).
+
+**Verified 2026-09-08 (later, after Greg ran the four commands):** 5010 Not
+Specified = 0.00 (Corp −513,080.53 until Tabitha drops her three 5010
+lines from `Rev Allocation 063026`; then −41,871.49 timing). Invoices: all
+2026 headers now follow the rule (`dry invdiv` = 0 to change). ☠️ **QBO's
+query index lags entity updates (~1 min)**: `write reclass` run seconds
+after the 242 re-tags read stale invoice headers and wrote June's legs half
+on the old Division (4100 Recurring 153,158.68). Fix = run `write reclass`
+again once `dry` shows the invoices settled. Guarded now: the weekly job
+defers the reclass to the next run when invoices changed this run, and the
+runner's `both` stops after a non-zero `invdiv` write.
