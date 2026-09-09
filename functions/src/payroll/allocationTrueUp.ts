@@ -63,6 +63,10 @@ export async function trueUpAllocationJes(
     const d = divisionKindForClassFqn(fqn) === 'recurring' ? divisions.recurring : divisions.event;
     return { value: d.Id, name: d.Name };
   };
+  // Credit + unattributed-remainder lines carry `Corp / Unalloc.` — the
+  // Division the bank-feed wire sits in — so the wire nets to zero there
+  // (Greg 2026-09-08; untagged credits were piling into Not Specified).
+  const corpRef = divisions.corp ? { DepartmentRef: { value: divisions.corp.Id, name: divisions.corp.Name } } : {};
   let start = 1;
   const jes: Array<Record<string, any>> = [];
   for (;;) {
@@ -157,9 +161,14 @@ export async function trueUpAllocationJes(
       .filter((l) => l.JournalEntryLineDetail?.PostingType === 'Debit');
     const have = haveLines
       .map((l) => ({ cls: l.JournalEntryLineDetail.ClassRef?.name ?? null, amt: Number(l.Amount) || 0 }));
-    const missingDivision = haveLines.some(
-      (l) => l.JournalEntryLineDetail.ClassRef?.value && !l.JournalEntryLineDetail.DepartmentRef?.value,
-    );
+    const jeCredits = ((je.Line ?? []) as Array<Record<string, any>>)
+      .filter((l) => l.JournalEntryLineDetail?.PostingType === 'Credit');
+    const missingDivision =
+      haveLines.some((l) => l.JournalEntryLineDetail.ClassRef?.value && !l.JournalEntryLineDetail.DepartmentRef?.value) ||
+      (Boolean(divisions.corp) &&
+        [...haveLines.filter((l) => !l.JournalEntryLineDetail.ClassRef?.value), ...jeCredits].some(
+          (l) => String(l.JournalEntryLineDetail.DepartmentRef?.value ?? '') !== String(divisions.corp!.Id),
+        ));
     const key = (arr: Array<{ cls: string | null; amt: number }>): string =>
       arr.map((x) => `${x.cls}|${x.amt.toFixed(2)}`).sort().join(';');
     const fingerprint = `${credit.toFixed(2)}|${wireTotal.toFixed(2)}|${key(want)}`;
@@ -202,10 +211,10 @@ export async function trueUpAllocationJes(
             ClassRef: { value: classIdByFqn.get(x.cls), name: x.cls },
             DepartmentRef: divRefForFqn(x.cls),
           }
-        : { PostingType: 'Debit', AccountRef: { value: ACCT_5010 } },
+        : { PostingType: 'Debit', AccountRef: { value: ACCT_5010 }, ...corpRef },
     }));
-    for (const l of (je.Line ?? []) as Array<Record<string, any>>) {
-      if (l.JournalEntryLineDetail?.PostingType === 'Credit') newLines.push(l);
+    for (const l of jeCredits) {
+      newLines.push({ ...l, JournalEntryLineDetail: { ...l.JournalEntryLineDetail, ...corpRef } });
     }
     // eslint-disable-next-line no-await-in-loop
     await qboEntityUpdate(tenantId, 'JournalEntry', { ...je, Line: newLines, sparse: false });

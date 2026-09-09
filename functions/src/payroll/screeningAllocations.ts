@@ -262,6 +262,10 @@ export async function pushScreeningAllocations(
     const origLine = ((p.Line ?? []) as Array<Record<string, any>>).find((l) => l.AccountBasedExpenseLineDetail);
     const origAcct = String(origLine?.AccountBasedExpenseLineDetail?.AccountRef?.value ?? '');
     const origCls = origLine?.AccountBasedExpenseLineDetail?.ClassRef;
+    // The credit mirrors the ORIGINAL purchase's Division too (header
+    // Location on the card charge — Corp / Unalloc. since May 2026), so the
+    // charge nets to zero in its own column (Greg 2026-09-08).
+    const origDept = p.DepartmentRef?.value ? { DepartmentRef: { value: String(p.DepartmentRef.value), name: String(p.DepartmentRef.name ?? '') } } : {};
     const lines: Array<Record<string, unknown>> = splits.map((sp) => {
       const cls = classFor(sp.leaf);
       const divRef = divisionRefForLeaf(sp.leaf, cls);
@@ -285,6 +289,7 @@ export async function pushScreeningAllocations(
         PostingType: 'Credit',
         AccountRef: { value: origAcct || RECRUIT },
         ...(origCls ? { ClassRef: origCls } : {}),
+        ...origDept,
       },
     });
     // eslint-disable-next-line no-await-in-loop

@@ -156,6 +156,7 @@ export const savePayrollVenueMapping = onCall(
       const item = (itemRes.QueryResponse?.Item ?? itemRes.Item ?? [])[0];
       if (!item) throw new HttpsError('failed-precondition', 'QBO item "Staffing" not found.');
 
+      const flexDivisions = await fetchQboDivisions(tenantId);
       const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class MAXRESULTS 1000')) as Record<string, any>;
       const classes: Array<Record<string, any>> = clsRes.QueryResponse?.Class ?? clsRes.Class ?? [];
       const flexParent = classes.find((c) => c.FullyQualifiedName === 'Indeed Flex');
@@ -229,6 +230,8 @@ export const savePayrollVenueMapping = onCall(
           CustomerRef: { value: String(customer.Id) },
           DocNumber: doc,
           TxnDate: date || undefined,
+          // Flex channel = Recurring Division (Greg 2026-09-08 rule).
+          DepartmentRef: { value: flexDivisions.recurring.Id, name: flexDivisions.recurring.Name },
           Line: [{
             DetailType: 'SalesItemLineDetail',
             Amount: amount,
@@ -339,6 +342,17 @@ export const savePayrollVenueMapping = onCall(
       await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
       const { trueUpAllocationJes } = await import('./allocationTrueUp');
       return await trueUpAllocationJes(tenantId, request.data?.dryRun !== false);
+    }
+
+    // Invoice Division true-up (Greg 2026-09-08): header Location on every
+    // 2026 invoice/credit memo = client family (Sodexo/Flex → Recurring,
+    // else Event-based). Run before the revenue reclass so its legs mirror
+    // the corrected invoices. Level 7.
+    if (action === 'pushInvoiceDivisions') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushInvoiceDivisions } = await import('./invoiceDivisions');
+      return await pushInvoiceDivisions(tenantId, request.data?.dryRun !== false);
     }
 
     // Revenue-account rule (Greg 2026-09-01): monthly 4200→4100 reclass
@@ -552,19 +566,26 @@ export const savePayrollVenueMapping = onCall(
             },
           });
         }
+        // Division convention (Greg 2026-09-08): the bank-feed wire sits in
+        // `Corp / Unalloc.`; this JE's credit carries the SAME Division so
+        // the wire nets to zero there and only the classed debits land in
+        // Event-based / Recurring. The unattributed remainder stays in Corp
+        // (honest: labor we could not attribute). Untagged credits used to
+        // pile up in the Not Specified column (−$513K in June 2026).
+        const corpRef = divisions.corp ? { DepartmentRef: { value: divisions.corp.Id, name: divisions.corp.Name } } : {};
         if (unresolved > 0.005) {
           lines.push({
             DetailType: 'JournalEntryLineDetail',
             Amount: Math.round(unresolved * 100) / 100,
             Description: `Everee wire ${w.fundingDate} — unattributed remainder`,
-            JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: ACCT } },
+            JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: ACCT }, ...corpRef },
           });
         }
         lines.push({
           DetailType: 'JournalEntryLineDetail',
           Amount: Math.round(w.amount * 100) / 100,
           Description: `Everee wire ${w.fundingDate} ${w.entityName} — reallocation`,
-          JournalEntryLineDetail: { PostingType: 'Credit', AccountRef: { value: ACCT } },
+          JournalEntryLineDetail: { PostingType: 'Credit', AccountRef: { value: ACCT }, ...corpRef },
         });
         if (dryRun) {
           results.push({
@@ -1680,6 +1701,17 @@ export async function maybeRunWeeklyClassificationHealth(
         }
       } catch (e) {
         console.error('[classificationHealth] true-up failed', { error: String(e) });
+      }
+      // Invoice Divisions first (Greg 2026-09-08): header Location = client
+      // family, so the reclass legs below mirror corrected invoices.
+      try {
+        const { pushInvoiceDivisions } = await import('./invoiceDivisions');
+        const idv = (await pushInvoiceDivisions(tenantId, false)) as Record<string, any>;
+        if (Number(idv.changed) > 0 && postText) {
+          await postText(`🏷️ Invoice Divisions: re-tagged ${idv.changed} invoice(s) to the client's Division (Sodexo/Flex → Recurring, else Event-based).`);
+        }
+      } catch (e) {
+        console.error('[classificationHealth] invoice divisions failed', { error: String(e) });
       }
       // Revenue-account rule rides the weekly run too — one idempotent
       // monthly 4200→4100 reclass JE per matured month (Greg 2026-09-01).

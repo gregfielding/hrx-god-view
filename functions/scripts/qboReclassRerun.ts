@@ -4,7 +4,11 @@
  * Run from functions/ on a machine with Firebase ADC + the QBO tokens:
  *   DOTENV_CONFIG_PATH=.env.hrx1-d3beb npx ts-node -r dotenv/config -P tsconfig.scripts.json scripts/qboReclassRerun.ts dry
  *   DOTENV_CONFIG_PATH=.env.hrx1-d3beb npx ts-node -r dotenv/config -P tsconfig.scripts.json scripts/qboReclassRerun.ts write
- * Optional 3rd arg: reclass | trueup | wc   (default: both = reclass, wc, trueup)
+ * Optional 3rd arg: invdiv | reclass | trueup | wc   (default: both = invdiv, reclass, wc, trueup)
+ *
+ * invdiv (Greg 2026-09-08) re-tags every 2026 invoice/credit memo header
+ * Division to the client's family (Sodexo/Flex → Recurring, else Event-
+ * based) so the reclass legs mirror corrected invoices.
  *
  * Entries are posted per SEGMENT (calendar month ∩ fiscal block, e.g.
  * 2026-06/B7) so the monthly AND the block P&L both foot — fiscalBlocks.ts.
@@ -26,11 +30,23 @@ const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
 async function main(): Promise<void> {
   const mode = process.argv[2];
   const phase = process.argv[3] ?? 'both';
-  if ((mode !== 'dry' && mode !== 'write') || !['both', 'reclass', 'trueup', 'wc'].includes(phase)) {
-    console.error('usage: qboReclassRerun.ts <dry|write> [reclass|trueup|wc]');
+  if ((mode !== 'dry' && mode !== 'write') || !['both', 'invdiv', 'reclass', 'trueup', 'wc'].includes(phase)) {
+    console.error('usage: qboReclassRerun.ts <dry|write> [invdiv|reclass|trueup|wc]');
     process.exit(2);
   }
   const dryRun = mode === 'dry';
+  if (phase === 'both' || phase === 'invdiv') {
+    const { pushInvoiceDivisions } = await import('../src/payroll/invoiceDivisions');
+    const d = (await pushInvoiceDivisions(TENANT, dryRun)) as Record<string, any>;
+    console.log(`\n=== invoice divisions (${mode}) — header Location = client family ===`);
+    for (const m of (d.months ?? []) as Array<Record<string, any>>) {
+      console.log(`${String(m.month).padEnd(10)} checked ${String(m.checked).padStart(4)}  ${dryRun ? 'would change' : 'changed'} ${String(m.changed).padStart(4)}  $${Number(m.amount ?? 0).toFixed(2)}`);
+    }
+    const flips = new Map<string, number>();
+    for (const c of (d.changes ?? []) as Array<Record<string, any>>) flips.set(`${c.from} → ${c.to}`, (flips.get(`${c.from} → ${c.to}`) ?? 0) + 1);
+    console.log('by flip:', JSON.stringify([...flips.entries()]));
+    if ((d.classMismatch ?? []).length) console.log(`class/customer family mismatches (header follows the CUSTOMER; review the line class): ${JSON.stringify(d.classMismatch)}`);
+  }
   if (phase === 'both' || phase === 'reclass') {
     const { pushRevenueAccountReclass } = await import('../src/payroll/revenueAccountReclass');
     const r = (await pushRevenueAccountReclass(TENANT, dryRun)) as Record<string, any>;

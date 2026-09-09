@@ -845,3 +845,86 @@ in Sept) and zero same-amount duplicates → the seven purchases were MISSING
 wires, not duplicates. Same session: two back-to-back buildWireJournal calls
 returned 4,194.11 and 3,736.83 for the 6/24 EVT wire — the flakiness the
 true-up guard now defends against.
+
+## P&L by Division cleanup — Tabitha call 2026-09-08 (evening)
+
+Greg + Tabitha reviewed the June "Profit and Loss by Division" (Corp /
+Unalloc. · Event-based · Recurring · Not specified). Read-only audit that
+reproduces the report to the penny from the QBO entities:
+`functions/.scratch/division_audit.ts <start> <end>` → CSV + pivot (line-
+level DepartmentRef for JEs, header DepartmentRef for everything else).
+Three separate problems, three separate fixes:
+
+**1. 5010 Direct Labor: Not Specified −$513,414.72 and Event-based doubled.**
+- Everee wire Purchases already sit in `Corp / Unalloc.` (Tabitha tags them
+  at bank rec) — June $478,521.64 (−$6,978.41 refund deposits).
+- Tabitha's own `Rev Allocation 063026` JE (#7846, created 7/26) spread the
+  whole Corp column out to Event-based/Recurring **by revenue ratio**, 5010
+  included: Corp −471,209.04 → Event 438,742.43 / Recurring 32,466.61. That
+  was her June method before our per-wire JEs existed (July she switched
+  to per-wire `EV Pay Alloc`, credits tagged Corp).
+- Our 31 June `EV Alloc` JEs (pushed 8/31) allocate the same wires again by
+  actual attribution — credits UNTAGGED (→ Not Specified), debits
+  Event/Recurring → 5010 Event-based = 864,951 against 355K revenue.
+- **Convention (Greg, law): wire lands in Corp; the allocation JE's credit
+  carries Corp too; classed debits carry Event/Recurring; unattributed
+  remainder stays Corp.** Result: wire nets to zero in Corp, nothing in
+  Not Specified. Tabitha's `EV Pay Alloc` credits already follow it.
+- Code: pushWireAllocations (payrollCostReport.ts), allocationTrueUp.ts
+  (also rewrites when a credit/unclassed debit lacks Corp),
+  screeningAllocations.ts (credit mirrors the purchase's Division).
+- Backfill: `.scratch/backfill_alloc_je_divisions.ts dry|write` — 91 JEs
+  (85 EV/TW Alloc + Scrn Alloc), $1,208,892 of credits, snapshot per JE to
+  `.scratch/backup_je_div_<Id>.json`, debit totals verified unchanged.
+- **Still Tabitha's call**: drop the three 5010 lines from `Rev Allocation
+  063026` (they are superseded by the per-wire JEs). Everything else in
+  that JE is her overhead-by-revenue allocation and stays.
+- Expected Corp 5010 after both: Jun −41,800.55 / Jul −10,657.38 /
+  Aug +15,523.89 / Sep +85,822.08 (Sept wires not pushed yet) — JEs are
+  dated by Everee funding date, purchases by bank post date, so month
+  edges carry timing; Jun–Sep nets to the un-pushed wires. Not Specified
+  5010 → 0.
+
+**2. Revenue: invoice header Division was hand-keyed and ignores the rule.**
+- June: $294,580 of Venue Smart/RS3/Black Caviar/G6 invoices carried
+  `Recurring`; $5,943 of Sodexo carried `Event-based`; Jan–Apr and Aug–Sep
+  mostly untagged. The `[revrc:]` JEs mirror the invoice Division (by
+  design since 9/8), so 4100 showed $296,504 under Recurring.
+- New `pushInvoiceDivisions` (`src/payroll/invoiceDivisions.ts`): header
+  DepartmentRef on every 2026 Invoice/CreditMemo = client family via
+  RECURRING_DIVISION_RE on the CUSTOMER name (Sodexo / Indeed Flex →
+  Recurring, else Event-based; never Corp, never blank). Idempotent; full-
+  entity update. Rides the weekly job BEFORE the revenue reclass, callable
+  action `pushInvoiceDivisions`, runner phase `invdiv` (now part of `both`).
+  Flex mirror invoices are created with Recurring stamped.
+- Dry run 2026-09-08: 242 invoices to re-tag (117 none→Event, 49
+  Recurring→Event, 18 Corp→Event, 42 none→Recurring, 16 Event→Recurring).
+  Three April Sodexo invoices (60600025/26/40) are classed `National` —
+  line class wrong, for Mark/Tabitha; header still goes Recurring.
+- After `invdiv write` → `reclass write`: 4100 entirely Event-based, 4200
+  entirely Recurring (= Sodexo + Flex only), every month.
+
+**3. Corp / Unalloc. residuals (June) — the "one by one" list.** All are
+side effects of the revenue-ratio allocation being a point-in-time JE:
+- Not in her JE at all: 5200 Payroll Platform Fees 550.50 (Everee fee),
+  5310 AccuSource 70.94, 6020 Gusto fee 289.00, 8840 Ground Transport
+  1,832.12 (Enterprise 1,002.35 + Marathon/Uber/9 card lines), 9010 card
+  rewards 335.71, 9020 interest 0.01; 5300 shortfall 501.93 (Indeed 6/29).
+- Re-accounted to sub-accounts AFTER her JE (parent −X Corp / sub +X Corp,
+  net zero, cosmetic): 8100→C1 App 986.74 (Twilio) + LLM 200 (Cursor);
+  8210→Phone 852.20 (Verizon); 8300→Small tools 664.74 (Apple);
+  8720→Wyoming LLC 209.94.
+- 7120 +1,184.31 / 7131 −1,184.31: Gusto 401(k) lines; her JE netted the
+  401(k) into the 7131 credit.
+- 7140 −6,369.13 = InSource 5,000 − her 5,000 credit − our WC Alloc field-
+  share credit 6,369.13 (Corp by design; 7140 goes negative when the
+  month's carrier payment < computed field premium — expected until the
+  carrier true-up).
+
+**Execution state**: code done (tsc clean), dry runs verified; the QBO
+WRITES were blocked by the Claude permission classifier this session —
+Greg runs them (order matters): backfill `write` → `qboReclassRerun.ts
+write invdiv` → `write reclass` → `dry` (all `already_*`). Then deploy
+`savePayrollVenueMapping,reconcileTimesheetBatchesCron`. Until deployed,
+the weekly job still posts untagged credits (the true-up will then re-tag
+them on its second pass via the missing-division trigger).
