@@ -67,7 +67,13 @@ async function main(): Promise<void> {
     const w = (await pushWcAllocations(TENANT, dryRun)) as Record<string, any>;
     console.log(`\n=== workers' comp allocation (${mode}) ===`);
     for (const m of (w.months ?? []) as Array<Record<string, any>>) {
-      console.log(`${String(m.month).padEnd(12)} ${String(m.dates ?? '').padEnd(24)} ${String(m.status).padEnd(20)} total ${Number(m.amount ?? 0).toFixed(2)}`);
+      const fam = (m.splits ?? []).reduce((a: Record<string, number>, x: Record<string, any>) => { a[x.family] = (a[x.family] ?? 0) + Number(x.amount); return a; }, {});
+      console.log(`${String(m.month).padEnd(12)} ${String(m.dates ?? '').padEnd(24)} ${String(m.status).padEnd(20)} total ${Number(m.amount ?? 0).toFixed(2).padStart(10)}  ${String(m.source ?? '').padEnd(17)} ${m.splits ? `event ${(fam.event ?? 0).toFixed(2)} / recurring ${(fam.recurring ?? 0).toFixed(2)}` : ''}`);
+    }
+    console.log('carrier months (wc_carrier_invoices):', (w.carrierMonths ?? []).join(', '));
+    console.log('reconciliation — InSource bank lines on 7140 by premium month vs portal (events+select+resources):');
+    for (const r of (w.reconciliation ?? []) as Array<Record<string, any>>) {
+      console.log(`  ${r.month}  portal ${r.portalTotal === null ? '   (none)' : Number(r.portalTotal).toFixed(2).padStart(9)}  bank premium ${Number(r.bankPremium).toFixed(2).padStart(9)}  other ${Number(r.bankOther).toFixed(2).padStart(8)}  diff ${r.diff === null ? '' : Number(r.diff).toFixed(2)}${(r.lines ?? []).filter((l: Record<string, any>) => /ASSESS|WOS/i.test(l.memo)).length ? '  (incl. ' + r.lines.filter((l: Record<string, any>) => /ASSESS|WOS/i.test(l.memo)).map((l: Record<string, any>) => `${l.amount} ${l.memo.replace(/INSOURCE - /,'').slice(0,22)}`).join(', ') + ')' : ''}`);
     }
     const x = (w.excluded8040 ?? {}) as Record<string, number>;
     console.log(`8040 placeholder class EXCLUDED (no premium paid yet): ${x.entries ?? 0} entries, gross ${Number(x.gross ?? 0).toFixed(2)}, would-have-been premium ${Number(x.premium ?? 0).toFixed(2)}`);

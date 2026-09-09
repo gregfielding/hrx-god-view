@@ -939,3 +939,34 @@ on the old Division (4100 Recurring 153,158.68). Fix = run `write reclass`
 again once `dry` shows the invoices settled. Guarded now: the weekly job
 defers the reclass to the next run when invoices changed this run, and the
 runner's `both` stops after a non-zero `invdiv` write.
+
+## Workers' comp allocation now uses InSource ACTUALS (2026-09-08, late)
+
+Greg: "5100/7140 are way off." Read all 61 InSource invoices from
+client.insourcees.com (Greg's logged-in Chrome; Show 100 rows → one page).
+**Entity → Division map (Greg): C1 Events = Event-based (5100), C1 Select =
+Recurring (5100), C1 Resources = internal (7140). Medstaff/Workforce = $0.**
+2026 YTD premium: Events 38,012.70 / Select 3,757.87 / Resources 2,905.59.
+
+- InSource debits the bank ONE LINE PER ENTITY; every 7140 bank line
+  matches a portal invoice to the penny (memo `INSOURCE - MAY 2026 PREMIUM`
+  = the PAYROLL month; cash lands in M+1). Extras that stay on 7140:
+  `UNLIMITED WOS` $500 fee (Jan, Aug), monthly `ASSESSMENTS` (~$280),
+  and $5,000-minimum top-ups in the March (2,552.45) and May (1,400.03)
+  payments. Jan–Feb premium cash sits on **5100 untagged with refund
+  deposits** (Lone Oak era) — left for Tabitha; allocation starts 2026-03.
+- The matrix estimate (gross × rate) ran 10–15% low on Events and high on
+  Recurring every month (Jun est. 5,570.68/798.45 vs actual 6,337.29/487.19).
+- `wcAllocations.ts` rewritten: reads `tenants/{t}/wc_carrier_invoices/
+  {YYYY-MM}` ({events, select, resources}); allocates each entity's ACTUAL,
+  using the matrix only to split it across classes and across the month's
+  segments; months with no doc fall back to the estimate labelled
+  `estimated_matrix` and self-true when the doc lands. Result carries a
+  `reconciliation` (bank premium by memo month vs portal). Seed/update:
+  `.scratch/seed_wc_carrier_invoices.ts` from
+  `.scratch/insource_wc_premium_by_entity.csv`. **Monthly ritual (~5th):
+  add the new month's three figures to the CSV and rerun the seed** (the
+  portal has no API; the Chrome read is the extraction path).
+- Tabitha's `Rev Allocation 063026` also spreads the June 7140 cash by
+  revenue ratio (−5,000 Corp / +4,655.50 / +344.50) — those three lines
+  should come out like the 5010 ones did (7140 is internal by design).

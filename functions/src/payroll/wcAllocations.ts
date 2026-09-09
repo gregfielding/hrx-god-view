@@ -1,18 +1,26 @@
 /**
- * Workers' Comp allocation (Greg 2026-09-03): all carrier payments land
- * on 7140 Workers' Comp — Internal Staff, but most premium is FIELD
- * labor. Monthly JE per month with field entries:
+ * Workers' Comp allocation (Greg 2026-09-03; ACTUALS since 2026-09-08).
  *
- *   debit  5100 Workers' Comp — Field Staff, split per class
- *   credit 7140 Workers' Comp — Internal Staff
+ * InSource bills one premium per legal entity per payroll month, and the
+ * bank feed lands each as its own 7140 purchase in `Corp / Unalloc.`:
+ *   C1 Events LLC    → field labor, Event-based  → 5100 (per event class)
+ *   C1 Select LLC    → field labor, Recurring    → 5100 (Sodexo / Flex classes)
+ *   C1 Resources LLC → internal staff            → stays on 7140
+ * Monthly JE per premium month (segment-dated, see fiscalBlocks.ts):
+ *   debit  5100 Workers' Comp — Field Staff, per class, Division per family
+ *   credit 7140 Workers' Comp — Internal Staff, Corp / Unalloc.
  *
- * Amount = matrix-computed premium (entry gross × workersCompRate) — the
- * residual on 7140 stays visible as internal WC + carrier deposit/
- * catch-up variance until the carrier audit trues it. Self-truing like
- * the revenue reclass: months (including the in-progress one) post
- * immediately and existing JEs are REWRITTEN when the recomputed total
- * drifts > $1 (late entries, rate backfills). Idempotent per month via
- * [wcalloc:YYYY-MM] in PrivateNote.
+ * Amounts = the ACTUAL entity premiums from the InSource portal, kept in
+ * tenants/{t}/wc_carrier_invoices/{YYYY-MM} ({events, select, resources},
+ * seeded from the portal; monthly ritual = add the new month). The matrix
+ * (entry gross × workersCompRate) is used only to SPLIT each entity's
+ * actual across classes/segments — it no longer sets the total (it ran
+ * 10–15% low on Events and high on Recurring every month). A month with no
+ * carrier doc yet falls back to the matrix estimate, labelled
+ * `estimated_matrix`, and self-trues once the invoice is entered.
+ * 7140 keeps: C1 Resources premium, unmatched InSource lines (WOS fee,
+ * assessments), and the one-month cash lag (premium for M is debited in
+ * M+1). Idempotent per segment via [wcalloc:YYYY-MM/B<n>] in PrivateNote.
  *
  * Class per entry: JO → payroll_jo_date_splits window → account-kind
  * mapping/rules → JO name (fuzzy classFor). Known limit: date-splits are
@@ -120,11 +128,24 @@ export async function pushWcAllocations(
     return rule ? rule.leaf : jo.name || null;
   };
 
-  // premium per month per leaf from entries
+  // ACTUAL carrier premiums per payroll month (InSource portal figures).
+  const carSnap = await db.collection(`tenants/${tenantId}/wc_carrier_invoices`).get().catch(() => null);
+  const carrier = new Map<string, { events: number; select: number; resources: number }>();
+  if (carSnap) {
+    carSnap.forEach((d) => {
+      if (!/^\d{4}-\d{2}$/.test(d.id)) return;
+      const m = d.data() as Record<string, unknown>;
+      carrier.set(d.id, { events: round2(num(m.events)), select: round2(num(m.select)), resources: round2(num(m.resources)) });
+    });
+  }
+  const familyOf = (leaf: string, cls?: Record<string, any>): 'event' | 'recurring' =>
+    divisionKindForClassFqn(String(cls?.FullyQualifiedName ?? leaf));
+
+  // matrix premium per segment per leaf from entries (the SPLIT weights)
   const PAID = new Set(['sent_to_everee', 'submitted', 'paid']);
   const es = await db
     .collection(`tenants/${tenantId}/timesheet_entries`)
-    .where('workDate', '>=', '2026-06-01')
+    .where('workDate', '>=', '2026-03-01')
     .get();
   // keyed by SEGMENT (calendar month ∩ fiscal block, e.g. 2026-06/B7) so the
   // monthly and the block P&L both foot — see fiscalBlocks.ts
@@ -163,6 +184,76 @@ export async function pushWcAllocations(
     m.set(leaf, (m.get(leaf) ?? 0) + prem);
   });
 
+  const results: Array<Record<string, unknown>> = [];
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Segments per calendar month: from entries, plus every carrier month
+  // (a month with actuals but no entries still needs a segment).
+  for (const ym of carrier.keys()) {
+    if (ym < '2026-03') continue; // Jan–Feb cash sits on 5100 untagged (Lone Oak era) — Tabitha
+    const seg = segmentFor(`${ym}-15`);
+    if (!segByKey.has(seg.key)) segByKey.set(seg.key, seg);
+  }
+  const segsOfMonth = new Map<string, ReportSegment[]>();
+  for (const seg of segByKey.values()) {
+    const ym = seg.key.slice(0, 7);
+    if (!segsOfMonth.has(ym)) segsOfMonth.set(ym, []);
+    segsOfMonth.get(ym)!.push(seg);
+  }
+
+  // Per segment: leaf → cents, built from actuals where a carrier doc exists,
+  // else from the matrix estimate.
+  type Split = { leaf: string; cls?: Record<string, any>; cents: number; family: 'event' | 'recurring' };
+  const planBySeg = new Map<string, { splits: Split[]; source: 'actual_insource' | 'estimated_matrix'; note: string }>();
+  const splitPennies = (total: number, weights: Array<{ leaf: string; cls?: Record<string, any>; w: number; family: 'event' | 'recurring' }>): Split[] => {
+    const wsum = weights.reduce((a, x) => a + x.w, 0);
+    const cents = Math.round(total * 100);
+    if (!weights.length || wsum <= 0) return [];
+    const floored = weights.map((x) => { const raw = (cents * x.w) / wsum; return { ...x, cents: Math.floor(raw), frac: raw - Math.floor(raw) }; });
+    let rem = cents - floored.reduce((a, x) => a + x.cents, 0);
+    for (const x of [...floored].sort((a, b) => b.frac - a.frac)) { if (rem <= 0) break; x.cents += 1; rem -= 1; }
+    return floored.filter((x) => x.cents > 0).map((x) => ({ leaf: x.leaf, cls: x.cls, cents: x.cents, family: x.family }));
+  };
+  for (const [ym, segs] of [...segsOfMonth.entries()].sort()) {
+    const act = carrier.get(ym);
+    // matrix weights per segment per leaf, tagged by family
+    const wBySeg = new Map<string, Array<{ leaf: string; cls?: Record<string, any>; w: number; family: 'event' | 'recurring' }>>();
+    for (const seg of segs) {
+      const m = byMonth.get(seg.key) ?? new Map<string, number>();
+      wBySeg.set(seg.key, [...m.entries()].filter(([, amt]) => amt > 0).map(([leaf, amt]) => { const cls = classFor(leaf); return { leaf, cls, w: amt, family: familyOf(leaf, cls) }; }));
+    }
+    if (!act) {
+      for (const seg of segs) {
+        const ws = wBySeg.get(seg.key) ?? [];
+        const total = round2(ws.reduce((a, x) => a + x.w, 0));
+        if (total < 0.01) continue;
+        planBySeg.set(seg.key, { splits: splitPennies(total, ws), source: 'estimated_matrix', note: `no wc_carrier_invoices/${ym} yet — matrix estimate` });
+      }
+      continue;
+    }
+    for (const family of ['event', 'recurring'] as const) {
+      const actual = family === 'event' ? act.events : act.select;
+      if (actual < 0.01) continue;
+      // distribute the entity actual across the month's segments by that
+      // family's matrix weight; no weights anywhere → the segment holding the 15th
+      const segWeight = segs.map((seg) => ({ seg, w: (wBySeg.get(seg.key) ?? []).filter((x) => x.family === family).reduce((a, x) => a + x.w, 0) }));
+      const wsum = segWeight.reduce((a, x) => a + x.w, 0);
+      const perSeg = wsum > 0
+        ? splitPennies(actual, segWeight.map((x) => ({ leaf: x.seg.key, w: x.w, family })))
+        : [{ leaf: segmentFor(`${ym}-15`).key, cents: Math.round(actual * 100), family }];
+      for (const ps of perSeg) {
+        const seg = segByKey.get(ps.leaf)!;
+        const ws = (wBySeg.get(seg.key) ?? []).filter((x) => x.family === family);
+        const splits = ws.length
+          ? splitPennies(ps.cents / 100, ws)
+          : [{ leaf: family === 'event' ? '(unclassed — no matrix weights)' : 'Sodexo', cls: family === 'event' ? undefined : classFor('Sodexo'), cents: ps.cents, family }];
+        const plan = planBySeg.get(seg.key) ?? { splits: [], source: 'actual_insource' as const, note: `InSource ${ym}: Events ${act.events.toFixed(2)} / Select ${act.select.toFixed(2)} (Resources ${act.resources.toFixed(2)} stays on 7140)` };
+        plan.splits.push(...splits);
+        planBySeg.set(seg.key, plan);
+      }
+    }
+  }
+
   // existing [wcalloc:] JEs
   const existing = new Map<string, Record<string, any>>();
   let start = 1;
@@ -176,68 +267,94 @@ export async function pushWcAllocations(
     if (rows.length < 1000) break;
     start += 1000;
   }
-
-  const results: Array<Record<string, unknown>> = [];
-  const today = new Date().toISOString().slice(0, 10);
   const { priors, orphans } = resolvePriors(existing, segByKey.values());
   for (const o of orphans) {
     results.push({ month: o.tag, amount: 0, status: 'stale_prior_delete_manually', docNumber: (o.je as Record<string, any>).DocNumber });
   }
-  for (const [month, m] of [...byMonth.entries()].sort()) {
-    const seg = segByKey.get(month)!;
-    const entries = [...m.entries()]
-      .map(([leaf, amt]) => ({ leaf, cls: classFor(leaf), amt }))
-      .filter((x) => x.amt >= 0.005);
-    const total = round2(entries.reduce((s, x) => s + x.amt, 0));
+
+  // Reconciliation: InSource bank lines on 7140 by premium month (memo
+  // "INSOURCE - MAY 2026 PREMIUM") vs the carrier docs.
+  const MONTHS: Record<string, string> = { JANUARY: '01', FEBRUARY: '02', MARCH: '03', APRIL: '04', MAY: '05', JUNE: '06', JULY: '07', AUGUST: '08', SEPTEMBER: '09', OCTOBER: '10', NOVEMBER: '11', DECEMBER: '12' };
+  const bankByMonth = new Map<string, { premium: number; other: number; lines: Array<{ date: string; amount: number; memo: string }> }>();
+  let pstart = 1;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = (await qboQuery(tenantId, `SELECT * FROM Purchase WHERE TxnDate >= '2026-01-01' STARTPOSITION ${pstart} MAXRESULTS 1000`)) as Record<string, any>;
+    const rows: Array<Record<string, any>> = r.QueryResponse?.Purchase ?? r.Purchase ?? [];
+    for (const p of rows) {
+      const memo = trim(p.PrivateNote);
+      if (!/insource/i.test(String(p.EntityRef?.name ?? '')) && !/insource/i.test(memo)) continue;
+      const amt = ((p.Line ?? []) as Array<Record<string, any>>)
+        .filter((l) => String(l.AccountBasedExpenseLineDetail?.AccountRef?.value ?? '') === String(internalAcct.Id))
+        .reduce((a, l) => a + num(l.Amount), 0);
+      if (amt <= 0) continue;
+      const mm = memo.toUpperCase().match(/(JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)\s+(20\d\d)\s+(PREMIUM|ASSESSMENTS?)/);
+      const ym = mm ? `${mm[2]}-${MONTHS[mm[1]]}` : String(p.TxnDate).slice(0, 7);
+      const b = bankByMonth.get(ym) ?? { premium: 0, other: 0, lines: [] };
+      if (mm && mm[3] === 'PREMIUM') b.premium = round2(b.premium + amt); else b.other = round2(b.other + amt);
+      b.lines.push({ date: String(p.TxnDate), amount: round2(amt), memo: memo.slice(0, 60) });
+      bankByMonth.set(ym, b);
+    }
+    if (rows.length < 1000) break;
+    pstart += 1000;
+  }
+  const reconciliation = [...new Set([...carrier.keys(), ...bankByMonth.keys()])].sort().map((ym) => {
+    const a = carrier.get(ym); const b = bankByMonth.get(ym);
+    const portal = a ? round2(a.events + a.select + a.resources) : null;
+    return { month: ym, portalTotal: portal, bankPremium: b?.premium ?? 0, bankOther: b?.other ?? 0, diff: portal === null ? null : round2((b?.premium ?? 0) - portal), lines: b?.lines ?? [] };
+  });
+
+  for (const [segKey, plan] of [...planBySeg.entries()].sort()) {
+    const seg = segByKey.get(segKey)!;
+    const month = segKey;
+    const total = round2(plan.splits.reduce((a, x) => a + x.cents, 0) / 100);
     if (total < 0.01) continue;
     const prior = priors.get(month);
+    const wantKey = plan.splits.map((x) => `${x.cls ? String(x.cls.Id) : ''}|${x.family}|${x.cents}`).sort().join(';');
     if (prior) {
       let net = 0;
       let missingDivision = false;
+      const haveParts: string[] = [];
       for (const l of (prior.Line ?? []) as Array<Record<string, any>>) {
         const d = l.JournalEntryLineDetail;
         if (!d) continue;
-        // Debits always get a division; the credit only when Corp exists.
         const wantsDivision = d.PostingType === 'Debit' || Boolean(divisions.corp);
         if (wantsDivision && !d.DepartmentRef?.value) missingDivision = true;
-        if (d.PostingType === 'Debit') net += num(l.Amount);
+        if (d.PostingType === 'Debit') {
+          net += num(l.Amount);
+          const fam = String(d.DepartmentRef?.value) === divisions.recurring.Id ? 'recurring' : 'event';
+          haveParts.push(`${trim(d.ClassRef?.value)}|${fam}|${Math.round(num(l.Amount) * 100)}`);
+        }
       }
-      if (Math.abs(round2(net) - total) <= 1 && !missingDivision) {
-        results.push({ month, dates: `${seg.start}..${seg.end}`, amount: total, status: 'already_allocated' });
+      if (haveParts.sort().join(';') === wantKey && Math.abs(round2(net) - total) <= 0.005 && !missingDivision) {
+        results.push({ month, dates: `${seg.start}..${seg.end}`, amount: total, status: 'already_allocated', source: plan.source });
         continue;
       }
     }
-    // penny-exact split
-    const floored = entries.map((x) => ({ ...x, cents: Math.floor(x.amt * 100), frac: x.amt * 100 - Math.floor(x.amt * 100) }));
-    let rem = Math.round(total * 100) - floored.reduce((s, x) => s + x.cents, 0);
-    for (const x of [...floored].sort((a, b) => b.frac - a.frac)) {
-      if (rem <= 0) break;
-      x.cents += 1;
-      rem -= 1;
-    }
     const action = prior ? 'true_up' : 'create';
     results.push({
-      month, dates: `${seg.start}..${seg.end}`, amount: total, status: dryRun ? `would_${action}` : `${action}d`,
-      splits: floored.filter((x) => x.cents > 0).map((x) => ({ leaf: x.leaf, amount: x.cents / 100, hasClass: Boolean(x.cls) })),
+      month, dates: `${seg.start}..${seg.end}`, amount: total, status: dryRun ? `would_${action}` : `${action}d`, source: plan.source, note: plan.note,
+      splits: plan.splits.map((x) => ({ leaf: x.leaf, family: x.family, amount: x.cents / 100, hasClass: Boolean(x.cls) })),
     });
     if (dryRun) continue;
-    const lines: Array<Record<string, unknown>> = floored
-      .filter((x) => x.cents > 0)
-      .map((x) => ({
+    const lines: Array<Record<string, unknown>> = plan.splits.map((x) => {
+      const div = x.family === 'recurring' ? divisions.recurring : divisions.event;
+      return {
         DetailType: 'JournalEntryLineDetail',
         Amount: x.cents / 100,
-        Description: `WC premium — ${x.leaf} (${month}, matrix-computed)`,
+        Description: `WC premium — ${x.leaf} (${month}, ${plan.source === 'actual_insource' ? 'InSource actual, matrix split' : 'matrix estimate'})`,
         JournalEntryLineDetail: {
           PostingType: 'Debit',
           AccountRef: { value: String(fieldAcct.Id) },
           ...(x.cls ? { ClassRef: { value: String(x.cls.Id), name: String(x.cls.FullyQualifiedName) } } : {}),
-          DepartmentRef: { value: divForLeaf(x.leaf, x.cls).Id, name: divForLeaf(x.leaf, x.cls).Name },
+          DepartmentRef: { value: div.Id, name: div.Name },
         },
-      }));
+      };
+    });
     lines.push({
       DetailType: 'JournalEntryLineDetail',
       Amount: total,
-      Description: `WC premium reclass — field share out of 7140 (${month})`,
+      Description: `WC premium reclass — field entities (C1 Events + C1 Select) out of 7140 (${month})`,
       JournalEntryLineDetail: {
         PostingType: 'Credit',
         AccountRef: { value: String(internalAcct.Id) },
@@ -248,13 +365,11 @@ export async function pushWcAllocations(
       DocNumber: `WC Alloc ${segmentDocSuffix(seg)}`,
       TxnDate: segmentTxnDate(seg, today),
       PrivateNote:
-        `Workers' comp field premium (entry gross × matrix rate) reclassed 7140 → 5100 per class. ` +
-        `Residual on 7140 = internal WC + carrier deposit/catch-up variance. ` +
-        `8040 placeholder class excluded (no premium paid yet). ` +
+        `Workers' comp field premium reclassed 7140 → 5100 per class. ${plan.note}. ` +
+        `C1 Events → Event-based, C1 Select → Recurring, C1 Resources stays on 7140 (internal). ` +
         `Segment ${seg.start}..${seg.end} (month ∩ block). [wcalloc:${seg.key}]`,
     };
     if (prior) {
-      // legacy month-keyed JEs are re-dated + re-tagged to their first segment here
       // eslint-disable-next-line no-await-in-loop
       await qboEntityUpdate(tenantId, 'JournalEntry', { ...prior, ...header, Line: lines, sparse: false });
     } else {
@@ -262,5 +377,6 @@ export async function pushWcAllocations(
       await qboEntityCreate(tenantId, 'JournalEntry', { ...header, Line: lines });
     }
   }
-  return { ok: true, dryRun, months: results, excluded8040 };
+  return { ok: true, dryRun, months: results, excluded8040, carrierMonths: [...carrier.keys()].sort(), reconciliation };
+
 }
