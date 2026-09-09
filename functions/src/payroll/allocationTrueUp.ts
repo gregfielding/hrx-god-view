@@ -18,6 +18,7 @@ import * as admin from 'firebase-admin';
 
 import { qboQuery, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
 import { buildWireJournal, divisionKindForClassFqn, fetchQboDivisions } from './payrollCostReport';
+import { fetchEvereeBankDebits, matchWiresToBank } from './wireBankMatch';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -51,6 +52,16 @@ export async function trueUpAllocationJes(
     // legacy un-qualified aggregate tags
     if (fid === 'none') wireByTag.set(`none@${ent}`, w);
   }
+  // Bank tie-out (Greg 2026-09-08): the JE credit must equal the BANK debit
+  // that paid the wire, not Everee's moving read. Wires matched to a bank
+  // line (exact, bundled, split, or near-pair drift) get that amount as
+  // their target credit; unmatched wires keep the Everee total.
+  const bankDebits = await fetchEvereeBankDebits(tenantId, '2026-05-01', today);
+  const { matches: bankMatch } = matchWiresToBank(
+    ((journal.wires ?? []) as Array<Record<string, any>>).map((w) => ({ fundingId: trim(w.fundingId), fundingDate: String(w.fundingDate), entityName: String(w.entityName), amount: Number(w.amount) || 0 })),
+    bankDebits,
+  );
+  const bankTied: Array<Record<string, unknown>> = [];
   const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class WHERE Active = true MAXRESULTS 1000')) as Record<string, any>;
   const classIdByFqn = new Map<string, string>(
     ((clsRes.QueryResponse?.Class ?? clsRes.Class ?? []) as Array<Record<string, any>>).map((c) => [String(c.FullyQualifiedName), String(c.Id)]),
@@ -128,8 +139,20 @@ export async function trueUpAllocationJes(
       }
     }
     if (wireTotal <= 0 || credit <= 0) continue;
-    if (Math.abs(credit - wireTotal) > Math.max(1, credit * 0.02)) {
-      if (!opts?.fixCreditDocs?.includes(doc)) {
+    // Bank-tied target: when every wire behind this JE matched a bank line,
+    // the credit target is the bank amount (drift after the pull is real cost).
+    const bm = wires.map((w) => bankMatch.get(trim(w.fundingId)));
+    const allBankMatched = bm.length > 0 && bm.every((m) => m && m.how !== 'unmatched');
+    if (allBankMatched) {
+      const bankTotal = round2(bm.reduce((s2, m) => s2 + (m!.bankCents / 100), 0));
+      if (Math.abs(bankTotal - wireTotal) > 0.005) {
+        bankTied.push({ doc, everee: round2(wireTotal), bank: bankTotal, how: bm.map((m) => m!.how).join('+'), bankDates: [...new Set(bm.flatMap((m) => m!.bankDates))] });
+        wireTotal = bankTotal;
+      }
+    }
+    const fixCredit = Math.abs(credit - wireTotal) > 0.005 && (allBankMatched || opts?.fixCreditDocs?.includes(doc));
+    if (Math.abs(credit - wireTotal) > Math.max(1, credit * 0.02) || (fixCredit && Math.abs(credit - wireTotal) > 0.005)) {
+      if (!fixCredit) {
         skippedDrift.push({ doc, credit, wireTotal });
         continue;
       }
@@ -221,5 +244,5 @@ export async function trueUpAllocationJes(
     // eslint-disable-next-line no-await-in-loop
     await obsCol.doc(doc).set({ patchedFingerprint: fingerprint, patchedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
   }
-  return { ok: true, dryRun, patched, unchanged, skippedDrift, skippedHuman, deferredUnstable, patchedDocs: patchedDocs.slice(0, 50) };
+  return { ok: true, dryRun, patched, unchanged, skippedDrift, skippedHuman, deferredUnstable, bankTied, patchedDocs: patchedDocs.slice(0, 50) };
 }

@@ -1080,3 +1080,16 @@ expense and credited it again → −86.00 Not Specified on 8810 (the 7/13
 Southwest return, 43.00 ×2). Both now negate `Credit:true` purchases.
 Other Expense (6xxx) is now allocated by revenue too (Greg) — nothing
 stays in Corp except what 5010/5100/5310 writers own.
+
+**Bank tie-out for wire JE credits (2026-09-08, late):** `src/payroll/
+wireBankMatch.ts` pairs buildWireJournal fundings with QBO Everee bank
+debits on 5010 (exact ≤4-funding bundles, one funding across 2 debits,
+near-pairs within max($50, 3%) for post-pull drift; −1..+8 day window;
+`ePay0001` fee drafts and `Credit:true` refunds excluded). `allocationTrueUp`
+now sets each JE's credit target to the BANK amount when every wire behind
+it matched (`bankTied` in the result; runner prints "bank-tied"), so Everee's
+moving reads no longer drive the credit. Unmatched wires keep Everee's total
+and the old drift guard. Never-submitted fundings (APPROVED_FOR_FUNDING)
+export: `.scratch/everee_unfunded_list.ts` → `everee_unfunded_approved_for_
+funding.csv` (54 lines, $18,963.67, all 2026-05-15 pay date) — for Greg's
+question to Everee.
