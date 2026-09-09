@@ -210,19 +210,19 @@ service cloud.firestore {
         // Account file uploads (e.g. contracts)
         match /uploads/{uploadId} {
           allow read, create, update, delete: if request.auth != null && (
-            isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId)
+            isHRX() || hasSecurityLevel(tenantId, 5) || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId)
           );
         }
         // Location-level order defaults (overrides per worksite)
         match /location_defaults/{locationKey} {
           allow read, create, update, delete: if request.auth != null && (
-            isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId)
+            isHRX() || hasSecurityLevel(tenantId, 5) || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId)
           );
         }
         // Location-level file uploads (docs have locationKey field)
         match /location_uploads/{uploadId} {
           allow read, create, update, delete: if request.auth != null && (
-            isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId)
+            isHRX() || hasSecurityLevel(tenantId, 5) || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId)
           );
         }
       }

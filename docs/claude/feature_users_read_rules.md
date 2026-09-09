@@ -110,9 +110,10 @@ ReadinessItems, accounts, entity_cost_centers, entity_jurisdictions,
 compliance_documents, workers_comp, requirement_packages,
 onboarding_item_library, onboarding_documents, document_templates,
 document_bundles, signature_sessions, signature_envelopes_public) got
-`hasSecurityLevel(tenantId, 5) ||`. Left untouched on purpose: the three
-`read, create, update, delete` clauses (uploads, location_defaults,
-location_uploads — widening WRITES was not asked) and the one `update`
-clause on worker_i9_supporting_documents. Rule for new collections:
+`hasSecurityLevel(tenantId, 5) ||`. Third pass (Greg: "extend the three write clauses too"): the
+`read, create, update, delete` clauses on accounts/{id}/uploads,
+location_defaults and location_uploads got the same branch, so level-5+
+staff can write there without claims (the worker_i9_supporting_documents
+`update` clause already had it). Rule for new collections:
 staff reads = `isHRX() || hasSecurityLevel(tenantId, 5) || hasTenantRole(...)`,
 never claims alone.
