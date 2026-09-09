@@ -67,7 +67,10 @@ export async function pushOverheadAllocations(
     if (a.AccountType === 'Expense') return true; // 7140 included: its net Corp balance (internal WC after accrual + clearing) spreads by revenue
     if (a.AccountType === 'Other Income') return true; // 9010 card rewards / 9020 interest — by revenue too (Greg 2026-09-08); credits flip sides below
     if (a.AccountType === 'Other Expense') return true; // 6xxx financing / misc — by revenue too (Greg 2026-09-08, later)
-    if (a.AccountType === 'Cost of Goods Sold') return !(['5010', '5100', '5310'].includes(n) || /direct labor|workers'? comp|background.*screening/i.test(name));
+    // COGS: only the three own-writer accounts are excluded (by number, or by
+    // their exact names — "5201 Direct Labor Fees (VenueSmart)" is a fee
+    // sub-account and must be allocated).
+    if (a.AccountType === 'Cost of Goods Sold') return !(['5010', '5100', '5310'].includes(n) || /^(direct labor — field staff|workers'? comp — field staff|background & drug screening)$/i.test(name));
     return false;
   };
   const label = (id: string): string => { const a = acctById.get(id); return a ? `${a.AcctNum ? a.AcctNum + ' ' : ''}${a.FullyQualifiedName}` : `#${id}`; };
