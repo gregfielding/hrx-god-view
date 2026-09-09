@@ -131,6 +131,21 @@ export const handleInboundSms = onRequest(
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
             await w.ref.set({ lastReplyAt: admin.firestore.FieldValue.serverTimestamp(), lastReply: String(messageBody).slice(0, 200) }, { merge: true });
+            // Onboarding follow-up conversations (2026-09-09): Natalie answers these by text herself
+            // (natalieOnboarding.drainSmsConversations) instead of only relaying to Slack.
+            const onb = w.get('onboardingFollowup') as { active?: boolean } | undefined;
+            if (onb?.active === true && !/^\s*(stop|help|start|unstop)\s*$/i.test(String(messageBody))) {
+              await db.collection('natalie_sms_convos').add({
+                tenantId: w.get('tenantId') ?? null,
+                userId: w.get('userId') ?? w.id,
+                workerName: w.get('workerName') ?? null,
+                phoneE164: fromE164,
+                text: String(messageBody).slice(0, 500),
+                messageSid: messageSid ? String(messageSid) : null,
+                status: 'pending',
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              });
+            }
           }
         }
       } catch (watchErr: any) {

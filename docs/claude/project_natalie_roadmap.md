@@ -209,3 +209,7 @@ follow up with them to make sure they do it… another blast tomorrow at 30 mi."
   only redeployed 05:04Z, so three replies (Claudia, Ezequiel ×2, Michelle ×2)
   were silently unrelayed for ~6h. Deploy handleInboundSms in the same list
   as natalieSlackInbox whenever natalieFill/inboundSmsWebhook change.
+
+
+## 2026-09-09 — onboarding + screening follow-ups (24h / 72h / 7d, SMS conversations)
+Shipped `functions/src/natalie/natalieOnboarding.ts` — see project_natalie_onboarding_followups.md. Texts go from the 312 (A2P approved the same day). Tools: `onboarding_followups`, `remove_worker_from_job`. Config: `app_config/natalie.{onboardingFollowups,onboardingChannelId,autoRemoveOnDecline}`.

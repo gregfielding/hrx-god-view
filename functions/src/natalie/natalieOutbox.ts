@@ -448,6 +448,14 @@ export async function drainNatalieOutbox(token: string): Promise<{ followups: nu
   try { await drainBackgroundFollowups(token); } catch (e) { logger.warn('[natalie] background followup drain failed', { err: String(e) }); }
   try { await drainScheduledActions(token); } catch (e) { logger.warn('[natalie] scheduled action drain failed', { err: String(e) }); }
   try { await drainFlexNotices(token); } catch (e) { logger.warn('[natalie] flex notice drain failed', { err: String(e) }); }
+  // Onboarding + screening follow-ups (Greg 2026-09-09): enroll new onboarding starts / screening
+  // orders, run the 24h / 72h / 7d checks, and answer worker replies by text.
+  try {
+    const { enrollOnboardingFollowups, runOnboardingCheckpoints, drainSmsConversations } = await import('./natalieOnboarding');
+    await enrollOnboardingFollowups(token);
+    await runOnboardingCheckpoints(token);
+    await drainSmsConversations(token);
+  } catch (e) { logger.warn('[natalie] onboarding followup drain failed', { err: String(e) }); }
   try { await drainAcceptFills(token); } catch (e) { logger.warn('[natalie] accept fill drain failed', { err: String(e) }); }
   try { await drainCraigslistDrafts(token); } catch (e) { logger.warn('[natalie] craigslist drain failed', { err: String(e) }); }
   try { await drainThinJobDescriptions(token); } catch (e) { logger.warn('[natalie] description autofill drain failed', { err: String(e) }); }

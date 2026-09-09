@@ -138,6 +138,18 @@ export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
     input_schema: { type: 'object', properties: { userId: { type: 'string' }, jobOrderId: { type: 'string' }, packageId: { type: 'string', description: 'AccuSource package id, e.g. 23923 Sodexo Basic, 36841 Database Package' } }, required: ['userId'] },
   },
   {
+    name: 'onboarding_followups',
+    description:
+      "What Natalie is following up on: workers whose onboarding a recruiter started (24h / 72h / 7d checks on tax forms, payroll/direct deposit, I-9, handbook, background form, drug screen; E-Verify for C1 Select) and workers with a screening ordered. Shows what each still owes, what the recruiter owes, the last text reply and how it was read (will_do / needs_link / says_done / declined…). Use when someone asks who is stuck in onboarding, whether a worker finished their paperwork, or what a worker said.",
+    input_schema: { type: 'object', properties: { includeClosed: { type: 'boolean', description: 'Also list finished / removed / parked follow-ups' } } },
+  },
+  {
+    name: 'remove_worker_from_job',
+    description:
+      "Cancel a worker's live assignment(s) on a job order — for a worker who is declining the background check, drug screen, or paperwork, or who a recruiter says to drop. The worker gets the standard cancellation text. Returns the next candidates for the order so you can propose a replacement. Only use when a human in the thread asked to remove them, or the worker clearly declined and the recruiter agreed; say what you did.",
+    input_schema: { type: 'object', properties: { userId: { type: 'string' }, jobOrderId: { type: 'string' }, reason: { type: 'string' } }, required: ['userId', 'jobOrderId', 'reason'] },
+  },
+  {
     name: 'schedule_blast',
     description:
       "Schedule a Worker Reach SMS blast for a job order at a future time (e.g. 'tomorrow 9am at 30 miles'). Runs itself and reports back in this thread. runAt must be ISO-8601 with an offset (America/Denver is -06:00 in September). radiusMiles 15, 30 or 60.",
@@ -680,6 +692,14 @@ export async function runNatalieTool(name: string, input: Record<string, unknown
     case 'order_background_check': {
       const { orderBackgroundCheck } = await import('./natalieFill');
       return orderBackgroundCheck({ tenantId: ctx.tenantId, userId: s(input.userId), jobOrderId: s(input.jobOrderId) || null, packageId: s(input.packageId) || undefined, slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });
+    }
+    case 'onboarding_followups': {
+      const { listOnboardingFollowups } = await import('./natalieOnboarding');
+      return listOnboardingFollowups(ctx.tenantId, { includeClosed: input.includeClosed === true });
+    }
+    case 'remove_worker_from_job': {
+      const { removeWorkerFromJob } = await import('./natalieOnboarding');
+      return removeWorkerFromJob({ tenantId: ctx.tenantId, userId: s(input.userId), jobOrderId: s(input.jobOrderId), reason: s(input.reason) || 'removed by recruiter request', slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });
     }
     case 'schedule_blast': {
       const { scheduleAction } = await import('./natalieFill');
