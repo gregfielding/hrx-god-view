@@ -216,6 +216,8 @@ export const jobPostingSeo = onRequest(
     const path = req.path.replace(/\/+$/, '') || '/';
     const SITE = await siteOrigin(req as unknown as { headers: Record<string, unknown>; hostname?: string });
     try {
+      // NOTE: unreachable in practice — the Cloud Functions runtime 404s /robots.txt and /favicon.ico
+      // before user code runs, so hosting serves a static public/robots.txt instead. Kept for a future runtime.
       if (path === '/robots.txt') {
         res.set('Content-Type', 'text/plain; charset=utf-8').set('Cache-Control', 'public, max-age=3600').status(200)
           .send(`User-agent: *\nDisallow:\n\nSitemap: ${SITE}/sitemap.xml\n`);

@@ -47,10 +47,6 @@
         "destination": "/consent.html"
       },
       {
-        "source": "/robots.txt",
-        "function": "jobPostingSeo"
-      },
-      {
         "source": "/sitemap.xml",
         "function": "jobPostingSeo"
       },
