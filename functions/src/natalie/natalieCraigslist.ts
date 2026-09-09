@@ -26,6 +26,22 @@ const s = (v: unknown): string => (typeof v === 'string' ? v.trim() : v == null 
  * the "Copy Jobs Board Link" button on the job order's Jobs Board tab produces. Thin/missing
  * descriptions are generated first with the shared generator so the post improves too.
  */
+/**
+ * Craigslist titles cap at 70 chars. Post titles often already carry the city ("CORT 201 3rd St,
+ * San Francisco - Gig Work"), so only append the location when it isn't there, and drop the pay
+ * suffix pieces from the right instead of cutting mid-word (the CORT SF draft came out as
+ * "... - San Francisco, CA - $21.50" on 2026-09-09).
+ */
+export function composeTitle(base: string, city: string, state: string, pay: number): string {
+  const loc = [city, state].filter(Boolean).join(', ');
+  const hasCity = !!city && base.toLowerCase().includes(city.toLowerCase());
+  const head = hasCity || !loc ? base : `${base} - ${loc}`;
+  const payFull = Number.isFinite(pay) && pay > 0 ? ` - $${pay.toFixed(2)}/hr, weekly pay` : '';
+  const payShort = Number.isFinite(pay) && pay > 0 ? ` - $${pay.toFixed(2)}/hr` : '';
+  for (const t of [head + payFull, head + payShort, head]) if (t.length <= 70) return t;
+  return head.slice(0, 70).trim();
+}
+
 async function composeDraft(post: Record<string, unknown>, postId: string): Promise<CraigslistDraft> {
   const city = s(post.city) || s((post.worksiteAddress as Record<string, unknown> | undefined)?.city);
   const state = s(post.state) || s((post.worksiteAddress as Record<string, unknown> | undefined)?.state);
@@ -40,9 +56,7 @@ async function composeDraft(post: Record<string, unknown>, postId: string): Prom
     if (generated) description = generated;
   }
   if (!description) throw new Error('no job description on the post and nothing to generate one from — add a description or client notes');
-  const titleBase = s(post.postTitle) || s(post.jobTitle);
-  const payBit = Number.isFinite(pay) && pay > 0 ? ` - $${pay.toFixed(2)}/hr, weekly pay` : '';
-  const title = `${titleBase} - ${[city, state].filter(Boolean).join(', ')}${payBit}`.slice(0, 70);
+  const title = composeTitle(s(post.postTitle) || s(post.jobTitle), city, state, pay);
   const body = `${description.trim()}
 
 Apply Here: ${applyUrl}`;
