@@ -13058,3 +13058,6 @@ export { getCrmReengagementStatus, crmReengagementSendBatch, crmReengagementDail
 // See docs/claude/reference_slack_natalie_persona.md.
 export { natalieSlackInbox } from './natalie/natalieSlackInbox';
 export { natalieMorningBrief } from './natalie/natalieBrief';
+
+// Google Jobs / SEO shell for the public job board (2026-09-09)
+export { jobPostingSeo } from './seo/jobPostingSeo';

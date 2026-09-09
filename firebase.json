@@ -47,6 +47,22 @@
         "destination": "/consent.html"
       },
       {
+        "source": "/robots.txt",
+        "function": "jobPostingSeo"
+      },
+      {
+        "source": "/sitemap.xml",
+        "function": "jobPostingSeo"
+      },
+      {
+        "source": "/*/jobs-board",
+        "function": "jobPostingSeo"
+      },
+      {
+        "source": "/*/jobs-board/*",
+        "function": "jobPostingSeo"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
