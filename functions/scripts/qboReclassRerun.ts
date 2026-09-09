@@ -30,8 +30,8 @@ const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
 async function main(): Promise<void> {
   const mode = process.argv[2];
   const phase = process.argv[3] ?? 'both';
-  if ((mode !== 'dry' && mode !== 'write') || !['both', 'invdiv', 'expdiv', 'reclass', 'trueup', 'wc', 'scrn', 'ovh'].includes(phase)) {
-    console.error('usage: qboReclassRerun.ts <dry|write> [invdiv|expdiv|reclass|trueup|wc|scrn|ovh]');
+  if ((mode !== 'dry' && mode !== 'write') || !['both', 'invdiv', 'expdiv', 'reclass', 'trueup', 'dpay', 'wc', 'scrn', 'ovh'].includes(phase)) {
+    console.error('usage: qboReclassRerun.ts <dry|write> [invdiv|expdiv|reclass|trueup|dpay|wc|scrn|ovh]');
     process.exit(2);
   }
   const dryRun = mode === 'dry';
@@ -61,6 +61,18 @@ async function main(): Promise<void> {
     for (const m of (r.months ?? []) as Array<Record<string, any>>) {
       console.log(`${String(m.month).padEnd(12)} ${String(m.dates ?? '').padEnd(24)} ${String(m.status).padEnd(26)} total ${Number(m.amount ?? 0).toFixed(2)}  classes ${m.classes ?? ''}${m.docNumber ? '  doc ' + m.docNumber : ''}`);
     }
+  }
+  if (phase === 'both' || phase === 'dpay') {
+    const { pushDirectPaymentAllocations } = await import('../src/payroll/directPaymentAllocations');
+    const d = (await pushDirectPaymentAllocations(TENANT, dryRun)) as Record<string, any>;
+    console.log(`\n=== direct worker payments (${mode}) — ${d.payments} payments $${Number(d.total ?? 0).toFixed(2)}; by method ${JSON.stringify(d.byMethod)} ===`);
+    for (const m of (d.months ?? []) as Array<Record<string, any>>) console.log(`${String(m.month).padEnd(12)} ${String(m.dates ?? '').padEnd(24)} ${String(m.status).padEnd(20)} total ${Number(m.amount ?? 0).toFixed(2).padStart(10)}  payments ${m.payments ?? ''}  unattributed ${m.unattributed !== undefined ? Number(m.unattributed).toFixed(2) : ''}  ${(m.splits ?? []).map((x: Record<string, any>) => `${x.cls} ${Number(x.amount).toFixed(2)}`).join(', ')}`);
+    const pl = (d.punchList ?? []) as Array<Record<string, any>>;
+    if (pl.length) { console.log(`punch list (name the event; add {kind:'worker', workerName, class} to payroll_class_overrides): ${pl.length} workers`); for (const x of pl.slice(0, 60)) console.log(`   ${String(x.worker).padEnd(30)} ${Number(x.amount).toFixed(2).padStart(9)}  ${x.payments}× ${x.dates}  ${x.hrx}`);
+      const fs = await import('fs'); const path = await import('path');
+      const out = path.join(__dirname, '..', '.scratch', 'direct_payment_punchlist.csv');
+      fs.writeFileSync(out, ['worker,amount,payments,dates,hrx_status,client_or_event (Mark fills in)', ...pl.map((x) => [x.worker, Number(x.amount).toFixed(2), x.payments, x.dates, x.hrx, ''].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))].join('\n') + '\n');
+      console.log(`punch list CSV → ${out}`); }
   }
   if (phase === 'both' || phase === 'wc') {
     const { pushWcAllocations } = await import('../src/payroll/wcAllocations');

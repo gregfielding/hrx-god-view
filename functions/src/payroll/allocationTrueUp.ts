@@ -189,7 +189,7 @@ export async function trueUpAllocationJes(
     // credit 1260 for the funded amount, no 5010 credit.
     // May (transition month) stays on the old behavior: unmatched → credit
     // 5010 at the funded amount, nothing through 1260.
-    const preModel = String(je.TxnDate) < '2026-06-01' && !allBankMatched;
+    const preModel = false; // May runs the 1260 model too (Greg 2026-09-09)
     const bank = allBankMatched ? round2(bm.reduce((s2, m) => s2 + m!.bankCents / 100, 0)) : preModel ? everee : 0;
     const held = allBankMatched ? round2(bank - everee) : preModel ? 0 : round2(-everee);
     if (allBankMatched && Math.abs(held) > 0.005) bankTied.push({ doc, everee, bank, held, how: bankHow, bankDates: [...new Set(bm.flatMap((m) => m!.bankDates))] });
@@ -299,7 +299,7 @@ export async function trueUpAllocationJes(
     const moves: Array<{ id: string; to: '5010' | '1260'; date: string; cents: number; memo: string }> = [];
     // May is out of scope (transition month; the 5/14 19,161.07 wire pre-funded
     // the May 15 batch Everee still shows as APPROVED_FOR_FUNDING).
-    for (const d of unmatchedDebits) if (d.acct === '5010' && d.date >= '2026-06-01' && stale(d.date)) moves.push({ id: d.id, to: '1260', date: d.date, cents: d.cents, memo: d.memo });
+    for (const d of unmatchedDebits) if (d.acct === '5010' && d.date >= '2026-05-01' && stale(d.date)) moves.push({ id: d.id, to: '1260', date: d.date, cents: d.cents, memo: d.memo });
     for (const d of bankDebits) if (d.acct === '1260' && matchedDebitIds.has(d.id)) moves.push({ id: d.id, to: '5010', date: d.date, cents: d.cents, memo: d.memo });
     for (const mv of moves) {
       bankLineMoves.push({ id: mv.id, date: mv.date, amount: mv.cents / 100, to: mv.to, memo: mv.memo, status: dryRun ? 'would_move' : 'moved' });

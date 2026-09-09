@@ -1187,3 +1187,60 @@ wires stay on the pre-1260 behavior. Result 2026-09-09: 1260 June in
 Nate's 8/12 "$283.95 over-wired" / 8/28 "92.62 to send back". Monthly
 check: `.scratch/balance_1260.ts`; per-JE check: `.scratch/june_je_check.ts
 <start> <end>`.
+
+## May 2026 + September-to-date closed the same way (2026-09-09, afternoon)
+
+Greg: "let's do May the same way - and sept to date". September was
+already clean (only the fresh 9/8 wire, 899.00, waits for the >3-day rule;
+the weekly job pushes it). May needed two things:
+
+**Everee side.** The 5/15 batch (18,963.67) is the only wire whose Everee
+funding never left `APPROVED_FOR_FUNDING` (first Everee test week) yet the
+bank shows the pull (5/14 wire 19,161.07 = 18,963.67 + 197.40). Rule in
+`buildWireJournal`: `APPROVED_FOR_FUNDING` counts as funded only when dated
+before 2026-06-01. `push_missing_wire_jes.ts write 2026-05-01 2026-05-31`
+created `EV Alloc 0515 EVT2`; trueup now uses the bank model for May too
+(`preModel = false`, bank-line moves from 2026-05-01). Match report May:
+bank 106,837.42 = credits 106,837.42, corp 0.00.
+
+**Direct worker payments — new writer `directPaymentAllocations.ts`**
+(`pushDirectPaymentAllocations`, runner phase `dpay`, callable action
+`pushDirectPaymentAllocations`, rides the weekly job right after trueup).
+During the Lone Oak→Everee cutover Greg paid workers straight from the
+bank: Purchases on 5010, memo "<Worker> - C1 Payment Sent By …" (Everee
+wires carry the same phrase, excluded by /everee/ on the memo). Same-day
+duplicate refunds land as Deposits "<Worker> - Cancellation of: …" and are
+netted per worker. One JE per segment, `DP Alloc MMYY B<n>`, tag
+`[dpay:YYYY-MM/B<n>]`: credit 5010 Corp = the bank debits, debit 5010 per
+class (Division by class family), unattributed remainder debited back to
+Corp so the P&L stays honest. Attribution chain per worker name:
+`payroll_class_overrides` kind 'worker' ("First Last" or "Last, First") →
+HRX `timesheet_entries` (workDate from 14 days before the window) → JO →
+`qbo_class_mappings` account mapping → `ACCOUNT_CLASS_RULES` on the account
+name (CORT → Indeed Flex:Cort, Hyatt) → `WIRE_LABEL_ALIASES` on the JO name
+("FIFA Fan Festival Kansas City" → FIFA KC) → JO name. Self-truing on the
+leg set; result carries `punchList` (worker, amount, dates, hrx status).
+
+May result: 138 items 35,872.17 → Cort 15,737.03, Sodexo 1,769.16,
+Carrier 1,399.26, Lollapalooza 1,224.10, FIFA KC 827.07, Hyatt 120.52;
+**14,795.03 across 40 workers unattributed** (35 are HRX users with no
+timesheets/assignments in May, 5 have no HRX user at all). Punch list CSV
+`.scratch/direct_payment_punchlist.csv` went to Mark; when he names the
+event, add `{kind:'worker', workerName, class}` overrides and the weekly
+job (or `write dpay`) pulls the money out of Corp.
+
+May P&L by Division after all this: every account is 0.00 in Corp except
+5010 = 13,274.04 = 14,795.03 unattributed − 1,520.99 `TW Alloc
+Continental` (the TempWorks-straddle pilot leaves its credit in the Corp
+pool by design — the TempWorks cash never hit 5010 in May).
+
+Footguns met today:
+- `qboQuery` returns the entity list UNWRAPPED (`{Class:[…]}`,
+  `{Deposit:[…]}`), not `{QueryResponse:{…}}` — always read
+  `r.QueryResponse?.X ?? r.X`. Two scratch probes silently printed nothing.
+- `users.tenantIds` is a MAP (`{tenantId:{role…}}`) — `array-contains`
+  returns 0. Use `where('tenantId','==',T)` (4,372 docs) and fall back to a
+  `lastName ==` lookup for docs that only carry the map.
+- `WIRE_LABEL_ALIASES` is now module-scope/exported from
+  payrollCostReport.ts (was local to buildWireJournal; the duplicated
+  "Womens Open" entry was removed).

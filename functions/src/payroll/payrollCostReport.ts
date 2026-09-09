@@ -362,6 +362,16 @@ export const savePayrollVenueMapping = onCall(
       return await pushOverheadAllocations(tenantId, request.data?.dryRun !== false);
     }
 
+    // Direct worker payments (bank, not Everee — May 2026 cutover) → client
+    // classes via override / HRX timesheets; unattributed stays Corp and is
+    // returned as `punchList` for ops (Greg 2026-09-09). Level 7.
+    if (action === 'pushDirectPaymentAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushDirectPaymentAllocations } = await import('./directPaymentAllocations');
+      return await pushDirectPaymentAllocations(tenantId, request.data?.dryRun !== false);
+    }
+
     // Invoice Division true-up (Greg 2026-09-08): header Location on every
     // 2026 invoice/credit memo = client family (Sodexo/Flex → Recurring,
     // else Event-based). Run before the revenue reclass so its legs mirror
@@ -1720,6 +1730,18 @@ export async function maybeRunWeeklyClassificationHealth(
       } catch (e) {
         console.error('[classificationHealth] true-up failed', { error: String(e) });
       }
+      // Direct (non-Everee) worker payments — self-truing per segment; new
+      // worker overrides / timesheets pull money out of Corp on the next run.
+      try {
+        const { pushDirectPaymentAllocations } = await import('./directPaymentAllocations');
+        const dp = (await pushDirectPaymentAllocations(tenantId, false)) as Record<string, any>;
+        const changed = ((dp.months ?? []) as Array<Record<string, any>>).filter((m) => m.status === 'created' || m.status === 'true_upd').length;
+        if (changed > 0 && postText) {
+          await postText(`🏦 Direct-payment allocation: ${changed} segment JE(s) written; ${((dp.punchList ?? []) as unknown[]).length} worker(s) still unattributed in Corp.`);
+        }
+      } catch (e) {
+        console.error('[classificationHealth] direct-payment allocation failed', { error: String(e) });
+      }
       // Invoice Divisions first (Greg 2026-09-08): header Location = client
       // family, so the reclass legs below mirror corrected invoices.
       let invoicesRetagged = 0;
@@ -1886,6 +1908,58 @@ export const ACCOUNT_CLASS_RULES: Array<{ re: RegExp; leaf: string }> = [
  * Class list (FQN + exists flag) — the stepping stone to auto-writing
  * the splits into QBO.
  * ------------------------------------------------------------------------- */
+
+// Wire labels come from Everee earning notes and legacy account names;
+// after the 2026-08-31 class restructure the generic matcher missed
+// ~$536K of splits. These aliases encode that day's rulings (RS3 family
+// = Proof of the Pudding; NASCAR/F1 own classes; FIFA fan-fest naming;
+// role-only Flex labels roll to the channel) — checked FIRST in
+// resolveClassFqn, then punctuation-insensitive exact, then containment.
+// Also applied to raw earning notes when resolveVenueText misses
+// ("LIV Golf VA - 35 Hours", "Dallas Fifa W/E 5.31", "7 Hours G6").
+export const WIRE_LABEL_ALIASES: Array<{ re: RegExp; leaf: string }> = [
+  { re: /governors?\s*ball/i, leaf: "Governor's Ball" },
+  { re: /fifa.*kansas\s*city|fifa\s*kc/i, leaf: 'FIFA KC' },
+  { re: /fifa.*dallas|dallas.*fifa/i, leaf: 'FIFA Dallas' },
+  { re: /fifa.*(ny|new\s*york)|adi\s*ny/i, leaf: 'FIFA NY' },
+  { re: /dell\s*diamond|kizer|slammers|legends\s*stadium|h-?e-?b\s*center/i, leaf: 'Proof of Pudding' },
+  // One golf event, many spellings ("Womens PGA Open", "LGPA", "US
+  // Women's Open") — LGPA PP was merged into 26 USGA Women's Open
+  // (Greg 2026-09-01: one event, split only by label naming).
+  { re: /pga|lpga|lgpa/i, leaf: "26 USGA Women's Open" },
+  { re: /us\s*wom[ea]n'?s?\s*open|usga/i, leaf: "26 USGA Women's Open" },
+  // bare "Womens Open" (no US/USGA prefix, no apostrophe) — 2026-06-11 note
+  { re: /\bwom[ea]n'?s?\s*open\b/i, leaf: "26 USGA Women's Open" },
+  { re: /suenos|sueños/i, leaf: 'Suenos Music Festival' },
+  { re: /^legends\s*national\s*account$/i, leaf: 'Legends' },
+  { re: /nascar.*san\s*diego|san\s*diego.*nascar/i, leaf: 'Nascar SanDiego' },
+  { re: /nascar/i, leaf: 'Nascar' },
+  // Plain COTA (after NASCAR above) = the year-round smaller-events class.
+  { re: /\bcota\b/i, leaf: 'COTA' },
+  { re: /liv\s*golf\s*(va|virginia)/i, leaf: 'LIV Golf VA' },
+  { re: /liv\s*golf\s*indy/i, leaf: '2026 LIV Golf Indy' },
+  { re: /cort\b|hazeltine|wbi|woodridge/i, leaf: 'Cort' },
+  { re: /\bunc\b/i, leaf: 'Sodexo' },
+  { re: /minnesota\s*yacht|mn\s*yacht/i, leaf: 'MN Yacht Club' },
+  { re: /minnesota\s*country|mn\s*country/i, leaf: 'MN Country Club' },
+  { re: /g6\s*catering|\bg6\b/i, leaf: 'G6' },
+  { re: /crystal\s*falls|roy\s*kizer/i, leaf: 'Proof of Pudding' },
+  { re: /carrier\b/i, leaf: 'Carrier Enterprise' },
+  { re: /obama/i, leaf: 'Obama Presidential Viewing' },
+  // BTS = Black Caviar's Stanford gig (Greg 2026-09-01, reversing the
+  // earlier Oakland ruling once the "BTS Stanford" JO surfaced).
+  { re: /\bbts\b/i, leaf: 'Black Caviar' },
+  // "18.12 Hours - Kid Cudi" (May) — the class is named "Kid Concert".
+  { re: /kid\s*cudi/i, leaf: 'Kid Concert' },
+  // Final Four weekend at Lucas Oil = VS PO 2105 (Greg 2026-09-01).
+  { re: /final\s*four|march\s*madness/i, leaf: '2026 March Madness' },
+  // Sodexo campus dining roles carry the university name, never "Sodexo".
+  { re: /prairie\s*view|nc\s*a&t|carthage|stanford|\buniversity\b/i, leaf: 'Sodexo' },
+  { re: /sips\s*and\s*sounds/i, leaf: 'Black Caviar' },
+  // Role-only Flex labels — no client attribution available; roll to the
+  // channel parent rather than guessing a client.
+  { re: /^(warehouse (associate|worker|operator|ops).*|loader\s*\/\s*crew.*|production associate.*|forklift driver.*|\d{1,2}:\d{2}.*shift)$/i, leaf: 'Indeed Flex' },
+];
 
 export async function buildWireJournal(
   tenantId: string,
@@ -2103,59 +2177,6 @@ export async function buildWireJournal(
     return best ? best.cls : null;
   };
 
-  // Wire labels come from Everee earning notes and legacy account names;
-  // after the 2026-08-31 class restructure the generic matcher missed
-  // ~$536K of splits. These aliases encode that day's rulings (RS3 family
-  // = Proof of the Pudding; NASCAR/F1 own classes; FIFA fan-fest naming;
-  // role-only Flex labels roll to the channel) — checked FIRST in
-  // resolveClassFqn, then punctuation-insensitive exact, then containment.
-  // Also applied to raw earning notes when resolveVenueText misses
-  // ("LIV Golf VA - 35 Hours", "Dallas Fifa W/E 5.31", "7 Hours G6").
-  const WIRE_LABEL_ALIASES: Array<{ re: RegExp; leaf: string }> = [
-    { re: /governors?\s*ball/i, leaf: "Governor's Ball" },
-    { re: /fifa.*kansas\s*city|fifa\s*kc/i, leaf: 'FIFA KC' },
-    { re: /fifa.*dallas|dallas.*fifa/i, leaf: 'FIFA Dallas' },
-    { re: /fifa.*(ny|new\s*york)|adi\s*ny/i, leaf: 'FIFA NY' },
-    { re: /dell\s*diamond|kizer|slammers|legends\s*stadium|h-?e-?b\s*center/i, leaf: 'Proof of Pudding' },
-    // One golf event, many spellings ("Womens PGA Open", "LGPA", "US
-    // Women's Open") — LGPA PP was merged into 26 USGA Women's Open
-    // (Greg 2026-09-01: one event, split only by label naming).
-    { re: /pga|lpga|lgpa/i, leaf: "26 USGA Women's Open" },
-    { re: /us\s*wom[ea]n'?s?\s*open|usga/i, leaf: "26 USGA Women's Open" },
-    // bare "Womens Open" (no US/USGA prefix, no apostrophe) — 2026-06-11 note
-    { re: /\bwom[ea]n'?s?\s*open\b/i, leaf: "26 USGA Women's Open" },
-    // bare "Womens Open" (no US/USGA prefix, no apostrophe) — 2026-06-11 note
-    { re: /\bwom[ea]n'?s?\s*open\b/i, leaf: "26 USGA Women's Open" },
-    { re: /suenos|sueños/i, leaf: 'Suenos Music Festival' },
-    { re: /^legends\s*national\s*account$/i, leaf: 'Legends' },
-    { re: /nascar.*san\s*diego|san\s*diego.*nascar/i, leaf: 'Nascar SanDiego' },
-    { re: /nascar/i, leaf: 'Nascar' },
-    // Plain COTA (after NASCAR above) = the year-round smaller-events class.
-    { re: /\bcota\b/i, leaf: 'COTA' },
-    { re: /liv\s*golf\s*(va|virginia)/i, leaf: 'LIV Golf VA' },
-    { re: /liv\s*golf\s*indy/i, leaf: '2026 LIV Golf Indy' },
-    { re: /cort\b|hazeltine|wbi|woodridge/i, leaf: 'Cort' },
-    { re: /\bunc\b/i, leaf: 'Sodexo' },
-    { re: /minnesota\s*yacht|mn\s*yacht/i, leaf: 'MN Yacht Club' },
-    { re: /minnesota\s*country|mn\s*country/i, leaf: 'MN Country Club' },
-    { re: /g6\s*catering|\bg6\b/i, leaf: 'G6' },
-    { re: /crystal\s*falls|roy\s*kizer/i, leaf: 'Proof of Pudding' },
-    { re: /carrier\b/i, leaf: 'Carrier Enterprise' },
-    { re: /obama/i, leaf: 'Obama Presidential Viewing' },
-    // BTS = Black Caviar's Stanford gig (Greg 2026-09-01, reversing the
-    // earlier Oakland ruling once the "BTS Stanford" JO surfaced).
-    { re: /\bbts\b/i, leaf: 'Black Caviar' },
-    // "18.12 Hours - Kid Cudi" (May) — the class is named "Kid Concert".
-    { re: /kid\s*cudi/i, leaf: 'Kid Concert' },
-    // Final Four weekend at Lucas Oil = VS PO 2105 (Greg 2026-09-01).
-    { re: /final\s*four|march\s*madness/i, leaf: '2026 March Madness' },
-    // Sodexo campus dining roles carry the university name, never "Sodexo".
-    { re: /prairie\s*view|nc\s*a&t|carthage|stanford|\buniversity\b/i, leaf: 'Sodexo' },
-    { re: /sips\s*and\s*sounds/i, leaf: 'Black Caviar' },
-    // Role-only Flex labels — no client attribution available; roll to the
-    // channel parent rather than guessing a client.
-    { re: /^(warehouse (associate|worker|operator|ops).*|loader\s*\/\s*crew.*|production associate.*|forklift driver.*|\d{1,2}:\d{2}.*shift)$/i, leaf: 'Indeed Flex' },
-  ];
 
   // ── Greg's persisted overrides (payroll_class_overrides) ──
   const paymentOverrides = new Map<string, string>();
@@ -2240,6 +2261,10 @@ export async function buildWireJournal(
           const fd = trim(f.fundingDate);
           if (!(fd >= startDate && fd <= endDate)) return false;
           const st = trim(f.status);
+          // May 2026 exception (Greg 2026-09-09): the May 15 batch stayed
+          // APPROVED_FOR_FUNDING in Everee but WAS funded by the 5/14 wire
+          // (19,161.07 = 18,963.67 + the 197.40 funding) — count it.
+          if (st === 'APPROVED_FOR_FUNDING' && fd < '2026-06-01') return true;
           if (st === 'APPROVED_FOR_FUNDING') {
             const k = `${entityName}|${fd.slice(0, 7)}`;
             const u = unfundedOptimistic.get(k) ?? { entityName, month: fd.slice(0, 7), lines: 0, amount: 0 };
