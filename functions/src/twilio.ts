@@ -1318,8 +1318,8 @@ export async function sendWorkerMessageInternal(
     try {
       messageResult = await client.messages.create(messageParams);
     } catch (twilioError: any) {
-      // When using Messaging Service, fall back to direct number on invalid SID (21705) or A2P (30034)
-      if ((twilioError.code === 21705 || twilioError.code === 30034) && messageParams.messagingServiceSid && messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
+      // When using Messaging Service, fall back to direct number on invalid SID (21705), no eligible sender in the pool yet (21703 — seen 2026-09-09 minutes after adding Natalie's numbers), or A2P (30034)
+      if (([21703, 21705, 30034].includes(Number(twilioError.code))) && messageParams.messagingServiceSid && messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
         logger.warn(`Messaging Service failed (${twilioError.code}), falling back to direct number ${messagingPhoneNumber}. Error: ${twilioError.message}`);
         try {
           messageResult = await client.messages.create({

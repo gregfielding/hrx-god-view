@@ -64,8 +64,13 @@ verified the same day). What changed and what's left:
   Idempotent. The service has `use_inbound_webhook_on_number=true` and both numbers already point
   at `handleInboundSms`, so no inbound URL change is needed. Sticky sender is on (a worker keeps
   getting the same number).
-- After that: send a Natalie text (e.g. a worker_status/offer via Slack) and confirm the `from` is
-  the 312 in the Twilio Messages log; error 30034 should disappear for those sends.
+- **Done 2026-09-09 ~18:00Z (Greg ran the script):** pool = +1 737 264 6753, +1 312 663 8247.
+  First test send 1–2 min later was accepted then **failed async with 21703** ("no phone number
+  available") — newly added numbers take a few minutes to attach to the campaign. Second test
+  ~5 min later: **delivered, from +1 737 264 6753**, service MG2dd6…, no error. Sticky sender picks
+  one of the two per recipient; if Natalie should present ONLY the 312, remove the 737 from the pool
+  (it's a spare). 21703 is not in PERMANENT_SMS_ERROR_CODES, so the failed test did not stamp the
+  recipient. 21703 was added to the sync fallback list next to 21705/30034.
 
 ## Opt-out keywords (C1 Messaging) — changed 2026-09-07
 
