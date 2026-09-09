@@ -344,6 +344,15 @@ export const savePayrollVenueMapping = onCall(
       return await trueUpAllocationJes(tenantId, request.data?.dryRun !== false);
     }
 
+    // Overhead allocation by revenue ratio (Greg 2026-09-08): Corp overhead
+    // → Event-based / Recurring per segment, same account both sides. Level 7.
+    if (action === 'pushOverheadAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushOverheadAllocations } = await import('./overheadAllocations');
+      return await pushOverheadAllocations(tenantId, request.data?.dryRun !== false);
+    }
+
     // Invoice Division true-up (Greg 2026-09-08): header Location on every
     // 2026 invoice/credit memo = client family (Sodexo/Flex → Recurring,
     // else Event-based). Run before the revenue reclass so its legs mirror
@@ -1740,6 +1749,16 @@ export async function maybeRunWeeklyClassificationHealth(
         const scr = (await pushScreeningAllocations(tenantId, false)) as Record<string, any>;
         const { pushWcAllocations } = await import('./wcAllocations');
         const wc = (await pushWcAllocations(tenantId, false).catch((e) => ({ ok: false, error: String(e) }))) as Record<string, any>;
+        // Overhead by revenue ratio runs LAST — it reads the Divisions the
+        // steps above just settled (invoices, WC). Skipped when invoices were
+        // re-tagged this run (same QBO query-lag reason as the reclass).
+        if (invoicesRetagged === 0) {
+          const { pushOverheadAllocations } = await import('./overheadAllocations');
+          const ovh = (await pushOverheadAllocations(tenantId, false).catch((e) => ({ ok: false, error: String(e) }))) as Record<string, any>;
+          const ovhMade = ((ovh.months ?? []) as Array<Record<string, any>>).filter((x) => /d$/.test(String(x.status)) && x.status !== 'already_allocated');
+          if (ovhMade.length && postText) await postText(`📐 Overhead allocation: ${ovhMade.length} segment entr${ovhMade.length === 1 ? 'y' : 'ies'} posted/re-trued by revenue ratio.`);
+          void wc;
+        }
         const created = ((scr.charges ?? []) as Array<Record<string, any>>).filter((c) => c.status === 'created');
         if (created.length && postText) {
           await postText(`🧾 Screening allocation: posted ${created.length} AccuSource reclass entr${created.length === 1 ? 'y' : 'ies'} (5010 → 5300 per class).`);

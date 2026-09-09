@@ -30,8 +30,8 @@ const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
 async function main(): Promise<void> {
   const mode = process.argv[2];
   const phase = process.argv[3] ?? 'both';
-  if ((mode !== 'dry' && mode !== 'write') || !['both', 'invdiv', 'reclass', 'trueup', 'wc'].includes(phase)) {
-    console.error('usage: qboReclassRerun.ts <dry|write> [invdiv|reclass|trueup|wc]');
+  if ((mode !== 'dry' && mode !== 'write') || !['both', 'invdiv', 'reclass', 'trueup', 'wc', 'ovh'].includes(phase)) {
+    console.error('usage: qboReclassRerun.ts <dry|write> [invdiv|reclass|trueup|wc|ovh]');
     process.exit(2);
   }
   const dryRun = mode === 'dry';
@@ -80,6 +80,16 @@ async function main(): Promise<void> {
     }
     const x = (w.excluded8040 ?? {}) as Record<string, number>;
     console.log(`8040 placeholder class EXCLUDED (no premium paid yet): ${x.entries ?? 0} entries, gross ${Number(x.gross ?? 0).toFixed(2)}, would-have-been premium ${Number(x.premium ?? 0).toFixed(2)}`);
+  }
+  if (phase === 'both' || phase === 'ovh') {
+    const { pushOverheadAllocations } = await import('../src/payroll/overheadAllocations');
+    const o = (await pushOverheadAllocations(TENANT, dryRun)) as Record<string, any>;
+    console.log(`\n=== overhead allocation by revenue ratio (${mode}) — Corp/untagged overhead → Event-based / Recurring ===`);
+    for (const m of (o.months ?? []) as Array<Record<string, any>>) {
+      console.log(`${String(m.month).padEnd(12)} ${String(m.dates ?? '').padEnd(24)} ${String(m.status).padEnd(20)} overhead ${Number(m.amount ?? 0).toFixed(2).padStart(10)}  event ${String(m.ratioEvent ?? '')}% (${m.ratioBasis ?? ''})  ${m.accounts ?? 0} accounts`);
+      for (const d of (m.detail ?? []) as Array<Record<string, any>>) console.log(`      ${String(d.account).slice(0, 60).padEnd(60)} ${String(d.source).padEnd(9)} ${Number(d.amount).toFixed(2).padStart(10)} → E ${Number(d.event).toFixed(2).padStart(10)} / R ${Number(d.recurring).toFixed(2).padStart(9)}  (${d.lines} lines)`);
+    }
+    if ((o.manualAllocationsToDelete ?? []).length) console.log(`⚠️ hand-keyed allocation JEs still present (double-count until deleted): ${(o.manualAllocationsToDelete as string[]).join('; ')}`);
   }
   if (phase === 'both' || phase === 'trueup') {
     const { trueUpAllocationJes } = await import('../src/payroll/allocationTrueUp');

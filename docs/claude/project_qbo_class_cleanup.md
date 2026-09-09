@@ -1003,3 +1003,26 @@ all 13 lines ($3,824.00), snapshot-first. Merchant rule
 match) routes future Uncategorized fee lines; Tabitha's bank-rec picks
 should use 7150 too. Tempworks WEB PAY lines on 6020 ($5,413) untouched
 (Lone Oak era).
+
+### Overhead allocation automated — `Ovh Alloc` (2026-09-08, latest)
+
+Greg: "most of our expenses are handled this way… you can automate?" Yes:
+`src/payroll/overheadAllocations.ts` (`pushOverheadAllocations`) replaces
+Tabitha's hand-keyed month-end `Rev Allocation` JE. Per segment (month ∩
+block): every overhead line sitting in Corp / Unalloc. OR untagged is
+credited where it sits and debited Event-based / Recurring at the
+**calendar month's** revenue ratio (invoice header Division; Sodexo + Flex
+= Recurring), same account both sides (sub-accounts included, so the
+"parent −X / child +X" artifacts can't happen). Eligible = all Expense-
+type accounts except 7140 and Uncategorized/Ask My Accountant, plus COGS
+overhead except 5010/5100/5310 (own writers). 6xxx Other Expense and 9xxx
+Other Income stay in Corp. Tag `[ovh:YYYY-MM/B<n>]`, DocNumber
+`Ovh Alloc MMYY B<n>`, self-truing on the leg set, since 2026-05. Runs
+LAST in the weekly job (after invoices/WC settle; skipped in a run that
+re-tagged invoices), callable `pushOverheadAllocations`, runner `ovh`.
+Result flags `manualAllocationsToDelete` — Tabitha's `Rev Allocation
+063026` (#7846) must be DELETED (not patched): `.scratch/delete_je.ts 7846
+"Rev Allocation 063026" write` (snapshot to backup_deleted_je_7846.json).
+Dry run 2026-09-08: May–Sep, 10 segments, ~$500K of overhead; June 94.63%
+Event. Decisions taken by default (Greg silent): 5200/5300 by revenue
+ratio like everything else; 9010/9020 stay Corp.
