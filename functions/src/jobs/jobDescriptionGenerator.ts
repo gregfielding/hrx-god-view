@@ -18,6 +18,21 @@ import { stripPostingMarkdown } from '../integrations/fieldglass/enrichment';
 export const JOB_DESCRIPTION_MODEL = process.env.JOB_DESCRIPTION_MODEL || 'claude-opus-5';
 export const THIN_DESCRIPTION_CHARS = 300;
 
+/**
+ * "Thin" = worth (re)generating. Under 300 chars is obvious; the other common case (Greg 2026-09-09,
+ * CORT SF: 633 chars, one paragraph, no headings, straight from the client's order) is a single
+ * blob of client boilerplate under ~1,500 chars. Anything the generator itself wrote is never thin —
+ * it carries the "What you will do" / "Why work with C1" structure.
+ */
+export function isThinDescription(text: string): boolean {
+  const d = (text || '').trim();
+  if (d.length < THIN_DESCRIPTION_CHARS) return true;
+  if (d.length >= 1500) return false;
+  const lines = d.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const hasBullets = /(^|\n)\s*[-•*]\s/.test(d);
+  return lines.length <= 2 && !hasBullets;
+}
+
 export interface JobDescriptionInput {
   jobTitle?: string;
   jobOrderName?: string;
@@ -118,7 +133,11 @@ export async function buildInputFromPosting(tenantId: string, post: Record<strin
   if (joId) jo = ((await db.doc(`tenants/${tenantId}/job_orders/${joId}`).get()).data() ?? {}) as Record<string, unknown>;
   const scoping = ((jo.deal as Record<string, unknown> | undefined)?.stageData as Record<string, unknown> | undefined)?.scoping as Record<string, unknown> | undefined ?? {};
   const compliance = (scoping.compliance ?? {}) as Record<string, unknown>;
-  const clientNotes = [s(jo.jobDescriptionFromClient) || s(jo.jobOrderDescription) || s(jo.jobDescription), s(post.jobDescriptionPrompt)].filter(Boolean).join('\n\n');
+  // When the post's current description is client boilerplate (thin), it IS the client notes — keep
+  // its facts (duties, weekend shifts, etc.) as source material for the rewrite.
+  const existing = s(post.jobDescription);
+  const existingAsNotes = existing && isThinDescription(existing) && !post.jobDescriptionGeneratedAt ? existing : '';
+  const clientNotes = [s(jo.jobDescriptionFromClient) || s(jo.jobOrderDescription) || s(jo.jobDescription), s(post.jobDescriptionPrompt), existingAsNotes].filter(Boolean).join('\n\n');
   const addr = (jo.worksiteAddress ?? {}) as Record<string, unknown>;
   const input: JobDescriptionInput = {
     jobTitle: s(post.jobTitle) || s(jo.jobTitle),
@@ -158,7 +177,7 @@ export async function generateDescriptionForPosting(tenantId: string, postId: st
   const snap = await ref.get();
   if (!snap.exists) return null;
   const post = snap.data() as Record<string, unknown>;
-  if (!opts.force && s(post.jobDescription).length >= THIN_DESCRIPTION_CHARS) return s(post.jobDescription);
+  if (!opts.force && !isThinDescription(s(post.jobDescription))) return s(post.jobDescription);
   const { input, toggles, hasSource } = await buildInputFromPosting(tenantId, post);
   if (!hasSource) { logger.info('[jobDescription] no source material; skipping', { postId }); return null; }
   const text = await generateJobDescriptionText(input, toggles);

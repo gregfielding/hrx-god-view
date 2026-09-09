@@ -12,7 +12,7 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { postAsNatalie } from '../messaging/slackAsNatalie';
 import { recordNatalieAction } from './natalieAudit';
-import { THIN_DESCRIPTION_CHARS, generateDescriptionForPosting } from '../jobs/jobDescriptionGenerator';
+import { isThinDescription, generateDescriptionForPosting } from '../jobs/jobDescriptionGenerator';
 import { craigslistCategoryFor, craigslistExpiryDays, craigslistPostUrl, craigslistSiteFor, type CraigslistDraft, type CraigslistPosting } from '../shared/craigslist';
 
 const db = admin.firestore();
@@ -51,7 +51,7 @@ async function composeDraft(post: Record<string, unknown>, postId: string): Prom
   const compensation = Number.isFinite(pay) && pay > 0 ? `$${pay.toFixed(2)}/hour, paid weekly` : 'Competitive hourly pay, paid weekly';
   const applyUrl = `https://hrxone.com/c1/jobs-board/${postId}`;
   let description = s(post.jobDescription);
-  if (description.length < THIN_DESCRIPTION_CHARS) {
+  if (isThinDescription(description)) {
     const generated = await generateDescriptionForPosting(TENANT, postId, { by: 'natalie-craigslist', force: true });
     if (generated) description = generated;
   }

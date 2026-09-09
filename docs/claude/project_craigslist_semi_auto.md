@@ -44,6 +44,11 @@
 - **Delivery status 2026-09-09:** OnTrac Denver Warehouse Operative gig (post Xu8hmPdNbCu8gLtP8ufM)
   published by Greg (CL id 7963535589), live URL recorded via `craigslistMarkPosted`
   (`functions/.scratch/cl-mark-posted.ts` pattern), status 'posted', expires 2026-10-09.
+  CORT 201 3rd St SF gig (JkbZMuMgbLmUEN17Cbrt) published same day ($10, SF bay area > city of
+  san francisco > SOMA / south beach > labor gigs; area select via `form_input` on the hidden
+  `select[name=n]` with value "SF bay area", then a sub-area radio page, then a neighborhood page).
+  The Children's Creativity Museum CORT order (8zdLxX4CwnqPQw0ez6GM) only has a private draft post
+  with no description or pay rate — not postable until a recruiter publishes it.
 - The form's existing `craigslistUrl` field doubles as the "live URL" input; `craigslist.status`
   is set to 'posted' by the tool or (TODO) by the form when a craigslist.org URL is pasted.
 - Site map covers the metros C1 works in; unknown cities fall back to the state default.
@@ -56,7 +61,10 @@
   adaptive thinking, 2,500 tokens, structured template (~350–600 words), same show/hide toggle rules.
   The recruiters' button and Natalie both use it. Override model with env `JOB_DESCRIPTION_MODEL`.
 - **Auto-fill**: `drainThinJobDescriptions` (inbox tick, max 3/tick) writes descriptions for active
-  public posts under 300 chars when there is source material (client notes / prompt / company+title),
+  public posts whose description `isThinDescription()` — under 300 chars, OR a single blob of client
+  boilerplate under 1,500 chars with no bullets/headings (CORT's 633-char paragraph, 2026-09-09:
+  "this is an example of the ai generated description not firing") — when there is source material;
+  the thin text itself is fed to the generator as client notes so its facts survive the rewrite (client notes / prompt / company+title),
   stamps `jobDescriptionGeneratedAt/By`, and tells #recruiting; no-source posts are flagged once
   (`descriptionAutoFillSkipped`). Off switch: `app_config/natalie.autoFillDescriptions=false`.
 - **Craigslist body = the job board description verbatim** + `Apply Here: https://hrxone.com/c1/jobs-board/<postId>`

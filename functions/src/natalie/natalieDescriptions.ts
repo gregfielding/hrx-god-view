@@ -9,7 +9,7 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { postAsNatalie } from '../messaging/slackAsNatalie';
 import { recordNatalieAction } from './natalieAudit';
-import { THIN_DESCRIPTION_CHARS, buildInputFromPosting, generateDescriptionForPosting } from '../jobs/jobDescriptionGenerator';
+import { isThinDescription, buildInputFromPosting, generateDescriptionForPosting } from '../jobs/jobDescriptionGenerator';
 
 const db = admin.firestore();
 const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
@@ -27,8 +27,8 @@ export async function drainThinJobDescriptions(token: string): Promise<number> {
     if (budget === 0) break;
     const post = d.data() as Record<string, unknown>;
     if (s(post.visibility) && s(post.visibility) !== 'public') continue;
-    if (s(post.jobDescription).length >= THIN_DESCRIPTION_CHARS) continue;
-    if (post.descriptionAutoFillAt || post.descriptionAutoFillSkipped) continue;
+    if (!isThinDescription(s(post.jobDescription))) continue;
+    if (post.descriptionAutoFillAt || post.descriptionAutoFillSkipped || post.jobDescriptionGeneratedAt) continue;
     const title = s(post.postTitle) || s(post.jobTitle) || d.id;
     try {
       const { hasSource } = await buildInputFromPosting(TENANT, post);
