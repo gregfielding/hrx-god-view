@@ -16,10 +16,10 @@
    #recruiting (`app_config/natalie.recruitingChannelId`, default C0BF02MEKUP), status 'ready'.
 3. A human (or Claude driving Greg's Chrome on request: "post the Craigslist queue") opens
    `draft.postUrl`, pastes title/body/location/compensation, uses contact email
-   n.brooks@c1staffing.com, pays (jobs are paid on every US site: ~$10–20 Denver, $75 SF Bay;
-   gigs free in most metros), and pastes the live URL into the post's Craigslist URL field — or
-   tells Natalie, who calls `craigslist_mark_posted`. Status 'posted', `expiresAt` = +30d (jobs) /
-   +7d (gigs).
+   the account's email (see gotcha below), pays (jobs are paid on every US site: ~$10–20 Denver,
+   $75 SF Bay; Denver gigs are $7 — verified 2026-09-09), and pastes the live URL into the post's
+   Craigslist URL field — or tells Natalie, who calls `craigslist_mark_posted`. Status 'posted',
+   `expiresAt` = +30d (paid posts in both sections; the preview page says so).
 4. The drain flips 'posted' → 'expired' at expiry and nudges the #recruiting thread 2 days before.
 5. Replies: Craigslist relays to Natalie's mailbox; she triages like any applicant email.
 
@@ -28,6 +28,21 @@
 `craigslist_mark_posted {postId, liveUrl}`. Prompt rule: she never claims to have published.
 
 ## Notes / gotchas
+- **Reply email is NOT a form field.** Craigslist replies go to the email of the account you post
+  from (Greg's account → g.fielding@c1staffing.com via CL mail relay). The draft's
+  `contactEmail: n.brooks@` only applies if someone posts from a Craigslist account registered to
+  Natalie's mailbox. Until then: Greg forwards CL relay replies to Natalie, or applicants use the
+  Apply Here link (preferred — it lands in HRX).
+- **Driving the posting flow from Claude-in-Chrome (2026-09-09, Greg's account, tab 1557242510):**
+  the flow is area → type ("gig offered") → "I want to hire someone" → category ("labor gigs $7") →
+  details form → map → images → preview. Ref-based clicks (`ref_N`) do NOT register on
+  post.craigslist.org — use coordinate clicks from a screenshot. `form_input` works on the real
+  inputs (title, city, ZIP, description textarea, compensation). The area combobox is a styled
+  SPAN over a hidden `select[name=n]`; leaving it at the site default ("denver, CO") is fine. Pick
+  "use CL mail relay". The preview page is the last stop before "publish" → payment; leave that
+  click to Greg.
+- **Delivery status 2026-09-09:** OnTrac Denver Warehouse Operative gig (post Xu8hmPdNbCu8gLtP8ufM)
+  staged to the preview step in Greg's account; awaiting his publish + $7.
 - The form's existing `craigslistUrl` field doubles as the "live URL" input; `craigslist.status`
   is set to 'posted' by the tool or (TODO) by the form when a craigslist.org URL is pasted.
 - Site map covers the metros C1 works in; unknown cities fall back to the state default.

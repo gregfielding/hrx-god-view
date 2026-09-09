@@ -45,7 +45,7 @@ export interface CraigslistPosting {
   requestedAt?: string | null;   // ISO
   requestedBy?: string | null;   // uid
   postedAt?: string | null;      // ISO — set when the live URL is recorded
-  expiresAt?: string | null;     // ISO — postedAt + 30 days (jobs) / 7 days (gigs)
+  expiresAt?: string | null;     // ISO — postedAt + 30 days (paid jobs AND paid gigs; verified on Denver labor gigs 2026-09-09)
   renewedAt?: string | null;
   lastError?: string | null;
   slackTs?: string | null;       // #recruiting thread where the draft was posted
@@ -88,7 +88,7 @@ export function craigslistSiteFor(city: string, state: string): string {
   return STATE_DEFAULT_SITE[(state || '').trim().toUpperCase()] || 'denver';
 }
 
-/** jobs are paid on every US site; gigs are the temporary-work section (paid in some metros). */
+/** jobs are paid on every US site; gigs are the temporary-work section (paid in most metros — Denver labor gigs $7, 2026-09-09). */
 export function craigslistCategoryFor(jobType: string): { category: string; slug: string } {
   return (jobType || '').toLowerCase() === 'gig'
     ? { category: 'gigs > labor gigs', slug: 'lbg' }
@@ -102,5 +102,9 @@ export function craigslistPostUrl(site: string, slug: string): string {
 }
 
 export function craigslistExpiryDays(jobType: string): number {
-  return (jobType || '').toLowerCase() === 'gig' ? 7 : 30;
+  // Craigslist's preview says "posting will expire in 30 days" for paid posts in both sections
+  // (checked on a Denver labor gig, 2026-09-09). Free gig posts in small metros expire in 7 days;
+  // C1's metros are all paid, so 30 is the safe default either way.
+  void jobType;
+  return 30;
 }
