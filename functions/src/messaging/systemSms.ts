@@ -25,11 +25,13 @@ const db = admin.firestore();
 
 export const SYSTEM_WELCOME_MESSAGE_TYPE_ID = 'system_onboarding_welcome';
 const DEFAULT_WELCOME_TEMPLATE_NAME = 'System Onboarding Welcome (SMS EN)';
+// 2026-09-09: this is the A2P opt-in CONFIRMATION (Twilio requires brand, fee line,
+// frequency, HELP and STOP in it) — keep identical to the registered OptInMessage.
 const DEFAULT_WELCOME_TEMPLATE_BODY =
-  'Thanks for signing up with C1 Staffing — we are excited to help you find your next opportunity.';
+  "C1 Staffing: You're opted in to employment texts (shift offers, reminders, check-ins). Msg frequency varies. Msg & data rates may apply. Reply HELP for help, STOP to opt out.";
 const DEFAULT_WELCOME_TEMPLATE_NAME_ES = 'System Onboarding Welcome (SMS ES)';
 const DEFAULT_WELCOME_TEMPLATE_BODY_ES =
-  'Gracias por registrarte con C1 Staffing. Nos emociona ayudarte a encontrar tu proxima oportunidad.';
+  'C1 Staffing: Aceptaste recibir mensajes de texto de empleo (ofertas de turnos, recordatorios, registro de llegada). La frecuencia varia. Pueden aplicar tarifas de mensajes y datos. Responde HELP para ayuda o STOP para cancelar.';
 
 function normalizeRole(val: any): string {
   return String(val || '')
