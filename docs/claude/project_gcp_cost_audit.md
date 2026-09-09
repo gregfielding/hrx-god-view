@@ -64,3 +64,8 @@ Managed bulk delete bills as ordinary deletes (nam5 $0.02/100k) → ~$360 one-ti
 - `evereeReconcileCron` = 20% of all function CPU (every 2h × 8.6 min, sweeps every worker across tenants; ~$12/mo). 2h cadence is a product decision (I-9 auto-clear ≤2h) — only change with Greg.
 - `fetchFollowedCompanyNews` scheduled full `users` scan + per-user subcollection query (~28.6k reads/run).
 - Everything else (Pub/Sub $3.6, Scheduler $3.9, Secret Manager $2.3, Artifact Registry $2.1, hosting) is noise.
+
+**Throughput / economics measured 2026-09-09 17:20-17:40Z** (so nobody re-learns this):
+- Managed bulk-delete ramped 150/s → ~1,500-1,700/s by +45 min and plateaued there (~12-14 days for 1.8B). Billed deletes + 1 read per 1,000 index entries.
+- TTL policies (`gcloud firestore fields ttls update timestamp --collection-group=X --enable-ttl`) started deleting within ~6 min even while state still said CREATING: `document/ttl_deletion_count` ≈ 500-1,000/s. Billed deletes only. Stacks with the managed op.
+- A parallel Cloud Run Job (`junk-deleter`, code in functions/.scratch/junk-deleter/, 3,844 ID-prefix ranges × N tasks × BulkWriter) did ~1,000 deletes/s per task on 3-field docs, ~100/s on test_logs (27 KB docs → hundreds of index entries each). BUT keys-only `select()` queries bill a FULL document read per key (verified: read_count rose ≈ delete_count during the test; `api/billable_read_units` is Enterprise-only, no data). So a DIY deleter costs +$0.06/100k = ~$1,080 for 1.8B keys — more than the ~$50/day of storage it would save by finishing a week sooner. Only use it if the managed op + TTL stall. Job left deployed (not running); smoke executions cancelled.
