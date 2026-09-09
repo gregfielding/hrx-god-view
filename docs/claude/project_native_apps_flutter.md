@@ -360,3 +360,43 @@ successfully registered" (the Sep 30 deadline is satisfied). Non-blocking
 warning on the release dashboard: "App optimization is below our threshold —
 Obfuscation (2%)", fix by Feb 2027 (enable R8 minify/shrinkResources in
 `android/app/build.gradle` release config for 1.0.1).
+
+### ☠️ Build 9 / Play 1.0.0 (8): SIGN-UP WAS DEAD (found 2026-09-09 from Greg's device recording)
+
+Greg recorded the App-Review walkthrough on his iPhone (new-account path)
+and the sign-up form stopped at "Address lookup is unavailable. Missing
+Google Places API key." with Continue disabled forever. Cause: the app reads
+`GOOGLE_PLACES_API_KEY` / `GOOGLE_MAPS_API_KEY` via `String.fromEnvironment`
+(compile-time `--dart-define`), and BOTH store builds on 2026-09-05 were
+built with no defines at all (`ios/Flutter/Generated.xcconfig` had only the
+Flutter version defines). Address validation is required by
+`SignupAddressState.canContinue`, so no new worker could ever register from
+either store build — an App Review reviewer creating an account would have
+hit it too. Firebase was unaffected (it initializes from the native
+GoogleService-Info.plist / google-services.json, not the defines).
+
+Fix (c1_app cb1e586): `tool/build_release.sh` builds ipa + appbundle with
+`--dart-define-from-file=.env.release.json` (gitignored via `.env.*`; holds
+`GOOGLE_PLACES_API_KEY`). **Never build a store binary without it.** Key
+requirements: Places API (New) `places.googleapis.com`,
+`geocoding-backend.googleapis.com`, `static-maps-backend.googleapis.com` on
+hrx1-d3beb (all enabled). The app's HTTP calls carry no iOS/Android app
+identity headers, so the key must be API-restricted only (no
+application restriction). Existing "API key 4" (085f4da8…) is
+iOS-restricted with an empty bundle list — not safe to reuse. Creating a
+new key via `gcloud services api-keys create` was blocked by the Claude
+permission classifier on 2026-09-09; Greg to create/approve.
+
+Same session, from the recording: cell phone is now prefilled on the
+sign-up form from the number typed at sign-in; the code screen's "Send a new
+code / Use a different number" row wraps instead of clipping; sign-up page
+horizontal padding 24→8pt (the section card adds 16 on top); the
+Delete-account dialog no longer claims it "opens your email app" (it files
+`account_deletion_requests/{uid}`). Version is `1.0.0+10` — ASC keeps
+version string 1.0.0 (rejected versions accept a new build), Play gets a new
+Production release 1.0.0 (10) replacing the in-review one.
+
+Recording findings that need no code: Greg's phone showed a BBC News banner
+mid-recording (turn on Do Not Disturb), and the sign-in flow sends the SMS
+code BEFORE it knows whether the number has an account (by design —
+`sendOtp` then `checkOtp` returns candidates/none).
