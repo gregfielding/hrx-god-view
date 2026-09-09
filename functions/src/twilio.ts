@@ -43,6 +43,19 @@ function getA2PCampaign() {
   return TWILIO_A2P_CAMPAIGN.value() || process.env.TWILIO_A2P_CAMPAIGN;
 }
 
+/**
+ * Natalie Brooks' own A2P 10DLC messaging service (campaign approved 2026-09-09; sender pool =
+ * +1 312 663 8247 and +1 737 264 6753). Texts she sends — every messageTypeId starting with
+ * "natalie_" — go out from her number so workers see one consistent sender and can reply to her
+ * directly. Everything else stays on the C1 Messaging toll-free 888. If the pool is empty/unready,
+ * Twilio answers 21705/30034 and the existing fallback below retries from the 888.
+ * Override/disable with env NATALIE_MESSAGING_SERVICE_SID (empty string = off).
+ */
+const NATALIE_MESSAGING_SERVICE_SID = process.env.NATALIE_MESSAGING_SERVICE_SID ?? 'MG2dd6557d05d9be9044c996fa568a8a39';
+function isNatalieMessage(messageTypeId?: string): boolean {
+  return typeof messageTypeId === 'string' && messageTypeId.startsWith('natalie_');
+}
+
 // Initialize CORS middleware
 const corsHandler = cors({ origin: true });
 
@@ -1258,6 +1271,7 @@ export async function sendWorkerMessageInternal(
       client = getTwilioClient();
       messagingPhoneNumber = getMessagingPhoneNumber();
       a2pCampaign = getA2PCampaign();
+      if (isNatalieMessage(context?.messageTypeId) && NATALIE_MESSAGING_SERVICE_SID) a2pCampaign = NATALIE_MESSAGING_SERVICE_SID;
     } catch (configError: any) {
       logger.error('Failed to load Twilio configuration:', configError);
       return {
