@@ -102,7 +102,17 @@ claim) saw the mirror-driven checkmarks + completion dates. Cause: the
 claims)` + own-doc branches; the client swallows the permission error
 and falls back silently. Fix (deployed): added `hasSecurityLevel(tenantId,
 5)` (doc-based, tenant-scoped) to those four reads — Greg's rule: ALL
-internal staff (securityLevel 5+) see this. ⚠️ `hasTenantRole(tenantId,
-request.auth.token.roles)` still gates ~52 other collection reads
-claims-only; any "recruiter X can't see Y but Greg can" report is almost
-certainly the same cause — add `hasSecurityLevel(tenantId, 5)` there too.
+internal staff (securityLevel 5+) see this. Same day, second pass (Greg: "fix the other reads"): every remaining
+`allow read` clause that had `hasTenantRole(claims)` without a doc-based
+branch (21 more: tenants, job_orders, shifts, applicationDrafts,
+userGroups, savedSmartGroups, messagingSequences, employee/assignment
+ReadinessItems, accounts, entity_cost_centers, entity_jurisdictions,
+compliance_documents, workers_comp, requirement_packages,
+onboarding_item_library, onboarding_documents, document_templates,
+document_bundles, signature_sessions, signature_envelopes_public) got
+`hasSecurityLevel(tenantId, 5) ||`. Left untouched on purpose: the three
+`read, create, update, delete` clauses (uploads, location_defaults,
+location_uploads — widening WRITES was not asked) and the one `update`
+clause on worker_i9_supporting_documents. Rule for new collections:
+staff reads = `isHRX() || hasSecurityLevel(tenantId, 5) || hasTenantRole(...)`,
+never claims alone.
