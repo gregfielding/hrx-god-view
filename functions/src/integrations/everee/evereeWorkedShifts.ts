@@ -70,9 +70,10 @@ export interface EvereeFullyClassifiedHoursSegment {
 
 /**
  * Break segment emitted on the create/update body. `segmentConfigCode`
- * is one of Everee's configured break codes — `DEFAULT_UNPAID` covers
- * the standard meal/rest break case; custom codes can be created for
- * paid-break variants but aren't in scope for C1's flow.
+ * must be one of Everee's configured break codes — on C1's instances that
+ * is ONLY `DEFAULT_UNPAID`. There is no `DEFAULT_PAID`: sending one 404s
+ * ("No break configured for code", 2026-09-09). Paid breaks are never put
+ * on the wire; both composers note them on the shift instead.
  */
 export interface EvereeWorkedShiftBreak {
   segmentConfigCode: string;
