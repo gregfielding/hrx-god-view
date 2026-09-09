@@ -1113,3 +1113,19 @@ callable, bank-tied credits, skips wires ≤3 days old): `EV Alloc 0820 SEL`
 **8/6 ePay0001 5,209.50 left on 5010 — too big for a fee, Tabitha to
 identify.** Not-a-wire on 5010: 6/11 Alberto Guerrero 1,800 (Railbird
 contractor, classed) — fine.
+
+## Classed expenses follow the CLIENT's Division (Greg 2026-09-08, latest)
+
+Greg: travel etc. must NOT be spread by revenue — each is classed (usually
+via Expensify) with the customer; Sodexo + Indeed Flex family (Cort…) →
+Recurring, everything else → Event-based. Only UNCLASSED overhead gets the
+ratio. `src/payroll/expenseDivisions.ts` (`pushExpenseDivisions`): every
+2026 Purchase/Bill with a client-classed P&L line gets the header Division
+of that class family (`National`/overhead classes ignored; mixed-family
+purchases take the larger side and are reported). Runs in the weekly job
+BEFORE the overhead ratio (which skips that run if anything was re-tagged
+— QBO query lag); callable `pushExpenseDivisions`; runner `expdiv` (in
+`both`, stops before `ovh` after a non-zero write). First write 2026-09-08:
+207 purchases (149 untagged→Event, 31 Corp→Event, 22 untagged→Recurring,
+4 Corp→Recurring, 1 Event→Recurring). `.scratch/retag_8840_event.ts` is
+superseded.

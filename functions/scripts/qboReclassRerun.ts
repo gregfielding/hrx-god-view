@@ -30,8 +30,8 @@ const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
 async function main(): Promise<void> {
   const mode = process.argv[2];
   const phase = process.argv[3] ?? 'both';
-  if ((mode !== 'dry' && mode !== 'write') || !['both', 'invdiv', 'reclass', 'trueup', 'wc', 'scrn', 'ovh'].includes(phase)) {
-    console.error('usage: qboReclassRerun.ts <dry|write> [invdiv|reclass|trueup|wc|scrn|ovh]');
+  if ((mode !== 'dry' && mode !== 'write') || !['both', 'invdiv', 'expdiv', 'reclass', 'trueup', 'wc', 'scrn', 'ovh'].includes(phase)) {
+    console.error('usage: qboReclassRerun.ts <dry|write> [invdiv|expdiv|reclass|trueup|wc|scrn|ovh]');
     process.exit(2);
   }
   const dryRun = mode === 'dry';
@@ -89,6 +89,16 @@ async function main(): Promise<void> {
       console.log(`${String(c.date).padEnd(12)} purchase #${String(c.purchaseId).padEnd(6)} ${String(c.status).padEnd(20)} ${Number(c.amount ?? 0).toFixed(2).padStart(9)}  ${c.screens ?? ''} screens  ${(c.splits ?? []).map((x: Record<string, any>) => `${x.leaf} ${Number(x.amount).toFixed(2)}`).join(', ')}`);
     }
     for (const f of (sc.divisionFixes ?? []) as Array<Record<string, any>>) console.log(`  ${f.docNumber} #${f.id}: ${f.status} (${f.lines} debit line(s) → Recurring)`);
+  }
+  if (phase === 'both' || phase === 'expdiv') {
+    const { pushExpenseDivisions } = await import('../src/payroll/expenseDivisions');
+    const e = (await pushExpenseDivisions(TENANT, dryRun)) as Record<string, any>;
+    console.log(`\n=== expense divisions (${mode}) — classed purchases/bills → client family Division ===`);
+    for (const m of (e.months ?? []) as Array<Record<string, any>>) console.log(`${String(m.month).padEnd(10)} classed ${String(m.checked).padStart(4)}  ${dryRun ? 'would change' : 'changed'} ${String(m.changed).padStart(4)}  $${Number(m.amount ?? 0).toFixed(2)}`);
+    const flips = new Map<string, number>(); for (const c of (e.changes ?? []) as Array<Record<string, any>>) flips.set(`${c.from} → ${c.to}`, (flips.get(`${c.from} → ${c.to}`) ?? 0) + 1);
+    console.log('by flip:', JSON.stringify([...flips.entries()]));
+    if ((e.mixed ?? []).length) console.log(`mixed-family purchases (header took the larger side): ${JSON.stringify(e.mixed)}`);
+    if (!dryRun && Number(e.changed) > 0 && phase === 'both') { console.log(`\n${e.changed} purchase(s) re-tagged. STOPPING before the ratio pass — rerun: qboReclassRerun.ts write ovh`); return; }
   }
   if (phase === 'both' || phase === 'ovh') {
     const { pushOverheadAllocations } = await import('../src/payroll/overheadAllocations');

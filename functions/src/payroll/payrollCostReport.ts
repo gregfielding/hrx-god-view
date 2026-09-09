@@ -344,6 +344,15 @@ export const savePayrollVenueMapping = onCall(
       return await trueUpAllocationJes(tenantId, request.data?.dryRun !== false);
     }
 
+    // Expense Division from the class (Greg 2026-09-08): classed purchase/bill
+    // lines follow their client's family; runs before the overhead ratio. Level 7.
+    if (action === 'pushExpenseDivisions') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushExpenseDivisions } = await import('./expenseDivisions');
+      return await pushExpenseDivisions(tenantId, request.data?.dryRun !== false);
+    }
+
     // Overhead allocation by revenue ratio (Greg 2026-09-08): Corp overhead
     // → Event-based / Recurring per segment, same account both sides. Level 7.
     if (action === 'pushOverheadAllocations') {
@@ -1752,7 +1761,19 @@ export async function maybeRunWeeklyClassificationHealth(
         // Overhead by revenue ratio runs LAST — it reads the Divisions the
         // steps above just settled (invoices, WC). Skipped when invoices were
         // re-tagged this run (same QBO query-lag reason as the reclass).
-        if (invoicesRetagged === 0) {
+        // Classed expenses take their client's Division first (Greg 2026-09-08);
+        // a run that re-tags any waits for the next run before the ratio pass
+        // (same QBO query-lag reason as invoices).
+        let expensesRetagged = 0;
+        try {
+          const { pushExpenseDivisions } = await import('./expenseDivisions');
+          const ed = (await pushExpenseDivisions(tenantId, false)) as Record<string, any>;
+          expensesRetagged = Number(ed.changed) || 0;
+          if (expensesRetagged > 0 && postText) await postText(`🏷️ Expense Divisions: ${expensesRetagged} classed purchase(s) re-tagged to the client's Division.`);
+        } catch (e) {
+          console.error('[classificationHealth] expense divisions failed', { error: String(e) });
+        }
+        if (invoicesRetagged === 0 && expensesRetagged === 0) {
           const { pushOverheadAllocations } = await import('./overheadAllocations');
           const ovh = (await pushOverheadAllocations(tenantId, false).catch((e) => ({ ok: false, error: String(e) }))) as Record<string, any>;
           const ovhMade = ((ovh.months ?? []) as Array<Record<string, any>>).filter((x) => /d$/.test(String(x.status)) && x.status !== 'already_allocated');
