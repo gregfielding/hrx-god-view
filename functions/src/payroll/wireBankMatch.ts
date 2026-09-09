@@ -9,7 +9,11 @@
  *      entity family, funded −1..+8 days before the debit)
  *   2. exact: one funding split across 2 debits
  *   3. near: one funding ↔ one debit, same family/window, |diff| ≤
- *      max($50, 3%) — the funding total drifted after the bank pulled
+ *      max($100, 5%) — the funding total drifted after the bank pulled
+ *   4. tolerant bundles (≤5 fundings within the same tolerance; drift on
+ *      the largest)
+ *   5. month close-out: leftover debits spread pro rata over leftover
+ *      wires of the same month when the sides are within ±25%
  * Returns, per wire, the bank amount it should be booked at.
  */
 import { qboQuery } from '../integrations/quickbooks/qboAuth';
@@ -18,7 +22,7 @@ const trim = (v: unknown): string => String(v ?? '').trim();
 const day = (s: string): number => Math.floor(Date.parse(s.slice(0, 10)) / 86400000);
 
 export type WireIn = { fundingId: string; fundingDate: string; entityName: string; amount: number };
-export type WireMatch = { fundingId: string; bankCents: number; bankDates: string[]; debitIds: string[]; how: 'exact' | 'split' | 'near' | 'unmatched' };
+export type WireMatch = { fundingId: string; bankCents: number; bankDates: string[]; debitIds: string[]; how: 'exact' | 'split' | 'near' | 'prorata' | 'unmatched' };
 export type BankDebit = { id: string; date: string; ent: 'EVT' | 'SEL' | 'ANY'; cents: number; memo: string };
 
 export async function fetchEvereeBankDebits(tenantId: string, start: string, end: string): Promise<BankDebit[]> {
@@ -78,12 +82,58 @@ export function matchWiresToBank(wiresIn: WireIn[], debitsIn: BankDebit[]): { ma
       if (ds[i].cents + ds[j].cents === w.cents) { take(w, ds[i], ds[i].cents, 'split'); take(w, ds[j], ds[j].cents, 'split'); ds[i].open = false; ds[j].open = false; break outer; }
     }
   }
-  // 3. near single pairs (drift after the pull) — closest first
+  // 3. near single pairs (drift after the pull) — closest first, ≤ max($100, 5%)
+  const tol = (cents: number): number => Math.max(10000, Math.round(cents * 0.05));
   const pairs: Array<{ w: W; d: BankDebit & { open: boolean }; diff: number }> = [];
   for (const w of wires.filter((w) => w.open)) for (const d of debits.filter((d) => d.open && okEnt(w, d) && inWin(w, d))) {
     const diff = Math.abs(d.cents - w.cents);
-    if (diff <= Math.max(5000, Math.round(w.cents * 0.03))) pairs.push({ w, d, diff });
+    if (diff <= tol(d.cents)) pairs.push({ w, d, diff });
   }
   for (const p of pairs.sort((a, b) => a.diff - b.diff)) { if (!p.w.open || !p.d.open) continue; take(p.w, p.d, p.d.cents, 'near'); p.d.open = false; }
+  // 4. tolerant bundles: a debit ≈ sum of ≤5 open wires within tol; the
+  //    drift is booked on the largest wire in the bundle (closest bundle first)
+  for (const d of debits.filter((d) => d.open).sort((a, b) => b.cents - a.cents)) {
+    const cands = wires.filter((w) => w.open && okEnt(w, d) && inWin(w, d)).sort((a, b) => b.cents - a.cents).slice(0, 12);
+    let best: { picked: W[]; diff: number } | null = null;
+    const search = (i: number, sum: number, picked: W[]): void => {
+      if (picked.length >= 2) { const diff = Math.abs(sum - d.cents); if (diff <= tol(d.cents) && (!best || diff < best.diff)) best = { picked: [...picked], diff }; }
+      if (picked.length >= 5) return;
+      for (let j = i; j < cands.length; j++) { if (sum + cands[j].cents > d.cents + tol(d.cents)) continue; search(j + 1, sum + cands[j].cents, [...picked, cands[j]]); }
+    };
+    search(0, 0, []);
+    if (best) {
+      const b = best as { picked: W[]; diff: number };
+      const sum = b.picked.reduce((s, w) => s + w.cents, 0);
+      const drift = d.cents - sum;
+      const largest = [...b.picked].sort((a, x) => x.cents - a.cents)[0];
+      for (const w of b.picked) take(w, d, w.cents + (w === largest ? drift : 0), 'near');
+      d.open = false;
+    }
+  }
+  // 5. month close-out: leftover unmatched debits vs leftover unmatched wires
+  //    in the same calendar month (wires older than 3 days) — the bank total
+  //    is spread across those wires pro rata when the two sides are within
+  //    ±25% of each other (Everee voids/reissues after several pulls). Months
+  //    with debits but no wires (or vice versa) stay unmatched and are reported.
+  const today = new Date().toISOString().slice(0, 10);
+  const fresh = (w: W): boolean => day(today) - day(w.date) <= 3;
+  const months = new Set([...wires.filter((w) => w.open).map((w) => w.date.slice(0, 7)), ...debits.filter((d) => d.open).map((d) => d.date.slice(0, 7))]);
+  for (const ym of months) {
+    const ws = wires.filter((w) => w.open && !fresh(w) && w.date.slice(0, 7) === ym);
+    const ds = debits.filter((d) => d.open && d.date.slice(0, 7) === ym);
+    const wSum = ws.reduce((s, w) => s + w.cents, 0);
+    const dSum = ds.reduce((s, d) => s + d.cents, 0);
+    if (!ws.length || !ds.length || wSum <= 0) continue;
+    const ratio = dSum / wSum;
+    if (ratio < 0.75 || ratio > 1.25) continue;
+    let assigned = 0;
+    ws.sort((a, b) => b.cents - a.cents);
+    ws.forEach((w, i) => {
+      const share = i === ws.length - 1 ? dSum - assigned : Math.round(w.cents * ratio);
+      assigned += share;
+      w.m.bankCents = share; w.m.bankDates = ds.map((d) => d.date); w.m.debitIds = ds.map((d) => d.id); w.m.how = 'prorata'; w.open = false;
+    });
+    for (const d of ds) d.open = false;
+  }
   return { matches: new Map(wires.map((w) => [w.id, w.m])), unmatchedDebits: debits.filter((d) => d.open).map(({ open: _o, ...d }) => d) };
 }

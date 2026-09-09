@@ -1093,3 +1093,10 @@ and the old drift guard. Never-submitted fundings (APPROVED_FOR_FUNDING)
 export: `.scratch/everee_unfunded_list.ts` → `everee_unfunded_approved_for_
 funding.csv` (54 lines, $18,963.67, all 2026-05-15 pay date) — for Greg's
 question to Everee.
+Matcher passes (final): exact bundles → one-wire/two-debits → near pairs
+(max $100/5%) → tolerant bundles (≤5, drift on the largest) → **month
+close-out** (leftover debits of a month spread pro rata over the month's
+leftover wires older than 3 days when the sides are within ±25%). Result
+2026-09-08: 104/105 wires tied; projected 5010 Corp = 0.00 for May–Aug,
+Sept = the un-posted 9/8 wire only. `.scratch/match_report.ts <start>
+<end>` prints how each wire matched + the month view.
