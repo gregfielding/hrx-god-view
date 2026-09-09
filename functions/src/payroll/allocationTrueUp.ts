@@ -171,7 +171,11 @@ export async function trueUpAllocationJes(
       }
       credit = wireTotal;
     }
-    const scale = credit / wireTotal;
+    // Scale the splits to the CREDIT by their own sum (not Everee's wire
+    // total — after a bank tie-out those differ, and the one-cent loop below
+    // cannot absorb a multi-dollar gap → "debits not equal to credits").
+    const splitSum = [...combined.values()].reduce((s2, x) => s2 + x.amt, 0);
+    const scale = splitSum > 0 ? credit / splitSum : 1;
     const floored = [...combined.values()].map((x) => ({ ...x, cents: Math.floor(x.amt * scale * 100), frac: x.amt * scale * 100 - Math.floor(x.amt * scale * 100) }));
     let rem = Math.round(credit * 100) - floored.reduce((s, x) => s + x.cents, 0);
     for (const x of [...floored].sort((a, b) => b.frac - a.frac)) {
@@ -179,6 +183,7 @@ export async function trueUpAllocationJes(
       x.cents += 1;
       rem -= 1;
     }
+    if (rem > 0 && floored.length) floored.sort((a, b) => b.cents - a.cents)[0].cents += rem; // any residue onto the largest line
     const want = floored.filter((x) => x.cents > 0).map((x) => ({ cls: x.cls, amt: x.cents / 100 }));
     const haveLines = ((je.Line ?? []) as Array<Record<string, any>>)
       .filter((l) => l.JournalEntryLineDetail?.PostingType === 'Debit');
@@ -207,7 +212,10 @@ export async function trueUpAllocationJes(
       continue;
     }
     const prev = lastObs.get(doc);
-    if (prev !== fingerprint) {
+    // A bank-anchored CREDIT correction is not subject to the read-stability
+    // guard (the guard exists for Everee's flapping class splits; the credit
+    // target here comes from the bank line and does not move).
+    if (prev !== fingerprint && !fixCredit) {
       deferredUnstable.push({ doc, reason: prev ? 'read differs from previous run' : 'first observation', wireTotal: round2(wireTotal) });
       // eslint-disable-next-line no-await-in-loop
       await obsCol.doc(doc).set({ fingerprint, wireTotal: round2(wireTotal), credit: round2(credit), observedAt: admin.firestore.FieldValue.serverTimestamp(), dryRun }, { merge: true });
