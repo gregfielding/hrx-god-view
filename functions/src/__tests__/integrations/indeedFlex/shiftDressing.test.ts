@@ -85,3 +85,23 @@ describe('shiftDressing — resolveShiftDressing', () => {
     expect(d.wcCode).to.equal('8292');
   });
 });
+
+describe('resolveShiftDressing — positionJobTitle (2026-09-09)', () => {
+  it('reports the resolved JO position title so the shift can carry the canonical name', () => {
+    const out = resolveShiftDressing({
+      roleName: 'Warehouse Operative',
+      joGigPositions: [{ jobTitle: 'Package Handler (Warehouse Operative)', payRate: '19.29' }],
+    });
+    expect(out.positionJobTitle).to.equal('Package Handler (Warehouse Operative)');
+    expect(out.paySource).to.equal('jo_position');
+  });
+
+  it('omits positionJobTitle when only an account position matched', () => {
+    const out = resolveShiftDressing({
+      roleName: 'Warehouse Operative',
+      joGigPositions: [],
+      accountPricing: { positions: [{ jobTitle: 'Warehouse Operative', payRate: 18 }] },
+    });
+    expect(out.positionJobTitle).to.equal(undefined);
+  });
+});

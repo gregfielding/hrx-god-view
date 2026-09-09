@@ -20,6 +20,7 @@ import {
   resolveJobOrderRequirementsForPosition,
   type GigPositionRequirementOverrides,
 } from '../../shared/jobOrder/resolveJobOrderRequirements';
+import { shiftBelongsToPosition } from '../../shared/jobOrder/matchPositionTitle';
 
 /** Lowercase trim for comparing job order workflow status (open, cancelled, on_hold, …). */
 export function normalizeJobOrderStatusValue(status: unknown): string {
@@ -665,7 +666,7 @@ export class JobsBoardService {
    * @param tenantId Tenant ID
    * @param jobOrderId Job Order ID
    * @param filterDays Number of days in future to include (default: 90 for event gigs)
-   * @param positionJobTitle When set (Gig per-position posts), only shifts with matching defaultJobTitle
+   * @param positionJobTitle When set (Gig per-position posts), only shifts belonging to that position (loose title match)
    */
   async fetchActiveShiftsForJobOrder(
     tenantId: string, 
@@ -758,7 +759,17 @@ export class JobsBoardService {
 
       const shifts = shiftsRaw
         // For Gig per-position posts: only include shifts for this position
-        .filter((shift) => !positionJobTitle || shift.defaultJobTitle === positionJobTitle)
+        // Loose per-position pairing (see shared/jobOrder/matchPositionTitle):
+        // an exact compare hid every Flex-born shift whose title differed from
+        // the JO position ("Warehouse Operative" vs "Package Handler (Warehouse
+        // Operative)") — no shifts, no Apply buttons (JO #501, 2026-09-09).
+        .filter((shift) =>
+          shiftBelongsToPosition({
+            shiftJobTitle: shift.defaultJobTitle,
+            positionJobTitle,
+            gigPositions,
+          }),
+        )
         // Multi-day aware overlap filter: include if the shift range overlaps [todayISO, cutoffISO]
         .filter((shift) => {
           // Open shift = ongoing/rolling crew: live while it has no end date or
