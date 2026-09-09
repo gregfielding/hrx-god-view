@@ -988,3 +988,18 @@ write and after Tabitha drops her Rev Allocation 7140 lines: 5,000 cash −
 3,599.97 clearing + 405.74 accrued = **1,805.77** (1,400.03 of it the May
 top-up). Runner `dry wc` prints allocations, payment clearings, and the
 bank-vs-portal reconciliation.
+
+### Gusto fees → 7150 Payroll Platform Fees — Internal (2026-09-08, latest)
+
+Greg: 6020 Payroll Financing Fees is wrong for Gusto fees (internal payroll
+processing). Gusto "GUSTO - FEE" bank lines were scattered: 8100 Software
+(Jan–Apr ×6), 5200 Payroll Platform Fees (May/Jul/Aug ×4 — that account is
+Everee/FIELD fees), 6020 (Jun/Sep ×2), plus the 5/6 "OUTSTANDING BALANCE
+per Gusto" $311 (= the May fee). New account **7150 Payroll Platform Fees —
+Internal** (Expense; name differs from 5200 because QBO names are unique).
+`.scratch/gusto_fees_to_7150.ts dry|write` creates the account and moves
+all 13 lines ($3,824.00), snapshot-first. Merchant rule
+`qbo_merchant_rules/gusto_fee_7150` (pattern `gusto - fee`, descriptor
+match) routes future Uncategorized fee lines; Tabitha's bank-rec picks
+should use 7150 too. Tempworks WEB PAY lines on 6020 ($5,413) untouched
+(Lone Oak era).
