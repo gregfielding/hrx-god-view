@@ -12,8 +12,8 @@
  * Same account both sides — sub-accounts included — so account totals never
  * move; only the Division columns do.
  *
- * Eligible: every Expense-type account except 7140 (the WC accrual writer
- * owns internal vs field), plus COGS overhead (5200 platform fees, 5210
+ * Eligible: every Expense-type account (7140's NET Corp balance — internal
+ * WC after the accrual and payment clearing — included), plus COGS overhead (5200 platform fees, 5210
  * ConnectTeam, 5300 recruiting, 5400 supplies…) except 5010 / 5100 / 5310
  * which have their own writers. Other Income (9xxx) and Other Expense
  * (6xxx financing) stay in Corp. Our own allocation JEs and Tabitha's
@@ -36,7 +36,11 @@ if (!admin.apps.length) {
 const trim = (v: unknown): string => String(v ?? '').trim();
 const num = (v: unknown): number => Number(v) || 0;
 const round2 = (n: number): number => Math.round(n * 100) / 100;
-const OUR_DOCS = /^(EV Alloc|TW Alloc|EV Pay Alloc|Rev Reclass|WC Alloc|WC Pay|Scrn Alloc|Screen Alloc|Ovh Alloc)/i;
+// Only THIS writer's own entries and the hand-keyed Rev Allocation are left
+// out of the base. Other automation JEs are part of the real balance — e.g.
+// the WC accrual/clearing lines ARE what 7140 Corp holds after the field
+// share leaves (Greg 2026-09-08: allocate 7140 by revenue too).
+const OUR_DOCS = /^(Ovh Alloc)/i;
 const MANUAL_ALLOC = /^Rev Allocation/i;
 
 export async function pushOverheadAllocations(
@@ -59,7 +63,7 @@ export async function pushOverheadAllocations(
     const n = String(a.AcctNum ?? '');
     const name = String(a.Name ?? '');
     if (/uncategorized|ask my accountant/i.test(name)) return false; // not yet booked anywhere real
-    if (a.AccountType === 'Expense') return !(n === '7140' || /workers'? comp.*internal/i.test(name));
+    if (a.AccountType === 'Expense') return true; // 7140 included: its net Corp balance (internal WC after accrual + clearing) spreads by revenue
     if (a.AccountType === 'Cost of Goods Sold') return !(['5010', '5100', '5310'].includes(n) || /direct labor|workers'? comp|background.*screening/i.test(name));
     return false;
   };
@@ -209,7 +213,7 @@ export async function pushOverheadAllocations(
       TxnDate: segmentTxnDate(seg, today),
       PrivateNote:
         `Overhead allocated by revenue ratio (Event-based ${(rt.ratio * 100).toFixed(2)}% / Recurring ${((1 - rt.ratio) * 100).toFixed(2)}%, ${rt.basis} revenue by invoice Division). ` +
-        `Same account both sides; Corp / untagged overhead moved to the client Divisions. Excludes 5010/5100/5310/7140 (own writers), 6xxx, 9xxx. ` +
+        `Same account both sides; Corp / untagged overhead moved to the client Divisions. Excludes 5010/5100/5310 (own writers), 6xxx, 9xxx. ` +
         `Segment ${seg.start}..${seg.end} (month ∩ block). [ovh:${seg.key}]`,
     };
     if (prior) {

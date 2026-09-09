@@ -1014,8 +1014,11 @@ credited where it sits and debited Event-based / Recurring at the
 **calendar month's** revenue ratio (invoice header Division; Sodexo + Flex
 = Recurring), same account both sides (sub-accounts included, so the
 "parent −X / child +X" artifacts can't happen). Eligible = all Expense-
-type accounts except 7140 and Uncategorized/Ask My Accountant, plus COGS
-overhead except 5010/5100/5310 (own writers). 6xxx Other Expense and 9xxx
+type accounts (7140 INCLUDED since Greg's later call — its NET Corp balance
+after the WC accrual + clearing spreads by revenue) except Uncategorized/
+Ask My Accountant, plus COGS overhead except 5010/5100/5310 (own writers).
+Base excludes only `Ovh Alloc` and `Rev Allocation` docs; every other JE is
+real balance (e.g. a Scrn Alloc credit on 5300 nets that account's base). 6xxx Other Expense and 9xxx
 Other Income stay in Corp. Tag `[ovh:YYYY-MM/B<n>]`, DocNumber
 `Ovh Alloc MMYY B<n>`, self-truing on the leg set, since 2026-05. Runs
 LAST in the weekly job (after invoices/WC settle; skipped in a run that
