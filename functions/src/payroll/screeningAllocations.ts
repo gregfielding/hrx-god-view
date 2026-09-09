@@ -21,7 +21,7 @@
  */
 import * as admin from 'firebase-admin';
 
-import { qboQuery, qboEntityCreate } from '../integrations/quickbooks/qboAuth';
+import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
 import { ACCOUNT_CLASS_RULES, divisionKindForClassFqn, fetchQboDivisions } from './payrollCostReport';
 
 if (!admin.apps.length) {
@@ -96,18 +96,13 @@ export async function pushScreeningAllocations(
     accts.find((a) => /recruitment/i.test(String(a.Name)));
   if (!recruitAcct) throw new Error('5310 Background & Drug Screening account not found');
   const RECRUIT = String(recruitAcct.Id);
-  // Divisions per class family (Tabitha matrix, Greg 2026-09-06); the
-  // National/overhead bucket is unattributable → Corp/Unalloc. if present.
+  // Division: EVERY background/drug screen is Recurring (Greg 2026-09-08 —
+  // screening is a recurring-business cost regardless of the client class it
+  // is split to, National included). The class split per client stays.
   const divisions = await fetchQboDivisions(tenantId);
-  const divisionRefForLeaf = (leaf: string, cls?: Record<string, any>): Record<string, string> | undefined => {
-    if (leaf === OVERHEAD_CLASS) {
-      return divisions.corp ? { value: divisions.corp.Id, name: divisions.corp.Name } : undefined;
-    }
-    const d = divisionKindForClassFqn(String(cls?.FullyQualifiedName ?? leaf)) === 'recurring'
-      ? divisions.recurring
-      : divisions.event;
-    return { value: d.Id, name: d.Name };
-  };
+  const recurringRef = { value: divisions.recurring.Id, name: divisions.recurring.Name };
+  const divisionRefForLeaf = (_leaf: string, _cls?: Record<string, any>): Record<string, string> | undefined => recurringRef;
+  void divisionKindForClassFqn;
 
   // ── screens + assignment index ──
   const bcSnap = await db.collection('backgroundChecks').get();
@@ -203,7 +198,8 @@ export async function pushScreeningAllocations(
     if (rows.length < 1000) break;
     start += 1000;
   }
-  // existing allocation tags
+  // existing allocation tags (+ Division true-up of their debit lines)
+  const divisionFixes: Array<Record<string, unknown>> = [];
   const existingTags = new Set<string>();
   start = 1;
   for (;;) {
@@ -211,7 +207,24 @@ export async function pushScreeningAllocations(
     const r = (await qboQuery(tenantId, `SELECT * FROM JournalEntry WHERE TxnDate >= '2026-01-01' STARTPOSITION ${start} MAXRESULTS 1000`)) as Record<string, any>;
     const rows: Array<Record<string, any>> = r.QueryResponse?.JournalEntry ?? r.JournalEntry ?? [];
     for (const je of rows) {
-      for (const m of trim(je.PrivateNote).matchAll(/\[screen:([^\]]+)\]/g)) existingTags.add(trim(m[1]));
+      const tags = [...trim(je.PrivateNote).matchAll(/\[screen:([^\]]+)\]/g)].map((m) => trim(m[1]));
+      for (const t of tags) existingTags.add(t);
+      // Division true-up on existing entries: every DEBIT (5310 per class)
+      // must be Recurring (Greg 2026-09-08); amounts/classes untouched.
+      if (tags.length && /^Scrn Alloc/i.test(trim(je.DocNumber))) {
+        const debits = ((je.Line ?? []) as Array<Record<string, any>>).filter((l) => l.JournalEntryLineDetail?.PostingType === 'Debit');
+        const stale = debits.filter((l) => String(l.JournalEntryLineDetail.DepartmentRef?.value ?? '') !== recurringRef.value);
+        if (stale.length) {
+          divisionFixes.push({ docNumber: trim(je.DocNumber), id: String(je.Id), lines: stale.length, status: dryRun ? 'would_retag_recurring' : 'retagged_recurring' });
+          if (!dryRun) {
+            const newLines = ((je.Line ?? []) as Array<Record<string, any>>).map((l) =>
+              l.JournalEntryLineDetail?.PostingType === 'Debit' ? { ...l, JournalEntryLineDetail: { ...l.JournalEntryLineDetail, DepartmentRef: recurringRef } } : l,
+            );
+            // eslint-disable-next-line no-await-in-loop
+            await qboEntityUpdate(tenantId, 'JournalEntry', { ...je, Line: newLines, sparse: false });
+          }
+        }
+      }
     }
     if (rows.length < 1000) break;
     start += 1000;
@@ -303,5 +316,5 @@ export async function pushScreeningAllocations(
     });
     existingTags.add(pid);
   }
-  return { ok: true, dryRun, charges: results };
+  return { ok: true, dryRun, charges: results, divisionFixes };
 }

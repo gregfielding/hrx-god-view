@@ -88,6 +88,7 @@ async function main(): Promise<void> {
     for (const c of (sc.charges ?? []) as Array<Record<string, any>>) {
       console.log(`${String(c.date).padEnd(12)} purchase #${String(c.purchaseId).padEnd(6)} ${String(c.status).padEnd(20)} ${Number(c.amount ?? 0).toFixed(2).padStart(9)}  ${c.screens ?? ''} screens  ${(c.splits ?? []).map((x: Record<string, any>) => `${x.leaf} ${Number(x.amount).toFixed(2)}`).join(', ')}`);
     }
+    for (const f of (sc.divisionFixes ?? []) as Array<Record<string, any>>) console.log(`  ${f.docNumber} #${f.id}: ${f.status} (${f.lines} debit line(s) → Recurring)`);
   }
   if (phase === 'both' || phase === 'ovh') {
     const { pushOverheadAllocations } = await import('../src/payroll/overheadAllocations');

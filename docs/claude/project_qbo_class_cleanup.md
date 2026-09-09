@@ -1031,3 +1031,13 @@ Event. Greg's later calls the same evening: 7140 by revenue too (net Corp after 
 accrual/clearing); **Other Income 9010/9020 by revenue too** (credits flip
 sides). Only 6xxx Other Expense stays in Corp (May Tempworks WEB PAY
 $5,413, Lone Oak era). 5200/5300 by revenue like everything else.
+
+**Screening Division = Recurring, always (Greg 2026-09-08, late):** every
+5310 debit in a `Scrn Alloc` JE is tagged Recurring regardless of the client
+class it splits to (National included — it used to go to Corp, event
+clients to Event-based). `pushScreeningAllocations` now also re-tags the
+debit lines of existing `[screen:]` JEs on every run (`divisionFixes` in
+the result; runner `scrn` phase prints them). 7 JEs re-tagged 2026-09-08.
+The credit still mirrors the source purchase's Division so the charge nets
+where it sits. June 5310 after: Corp 0 / Recurring 70.94 (Greg's screenshot
+showing 70.94 in both columns predated the recreated Scrn Alloc 0610).
