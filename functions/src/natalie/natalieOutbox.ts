@@ -11,6 +11,7 @@ import { recordNatalieAction } from './natalieAudit';
 import Anthropic from '@anthropic-ai/sdk';
 import { NATALIE_MODEL } from './natalieAgent';
 import { drainAcceptFills } from './natalieAcceptFill';
+import { drainCraigslistDrafts } from './natalieCraigslist';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -447,5 +448,6 @@ export async function drainNatalieOutbox(token: string): Promise<{ followups: nu
   try { await drainScheduledActions(token); } catch (e) { logger.warn('[natalie] scheduled action drain failed', { err: String(e) }); }
   try { await drainFlexNotices(token); } catch (e) { logger.warn('[natalie] flex notice drain failed', { err: String(e) }); }
   try { await drainAcceptFills(token); } catch (e) { logger.warn('[natalie] accept fill drain failed', { err: String(e) }); }
+  try { await drainCraigslistDrafts(token); } catch (e) { logger.warn('[natalie] craigslist drain failed', { err: String(e) }); }
   return out;
 }

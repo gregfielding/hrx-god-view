@@ -120,6 +120,18 @@ export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
     input_schema: { type: 'object', properties: { jobOrderId: { type: 'string' }, radiusMiles: { type: 'number', enum: [15, 30, 60] }, limit: { type: 'number' } }, required: ['jobOrderId'] },
   },
   {
+    name: 'craigslist_queue',
+    description:
+      "Craigslist posting status for every job board post that has 'Post to Craigslist' turned on: drafts waiting to be published (with the ad title, site, category and posting link), live ads (with expiry), and expired ones. Use when someone asks what needs to go on Craigslist or what's live there. Publishing itself is a human step (or Claude in the recruiter's browser) — never claim you posted.",
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'craigslist_mark_posted',
+    description:
+      "Record that a Craigslist ad went live: saves the craigslist.org URL on the job board post, sets it to 'posted' with an expiry (30 days jobs / 7 days gigs) so you can nudge before it lapses. Needs postId (from craigslist_queue) and the live URL the person gives you.",
+    input_schema: { type: 'object', properties: { postId: { type: 'string' }, liveUrl: { type: 'string' } }, required: ['postId', 'liveUrl'] },
+  },
+  {
     name: 'order_background_check',
     description:
       "Order an AccuSource background check for a worker (default: the job order's package, else Sodexo Basic Package 23923), text them the applicant form link, and follow up daily until they complete it. Use when a recruiter says to order/run a background on someone, or when a worker says YES to an order that requires one. Refuses if they already cleared it unless packageId is given. Needs userId; jobOrderId helps pick the package and account.",
@@ -656,6 +668,14 @@ export async function runNatalieTool(name: string, input: Record<string, unknown
       const jobOrderId = s(input.jobOrderId);
       const [cands, shifts] = await Promise.all([candidatesForJobOrder(ctx.tenantId, jobOrderId, { radiusMiles: Number(input.radiusMiles) || 15, limit: Number(input.limit) || 12 }), upcomingShifts(ctx.tenantId, jobOrderId, 10)]);
       return { ...cands, upcomingShifts: shifts };
+    }
+    case 'craigslist_queue': {
+      const { craigslistQueue } = await import('./natalieCraigslist');
+      return craigslistQueue(ctx.tenantId);
+    }
+    case 'craigslist_mark_posted': {
+      const { craigslistMarkPosted } = await import('./natalieCraigslist');
+      return craigslistMarkPosted(ctx.tenantId, s(input.postId), s(input.liveUrl));
     }
     case 'order_background_check': {
       const { orderBackgroundCheck } = await import('./natalieFill');

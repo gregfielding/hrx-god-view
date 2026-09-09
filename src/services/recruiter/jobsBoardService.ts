@@ -21,6 +21,7 @@ import {
   type GigPositionRequirementOverrides,
 } from '../../shared/jobOrder/resolveJobOrderRequirements';
 import { shiftBelongsToPosition } from '../../shared/jobOrder/matchPositionTitle';
+import type { CraigslistPosting } from '../../shared/craigslist';
 
 /** Lowercase trim for comparing job order workflow status (open, cancelled, on_hold, …). */
 export function normalizeJobOrderStatusValue(status: unknown): string {
@@ -317,6 +318,8 @@ export interface JobsBoardPost {
   /** External job board listings (optional). */
   craigslistUrl?: string;
   indeedUrl?: string;
+  /** Semi-automated Craigslist posting (opt-in per post). See shared/craigslist.ts. */
+  craigslist?: CraigslistPosting | null;
 
   // Company & Location
   companyId?: string;
