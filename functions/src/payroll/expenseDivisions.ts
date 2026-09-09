@@ -1,10 +1,11 @@
 /**
- * Expense Division from the CLASS (Greg 2026-09-08): a purchase/bill line
- * that carries a client class — travel, meals, supplies… usually tagged in
- * Expensify — belongs to that client's Division: Sodexo + the Indeed Flex
+ * Expense Division from the CLASS (Greg 2026-09-08): a DIRECT client cost —
+ * travel, client meals, client-facing COGS — usually class-tagged in
+ * Expensify, belongs to that client's Division: Sodexo + the Indeed Flex
  * family (Cort, Domino's…) → Recurring, every other client → Event-based.
- * Only UNCLASSED overhead is spread by revenue ratio (overheadAllocations,
- * which runs after this and therefore no longer sees these lines).
+ * G&A and every other overhead account is spread by REVENUE RATIO whatever
+ * class it carries (overheadAllocations runs after this); a G&A purchase
+ * found parked in a client Division is put back in Corp for that pass.
  *
  * QBO's Division (Department) is a transaction-header field, so a purchase
  * whose lines mix families takes the family of the larger classed amount
@@ -31,8 +32,20 @@ export async function pushExpenseDivisions(
   const divisions = await fetchQboDivisions(tenantId);
   const clRes = (await qboQuery(tenantId, 'SELECT Id, FullyQualifiedName FROM Class MAXRESULTS 1000')) as Record<string, any>;
   const clsById = new Map<string, string>(((clRes.QueryResponse?.Class ?? clRes.Class ?? []) as Array<Record<string, any>>).map((c) => [String(c.Id), String(c.FullyQualifiedName)]));
-  const acctRes = (await qboQuery(tenantId, 'SELECT Id, AccountType FROM Account MAXRESULTS 1000')) as Record<string, any>;
-  const plAcct = new Set<string>(((acctRes.QueryResponse?.Account ?? acctRes.Account ?? []) as Array<Record<string, any>>).filter((a) => /Expense|Cost of Goods Sold/.test(String(a.AccountType))).map((a) => String(a.Id)));
+  const acctRes = (await qboQuery(tenantId, 'SELECT Id, Name, AcctNum, FullyQualifiedName, AccountType FROM Account MAXRESULTS 1000')) as Record<string, any>;
+  const accts = (acctRes.QueryResponse?.Account ?? acctRes.Account ?? []) as Array<Record<string, any>>;
+  const plAcct = new Set<string>(accts.filter((a) => /Expense|Cost of Goods Sold/.test(String(a.AccountType))).map((a) => String(a.Id)));
+  // CLASS-DRIVEN accounts (Greg 2026-09-08): direct client spend — Travel
+  // (8800 family), client meals (8400), client-facing COGS (5210 ConnectTeam,
+  // 5300 recruiting, 5400 event supplies). Everything else — G&A, occupancy,
+  // software, insurance, professional services, internal payroll — is
+  // allocated by REVENUE RATIO even when a line carries a client class, so
+  // those purchases are kept in Corp / Unalloc. for the ratio pass.
+  const classDriven = new Set<string>(accts.filter((a) => {
+    const n = String(a.AcctNum ?? ''); const f = String(a.FullyQualifiedName ?? a.Name ?? '');
+    return /^88\d\d$/.test(n) || /^8400$/.test(n) || /^(5210|5300|5400)$/.test(n) || /^(8800 )?Travel(:|$)/i.test(f) || /meals & entertainment/i.test(f);
+  }).map((a) => String(a.Id)));
+  const ownWriter = new Set<string>(accts.filter((a) => /^(5010|5100|5310)$/.test(String(a.AcctNum ?? ''))).map((a) => String(a.Id)));
   const itemRes = (await qboQuery(tenantId, 'SELECT Id, ExpenseAccountRef FROM Item MAXRESULTS 1000')) as Record<string, any>;
   const itemExp = new Map<string, string>(((itemRes.QueryResponse?.Item ?? itemRes.Item ?? []) as Array<Record<string, any>>).map((i) => [String(i.Id), String(i.ExpenseAccountRef?.value ?? '')]));
 
@@ -47,20 +60,26 @@ export async function pushExpenseDivisions(
       const rows: Array<Record<string, any>> = r.QueryResponse?.[ent] ?? r[ent] ?? [];
       for (const t of rows) {
         const fam = { event: 0, recurring: 0 };
+        let ratioAmt = 0; let ownAmt = 0;
         for (const l of (t.Line ?? []) as Array<Record<string, any>>) {
           const ab = l.AccountBasedExpenseLineDetail; const ib = l.ItemBasedExpenseLineDetail;
           const acct = ab ? trim(ab.AccountRef?.value) : ib ? itemExp.get(trim(ib.ItemRef?.value)) ?? '' : '';
           if (!plAcct.has(acct)) continue;
-          const fqn = clsById.get(trim((ab ?? ib)?.ClassRef?.value)) ?? '';
-          if (!fqn || OVERHEAD_CLASS_RE.test(fqn)) continue;
           const amt = Math.abs(Number(l.Amount) || 0);
+          if (ownWriter.has(acct)) { ownAmt += amt; continue; }
+          if (!classDriven.has(acct)) { ratioAmt += amt; continue; }
+          const fqn = clsById.get(trim((ab ?? ib)?.ClassRef?.value)) ?? '';
+          if (!fqn || OVERHEAD_CLASS_RE.test(fqn)) continue; // unclassed / overhead travel → ratio fallback
           if (RECURRING_DIVISION_RE.test(fqn)) fam.recurring += amt; else fam.event += amt;
         }
-        if (fam.event === 0 && fam.recurring === 0) continue;
+        const classed = fam.event + fam.recurring;
+        let want: { Id: string; Name: string } | null = null;
+        if (classed > 0 && classed >= ratioAmt) want = fam.recurring > fam.event ? divisions.recurring : divisions.event;
+        else if (ratioAmt > 0 && ownAmt === 0 && divisions.corp && [divisions.event.Id, divisions.recurring.Id].includes(trim(t.DepartmentRef?.value))) want = divisions.corp; // ratio account wrongly parked in a client Division → back to Corp
+        if (!want) continue;
         const month = String(t.TxnDate).slice(0, 7);
         const m = byMonth.get(month) ?? { checked: 0, changed: 0, amount: 0 };
         m.checked += 1;
-        const want = fam.recurring > fam.event ? divisions.recurring : divisions.event;
         if (fam.event > 0 && fam.recurring > 0) mixed.push({ type: ent, id: String(t.Id), date: t.TxnDate, event: fam.event, recurring: fam.recurring, chosen: want.Name });
         if (trim(t.DepartmentRef?.value) === want.Id) { byMonth.set(month, m); continue; }
         m.changed += 1; m.amount += Number(t.TotalAmt) || 0; byMonth.set(month, m);

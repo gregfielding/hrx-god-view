@@ -1053,7 +1053,8 @@ causes, all in `buildWireJournal`'s funding handling:
   that ALWAYS has a SUBMITTED sibling for the same money (July: 81 lines
   $32,000.29 → counted twice); `APPROVED_FOR_FUNDING` = paid to the worker
   but the company pull was NEVER submitted (May 19: 54 lines $18,963.67 —
-  **C1 may still owe Everee this; ask them**). `prevFundingId` links the
+  Greg 2026-09-08: that was the very first Everee test period — DISREGARD,
+nothing owed). `prevFundingId` links the
   chain. No company-funding endpoint exists (/company-fundings, /fundings
   404).
 - The builder grouped every no-id funding for an entity into ONE bucket
@@ -1118,11 +1119,14 @@ contractor, classed) — fine.
 
 Greg: travel etc. must NOT be spread by revenue — each is classed (usually
 via Expensify) with the customer; Sodexo + Indeed Flex family (Cort…) →
-Recurring, everything else → Event-based. Only UNCLASSED overhead gets the
-ratio. `src/payroll/expenseDivisions.ts` (`pushExpenseDivisions`): every
-2026 Purchase/Bill with a client-classed P&L line gets the header Division
-of that class family (`National`/overhead classes ignored; mixed-family
-purchases take the larger side and are reported). Runs in the weekly job
+Recurring, everything else → Event-based. **But all G&A is by revenue
+ratio regardless of class** (Greg, minutes later). Boundary in
+`src/payroll/expenseDivisions.ts` (`pushExpenseDivisions`): CLASS-DRIVEN =
+Travel 8800 family, 8400 client meals, 5210/5300/5400 client-facing COGS
+(header Division = larger class family; unclassed/`National` travel falls
+to the ratio); RATIO = every other expense account — a purchase there
+found in Event/Recurring is put BACK to Corp for the ratio pass (94 moved
+on the second write). Runs in the weekly job
 BEFORE the overhead ratio (which skips that run if anything was re-tagged
 — QBO query lag); callable `pushExpenseDivisions`; runner `expdiv` (in
 `both`, stops before `ovh` after a non-zero write). First write 2026-09-08:
