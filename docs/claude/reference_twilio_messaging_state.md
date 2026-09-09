@@ -11,8 +11,8 @@ Account "My first Twilio account" (Greg), verified via Claude-in-Chrome 2026-09-
 | +1 888 805 8650 | Toll-free | C1 Messaging service (MGe3edf114c7b9c270ee66928816d65b25) | THE outbound sender for all HRX SMS (toll-free verified, separate from 10DLC) |
 | +1 312 500 4352 | Local | direct webhook → `handleInboundSms` | main inbound line; NOT on any messaging service, NOT A2P registered |
 | +1 415 429 3750 | Local | Low Volume Mixed service MG98999c80df5bb34ceeb0af83d9b206b3 (campaign FAILED) | Greg: may become a general company line |
-| +1 312 663 8247 | Local | direct webhook → `handleInboundSms` | Natalie Brooks (automation persona), bought 2026-09-06; inbound works, outbound unregistered |
-| +1 737 264 6753 | Local (Austin overlay; Twilio had zero 512 inventory 2026-09-08) | direct webhook → `handleInboundSms`, voice → demo.twilio.com welcome (same as 312) | "Natalie Brooks (automation) #2 — 737", bought 2026-09-08 (PN54f9b011…) as a spare configured identically to the 312; unregistered for A2P until the campaign is approved, then add to MG2dd6…'s sender pool with the 312 |
+| +1 312 663 8247 | Local | direct webhook → `handleInboundSms`; sole number in MG2dd6…'s sender pool (A2P campaign VERIFIED 2026-09-09) | Natalie Brooks (automation persona), bought 2026-09-06; outbound live from this number for every `natalie_*` message type |
+| +1 737 264 6753 | Local (Austin overlay; Twilio had zero 512 inventory 2026-09-08) | direct webhook → `handleInboundSms`, voice → demo.twilio.com welcome (same as 312) | "Natalie Brooks (automation) #2 — 737", bought 2026-09-08 (PN54f9b011…). **RESERVED for the next persona (Rosa's support), per Greg 2026-09-09** — not in any messaging service, not A2P-registered; do not add it to Natalie's pool |
 
 ## Messaging services
 
@@ -67,9 +67,13 @@ verified the same day). What changed and what's left:
 - **Done 2026-09-09 ~18:00Z (Greg ran the script):** pool = +1 737 264 6753, +1 312 663 8247.
   First test send 1–2 min later was accepted then **failed async with 21703** ("no phone number
   available") — newly added numbers take a few minutes to attach to the campaign. Second test
-  ~5 min later: **delivered, from +1 737 264 6753**, service MG2dd6…, no error. Sticky sender picks
-  one of the two per recipient; if Natalie should present ONLY the 312, remove the 737 from the pool
-  (it's a spare). 21703 is not in PERMANENT_SMS_ERROR_CODES, so the failed test did not stamp the
+  ~5 min later: **delivered, from +1 737 264 6753**. Greg: "Natalie should be the 312... the 737
+  number is going be reserved for next 'natalie' that we create to support Rosa" → 737 removed from
+  the pool (`twilio-natalie-pool-312-only.cjs`); **pool = +1 312 663 8247 only**; test #3 delivered
+  from the 312. The 737 stays on the account, direct webhook → handleInboundSms, unassigned to any
+  service, held for the second persona (Rosa's support). When that persona needs A2P: add the 737
+  to a messaging service with an approved campaign (a second campaign, or MG2dd6… if the use case
+  matches). 21703 is not in PERMANENT_SMS_ERROR_CODES, so the failed test did not stamp the
   recipient. 21703 was added to the sync fallback list next to 21705/30034.
 
 ## Opt-out keywords (C1 Messaging) — changed 2026-09-07
