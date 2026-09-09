@@ -382,10 +382,14 @@ requirements: Places API (New) `places.googleapis.com`,
 `geocoding-backend.googleapis.com`, `static-maps-backend.googleapis.com` on
 hrx1-d3beb (all enabled). The app's HTTP calls carry no iOS/Android app
 identity headers, so the key must be API-restricted only (no
-application restriction). Existing "API key 4" (085f4da8…) is
-iOS-restricted with an empty bundle list — not safe to reuse. Creating a
-new key via `gcloud services api-keys create` was blocked by the Claude
-permission classifier on 2026-09-09; Greg to create/approve.
+application restriction). "API key 4" (085f4da8…, created 2026-04-07,
+API-restricted to the Maps family incl. places.googleapis.com; its
+`iosKeyRestrictions` is an EMPTY object, which in practice does not block
+header-less requests) is what `.env.release.json` holds — verified
+2026-09-09: sign-up address autocomplete returned suggestions from the
+iOS simulator build. Creating a dedicated key via `gcloud services api-keys
+create` was blocked by the Claude permission classifier; do it from the
+console if we ever want to rotate.
 
 Same session, from the recording: cell phone is now prefilled on the
 sign-up form from the number typed at sign-in; the code screen's "Send a new
@@ -395,6 +399,11 @@ Delete-account dialog no longer claims it "opens your email app" (it files
 `account_deletion_requests/{uid}`). Version is `1.0.0+10` — ASC keeps
 version string 1.0.0 (rejected versions accept a new build), Play gets a new
 Production release 1.0.0 (10) replacing the in-review one.
+
+Also found on the simulator the same day: **"Sign in with email instead"
+was a dead link in build 9** — the router's `unauthenticated` redirect
+allowed only `/login`, `/signup`, `/forgot-password`, so `/login/email`
+bounced straight back (c1_app a616a1d adds it).
 
 Recording findings that need no code: Greg's phone showed a BBC News banner
 mid-recording (turn on Do Not Disturb), and the sign-in flow sends the SMS
