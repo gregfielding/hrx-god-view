@@ -46,6 +46,25 @@ export async function fetchEvereeBankDebits(tenantId: string, start: string, end
     if (rows.length < 1000) break;
     pos += 1000;
   }
+  // Everee refund DEPOSITS on 5010 (a returned payment / reversed pull) —
+  // negative items, only used by the month close-out netting.
+  pos = 1;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = (await qboQuery(tenantId, `SELECT * FROM Deposit WHERE TxnDate >= '${start}' AND TxnDate <= '${end}' STARTPOSITION ${pos} MAXRESULTS 1000`)) as Record<string, any>;
+    const rows: Array<Record<string, any>> = r.QueryResponse?.Deposit ?? r.Deposit ?? [];
+    for (const dep of rows) {
+      for (const l of (dep.Line ?? []) as Array<Record<string, any>>) {
+        const d = l.DepositLineDetail;
+        if (!d || String(d.AccountRef?.value) !== String(a5010.Id)) continue;
+        const memo = `${trim(dep.PrivateNote)} ${trim(l.Description)} ${trim(d.Entity?.name)}`;
+        if (!/everee|payment/i.test(memo)) continue;
+        out.push({ id: `dep-${dep.Id}`, date: String(dep.TxnDate).slice(0, 10), ent: 'ANY', cents: -Math.round((Number(l.Amount) || 0) * 100), memo: memo.trim().slice(0, 60) });
+      }
+    }
+    if (rows.length < 1000) break;
+    pos += 1000;
+  }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 
@@ -63,8 +82,8 @@ export function matchWiresToBank(wiresIn: WireIn[], debitsIn: BankDebit[]): { ma
   const take = (w: W, d: BankDebit & { open: boolean }, cents: number, how: WireMatch['how']): void => {
     w.m.bankCents += cents; w.m.bankDates.push(d.date); w.m.debitIds.push(d.id); w.m.how = how; w.open = false;
   };
-  // 1. exact subset (≤4 whole wires) per debit
-  for (const d of debits) {
+  // 1. exact subset (≤4 whole wires) per debit (positive debits only; refunds net in pass 5)
+  for (const d of debits.filter((d) => d.cents > 0)) {
     const cands = wires.filter((w) => w.open && okEnt(w, d) && inWin(w, d)).sort((a, b) => b.cents - a.cents);
     let found: W[] | null = null;
     const search = (i: number, left: number, picked: W[]): void => {
@@ -77,7 +96,7 @@ export function matchWiresToBank(wiresIn: WireIn[], debitsIn: BankDebit[]): { ma
   }
   // 2. one wire = two debits
   for (const w of wires.filter((w) => w.open)) {
-    const ds = debits.filter((d) => d.open && okEnt(w, d) && inWin(w, d));
+    const ds = debits.filter((d) => d.open && d.cents > 0 && okEnt(w, d) && inWin(w, d));
     outer: for (let i = 0; i < ds.length; i++) for (let j = i + 1; j < ds.length; j++) {
       if (ds[i].cents + ds[j].cents === w.cents) { take(w, ds[i], ds[i].cents, 'split'); take(w, ds[j], ds[j].cents, 'split'); ds[i].open = false; ds[j].open = false; break outer; }
     }
@@ -85,14 +104,14 @@ export function matchWiresToBank(wiresIn: WireIn[], debitsIn: BankDebit[]): { ma
   // 3. near single pairs (drift after the pull) — closest first, ≤ max($100, 5%)
   const tol = (cents: number): number => Math.max(10000, Math.round(cents * 0.05));
   const pairs: Array<{ w: W; d: BankDebit & { open: boolean }; diff: number }> = [];
-  for (const w of wires.filter((w) => w.open)) for (const d of debits.filter((d) => d.open && okEnt(w, d) && inWin(w, d))) {
+  for (const w of wires.filter((w) => w.open)) for (const d of debits.filter((d) => d.open && d.cents > 0 && okEnt(w, d) && inWin(w, d))) {
     const diff = Math.abs(d.cents - w.cents);
     if (diff <= tol(d.cents)) pairs.push({ w, d, diff });
   }
   for (const p of pairs.sort((a, b) => a.diff - b.diff)) { if (!p.w.open || !p.d.open) continue; take(p.w, p.d, p.d.cents, 'near'); p.d.open = false; }
   // 4. tolerant bundles: a debit ≈ sum of ≤5 open wires within tol; the
   //    drift is booked on the largest wire in the bundle (closest bundle first)
-  for (const d of debits.filter((d) => d.open).sort((a, b) => b.cents - a.cents)) {
+  for (const d of debits.filter((d) => d.open && d.cents > 0).sort((a, b) => b.cents - a.cents)) {
     const cands = wires.filter((w) => w.open && okEnt(w, d) && inWin(w, d)).sort((a, b) => b.cents - a.cents).slice(0, 12);
     let best: { picked: W[]; diff: number } | null = null;
     const search = (i: number, sum: number, picked: W[]): void => {

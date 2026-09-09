@@ -1100,3 +1100,16 @@ leftover wires older than 3 days when the sides are within ±25%). Result
 2026-09-08: 104/105 wires tied; projected 5010 Corp = 0.00 for May–Aug,
 Sept = the un-posted 9/8 wire only. `.scratch/match_report.ts <start>
 <end>` prints how each wire matched + the month view.
+Late additions (2026-09-08): matcher nets Everee refund DEPOSITS on 5010 in
+the month close-out; pro-rata shares must pass the two-read guard (exact/
+near/split credit fixes apply immediately); true-up reports `humanDrift`
+(Tabitha's `EV Pay Alloc` credit vs bank — never rewritten; 2 tiny in July).
+Stale `EV Alloc 0731 SEL` (#8729, 11,784.98 — the old entity-wide SEL
+'none' bucket, really August money) deleted; missing JEs created by
+`.scratch/push_missing_wire_jes.ts dry|write <start> <end>` (mirrors the
+callable, bank-tied credits, skips wires ≤3 days old): `EV Alloc 0820 SEL`
+(none-2026-08@SEL 11,346.21) + Sept 9/1–9/4 wires. ePay0001 fee drafts
+250 (6/8) + 45 (8/21) moved 5010→5200 (`.scratch/epay_fees_to_5200.ts`);
+**8/6 ePay0001 5,209.50 left on 5010 — too big for a fee, Tabitha to
+identify.** Not-a-wire on 5010: 6/11 Alberto Guerrero 1,800 (Railbird
+contractor, classed) — fine.

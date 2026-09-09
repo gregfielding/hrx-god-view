@@ -62,6 +62,7 @@ export async function trueUpAllocationJes(
     bankDebits,
   );
   const bankTied: Array<Record<string, unknown>> = [];
+  const humanDrift: Array<Record<string, unknown>> = [];
   const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class WHERE Active = true MAXRESULTS 1000')) as Record<string, any>;
   const classIdByFqn = new Map<string, string>(
     ((clsRes.QueryResponse?.Class ?? clsRes.Class ?? []) as Array<Record<string, any>>).map((c) => [String(c.FullyQualifiedName), String(c.Id)]),
@@ -116,6 +117,15 @@ export async function trueUpAllocationJes(
     // hand splits (Greg 2026-09-08: never again).
     if (/^EV Pay Alloc/i.test(doc)) {
       skippedHuman.push(doc);
+      // Report (never rewrite): her credit vs the bank amount of her wires.
+      const hTags = [...trim(je.PrivateNote).matchAll(/\[wire:([^\]]+)\]/g)].map((m) => trim(m[1]));
+      const hWires = [...new Set(hTags.map((t) => wireByTag.get(t)).filter(Boolean))] as Array<Record<string, any>>;
+      const hCredit = ((je.Line ?? []) as Array<Record<string, any>>).filter((l) => l.JournalEntryLineDetail?.PostingType === 'Credit').reduce((s2, l) => s2 + (Number(l.Amount) || 0), 0);
+      const hm = hWires.map((w) => bankMatch.get(trim(w.fundingId)));
+      if (hWires.length && hm.every((m) => m && m.how !== 'unmatched')) {
+        const hBank = round2(hm.reduce((s2, m) => s2 + (m!.bankCents / 100), 0));
+        if (Math.abs(hBank - hCredit) > 1) humanDrift.push({ doc, id: String(je.Id), credit: round2(hCredit), bank: hBank, delta: round2(hBank - hCredit), how: hm.map((m) => m!.how).join('+') });
+      }
       continue;
     }
     if (!/^(EV|TW) Alloc\b/i.test(doc)) continue;
@@ -143,13 +153,18 @@ export async function trueUpAllocationJes(
     // the credit target is the bank amount (drift after the pull is real cost).
     const bm = wires.map((w) => bankMatch.get(trim(w.fundingId)));
     const allBankMatched = bm.length > 0 && bm.every((m) => m && m.how !== 'unmatched');
+    const bankHow = bm.map((m) => m?.how ?? 'unmatched').join('+');
     if (allBankMatched) {
       const bankTotal = round2(bm.reduce((s2, m) => s2 + (m!.bankCents / 100), 0));
       if (Math.abs(bankTotal - wireTotal) > 0.005) {
-        bankTied.push({ doc, everee: round2(wireTotal), bank: bankTotal, how: bm.map((m) => m!.how).join('+'), bankDates: [...new Set(bm.flatMap((m) => m!.bankDates))] });
+        bankTied.push({ doc, everee: round2(wireTotal), bank: bankTotal, how: bankHow, bankDates: [...new Set(bm.flatMap((m) => m!.bankDates))] });
         wireTotal = bankTotal;
       }
     }
+    // Pro-rata shares depend on which wires were left over in THIS Everee
+    // read, so they must pass the two-read guard; exact/split/near are
+    // anchored to a specific bank line and may fix the credit immediately.
+    const bankStable = allBankMatched && !bankHow.includes('prorata');
     const fixCredit = Math.abs(credit - wireTotal) > 0.005 && (allBankMatched || opts?.fixCreditDocs?.includes(doc));
     if (Math.abs(credit - wireTotal) > Math.max(1, credit * 0.02) || (fixCredit && Math.abs(credit - wireTotal) > 0.005)) {
       if (!fixCredit) {
@@ -199,7 +214,7 @@ export async function trueUpAllocationJes(
         ));
     const key = (arr: Array<{ cls: string | null; amt: number }>): string =>
       arr.map((x) => `${x.cls}|${x.amt.toFixed(2)}`).sort().join(';');
-    const fingerprint = `${credit.toFixed(2)}|${wireTotal.toFixed(2)}|${key(want)}`;
+    const fingerprint = allBankMatched ? `${credit.toFixed(2)}|${wireTotal.toFixed(2)}|${bankHow}` : `${credit.toFixed(2)}|${wireTotal.toFixed(2)}|${key(want)}`;
     if (key(want) === key(have) && !missingDivision) {
       unchanged += 1;
       // An unchanged read must still supersede the last observation —
@@ -215,7 +230,7 @@ export async function trueUpAllocationJes(
     // A bank-anchored CREDIT correction is not subject to the read-stability
     // guard (the guard exists for Everee's flapping class splits; the credit
     // target here comes from the bank line and does not move).
-    if (prev !== fingerprint && !fixCredit) {
+    if (prev !== fingerprint && !(fixCredit && (bankStable || opts?.fixCreditDocs?.includes(doc)))) {
       deferredUnstable.push({ doc, reason: prev ? 'read differs from previous run' : 'first observation', wireTotal: round2(wireTotal) });
       // eslint-disable-next-line no-await-in-loop
       await obsCol.doc(doc).set({ fingerprint, wireTotal: round2(wireTotal), credit: round2(credit), observedAt: admin.firestore.FieldValue.serverTimestamp(), dryRun }, { merge: true });
@@ -252,5 +267,5 @@ export async function trueUpAllocationJes(
     // eslint-disable-next-line no-await-in-loop
     await obsCol.doc(doc).set({ patchedFingerprint: fingerprint, patchedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
   }
-  return { ok: true, dryRun, patched, unchanged, skippedDrift, skippedHuman, deferredUnstable, bankTied, patchedDocs: patchedDocs.slice(0, 50) };
+  return { ok: true, dryRun, patched, unchanged, skippedDrift, skippedHuman, deferredUnstable, bankTied, humanDrift, patchedDocs: patchedDocs.slice(0, 50) };
 }

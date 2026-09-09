@@ -121,6 +121,7 @@ async function main(): Promise<void> {
     console.log('deferred (read must match the previous run before a write):', JSON.stringify(t.deferredUnstable ?? []));
     console.log('skippedHuman (Tabitha, never rewritten):', (t.skippedHuman ?? []).join(', '));
     console.log('patched docs:', (t.patchedDocs ?? []).join(', '));
+    for (const h of (t.humanDrift ?? []) as Array<Record<string, any>>) console.log(`  TABITHA (not rewritten): ${String(h.doc).padEnd(20)} #${h.id} credit ${Number(h.credit).toFixed(2).padStart(11)} vs bank ${Number(h.bank).toFixed(2).padStart(11)}  delta ${Number(h.delta).toFixed(2).padStart(10)}  (${h.how})`);
     for (const b of (t.bankTied ?? []) as Array<Record<string, any>>) console.log(`  bank-tied: ${String(b.doc).padEnd(20)} everee ${Number(b.everee).toFixed(2).padStart(11)} → bank ${Number(b.bank).toFixed(2).padStart(11)}  (${b.how}, ${(b.bankDates as string[]).join('/')})`);
     if ((t.skippedDrift ?? []).length) console.log('drift (credit ≠ wire, left alone):', JSON.stringify(t.skippedDrift));
   }
