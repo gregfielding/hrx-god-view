@@ -30,8 +30,8 @@ const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
 async function main(): Promise<void> {
   const mode = process.argv[2];
   const phase = process.argv[3] ?? 'both';
-  if ((mode !== 'dry' && mode !== 'write') || !['both', 'invdiv', 'reclass', 'trueup', 'wc', 'ovh'].includes(phase)) {
-    console.error('usage: qboReclassRerun.ts <dry|write> [invdiv|reclass|trueup|wc|ovh]');
+  if ((mode !== 'dry' && mode !== 'write') || !['both', 'invdiv', 'reclass', 'trueup', 'wc', 'scrn', 'ovh'].includes(phase)) {
+    console.error('usage: qboReclassRerun.ts <dry|write> [invdiv|reclass|trueup|wc|scrn|ovh]');
     process.exit(2);
   }
   const dryRun = mode === 'dry';
@@ -80,6 +80,14 @@ async function main(): Promise<void> {
     }
     const x = (w.excluded8040 ?? {}) as Record<string, number>;
     console.log(`8040 placeholder class EXCLUDED (no premium paid yet): ${x.entries ?? 0} entries, gross ${Number(x.gross ?? 0).toFixed(2)}, would-have-been premium ${Number(x.premium ?? 0).toFixed(2)}`);
+  }
+  if (phase === 'both' || phase === 'scrn') {
+    const { pushScreeningAllocations } = await import('../src/payroll/screeningAllocations');
+    const sc = (await pushScreeningAllocations(TENANT, dryRun)) as Record<string, any>;
+    console.log(`\n=== screening allocation (${mode}) — AccuSource charges → 5310 per client class ===`);
+    for (const c of (sc.charges ?? []) as Array<Record<string, any>>) {
+      console.log(`${String(c.date).padEnd(12)} purchase #${String(c.purchaseId).padEnd(6)} ${String(c.status).padEnd(20)} ${Number(c.amount ?? 0).toFixed(2).padStart(9)}  ${c.screens ?? ''} screens  ${(c.splits ?? []).map((x: Record<string, any>) => `${x.leaf} ${Number(x.amount).toFixed(2)}`).join(', ')}`);
+    }
   }
   if (phase === 'both' || phase === 'ovh') {
     const { pushOverheadAllocations } = await import('../src/payroll/overheadAllocations');
