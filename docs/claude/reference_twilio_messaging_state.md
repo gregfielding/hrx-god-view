@@ -186,3 +186,16 @@ TwiML; fixed to `<Response></Response>` text/xml), one 11200 (an inbound
 MMS with no text got a 400 from `handleInboundSms` — fixed: attachments
 become `[sent N attachment(s)] <MediaUrl>`), and 30003/30005/30006/21610
 delivery failures from the Denver blasts (bad/unreachable numbers).
+
+## Campaign #3 REJECTED 22:38Z (30908 MESSAGE_FLOW) — cause was a deploy race, not the copy
+The reviewer (human, 2.5h after submission) followed the sign-up flow to
+hrxone.com/privacy — the in-app page, which then lacked the statement — and
+privacy.html/terms.html had vanished: they were published from a checkout
+that was on the wrong branch and a later main deploy replaced them (see
+feedback_hosting_empty_config_incident.md addendum). Round 4 setup
+(2026-09-08 ~17:15 PT, on main): `legal.privacy.s4P3` non-sharing statement
+in the Privacy Policy itself (en/es); `/privacy`, `/terms`, `/sms-privacy`,
+`/consent` rewritten to the static bilingual pages ahead of the SPA
+catch-all; resubmit script cites the canonical URLs and quotes the sign-up
+checkbox verbatim (`PrivacyPolicyUrl=https://hrxone.com/privacy`,
+`TermsAndConditionsUrl=https://hrxone.com/terms`).
