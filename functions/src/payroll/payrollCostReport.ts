@@ -1148,7 +1148,7 @@ export async function buildEvereeRegister(
       const res = (await evereeRequest(
         config,
         'GET',
-        `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true`,
+        `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true&sort=id,asc`,
       )) as Record<string, any>;
       const items = (res.items ?? []) as Array<Record<string, any>>;
       let fresh = 0;
@@ -2216,7 +2216,7 @@ export async function buildWireJournal(
       const res = (await evereeRequest(
         config,
         'GET',
-        `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true`,
+        `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true&sort=id,asc`,
       )) as Record<string, any>;
       const items = (res.items ?? []) as Array<Record<string, any>>;
       let fresh = 0;

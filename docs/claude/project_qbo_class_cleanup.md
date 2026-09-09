@@ -1153,3 +1153,27 @@ Small ePay drafts (250 6/8, 45 8/21) are ad-hoc fees, also 5200. The only
 other ePay0001 activity is REFUNDS (deposits) of over-wired payroll (Nate
 8/12: "over wired $283.95 in total"). `.scratch/epay_fees_to_5200.ts`
 moves any ePay draft found on 5010 to 5200 (≤ $10K).
+
+## 1260 Everee Funding Balance — the cash-vs-funded model (2026-09-09)
+
+Greg: "held at Everee" needs its own ledger item. **1260 Everee Funding
+Balance** (Other Current Asset; 1250 was taken by the Lone Oak factor
+reserve). Every wire JE now books: debit 5010 per class = what Everee
+FUNDED (labor); credit 5010 Corp = the BANK debit (Corp nets to zero);
+difference → 1260 (over-wire = asset up, Everee netting a later wire =
+asset down). Unmatched wire (no bank line yet) → credit 1260 for the funded
+amount; unmatched Everee bank debit (≥5 days old, June+) → the purchase
+line is moved 5010→1260 (and back when it later matches); Everee refund
+deposits → 1260; Tabitha's `EV Pay Alloc` get a companion `EV Hold …` JE
+(`[wirehold:je{Id}]`) for their bank difference instead of edits. The
+account balance should track Nate's "over-wired" figure (8/12: $283.95).
+
+☠️ **Everee `/api/v2/payments` MUST be walked with `sort=id,asc`**: the
+unsorted walk silently drops 34–49 payments per pass (page shift) — June
+funded read 433,077.76 vs 442,574.33 sorted; the drop looked like $9.9K
+"held at Everee". Fixed in buildWireJournal + payrollPaymentIssueSweep.
+June closes to 0.00 in 1260: three untied early-June debits (11,572.07) =
+6/15 refund 6,853.74 + netting into bigger fundings 3,983 + the two tiny
+unmatched wires 735.40. The 5/14 wire 19,161.07 = the May 15 batch
+(18,963.67, still APPROVED_FOR_FUNDING in Everee) + 197.40 — Everee's
+statuses are wrong for that test batch; May left out of the 1260 moves.

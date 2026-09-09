@@ -23,11 +23,15 @@ const day = (s: string): number => Math.floor(Date.parse(s.slice(0, 10)) / 86400
 
 export type WireIn = { fundingId: string; fundingDate: string; entityName: string; amount: number };
 export type WireMatch = { fundingId: string; bankCents: number; bankDates: string[]; debitIds: string[]; how: 'exact' | 'split' | 'near' | 'prorata' | 'unmatched' };
-export type BankDebit = { id: string; date: string; ent: 'EVT' | 'SEL' | 'ANY'; cents: number; memo: string };
+export type BankDebit = { id: string; date: string; ent: 'EVT' | 'SEL' | 'ANY'; cents: number; memo: string; acct?: '5010' | '1260' };
 
+/** Everee bank debits on 5010 (labor) AND on 1260 Everee Funding Balance
+ *  (cash sent that has no funding yet) — both are candidates for matching. */
 export async function fetchEvereeBankDebits(tenantId: string, start: string, end: string): Promise<BankDebit[]> {
   const acctRes = (await qboQuery(tenantId, 'SELECT Id, Name, AcctNum FROM Account MAXRESULTS 1000')) as Record<string, any>;
-  const a5010 = ((acctRes.QueryResponse?.Account ?? acctRes.Account ?? []) as Array<Record<string, any>>).find((a) => String(a.AcctNum) === '5010' || /^5010/.test(String(a.Name)));
+  const accts = (acctRes.QueryResponse?.Account ?? acctRes.Account ?? []) as Array<Record<string, any>>;
+  const a5010 = accts.find((a) => String(a.AcctNum) === '5010' || /^5010/.test(String(a.Name)));
+  const a1260 = accts.find((a) => String(a.AcctNum) === '1260' || /everee funding balance/i.test(String(a.Name)));
   if (!a5010) throw new Error('5010 not found');
   const out: BankDebit[] = [];
   let pos = 1;
@@ -39,9 +43,11 @@ export async function fetchEvereeBankDebits(tenantId: string, start: string, end
       const memo = trim(p.PrivateNote);
       if (!/everee/i.test(trim(p.EntityRef?.name)) && !/everee/i.test(memo)) continue;
       if (/ePay0001/i.test(memo) || p.Credit === true) continue; // service-fee drafts / refunds
-      const amt = ((p.Line ?? []) as Array<Record<string, any>>).filter((l) => String(l.AccountBasedExpenseLineDetail?.AccountRef?.value) === String(a5010.Id)).reduce((s, l) => s + (Number(l.Amount) || 0), 0);
+      const on = (id: string | undefined): number => id ? ((p.Line ?? []) as Array<Record<string, any>>).filter((l) => String(l.AccountBasedExpenseLineDetail?.AccountRef?.value) === id).reduce((s, l) => s + (Number(l.Amount) || 0), 0) : 0;
+      const amt5010 = on(String(a5010.Id)); const amt1260 = a1260 ? on(String(a1260.Id)) : 0;
+      const amt = amt5010 > 0 ? amt5010 : amt1260;
       if (amt <= 0) continue;
-      out.push({ id: String(p.Id), date: String(p.TxnDate).slice(0, 10), ent: /C1 Events/i.test(memo) ? 'EVT' : /C1 Select/i.test(memo) ? 'SEL' : 'ANY', cents: Math.round(amt * 100), memo: memo.slice(0, 60) });
+      out.push({ id: String(p.Id), date: String(p.TxnDate).slice(0, 10), ent: /C1 Events/i.test(memo) ? 'EVT' : /C1 Select/i.test(memo) ? 'SEL' : 'ANY', cents: Math.round(amt * 100), memo: memo.slice(0, 60), acct: amt5010 > 0 ? '5010' : '1260' });
     }
     if (rows.length < 1000) break;
     pos += 1000;

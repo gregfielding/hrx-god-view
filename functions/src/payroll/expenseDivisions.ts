@@ -96,6 +96,7 @@ export async function pushExpenseDivisions(
   // the paying entity — C1 Select → Recurring, C1 Events / generic → Event-
   // based — so the refund nets against the labor it reverses, not in Corp.
   const a5010 = accts.find((a) => String(a.AcctNum) === '5010');
+  const a1250 = accts.find((a) => String(a.AcctNum) === '1260' || /everee funding balance/i.test(String(a.Name ?? '')));
   const refunds: Array<Record<string, unknown>> = [];
   if (a5010) {
     let start = 1;
@@ -108,12 +109,14 @@ export async function pushExpenseDivisions(
         if (!on5010.length) continue;
         const memo = `${trim(dep.PrivateNote)} ${on5010.map((l) => `${trim(l.Description)} ${trim(l.DepositLineDetail?.Entity?.name)}`).join(' ')}`;
         if (!/everee|epay|c1 (events|select|payment)/i.test(memo)) continue;
-        const want = /c1 select/i.test(memo) ? divisions.recurring : divisions.event;
-        if (trim(dep.DepartmentRef?.value) === want.Id) continue;
-        refunds.push({ id: String(dep.Id), date: dep.TxnDate, amount: Number(dep.TotalAmt) || 0, from: trim(dep.DepartmentRef?.name) || '(none)', to: want.Name, memo: memo.trim().slice(0, 50), status: dryRun ? 'would_update' : 'updated' });
+        // Everee money coming back is the held balance returning → 1250
+        // Everee Funding Balance (Greg 2026-09-09), not a labor reversal.
+        if (!a1250) continue;
+        refunds.push({ id: String(dep.Id), date: dep.TxnDate, amount: Number(dep.TotalAmt) || 0, from: '5010', to: '1250 Everee Funding Balance', memo: memo.trim().slice(0, 50), status: dryRun ? 'would_update' : 'updated' });
         if (dryRun) continue;
+        const newLines = ((dep.Line ?? []) as Array<Record<string, any>>).map((l) => String(l.DepositLineDetail?.AccountRef?.value) === String(a5010.Id) ? { ...l, DepositLineDetail: { ...l.DepositLineDetail, AccountRef: { value: String(a1250.Id), name: String(a1250.Name) } } } : l);
         // eslint-disable-next-line no-await-in-loop
-        await qboEntityUpdate(tenantId, 'Deposit', { ...dep, DepartmentRef: { value: want.Id, name: want.Name }, sparse: false });
+        await qboEntityUpdate(tenantId, 'Deposit', { ...dep, Line: newLines, sparse: false });
       }
       if (rows.length < 1000) break;
       start += 1000;

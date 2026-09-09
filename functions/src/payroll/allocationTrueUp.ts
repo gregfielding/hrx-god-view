@@ -7,6 +7,13 @@
  * health check and on demand from the callable — flag fixes made on the
  * verification page flow into QuickBooks without re-pushing anything.
  *
+ * Everee Funding Balance model (Greg 2026-09-09): each entry debits 5010
+ * per class at what Everee FUNDED, credits 5010 (Corp) for the BANK debit
+ * (wireBankMatch), and books the difference to 1250 Everee Funding Balance
+ * (over-wire → asset up; Everee netting a later wire → asset down). Human
+ * "EV Pay Alloc" entries get a companion "EV Hold" entry for their bank
+ * difference instead of being edited.
+ *
  * Safety: only OUR JEs (DocNumber "EV Alloc"/"TW Alloc") carrying
  * [wire:...] tags are touched — human "EV Pay Alloc" entries are reported
  * as skippedHuman and never rewritten; a JE whose
@@ -16,7 +23,7 @@
  */
 import * as admin from 'firebase-admin';
 
-import { qboQuery, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
+import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
 import { buildWireJournal, divisionKindForClassFqn, fetchQboDivisions } from './payrollCostReport';
 import { fetchEvereeBankDebits, matchWiresToBank } from './wireBankMatch';
 
@@ -57,12 +64,15 @@ export async function trueUpAllocationJes(
   // line (exact, bundled, split, or near-pair drift) get that amount as
   // their target credit; unmatched wires keep the Everee total.
   const bankDebits = await fetchEvereeBankDebits(tenantId, '2026-05-01', today);
-  const { matches: bankMatch } = matchWiresToBank(
+  const { matches: bankMatch, unmatchedDebits } = matchWiresToBank(
     ((journal.wires ?? []) as Array<Record<string, any>>).map((w) => ({ fundingId: trim(w.fundingId), fundingDate: String(w.fundingDate), entityName: String(w.entityName), amount: Number(w.amount) || 0 })),
     bankDebits,
   );
   const bankTied: Array<Record<string, unknown>> = [];
   const humanDrift: Array<Record<string, unknown>> = [];
+  const holdWanted = new Map<string, { doc: string; date: string; delta: number }>();
+  const holdHave = new Map<string, Record<string, any>>();
+  const holds: Array<Record<string, unknown>> = [];
   const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class WHERE Active = true MAXRESULTS 1000')) as Record<string, any>;
   const classIdByFqn = new Map<string, string>(
     ((clsRes.QueryResponse?.Class ?? clsRes.Class ?? []) as Array<Record<string, any>>).map((c) => [String(c.FullyQualifiedName), String(c.Id)]),
@@ -79,6 +89,11 @@ export async function trueUpAllocationJes(
   // Division the bank-feed wire sits in — so the wire nets to zero there
   // (Greg 2026-09-08; untagged credits were piling into Not Specified).
   const corpRef = divisions.corp ? { DepartmentRef: { value: divisions.corp.Id, name: divisions.corp.Name } } : {};
+  // 1250 Everee Funding Balance (Other Current Asset) — bank − funded lives here.
+  const acctRes = (await qboQuery(tenantId, "SELECT Id, Name, AcctNum FROM Account WHERE AccountType = 'Other Current Asset' MAXRESULTS 200")) as Record<string, any>;
+  const acct1250 = ((acctRes.QueryResponse?.Account ?? acctRes.Account ?? []) as Array<Record<string, any>>).find((a) => String(a.AcctNum) === '1260' || /everee funding balance/i.test(String(a.Name)));
+  const ACCT_1250 = acct1250 ? String(acct1250.Id) : '';
+  if (!ACCT_1250) console.warn('[trueUpAllocationJes] 1250 Everee Funding Balance not found — bank/funded differences will stay on 5010');
   let start = 1;
   const jes: Array<Record<string, any>> = [];
   for (;;) {
@@ -124,8 +139,19 @@ export async function trueUpAllocationJes(
       const hm = hWires.map((w) => bankMatch.get(trim(w.fundingId)));
       if (hWires.length && hm.every((m) => m && m.how !== 'unmatched')) {
         const hBank = round2(hm.reduce((s2, m) => s2 + (m!.bankCents / 100), 0));
-        if (Math.abs(hBank - hCredit) > 1) humanDrift.push({ doc, id: String(je.Id), credit: round2(hCredit), bank: hBank, delta: round2(hBank - hCredit), how: hm.map((m) => m!.how).join('+') });
+        const delta = round2(hBank - hCredit);
+        if (Math.abs(delta) > 0.005) {
+          humanDrift.push({ doc, id: String(je.Id), credit: round2(hCredit), bank: hBank, delta, how: hm.map((m) => m!.how).join('+') });
+          // Companion `EV Hold` entry keyed to her JE: moves the bank/credit
+          // difference to 1250 without touching her lines.
+          if (ACCT_1250) holdWanted.set(String(je.Id), { doc, date: trim(je.TxnDate), delta });
+        }
       }
+      continue;
+    }
+    if (/^EV Hold\b/i.test(doc)) {
+      const m = trim(je.PrivateNote).match(/\[wirehold:je(\d+)\]/);
+      if (m) holdHave.set(m[1], je);
       continue;
     }
     if (!/^(EV|TW) Alloc\b/i.test(doc)) continue;
@@ -149,63 +175,45 @@ export async function trueUpAllocationJes(
       }
     }
     if (wireTotal <= 0 || credit <= 0) continue;
-    // Bank-tied target: when every wire behind this JE matched a bank line,
-    // the credit target is the bank amount (drift after the pull is real cost).
+    // ── Everee Funding Balance model (Greg 2026-09-09) ──
+    //   debit  5010 per class   = what Everee actually FUNDED (the labor)
+    //   debit/credit 1250       = bank − funded (over-wire → asset up; Everee
+    //                             netting a later wire → asset down)
+    //   credit 5010 (Corp)      = the BANK debit (so Corp nets to zero)
+    const everee = round2(wireTotal);
     const bm = wires.map((w) => bankMatch.get(trim(w.fundingId)));
     const allBankMatched = bm.length > 0 && bm.every((m) => m && m.how !== 'unmatched');
     const bankHow = bm.map((m) => m?.how ?? 'unmatched').join('+');
-    if (allBankMatched) {
-      const bankTotal = round2(bm.reduce((s2, m) => s2 + (m!.bankCents / 100), 0));
-      if (Math.abs(bankTotal - wireTotal) > 0.005) {
-        bankTied.push({ doc, everee: round2(wireTotal), bank: bankTotal, how: bankHow, bankDates: [...new Set(bm.flatMap((m) => m!.bankDates))] });
-        wireTotal = bankTotal;
-      }
-    }
+    // matched: credit 5010 (Corp) = bank; 1260 = bank − funded.
+    // unmatched (no bank line yet / ever): funded from the Everee balance →
+    // credit 1260 for the funded amount, no 5010 credit.
+    const bank = allBankMatched ? round2(bm.reduce((s2, m) => s2 + m!.bankCents / 100, 0)) : 0;
+    const held = allBankMatched ? round2(bank - everee) : round2(-everee);
+    if (allBankMatched && Math.abs(held) > 0.005) bankTied.push({ doc, everee, bank, held, how: bankHow, bankDates: [...new Set(bm.flatMap((m) => m!.bankDates))] });
     // Pro-rata shares depend on which wires were left over in THIS Everee
     // read, so they must pass the two-read guard; exact/split/near are
     // anchored to a specific bank line and may fix the credit immediately.
     const bankStable = allBankMatched && !bankHow.includes('prorata');
-    const fixCredit = Math.abs(credit - wireTotal) > 0.005 && (allBankMatched || opts?.fixCreditDocs?.includes(doc));
-    if (Math.abs(credit - wireTotal) > Math.max(1, credit * 0.02) || (fixCredit && Math.abs(credit - wireTotal) > 0.005)) {
-      if (!fixCredit) {
-        skippedDrift.push({ doc, credit, wireTotal });
-        continue;
-      }
-      // Approved credit true-up (Greg 2026-09-03): rewrite the credit
-      // side to the current wire total so the debit split can follow.
-      const f = wireTotal / credit;
-      const creditLines = ((je.Line ?? []) as Array<Record<string, any>>).filter(
-        (l) => l.JournalEntryLineDetail?.PostingType === 'Credit',
-      );
-      for (const l of creditLines) l.Amount = Math.round((Number(l.Amount) || 0) * f * 100) / 100;
-      let newCredit = creditLines.reduce((s2, l) => s2 + (Number(l.Amount) || 0), 0);
-      const diffC = Math.round((wireTotal - newCredit) * 100);
-      if (diffC !== 0 && creditLines.length) {
-        const big = [...creditLines].sort((a, b) => (Number(b.Amount) || 0) - (Number(a.Amount) || 0))[0];
-        big.Amount = Math.round(((Number(big.Amount) || 0) + diffC / 100) * 100) / 100;
-      }
-      credit = wireTotal;
-    }
-    // Scale the splits to the CREDIT by their own sum (not Everee's wire
-    // total — after a bank tie-out those differ, and the one-cent loop below
-    // cannot absorb a multi-dollar gap → "debits not equal to credits").
+    // class debits at the FUNDED amount, penny-exact
     const splitSum = [...combined.values()].reduce((s2, x) => s2 + x.amt, 0);
-    const scale = splitSum > 0 ? credit / splitSum : 1;
+    const scale = splitSum > 0 ? everee / splitSum : 1;
     const floored = [...combined.values()].map((x) => ({ ...x, cents: Math.floor(x.amt * scale * 100), frac: x.amt * scale * 100 - Math.floor(x.amt * scale * 100) }));
-    let rem = Math.round(credit * 100) - floored.reduce((s, x) => s + x.cents, 0);
+    let rem = Math.round(everee * 100) - floored.reduce((s, x) => s + x.cents, 0);
     for (const x of [...floored].sort((a, b) => b.frac - a.frac)) {
       if (rem <= 0) break;
       x.cents += 1;
       rem -= 1;
     }
-    if (rem > 0 && floored.length) floored.sort((a, b) => b.cents - a.cents)[0].cents += rem; // any residue onto the largest line
+    if (rem > 0 && floored.length) floored.sort((a, b) => b.cents - a.cents)[0].cents += rem;
     const want = floored.filter((x) => x.cents > 0).map((x) => ({ cls: x.cls, amt: x.cents / 100 }));
-    const haveLines = ((je.Line ?? []) as Array<Record<string, any>>)
-      .filter((l) => l.JournalEntryLineDetail?.PostingType === 'Debit');
-    const have = haveLines
-      .map((l) => ({ cls: l.JournalEntryLineDetail.ClassRef?.name ?? null, amt: Number(l.Amount) || 0 }));
-    const jeCredits = ((je.Line ?? []) as Array<Record<string, any>>)
-      .filter((l) => l.JournalEntryLineDetail?.PostingType === 'Credit');
+    const allLines = (je.Line ?? []) as Array<Record<string, any>>;
+    const is5010 = (l: Record<string, any>): boolean => String(l.JournalEntryLineDetail?.AccountRef?.value) === ACCT_5010;
+    const is1250 = (l: Record<string, any>): boolean => Boolean(ACCT_1250) && String(l.JournalEntryLineDetail?.AccountRef?.value) === ACCT_1250;
+    const haveLines = allLines.filter((l) => l.JournalEntryLineDetail?.PostingType === 'Debit' && is5010(l));
+    const have = haveLines.map((l) => ({ cls: l.JournalEntryLineDetail.ClassRef?.name ?? null, amt: Number(l.Amount) || 0 }));
+    const haveHeld = round2(allLines.filter(is1250).reduce((s2, l) => s2 + (l.JournalEntryLineDetail.PostingType === 'Debit' ? 1 : -1) * (Number(l.Amount) || 0), 0));
+    const jeCredits = allLines.filter((l) => l.JournalEntryLineDetail?.PostingType === 'Credit' && is5010(l));
+    const haveCredit = round2(jeCredits.reduce((s2, l) => s2 + (Number(l.Amount) || 0), 0));
     const missingDivision =
       haveLines.some((l) => l.JournalEntryLineDetail.ClassRef?.value && !l.JournalEntryLineDetail.DepartmentRef?.value) ||
       (Boolean(divisions.corp) &&
@@ -214,33 +222,30 @@ export async function trueUpAllocationJes(
         ));
     const key = (arr: Array<{ cls: string | null; amt: number }>): string =>
       arr.map((x) => `${x.cls}|${x.amt.toFixed(2)}`).sort().join(';');
-    const fingerprint = allBankMatched ? `${credit.toFixed(2)}|${wireTotal.toFixed(2)}|${bankHow}` : `${credit.toFixed(2)}|${wireTotal.toFixed(2)}|${key(want)}`;
-    if (key(want) === key(have) && !missingDivision) {
+    const fingerprint = `${bank.toFixed(2)}|${everee.toFixed(2)}|${key(want)}`;
+    const sameDebits = key(want) === key(have);
+    const sameHeld = Math.abs(haveHeld - (ACCT_1250 ? held : 0)) < 0.005;
+    const sameCredit = Math.abs(haveCredit - (ACCT_1250 ? bank : everee)) < 0.005;
+    if (sameDebits && sameHeld && sameCredit && !missingDivision) {
       unchanged += 1;
-      // An unchanged read must still supersede the last observation —
-      // otherwise reads that alternate A, B, A would pair the two A's as
-      // "consecutive" (EV Alloc 0622, 2026-09-08) and patch on stale data.
       if (lastObs.has(doc) && lastObs.get(doc) !== fingerprint) {
         // eslint-disable-next-line no-await-in-loop
-        await obsCol.doc(doc).set({ fingerprint, wireTotal: round2(wireTotal), credit: round2(credit), observedAt: admin.firestore.FieldValue.serverTimestamp(), dryRun, unchanged: true }, { merge: true });
+        await obsCol.doc(doc).set({ fingerprint, wireTotal: everee, bank, held, credit: haveCredit, observedAt: admin.firestore.FieldValue.serverTimestamp(), dryRun, unchanged: true }, { merge: true });
       }
       continue;
     }
+    // A bank-anchored correction (credit or held line off, bank line fixed) is
+    // not subject to the read-stability guard; a changed class split is.
+    const urgent = bankStable && (!sameCredit || !sameHeld);
     const prev = lastObs.get(doc);
-    // A bank-anchored CREDIT correction is not subject to the read-stability
-    // guard (the guard exists for Everee's flapping class splits; the credit
-    // target here comes from the bank line and does not move).
-    if (prev !== fingerprint && !(fixCredit && (bankStable || opts?.fixCreditDocs?.includes(doc)))) {
-      deferredUnstable.push({ doc, reason: prev ? 'read differs from previous run' : 'first observation', wireTotal: round2(wireTotal) });
+    if (prev !== fingerprint && !urgent) {
+      deferredUnstable.push({ doc, reason: prev ? 'read differs from previous run' : 'first observation', wireTotal: everee });
       // eslint-disable-next-line no-await-in-loop
-      await obsCol.doc(doc).set({ fingerprint, wireTotal: round2(wireTotal), credit: round2(credit), observedAt: admin.firestore.FieldValue.serverTimestamp(), dryRun }, { merge: true });
+      await obsCol.doc(doc).set({ fingerprint, wireTotal: everee, bank, held, credit: haveCredit, observedAt: admin.firestore.FieldValue.serverTimestamp(), dryRun }, { merge: true });
       continue;
     }
-    if (lastPatched.get(doc) === fingerprint) {
-      // We already wrote exactly this split and QBO still reads back as
-      // different → the have/want comparison is wrong for this doc, not the
-      // data. Never loop on it; surface it.
-      deferredUnstable.push({ doc, reason: 'already written with this exact split but still compares as different — comparison bug, investigate', wireTotal: round2(wireTotal) });
+    if (lastPatched.get(doc) === fingerprint && !urgent) {
+      deferredUnstable.push({ doc, reason: 'already written with this exact split but still compares as different — comparison bug, investigate', wireTotal: everee });
       continue;
     }
     patched += 1;
@@ -259,13 +264,72 @@ export async function trueUpAllocationJes(
           }
         : { PostingType: 'Debit', AccountRef: { value: ACCT_5010 }, ...corpRef },
     }));
-    for (const l of jeCredits) {
-      newLines.push({ ...l, JournalEntryLineDetail: { ...l.JournalEntryLineDetail, ...corpRef } });
+    if (ACCT_1250 && Math.abs(held) > 0.005) {
+      newLines.push({
+        DetailType: 'JournalEntryLineDetail',
+        Amount: Math.abs(held),
+        Description: !allBankMatched ? `Funded from Everee balance — no bank debit matched yet (funded ${everee.toFixed(2)})` : held > 0 ? `Over-wired to Everee (bank ${bank.toFixed(2)} vs funded ${everee.toFixed(2)}) — held at Everee` : `Funded from Everee balance (bank ${bank.toFixed(2)} vs funded ${everee.toFixed(2)})`,
+        JournalEntryLineDetail: { PostingType: held > 0 ? 'Debit' : 'Credit', AccountRef: { value: ACCT_1250 } },
+      });
+    }
+    const creditAmt = ACCT_1250 ? bank : everee;
+    if (creditAmt > 0.005) {
+      newLines.push({
+        DetailType: 'JournalEntryLineDetail',
+        Amount: creditAmt,
+        Description: `Everee wire — bank debit ${allBankMatched ? [...new Set(bm.flatMap((m) => m!.bankDates))].join('/') : '(unmatched, Everee total)'} — reallocation`,
+        JournalEntryLineDetail: { PostingType: 'Credit', AccountRef: { value: ACCT_5010 }, ...corpRef },
+      });
     }
     // eslint-disable-next-line no-await-in-loop
     await qboEntityUpdate(tenantId, 'JournalEntry', { ...je, Line: newLines, sparse: false });
     // eslint-disable-next-line no-await-in-loop
     await obsCol.doc(doc).set({ patchedFingerprint: fingerprint, patchedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
   }
-  return { ok: true, dryRun, patched, unchanged, skippedDrift, skippedHuman, deferredUnstable, bankTied, humanDrift, patchedDocs: patchedDocs.slice(0, 50) };
+  // Everee bank lines themselves: a debit with NO funding behind it (older
+  // than 5 days) is cash sitting at Everee → 1260; one on 1260 that now
+  // matches a funding goes back to 5010 so the JE credit nets it in Corp.
+  const bankLineMoves: Array<Record<string, unknown>> = [];
+  if (ACCT_1250) {
+    const matchedDebitIds = new Set<string>([...bankMatch.values()].flatMap((m) => m.debitIds));
+    const stale = (d: string): boolean => Math.floor(Date.parse(today) / 86400000) - Math.floor(Date.parse(d) / 86400000) > 5;
+    const moves: Array<{ id: string; to: '5010' | '1260'; date: string; cents: number; memo: string }> = [];
+    // May is out of scope (transition month; the 5/14 19,161.07 wire pre-funded
+    // the May 15 batch Everee still shows as APPROVED_FOR_FUNDING).
+    for (const d of unmatchedDebits) if (d.acct === '5010' && d.date >= '2026-06-01' && stale(d.date)) moves.push({ id: d.id, to: '1260', date: d.date, cents: d.cents, memo: d.memo });
+    for (const d of bankDebits) if (d.acct === '1260' && matchedDebitIds.has(d.id)) moves.push({ id: d.id, to: '5010', date: d.date, cents: d.cents, memo: d.memo });
+    for (const mv of moves) {
+      bankLineMoves.push({ id: mv.id, date: mv.date, amount: mv.cents / 100, to: mv.to, memo: mv.memo, status: dryRun ? 'would_move' : 'moved' });
+      if (dryRun) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const pr = (await qboQuery(tenantId, `SELECT * FROM Purchase WHERE Id = '${mv.id}'`)) as Record<string, any>;
+      const p = (pr.QueryResponse?.Purchase ?? pr.Purchase ?? [])[0];
+      if (!p) continue;
+      const from = mv.to === '1260' ? ACCT_5010 : ACCT_1250; const to = mv.to === '1260' ? ACCT_1250 : ACCT_5010;
+      const lines = ((p.Line ?? []) as Array<Record<string, any>>).map((l) => String(l.AccountBasedExpenseLineDetail?.AccountRef?.value) === from ? { ...l, AccountBasedExpenseLineDetail: { ...l.AccountBasedExpenseLineDetail, AccountRef: { value: to } } } : l);
+      // eslint-disable-next-line no-await-in-loop
+      await qboEntityUpdate(tenantId, 'Purchase', { ...p, Line: lines, sparse: false });
+    }
+  }
+  // Companion entries for human JEs (bank ≠ her credit): create / true up.
+  for (const [jeId, h] of holdWanted) {
+    const prior = holdHave.get(jeId);
+    const lines = [
+      { DetailType: 'JournalEntryLineDetail', Amount: Math.abs(h.delta), Description: h.delta > 0 ? `Over-wired to Everee vs ${h.doc} — held at Everee` : `Funded from Everee balance vs ${h.doc}`, JournalEntryLineDetail: { PostingType: h.delta > 0 ? 'Debit' : 'Credit', AccountRef: { value: ACCT_1250 } } },
+      { DetailType: 'JournalEntryLineDetail', Amount: Math.abs(h.delta), Description: `Bank debit vs ${h.doc} credit — moved to 1250`, JournalEntryLineDetail: { PostingType: h.delta > 0 ? 'Credit' : 'Debit', AccountRef: { value: ACCT_5010 }, ...corpRef } },
+    ];
+    const priorAmt = prior ? round2(((prior.Line ?? []) as Array<Record<string, any>>).filter((l) => String(l.JournalEntryLineDetail?.AccountRef?.value) === ACCT_1250).reduce((s2, l) => s2 + (l.JournalEntryLineDetail.PostingType === 'Debit' ? 1 : -1) * (Number(l.Amount) || 0), 0)) : null;
+    if (prior && priorAmt !== null && Math.abs(priorAmt - h.delta) < 0.005) { holds.push({ for: h.doc, delta: h.delta, status: 'already' }); continue; }
+    holds.push({ for: h.doc, delta: h.delta, status: dryRun ? (prior ? 'would_true_up' : 'would_create') : (prior ? 'true_upd' : 'created') });
+    if (dryRun) continue;
+    const header = { DocNumber: `EV Hold ${h.doc.replace(/^EV Pay Alloc\s*/i, '').slice(0, 12)}`, TxnDate: h.date, PrivateNote: `Bank debit vs ${h.doc} credit: difference booked to 1250 Everee Funding Balance (over-wire / netting). Companion to a hand-keyed entry — never edits it. [wirehold:je${jeId}]` };
+    if (prior) {
+      // eslint-disable-next-line no-await-in-loop
+      await qboEntityUpdate(tenantId, 'JournalEntry', { ...prior, ...header, Line: lines, sparse: false });
+    } else {
+      // eslint-disable-next-line no-await-in-loop
+      await qboEntityCreate(tenantId, 'JournalEntry', { ...header, Line: lines });
+    }
+  }
+  return { ok: true, dryRun, patched, unchanged, skippedDrift, skippedHuman, deferredUnstable, bankTied, humanDrift, holds, bankLineMoves, patchedDocs: patchedDocs.slice(0, 50) };
 }

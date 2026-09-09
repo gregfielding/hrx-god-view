@@ -121,7 +121,7 @@ async function scanEntity(entity: { entityId: string; evereeTenantId: string }):
     const raw = (await evereeRequest<Record<string, unknown>>(
       config,
       'GET',
-      `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true`,
+      `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true&sort=id,asc`,
     )) as { items?: unknown[]; totalPages?: number };
     const items = Array.isArray(raw?.items) ? raw.items : [];
     let fresh = 0;

@@ -133,7 +133,9 @@ async function main(): Promise<void> {
     console.log('skippedHuman (Tabitha, never rewritten):', (t.skippedHuman ?? []).join(', '));
     console.log('patched docs:', (t.patchedDocs ?? []).join(', '));
     for (const h of (t.humanDrift ?? []) as Array<Record<string, any>>) console.log(`  TABITHA (not rewritten): ${String(h.doc).padEnd(20)} #${h.id} credit ${Number(h.credit).toFixed(2).padStart(11)} vs bank ${Number(h.bank).toFixed(2).padStart(11)}  delta ${Number(h.delta).toFixed(2).padStart(10)}  (${h.how})`);
-    for (const b of (t.bankTied ?? []) as Array<Record<string, any>>) console.log(`  bank-tied: ${String(b.doc).padEnd(20)} everee ${Number(b.everee).toFixed(2).padStart(11)} → bank ${Number(b.bank).toFixed(2).padStart(11)}  (${b.how}, ${(b.bankDates as string[]).join('/')})`);
+    for (const b of (t.bankLineMoves ?? []) as Array<Record<string, any>>) console.log(`  bank line ${b.date} #${b.id} ${Number(b.amount).toFixed(2).padStart(10)} → ${b.to} ${String(b.status).padEnd(10)} ${b.memo}`);
+    for (const h of (t.holds ?? []) as Array<Record<string, any>>) console.log(`  EV Hold for ${String(h.for).padEnd(20)} ${String(h.status).padEnd(14)} 1250 ${Number(h.delta) > 0 ? '+' : ''}${Number(h.delta).toFixed(2)}`);
+    for (const b of (t.bankTied ?? []) as Array<Record<string, any>>) console.log(`  bank-tied: ${String(b.doc).padEnd(20)} funded ${Number(b.everee).toFixed(2).padStart(11)}  bank ${Number(b.bank).toFixed(2).padStart(11)}  1250 ${Number(b.held) > 0 ? '+' : ''}${Number(b.held).toFixed(2).padStart(9)}  (${b.how}, ${(b.bankDates as string[]).join('/')})`);
     if ((t.skippedDrift ?? []).length) console.log('drift (credit ≠ wire, left alone):', JSON.stringify(t.skippedDrift));
   }
   console.log('\nWeekly writers switch: scripts/qboJeWriters.ts status|on|off (currently controlled by tenants/{t}/settings/qbo_automation.jeWritersEnabled).');
