@@ -89,3 +89,20 @@ claims-Admin (vicki/tabitha).
   read/WRITE to any tenant-assigned user including workers.
 - `allow write: if isHighSecurityLevel()` on users is tenant-unscoped and
   string-only.
+
+## 2026-09-09 — Everee mirror reads were claims-only (Daniel couldn't see C1 Select checkmarks)
+
+Symptom: on a worker record, Daniel (Admin, level 7, Firestore-only —
+no `roles` claim) saw the C1 Select header block fall back to the HRX-side
+pending rows ("Direct deposit: Not started") and the Employment tab's
+Everee status card render every row open with no dates, while Greg (hrx
+claim) saw the mirror-driven checkmarks + completion dates. Cause: the
+`everee_workers` / `everee_embed_sessions` / `everee_pay_history_cache` /
+`payroll_payment_issues` read rules only had `isHRX() || hasTenantRole(
+claims)` + own-doc branches; the client swallows the permission error
+and falls back silently. Fix (deployed): added `hasSecurityLevel(tenantId,
+5)` (doc-based, tenant-scoped) to those four reads — Greg's rule: ALL
+internal staff (securityLevel 5+) see this. ⚠️ `hasTenantRole(tenantId,
+request.auth.token.roles)` still gates ~52 other collection reads
+claims-only; any "recruiter X can't see Y but Greg can" report is almost
+certainly the same cause — add `hasSecurityLevel(tenantId, 5)` there too.

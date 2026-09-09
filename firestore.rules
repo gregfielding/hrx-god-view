@@ -651,6 +651,11 @@ service cloud.firestore {
         allow read: if request.auth != null && (
           isHRX() ||
           hasTenantRole(tenantId, request.auth.token.roles) ||
+          // Doc-based staff branch (2026-09-09): most staff sign in with
+          // claimless tokens (see docs/claude/feature_users_read_rules.md),
+          // so claims-only gating hid the Everee mirror (C1 Select onboarding
+          // checkmarks/dates) from every level-5+ recruiter except Greg.
+          hasSecurityLevel(tenantId, 5) ||
           resource.data.uid == request.auth.uid
         );
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
@@ -659,6 +664,11 @@ service cloud.firestore {
         allow read: if request.auth != null && (
           isHRX() ||
           hasTenantRole(tenantId, request.auth.token.roles) ||
+          // Doc-based staff branch (2026-09-09): most staff sign in with
+          // claimless tokens (see docs/claude/feature_users_read_rules.md),
+          // so claims-only gating hid the Everee mirror (C1 Select onboarding
+          // checkmarks/dates) from every level-5+ recruiter except Greg.
+          hasSecurityLevel(tenantId, 5) ||
           resource.data.firebaseUid == request.auth.uid
         );
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
@@ -667,6 +677,11 @@ service cloud.firestore {
         allow read: if request.auth != null && (
           isHRX() ||
           hasTenantRole(tenantId, request.auth.token.roles) ||
+          // Doc-based staff branch (2026-09-09): most staff sign in with
+          // claimless tokens (see docs/claude/feature_users_read_rules.md),
+          // so claims-only gating hid the Everee mirror (C1 Select onboarding
+          // checkmarks/dates) from every level-5+ recruiter except Greg.
+          hasSecurityLevel(tenantId, 5) ||
           resource.data.userId == request.auth.uid
         );
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
@@ -678,6 +693,11 @@ service cloud.firestore {
         allow read: if request.auth != null && (
           isHRX() ||
           hasTenantRole(tenantId, request.auth.token.roles) ||
+          // Doc-based staff branch (2026-09-09): most staff sign in with
+          // claimless tokens (see docs/claude/feature_users_read_rules.md),
+          // so claims-only gating hid the Everee mirror (C1 Select onboarding
+          // checkmarks/dates) from every level-5+ recruiter except Greg.
+          hasSecurityLevel(tenantId, 5) ||
           resource.data.userId == request.auth.uid
         );
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
