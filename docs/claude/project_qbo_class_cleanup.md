@@ -1027,5 +1027,7 @@ Result flags `manualAllocationsToDelete` — Tabitha's `Rev Allocation
 063026` (#7846) must be DELETED (not patched): `.scratch/delete_je.ts 7846
 "Rev Allocation 063026" write` (snapshot to backup_deleted_je_7846.json).
 Dry run 2026-09-08: May–Sep, 10 segments, ~$500K of overhead; June 94.63%
-Event. Decisions taken by default (Greg silent): 5200/5300 by revenue
-ratio like everything else; 9010/9020 stay Corp.
+Event. Greg's later calls the same evening: 7140 by revenue too (net Corp after WC
+accrual/clearing); **Other Income 9010/9020 by revenue too** (credits flip
+sides). Only 6xxx Other Expense stays in Corp (May Tempworks WEB PAY
+$5,413, Lone Oak era). 5200/5300 by revenue like everything else.

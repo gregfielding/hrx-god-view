@@ -15,8 +15,8 @@
  * Eligible: every Expense-type account (7140's NET Corp balance — internal
  * WC after the accrual and payment clearing — included), plus COGS overhead (5200 platform fees, 5210
  * ConnectTeam, 5300 recruiting, 5400 supplies…) except 5010 / 5100 / 5310
- * which have their own writers. Other Income (9xxx) and Other Expense
- * (6xxx financing) stay in Corp. Our own allocation JEs and Tabitha's
+ * which have their own writers, plus Other Income (9xxx — credits, so the
+ * legs flip). Other Expense (6xxx financing) stays in Corp. Our own allocation JEs and Tabitha's
  * hand-keyed `Rev Allocation` JEs are excluded from the base; a surviving
  * `Rev Allocation` is reported so it can be deleted (it would double-count).
  *
@@ -64,6 +64,7 @@ export async function pushOverheadAllocations(
     const name = String(a.Name ?? '');
     if (/uncategorized|ask my accountant/i.test(name)) return false; // not yet booked anywhere real
     if (a.AccountType === 'Expense') return true; // 7140 included: its net Corp balance (internal WC after accrual + clearing) spreads by revenue
+    if (a.AccountType === 'Other Income') return true; // 9010 card rewards / 9020 interest — by revenue too (Greg 2026-09-08); credits flip sides below
     if (a.AccountType === 'Cost of Goods Sold') return !(['5010', '5100', '5310'].includes(n) || /direct labor|workers'? comp|background.*screening/i.test(name));
     return false;
   };
@@ -213,7 +214,7 @@ export async function pushOverheadAllocations(
       TxnDate: segmentTxnDate(seg, today),
       PrivateNote:
         `Overhead allocated by revenue ratio (Event-based ${(rt.ratio * 100).toFixed(2)}% / Recurring ${((1 - rt.ratio) * 100).toFixed(2)}%, ${rt.basis} revenue by invoice Division). ` +
-        `Same account both sides; Corp / untagged overhead moved to the client Divisions. Excludes 5010/5100/5310 (own writers), 6xxx, 9xxx. ` +
+        `Same account both sides; Corp / untagged overhead moved to the client Divisions. Excludes 5010/5100/5310 (own writers) and 6xxx Other Expense. ` +
         `Segment ${seg.start}..${seg.end} (month ∩ block). [ovh:${seg.key}]`,
     };
     if (prior) {
