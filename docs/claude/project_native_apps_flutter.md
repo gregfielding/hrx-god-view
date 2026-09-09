@@ -328,3 +328,35 @@ DeletionRequestsPage.tsx retention rules.
   (`store/screenshots/play/`).
 - App Store Connect: age-rating and privacy questionnaires are ref-driven
   and reliable; the privacy "linked/tracking" pages repeat per data type.
+
+## Store status check (2026-09-09, Claude read both consoles in Greg's Chrome)
+
+**Apple: iOS 1.0.0 (build 9) REJECTED 2026-09-06 5:16 PM** — submission
+`3da6eb76-6ed4-40ca-90e4-2a35d6fe38d5`, state `UNRESOLVED_ISSUES`, reason
+"Guideline 2.1 - Information Needed - New App Submission" (new developer
+account with limited review history; NOT a bug/crash/metadata rejection).
+Apple wants, both as a reply on the submission thread AND pasted into the
+App Review Information → Notes field:
+1. A screen recording on a PHYSICAL device (latest iOS) starting at app
+   launch, showing the typical flow incl. signup/login AND account deletion
+   (Profile → Delete account request), and any UGC reporting/blocking.
+2. Purpose + target audience (problem solved, value).
+3. Setup/access instructions incl. demo creds (already in notes: phone
+   `+1 555 555 0100` / code `246810`).
+4. External services list (Firebase Auth/Firestore/Functions/FCM/
+   Crashlytics/Analytics, Twilio SMS codes, Everee payroll webview,
+   AccuSource, E-Verify/WorkBright, Google Maps if used).
+5. Regional differences (US-only; confirm consistent behavior).
+6. Regulated-industry documentation (staffing agency — state the business;
+   no licensed content).
+Resubmit: reply on the thread ("Reply to App Review" on the submission
+details page) → the version page's "Update Review"/Resubmit; the same
+build 9 can be reused (no code change requested).
+
+**Google Play: still "Changes in review"** (Production 1.0.0 (8), US, app
+status Draft / update status In review, last updated Sep 6). No policy
+messages. Android developer verification banner: "All of your apps have been
+successfully registered" (the Sep 30 deadline is satisfied). Non-blocking
+warning on the release dashboard: "App optimization is below our threshold —
+Obfuscation (2%)", fix by Feb 2027 (enable R8 minify/shrinkResources in
+`android/app/build.gradle` release config for 1.0.1).
