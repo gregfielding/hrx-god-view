@@ -76,9 +76,12 @@ worker's Slack thread (the raw inbound is already relayed there by the existing 
   candidates (`candidatesForJobOrder`) so she can `offer_shift` to someone else when asked.
 
 ## Slack
-Thread per worker in `app_config/natalie.onboardingChannelId` (falls back to `recruitingChannelId`,
-then #recruiting C0BF02MEKUP). Opener when enrolled; 24h/72h summary (done / worker owes /
-:warning: recruiter side / background + drug status); every text she sends or receives; close-out.
+One thread per job order per day (`natalie_onboarding_threads/{jobOrderId__YYYY-MM-DD}`) in
+`app_config/natalie.onboardingChannelId` (falls back to `recruitingChannelId`, then #recruiting
+C0BF02MEKUP) — a bulk placement would otherwise open a thread per worker. Opener once; then a line
+per enrolled worker, each 24h/72h summary (done / worker owes / :warning: recruiter side /
+background + drug status), every text she sends or receives (the raw inbound via the existing
+watch relay), and close-outs.
 
 ## Tools / prompt
 `onboarding_followups {includeClosed?}` (who is stuck, what they owe, last reply + intent),
