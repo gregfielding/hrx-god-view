@@ -970,3 +970,21 @@ Recurring (5100), C1 Resources = internal (7140). Medstaff/Workforce = $0.**
 - Tabitha's `Rev Allocation 063026` also spreads the June 7140 cash by
   revenue ratio (−5,000 Corp / +4,655.50 / +344.50) — those three lines
   should come out like the 5010 ones did (7140 is internal by design).
+
+### WC accrual model (2026-09-08, latest) — 7140 shows the month's own premium
+
+Greg: accrue C1 Resources too. `wcAllocations.ts` now books the FULL
+InSource premium for payroll month M in M: debit 5100 per class (Events →
+Event-based, Select → Recurring), debit 7140 Corp (Resources, pro-rata by
+segment days), credit **2410 Accrued Workers' Comp** (sub of 2400 Accrued
+Expenses; auto-created on the first write run). The carrier's debit in M+1
+(one bank line per entity on 7140, memo `<MONTH> 2026 PREMIUM`) is offset
+by a `WC Pay MMYY` JE dated the bank date: debit 2410 / credit 7140 Corp
+for min(bank premium, portal total), tag `[wcpay:YYYY-MM]`. Real cost that
+stays on 7140: $5,000-minimum top-ups (Mar 2,552.45, May 1,400.03),
+`UNLIMITED WOS` $500 fees, monthly `ASSESSMENTS`. Legacy `WC Alloc` JEs
+(credit 7140) are rewritten in place. Expected June 7140 Corp after the
+write and after Tabitha drops her Rev Allocation 7140 lines: 5,000 cash −
+3,599.97 clearing + 405.74 accrued = **1,805.77** (1,400.03 of it the May
+top-up). Runner `dry wc` prints allocations, payment clearings, and the
+bank-vs-portal reconciliation.

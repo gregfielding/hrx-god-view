@@ -70,6 +70,9 @@ async function main(): Promise<void> {
       const fam = (m.splits ?? []).reduce((a: Record<string, number>, x: Record<string, any>) => { a[x.family] = (a[x.family] ?? 0) + Number(x.amount); return a; }, {});
       console.log(`${String(m.month).padEnd(12)} ${String(m.dates ?? '').padEnd(24)} ${String(m.status).padEnd(20)} total ${Number(m.amount ?? 0).toFixed(2).padStart(10)}  ${String(m.source ?? '').padEnd(17)} ${m.splits ? `event ${(fam.event ?? 0).toFixed(2)} / recurring ${(fam.recurring ?? 0).toFixed(2)}` : ''}`);
     }
+    if (w.accountNote) console.log('accrual account:', w.accountNote);
+    console.log('payment clearing (WC Pay — debit 2410 / credit 7140 Corp on the bank date):');
+    for (const p of (w.payments ?? []) as Array<Record<string, any>>) console.log(`  ${p.month}  paid ${p.date}  ${String(p.status).padEnd(16)} ${Number(p.amount).toFixed(2).padStart(10)}${p.unmatchedOn7140 !== undefined ? `  stays on 7140: ${Number(p.unmatchedOn7140).toFixed(2)}` : ''}`);
     console.log('carrier months (wc_carrier_invoices):', (w.carrierMonths ?? []).join(', '));
     console.log('reconciliation — InSource bank lines on 7140 by premium month vs portal (events+select+resources):');
     for (const r of (w.reconciliation ?? []) as Array<Record<string, any>>) {
