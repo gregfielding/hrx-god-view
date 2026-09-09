@@ -2176,6 +2176,7 @@ export async function buildWireJournal(
     unresolvedGross: number;
   }
   const groups = new Map<string, WireGroup>();
+  const unfundedOptimistic = new Map<string, { entityName: string; month: string; lines: number; amount: number }>();
   const unattributedDetail: Array<{ paymentId: string; worker: string; fundingDate: string; entityName: string; amount: number; notes: string }> = [];
   const auditMethod = new Map<string, number>();
   const auditMethodClass = new Map<string, Map<string, number>>();
@@ -2204,9 +2205,22 @@ export async function buildWireJournal(
         seenIds.add(id);
         fresh += 1;
         if (trim(p.status) !== 'PAID') continue;
+        // Only SUBMITTED fundings are cash that left the bank. Everee also
+        // keeps `CREATED_NEW_FUNDING` (a superseded attempt — always has a
+        // SUBMITTED sibling for the same money) and `APPROVED_FOR_FUNDING`
+        // (optimistically paid, company pull never submitted). Counting
+        // those double-booked $32K of July labor and $19K of May
+        // (2026-09-08 investigation). Never-submitted ones are reported.
         const fundings = ((p.fundingList ?? []) as Array<Record<string, any>>).filter((f) => {
           const fd = trim(f.fundingDate);
-          return fd >= startDate && fd <= endDate;
+          if (!(fd >= startDate && fd <= endDate)) return false;
+          const st = trim(f.status);
+          if (st === 'APPROVED_FOR_FUNDING') {
+            const k = `${entityName}|${fd.slice(0, 7)}`;
+            const u = unfundedOptimistic.get(k) ?? { entityName, month: fd.slice(0, 7), lines: 0, amount: 0 };
+            u.lines += 1; u.amount = round2(u.amount + money(f.amount)); unfundedOptimistic.set(k, u);
+          }
+          return st === 'SUBMITTED';
         });
         if (fundings.length === 0) continue;
         const uid = trim(p.employee?.externalWorkerId);
@@ -2333,7 +2347,10 @@ export async function buildWireJournal(
         }
 
         for (const f of fundings) {
-          const key = `${entityId}__${trim(f.companyFundingId) || 'none'}`;
+          // No-id fundings (SUBMITTED but no companyFundingId — funded from a
+          // manual wire) are grouped PER MONTH; one entity-wide 'none' bucket
+          // used to merge May, June and July money into a single June JE.
+          const key = `${entityId}__${trim(f.companyFundingId) || `none-${trim(f.fundingDate).slice(0, 7)}`}`;
           let g = groups.get(key);
           if (!g) {
             g = {
@@ -2472,6 +2489,8 @@ export async function buildWireJournal(
     .map(([cls, amount]) => {
       const q = resolveClassFqn(cls);
       return {
+    unfundedOptimistic: [...unfundedOptimistic.values()].sort((a, b) => a.month.localeCompare(b.month)),
+
         class: cls,
         qboClass: cls === 'Unattributed' ? null : q.fqn,
         qboClassExists: cls === 'Unattributed' ? false : q.exists,

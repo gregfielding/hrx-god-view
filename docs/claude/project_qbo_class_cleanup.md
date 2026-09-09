@@ -1041,3 +1041,34 @@ the result; runner `scrn` phase prints them). 7 JEs re-tagged 2026-09-08.
 The credit still mirrors the source purchase's Division so the charge nets
 where it sits. June 5310 after: Corp 0 / Recurring 70.94 (Greg's screenshot
 showing 70.94 in both columns predated the recreated Scrn Alloc 0610).
+
+## 5010 Corp residual — Everee funding statuses (2026-09-08, late)
+
+Greg: "tackle the −41,800.55 of Corp field payroll" (and July/Aug). Root
+causes, all in `buildWireJournal`'s funding handling:
+- **Everee fundingList statuses**: every funding is type OPTIMISTIC_FUNDED
+  (Everee fronts pay); status `SUBMITTED` = company pull happened (has
+  companyFundingId, or none when funded from a manual wire — the 6/25
+  batch, 216 lines $96,751.60); `CREATED_NEW_FUNDING` = superseded attempt
+  that ALWAYS has a SUBMITTED sibling for the same money (July: 81 lines
+  $32,000.29 → counted twice); `APPROVED_FOR_FUNDING` = paid to the worker
+  but the company pull was NEVER submitted (May 19: 54 lines $18,963.67 —
+  **C1 may still owe Everee this; ask them**). `prevFundingId` links the
+  chain. No company-funding endpoint exists (/company-fundings, /fundings
+  404).
+- The builder grouped every no-id funding for an entity into ONE bucket
+  keyed `none` regardless of date → the June aggregate JE `EV Alloc 0625
+  EVT2` (148,174.05) = May pending 19,422.16 + June 96,751.60 + July
+  superseded 32,000.29. Fixed: only SUBMITTED fundings count; no-id groups
+  keyed `none-YYYY-MM`; journal result carries `unfundedOptimistic`.
+- Executed: 0625 EVT2 credit rewritten to 96,751.60 (runner
+  `write trueup "fixcredit=EV Alloc 0625 EVT2"` — the fixcredit list form
+  exists because a drifted credit that still matches the BANK debit, e.g.
+  0730 EVT, must not be pulled toward Everee's moving read); legacy May
+  aggregate `EV Alloc 0519 EVT` (#8797, 19,422.16, never-pulled money)
+  deleted (backup_deleted_je_8797.json).
+- Reconciliation tooling: `.scratch/wire_bank_match.ts <start> <end>` —
+  fundings ↔ bank debits with bundling (≤4 fundings per debit, one funding
+  across 2 debits, −1..+8 days). 74/105 exact; the rest are near-pairs
+  where Everee's wire total moved after the bank debit (voids/reissues).
+  **Bank debit is the truth for the JE credit**, not Everee's current read.

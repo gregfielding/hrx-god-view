@@ -102,7 +102,20 @@ async function main(): Promise<void> {
   }
   if (phase === 'both' || phase === 'trueup') {
     const { trueUpAllocationJes } = await import('../src/payroll/allocationTrueUp');
-    const t = (await trueUpAllocationJes(TENANT, dryRun)) as Record<string, any>;
+    // 4th arg `fixcredit`: rewrite the CREDIT of drifted JEs to the current
+    // Everee wire total (aggregate no-id groups shrink as Everee reconciles)
+    let fixCreditDocs: string[] | undefined;
+    // `fixcredit` = every drifted doc; `fixcredit=EV Alloc 0625 EVT2,…` = only
+    // those (a drifted credit that still matches the BANK debit must be left).
+    const fc = process.argv[4] ?? '';
+    if (fc === 'fixcredit') {
+      const probe = (await trueUpAllocationJes(TENANT, true)) as Record<string, any>;
+      fixCreditDocs = ((probe.skippedDrift ?? []) as Array<Record<string, any>>).map((d) => String(d.doc));
+    } else if (fc.startsWith('fixcredit=')) {
+      fixCreditDocs = fc.slice('fixcredit='.length).split(',').map((x) => x.trim()).filter(Boolean);
+    }
+    if (fixCreditDocs) console.log('fixcredit: will rewrite credits of', fixCreditDocs.join(', ') || '(none)');
+    const t = (await trueUpAllocationJes(TENANT, dryRun, fixCreditDocs ? { fixCreditDocs } : undefined)) as Record<string, any>;
     console.log(`\n=== allocation true-up (${mode}) ===`);
     console.log(`patched ${t.patched}  unchanged ${t.unchanged}  deferred ${(t.deferredUnstable ?? []).length}  skippedHuman ${(t.skippedHuman ?? []).length}  skippedDrift ${(t.skippedDrift ?? []).length}`);
     console.log('deferred (read must match the previous run before a write):', JSON.stringify(t.deferredUnstable ?? []));
