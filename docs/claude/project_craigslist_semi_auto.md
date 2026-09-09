@@ -42,7 +42,8 @@
   "use CL mail relay". The preview page is the last stop before "publish" → payment; leave that
   click to Greg.
 - **Delivery status 2026-09-09:** OnTrac Denver Warehouse Operative gig (post Xu8hmPdNbCu8gLtP8ufM)
-  staged to the preview step in Greg's account; awaiting his publish + $7.
+  published by Greg (CL id 7963535589), live URL recorded via `craigslistMarkPosted`
+  (`functions/.scratch/cl-mark-posted.ts` pattern), status 'posted', expires 2026-10-09.
 - The form's existing `craigslistUrl` field doubles as the "live URL" input; `craigslist.status`
   is set to 'posted' by the tool or (TODO) by the form when a craigslist.org URL is pasted.
 - Site map covers the metros C1 works in; unknown cities fall back to the state default.
