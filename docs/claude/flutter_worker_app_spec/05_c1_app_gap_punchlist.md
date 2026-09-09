@@ -465,3 +465,5 @@ Follow-up 2026-09-08 (later): the web Add Certification dialog also
 takes an optional **certificate number** (`profile.certificateNumber*`
 keys) stored on the canonical row as `certificateNumber` — add the same
 field to the app's certification form when it gains canonical writes.
+
+- [ ] 2026-09-09 — Phone sign-up (`PhoneSignupGate`) now shows a SEPARATE, unchecked, optional SMS-consent checkbox with the CTIA disclosure ("Message and data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment") and links to /privacy, /terms, /consent; `checkOtp` takes `smsConsent: boolean` and stamps `users.smsOptIn` + `userConsents/{uid}`. Before this, every phone signup was stamped `userAgreements.smsConsent.agreed = true` with no checkbox (bundled consent — a Twilio 10DLC rejection reason). The Flutter sign-up must add the same box and send `smsConsent`.

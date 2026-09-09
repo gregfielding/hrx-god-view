@@ -499,6 +499,9 @@ async function resolvePhoneSignup(
     signupGroupId?: string | null;
     jobContext?: { tenantId?: string | null; tenantSlug?: string | null; jobId?: string | null } | null;
     ip: string;
+    /** The separate, unchecked-by-default SMS box on the sign-up form (Twilio 10DLC: consent may not be bundled into account creation). */
+    smsConsent?: boolean;
+    userAgent?: string;
   },
 ): Promise<Record<string, unknown>> {
   const existing = await resolvePhoneSignIn(phoneE164, { ip: opts.ip });
@@ -584,6 +587,9 @@ async function resolvePhoneSignup(
   const signupGroupId = String(opts.signupGroupId ?? '').trim() || null;
   const resumePath = jobId ? 'job' : signupGroupId ? 'c1_group' : 'c1_general';
   const agreementStamp = { agreed: true, version: '2025-10-21', timestamp: new Date().toISOString() };
+  // SMS consent is its OWN checkbox (2026-09-09): record exactly what the worker chose.
+  const smsConsent = opts.smsConsent === true;
+  const smsConsentStamp = { agreed: smsConsent, version: '2026-09-09', timestamp: agreementStamp.timestamp, source: 'phone_signup_checkbox' };
   // Wizard base-profile shape (apply/Wizard.tsx step 0) — email is null and
   // OPTIONAL now; Everee's flow collects it later when payroll needs it.
   await db.doc(`users/${uid}`).set(
@@ -639,14 +645,22 @@ async function resolvePhoneSignup(
       recruiter: false,
       jobsBoard: false,
       userGroupIds: [],
+      smsOptIn: smsConsent,
+      smsConsentAt: smsConsent ? now : null,
+      smsConsentSource: 'phone_signup_checkbox',
       userAgreements: {
         termsOfUse: agreementStamp,
-        smsConsent: agreementStamp,
+        smsConsent: smsConsentStamp,
         privacyPolicy: { acknowledged: true, version: '2025-10-21', timestamp: agreementStamp.timestamp },
       },
     },
     { merge: true },
   );
+  // Consent record (TCPA proof) — mirrors the client-side logSMSConsent shape in userConsents/{uid}.
+  await db.doc(`userConsents/${uid}`).set(
+    { uid, phone: phoneE164, smsOptIn: smsConsent, source: 'signup_form', termsVersion: '2026-09-09', ip: opts.ip || null, userAgent: opts.userAgent || null, timestamp: now, disclosureShown: true, checkboxDefault: 'unchecked' },
+    { merge: true },
+  ).catch((e) => logger.warn('[phoneSignup] userConsents write failed (non-fatal)', { err: String(e) }));
 
   await db.collection('phone_signin_audit').add({
     uid,
@@ -839,6 +853,8 @@ export const checkOtp = onCall(
         signupGroupId: (d.signupGroupId as string) ?? null,
         jobContext: (d.jobContext as { tenantId?: string; tenantSlug?: string; jobId?: string } | null) ?? null,
         ip: callerIp,
+        smsConsent: d.smsConsent === true,
+        userAgent: String(request.rawRequest?.headers?.['user-agent'] ?? '').slice(0, 300) || undefined,
       });
     }
     return { success: true, status: 'approved', test: true };
@@ -882,6 +898,8 @@ export const checkOtp = onCall(
         signupGroupId: (d.signupGroupId as string) ?? null,
         jobContext: (d.jobContext as { tenantId?: string; tenantSlug?: string; jobId?: string } | null) ?? null,
         ip: callerIp,
+        smsConsent: d.smsConsent === true,
+        userAgent: String(request.rawRequest?.headers?.['user-agent'] ?? '').slice(0, 300) || undefined,
       });
     }
 

@@ -2139,7 +2139,11 @@
     "accountReady": "Your account is ready — continue below.",
     "genericError": "Something went wrong — please try again.",
     "emailOptional": "Optional — we'll ask again later if payroll needs it.",
-    "mustBe18": "You must be at least 18 years old to work with C1 Staffing."
+    "mustBe18": "You must be at least 18 years old to work with C1 Staffing.",
+    "smsConsentLabel": "Yes, text me about jobs, shifts, onboarding and my application (optional)",
+    "smsConsentDisclosure": "By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One at the number above, including application updates, interview scheduling, onboarding reminders, shift offers and confirmations, payroll alerts, and account security messages. Message and data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment or of creating an account.",
+    "smsConsentLinks": "See our",
+    "otpNote": "Tapping \"Text me a code\" sends one verification code to this number (message and data rates may apply)."
   },
   "workerPayroll": {
     "bankFirst": {

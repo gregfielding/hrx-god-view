@@ -76,7 +76,7 @@ const AUTH_COPY: Record<'en' | 'es', Record<string, string>> = {
     phoneHelp: "We'll use this to send you job updates and verification codes.",
     dob: 'Date of birth',
     dobHelp: 'MM/DD/YYYY — you must be 18 or older to work with us.',
-    smsConsent: 'By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One, including application updates, interview scheduling, onboarding reminders, shift notifications, payroll alerts, and account security messages. Message & data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment. See our Privacy Policy, Terms of Use, and SMS Consent.',
+    smsConsent: 'By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One, including application updates, interview scheduling, onboarding reminders, shift notifications, payroll alerts, and account security messages. Message and data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment. See our Privacy Policy, Terms of Use, and SMS Consent.',
     termsAgree: 'I agree to the Terms of Use.',
     termsAgreePrefix: 'I agree to the ',
     termsAgreeLink: 'Terms of Use',

@@ -2139,7 +2139,11 @@
     "accountReady": "Tu cuenta está lista — continúa abajo.",
     "genericError": "Algo salió mal — inténtalo de nuevo.",
     "emailOptional": "Opcional — te lo pediremos después si la nómina lo necesita.",
-    "mustBe18": "Debes tener al menos 18 años para trabajar con C1 Staffing."
+    "mustBe18": "Debes tener al menos 18 años para trabajar con C1 Staffing.",
+    "smsConsentLabel": "Sí, envíenme mensajes de texto sobre empleos, turnos, incorporación y mi solicitud (opcional)",
+    "smsConsentDisclosure": "Al marcar esta casilla, acepto recibir mensajes de texto relacionados con el empleo de C1 Staffing / HRX One en el número indicado, incluyendo actualizaciones de mi solicitud, citas para entrevistas, recordatorios de incorporación, ofertas y confirmaciones de turnos, avisos de nómina y mensajes de seguridad de la cuenta. Pueden aplicarse tarifas de mensajes y datos. La frecuencia de los mensajes varía. Responde STOP para cancelar o HELP para obtener ayuda. El consentimiento no es condición de empleo ni para crear una cuenta.",
+    "smsConsentLinks": "Consulta nuestra",
+    "otpNote": "Al tocar \"Envíame un código\" se envía un código de verificación a este número (pueden aplicarse tarifas de mensajes y datos)."
   },
   "workerPayroll": {
     "bankFirst": {

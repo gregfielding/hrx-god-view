@@ -18,8 +18,10 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   CircularProgress,
   FormControlLabel,
+  Link,
   Radio,
   RadioGroup,
   Stack,
@@ -85,6 +87,8 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
   const [selectionToken, setSelectionToken] = useState('');
   const [pick, setPick] = useState('');
   const [existingNotice, setExistingNotice] = useState(false);
+  // Twilio 10DLC (2026-09-09): SMS consent is a separate, unchecked, optional box shown where the number is collected.
+  const [smsConsent, setSmsConsent] = useState(false);
 
   const phoneE164 = toE164(phone);
 
@@ -164,6 +168,7 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
         lastName: lastName.trim(),
         dob: dob.trim(),
         preferredLanguage: getLanguage(),
+        smsConsent,
         signupSource,
         signupGroupId,
         jobContext,
@@ -218,6 +223,28 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
           {t('phoneSignup.subtitle')}
         </Typography>
 
+        {step === 'idle' && (
+          <Box sx={{ mb: 1.5 }}>
+            <FormControlLabel
+              sx={{ alignItems: 'flex-start' }}
+              control={<Checkbox checked={smsConsent} onChange={(e) => setSmsConsent(e.target.checked)} sx={{ mt: -0.5 }} inputProps={{ 'aria-label': t('phoneSignup.smsConsentLabel') }} />}
+              label={
+                <Box>
+                  <Typography variant="body2">{t('phoneSignup.smsConsentLabel')}</Typography>
+                  <Typography variant="caption" color="text.secondary" component="div">
+                    {t('phoneSignup.smsConsentDisclosure')} {t('phoneSignup.smsConsentLinks')}{' '}
+                    <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>,{' '}
+                    <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link>{' '}
+                    &amp; <Link href="/consent" target="_blank" rel="noopener">SMS Consent</Link>.
+                  </Typography>
+                </Box>
+              }
+            />
+            <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
+              {t('phoneSignup.otpNote')}
+            </Typography>
+          </Box>
+        )}
         {step === 'idle' && (
           <Button variant="contained" disabled={!ready || busy} onClick={() => void sendCode()}>
             {busy ? <CircularProgress size={20} /> : t('phoneSignup.sendCode')}
