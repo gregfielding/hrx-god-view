@@ -957,247 +957,28 @@ Communication Style: ${(customerData || {}).communicationStyle || ''}
 
 // Generate job description using OpenAI
 export const generateJobDescription = onCall({
-  timeoutSeconds: 60,
+  timeoutSeconds: 120,
   memory: '512MiB',
   maxInstances: 5,
   cors: true
 }, async (request) => {
+  // 2026-09-09: delegates to jobs/jobDescriptionGenerator (Claude Opus 5, structured, ~350-600 words).
+  // Same request/response shape as before: { jobOrderData, toggleStates } → { description, jobDescription }.
+  if (!request.auth?.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated');
+  }
   try {
-    if (!request.auth?.uid) {
-      throw new HttpsError('unauthenticated', 'User must be authenticated');
-    }
-
-    const jobOrderData = request.data?.jobOrderData || {};
-    const toggleStates = request.data?.toggleStates || {};
-
-    // Build the prompt for ChatGPT
-    let prompt = `Write a professional job description for a job board posting (like Indeed or Craigslist) based on the following information:\n\n`;
-    
-    // Add training instructions
-    prompt += `IMPORTANT INSTRUCTIONS:\n`;
-    prompt += `- NEVER mention the client name or worksite name in the description\n`;
-    prompt += `- You can mention the worksite zip code if available\n`;
-    prompt += `- Always say "C1" is hiring (not the company name or worksite name)\n`;
-    prompt += `- Only include information that is marked as "visible" or "show" in the toggles below\n`;
-    prompt += `- If a field has its toggle set to false/off, do NOT mention that information in the description\n`;
-    prompt += `- Be professional, engaging, and clear\n`;
-    prompt += `- Format the description for job boards like Indeed or Craigslist\n\n`;
-
-    // Job Title and Name
-    if (jobOrderData.jobTitle) {
-      prompt += `Job Title: ${jobOrderData.jobTitle}\n`;
-    }
-    if (jobOrderData.jobOrderName) {
-      prompt += `Position Name: ${jobOrderData.jobOrderName}\n`;
-    }
-
-    // Client Description
-    if (jobOrderData.jobDescriptionFromClient) {
-      prompt += `\nClient's Description:\n${jobOrderData.jobDescriptionFromClient}\n`;
-    }
-
-    // Location (zip code only, never company/worksite names)
-    const zipCode = jobOrderData.zipCode || jobOrderData.worksiteAddress?.zipCode;
-    if (zipCode) {
-      prompt += `\nLocation Zip Code: ${zipCode}\n`;
-    }
-    if (jobOrderData.city || jobOrderData.state) {
-      // Only include city/state if we have them, but never mention company/worksite names
-      prompt += `Location: ${[jobOrderData.city, jobOrderData.state].filter(Boolean).join(', ')}\n`;
-    }
-
-    // Pay Rate (only if toggle is on)
-    if (toggleStates.showPayRate && jobOrderData.payRate) {
-      prompt += `\nPay Rate: $${jobOrderData.payRate}/hour (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.payRate) {
-      prompt += `\nPay Rate: $${jobOrderData.payRate}/hour (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Skills (only if toggle is on)
-    if (toggleStates.showSkills && jobOrderData.skills && jobOrderData.skills.length > 0) {
-      prompt += `\nRequired Skills: ${jobOrderData.skills.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.skills && jobOrderData.skills.length > 0) {
-      prompt += `\nRequired Skills: ${jobOrderData.skills.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Experience and Education (only if toggles are on)
-    if (toggleStates.showExperience && jobOrderData.experienceRequired) {
-      const expMap: Record<string, string> = {
-        'entry': 'Entry-Level (0-1 year)',
-        'intermediate': 'Intermediate (2-4 years)',
-        'experienced': 'Experienced (5+ years)'
-      };
-      prompt += `\nExperience Level: ${expMap[jobOrderData.experienceRequired] || jobOrderData.experienceRequired} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.experienceRequired) {
-      const expMap: Record<string, string> = {
-        'entry': 'Entry-Level (0-1 year)',
-        'intermediate': 'Intermediate (2-4 years)',
-        'experienced': 'Experienced (5+ years)'
-      };
-      prompt += `\nExperience Level: ${expMap[jobOrderData.experienceRequired] || jobOrderData.experienceRequired} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-    if (toggleStates.showEducation && jobOrderData.educationRequired) {
-      prompt += `Education Required: ${jobOrderData.educationRequired} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.educationRequired) {
-      prompt += `Education Required: ${jobOrderData.educationRequired} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Languages (only if toggle is on)
-    if (toggleStates.showLanguages && jobOrderData.languages && jobOrderData.languages.length > 0) {
-      prompt += `Languages: ${jobOrderData.languages.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.languages && jobOrderData.languages.length > 0) {
-      prompt += `Languages: ${jobOrderData.languages.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Shift Type (only if toggle is on)
-    if (toggleStates.showShift && jobOrderData.shiftType && jobOrderData.shiftType.length > 0) {
-      prompt += `Shift Type: ${jobOrderData.shiftType.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.shiftType && jobOrderData.shiftType.length > 0) {
-      prompt += `Shift Type: ${jobOrderData.shiftType.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Dates (only if toggles are on)
-    if (toggleStates.showStart && jobOrderData.startDate) {
-      prompt += `Start Date: ${jobOrderData.startDate} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.startDate) {
-      prompt += `Start Date: ${jobOrderData.startDate} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-    if (toggleStates.showEnd && jobOrderData.endDate) {
-      prompt += `End Date: ${jobOrderData.endDate} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.endDate) {
-      prompt += `End Date: ${jobOrderData.endDate} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Workers Needed (only if toggle is on)
-    if (toggleStates.showWorkersNeeded && jobOrderData.workersNeeded) {
-      prompt += `Workers Needed: ${jobOrderData.workersNeeded} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.workersNeeded) {
-      prompt += `Workers Needed: ${jobOrderData.workersNeeded} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Uniform Requirements (only if toggle is on)
-    if (toggleStates.showUniformRequirements && jobOrderData.uniformRequirements && jobOrderData.uniformRequirements.length > 0) {
-      prompt += `\nUniform Requirements: ${jobOrderData.uniformRequirements.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.uniformRequirements && jobOrderData.uniformRequirements.length > 0) {
-      prompt += `\nUniform Requirements: ${jobOrderData.uniformRequirements.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-    if (toggleStates.showUniformRequirements && jobOrderData.customUniformRequirements) {
-      prompt += `Additional Uniform Requirements: ${jobOrderData.customUniformRequirements} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.customUniformRequirements) {
-      prompt += `Additional Uniform Requirements: ${jobOrderData.customUniformRequirements} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Physical Requirements (only if toggle is on)
-    if (toggleStates.showPhysicalRequirements && jobOrderData.physicalRequirements && jobOrderData.physicalRequirements.length > 0) {
-      prompt += `Physical Requirements: ${jobOrderData.physicalRequirements.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.physicalRequirements && jobOrderData.physicalRequirements.length > 0) {
-      prompt += `Physical Requirements: ${jobOrderData.physicalRequirements.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // PPE Requirements (only if toggle is on)
-    if (toggleStates.showRequiredPpe && jobOrderData.ppeRequirements && jobOrderData.ppeRequirements.length > 0) {
-      prompt += `PPE Requirements: ${jobOrderData.ppeRequirements.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.ppeRequirements && jobOrderData.ppeRequirements.length > 0) {
-      prompt += `PPE Requirements: ${jobOrderData.ppeRequirements.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Licenses and Certifications (only if toggle is on)
-    if (toggleStates.showLicensesCerts && jobOrderData.licensesCerts && jobOrderData.licensesCerts.length > 0) {
-      prompt += `Licenses/Certifications Required: ${jobOrderData.licensesCerts.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.licensesCerts && jobOrderData.licensesCerts.length > 0) {
-      prompt += `Licenses/Certifications Required: ${jobOrderData.licensesCerts.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Background Checks (only if toggle is on)
-    if (toggleStates.showBackgroundChecks && jobOrderData.backgroundCheckPackages && jobOrderData.backgroundCheckPackages.length > 0) {
-      prompt += `Background Check: ${jobOrderData.backgroundCheckPackages.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.backgroundCheckPackages && jobOrderData.backgroundCheckPackages.length > 0) {
-      prompt += `Background Check: ${jobOrderData.backgroundCheckPackages.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Drug Screening (only if toggle is on)
-    if (toggleStates.showDrugScreening && jobOrderData.drugScreeningPanels && jobOrderData.drugScreeningPanels.length > 0) {
-      prompt += `Drug Screening: ${jobOrderData.drugScreeningPanels.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.drugScreeningPanels && jobOrderData.drugScreeningPanels.length > 0) {
-      prompt += `Drug Screening: ${jobOrderData.drugScreeningPanels.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Additional Screenings (only if toggle is on)
-    if (toggleStates.showAdditionalScreenings && jobOrderData.additionalScreenings && jobOrderData.additionalScreenings.length > 0) {
-      prompt += `Additional Screenings: ${jobOrderData.additionalScreenings.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.additionalScreenings && jobOrderData.additionalScreenings.length > 0) {
-      prompt += `Additional Screenings: ${jobOrderData.additionalScreenings.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // E-Verify
-    // R.16.2a deferral — `jobOrderData` here is a client-supplied prompt
-    // payload (`request.data?.jobOrderData`), not a fetched JO document
-    // with `status` + `snapshot`. Wrapping through `getEffectiveJobOrderField`
-    // would be a no-op (the helper would always fall through to fallback
-    // since the payload lacks the snapshot envelope). Defer to R.16.2b
-    // pending a decision on whether the client should send the JO doc shape
-    // directly or this callable should re-fetch the JO server-side.
-    if (jobOrderData.eVerifyRequired) {
-      prompt += `E-Verify Required: Yes\n`;
-    }
-
-    prompt += `\nPlease write a compelling, professional job description that:\n`;
-    prompt += `- Is formatted for job boards like Indeed or Craigslist\n`;
-    prompt += `- Highlights key responsibilities and requirements\n`;
-    prompt += `- Is engaging and attracts qualified candidates\n`;
-    prompt += `- ONLY includes information marked as "SHOW THIS IN DESCRIPTION" above\n`;
-    prompt += `- NEVER mentions information marked as "DO NOT MENTION IN DESCRIPTION"\n`;
-    prompt += `- Do not include the number of workers needed or positions unless explicitly marked "SHOW THIS IN DESCRIPTION"\n`;
-    prompt += `- Always says "C1 is hiring" or "C1 Staffing is hiring" (never mention the actual company or worksite name)\n`;
-    prompt += `- You can mention the zip code if provided\n`;
-    prompt += `- Uses clear, professional language\n`;
-    prompt += `- Is approximately 200-400 words\n`;
-    prompt += `- PLAIN TEXT ONLY: no markdown of any kind — no "#" headings, no "**bold**", no emojis. The text renders verbatim in a plain-text field, so markdown characters appear literally and look broken. Use short paragraphs and simple hyphen bullets, with section lead-ins as plain sentences like "What you will do:".\n`;
-
-    // Call OpenAI
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a professional job description writer specializing in creating compelling job postings for job boards like Indeed and Craigslist. You always refer to the employer as "C1" or "C1 Staffing" and never mention client names or worksite names. You only include information that is explicitly marked as visible/shown in the job posting.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: 0.7,
-      max_tokens: 800
-    });
-
-    // Belt-and-suspenders plain-text pass — the Claude-backed adapter
-    // sometimes emits markdown despite instructions (Greg 2026-09-04).
-    const generatedDescription = stripPostingMarkdown(
-      completion.choices[0]?.message?.content || '',
-    );
-
-    if (!generatedDescription) {
-      throw new HttpsError('internal', 'Failed to generate job description');
-    }
-
-    return {
-      success: true,
-      description: generatedDescription.trim(),
-      jobDescription: generatedDescription.trim() // Support both field names for backward compatibility
-    };
+    const { generateJobDescriptionText } = await import('./jobs/jobDescriptionGenerator');
+    const text = await generateJobDescriptionText((request.data?.jobOrderData || {}) as Record<string, unknown>, (request.data?.toggleStates || {}) as Record<string, boolean>);
+    if (!text) throw new HttpsError('internal', 'Failed to generate job description');
+    return { success: true, description: text, jobDescription: text };
   } catch (error: any) {
     console.error('Error generating job description:', error);
-    
-    if (error instanceof HttpsError) {
-      throw error;
-    }
-    
+    if (error instanceof HttpsError) throw error;
     throw new HttpsError('internal', error.message || 'Failed to generate job description');
   }
 });
 
-// Vector Management Functions
 export const getVectorCollections = onCall(async (request) => {
   try {
     const collectionsRef = db.collection('vectorCollections');

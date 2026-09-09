@@ -32,3 +32,17 @@
   is set to 'posted' by the tool or (TODO) by the form when a craigslist.org URL is pasted.
 - Site map covers the metros C1 works in; unknown cities fall back to the state default.
 - Queries use equality on nested fields (`craigslist.status`, `craigslist.enabled`) — auto-indexed.
+
+## 2026-09-09 follow-ups (Greg): description quality, verbatim CL body, Apply Here
+- **Thin AI descriptions — root cause**: `generateJobDescription` ran gpt-4o-mini, max_tokens 800,
+  temperature 0.7, asking for 200–400 words → short/generic first drafts, better on re-run mostly by
+  luck + more fields filled. Now `functions/src/jobs/jobDescriptionGenerator.ts`: Claude Opus 5,
+  adaptive thinking, 2,500 tokens, structured template (~350–600 words), same show/hide toggle rules.
+  The recruiters' button and Natalie both use it. Override model with env `JOB_DESCRIPTION_MODEL`.
+- **Auto-fill**: `drainThinJobDescriptions` (inbox tick, max 3/tick) writes descriptions for active
+  public posts under 300 chars when there is source material (client notes / prompt / company+title),
+  stamps `jobDescriptionGeneratedAt/By`, and tells #recruiting; no-source posts are flagged once
+  (`descriptionAutoFillSkipped`). Off switch: `app_config/natalie.autoFillDescriptions=false`.
+- **Craigslist body = the job board description verbatim** + `Apply Here: https://hrxone.com/c1/jobs-board/<postId>`
+  (the same link the job order's "Copy Jobs Board Link" button copies). Title is deterministic:
+  `<post title> - <City, ST> - $X.XX/hr, weekly pay` (≤70 chars). Thin descriptions are generated first.

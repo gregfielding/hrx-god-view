@@ -10,10 +10,9 @@
  */
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
-import Anthropic from '@anthropic-ai/sdk';
 import { postAsNatalie } from '../messaging/slackAsNatalie';
 import { recordNatalieAction } from './natalieAudit';
-import { NATALIE_MODEL } from './natalieAgent';
+import { THIN_DESCRIPTION_CHARS, generateDescriptionForPosting } from '../jobs/jobDescriptionGenerator';
 import { craigslistCategoryFor, craigslistExpiryDays, craigslistPostUrl, craigslistSiteFor, type CraigslistDraft, type CraigslistPosting } from '../shared/craigslist';
 
 const db = admin.firestore();
@@ -21,6 +20,12 @@ const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
 const CONTACT_EMAIL = 'n.brooks@c1staffing.com';
 const s = (v: unknown): string => (typeof v === 'string' ? v.trim() : v == null ? '' : String(v));
 
+/**
+ * Greg 2026-09-09: the Craigslist body IS the job board description (the rich AI text recruiters
+ * generate in HRX) — not a re-summary — with "Apply Here: <jobs board link>" appended, the same link
+ * the "Copy Jobs Board Link" button on the job order's Jobs Board tab produces. Thin/missing
+ * descriptions are generated first with the shared generator so the post improves too.
+ */
 async function composeDraft(post: Record<string, unknown>, postId: string): Promise<CraigslistDraft> {
   const city = s(post.city) || s((post.worksiteAddress as Record<string, unknown> | undefined)?.city);
   const state = s(post.state) || s((post.worksiteAddress as Record<string, unknown> | undefined)?.state);
@@ -29,31 +34,18 @@ async function composeDraft(post: Record<string, unknown>, postId: string): Prom
   const pay = Number(post.payRate);
   const compensation = Number.isFinite(pay) && pay > 0 ? `$${pay.toFixed(2)}/hour, paid weekly` : 'Competitive hourly pay, paid weekly';
   const applyUrl = `https://hrxone.com/c1/jobs-board/${postId}`;
-  const facts = {
-    title: s(post.postTitle) || s(post.jobTitle),
-    company: s(post.companyName),
-    city, state, zip: s(post.zipCode),
-    pay: compensation,
-    jobType: s(post.jobType),
-    shiftTimes: s(post.shiftTimes),
-    description: s(post.jobDescription).slice(0, 2500),
-    screening: s(post.screeningPackageName) ? 'background check required' : '',
-    eVerify: post.eVerifyRequired === true ? 'E-Verify employer' : '',
-    applyUrl,
-  };
-  const client = new Anthropic();
-  const res = await client.messages.create({
-    model: NATALIE_MODEL,
-    max_tokens: 1200,
-    thinking: { type: 'adaptive' },
-    system: "You write Craigslist job ads for C1 Staffing, a W-2 staffing agency. Output JSON only: {\"title\": string (<= 70 chars, plain, no ALL CAPS, no emojis, no symbols like $$$), \"body\": string}. Body rules: plain text, 900-1400 characters, short paragraphs; lead with who/what/where/pay/schedule; concrete duties; requirements (18+, ability to lift as stated, background check if required, E-Verify if stated); how to apply: the given apply URL AND 'or reply to this ad'; say weekly pay and that C1 Staffing is the employer of record; equal opportunity employer line; no phone numbers, no promises of hours, no salary ranges beyond the given pay, no discriminatory language, no client names unless given as company. Never invent facts not in the input.",
-    messages: [{ role: 'user', content: JSON.stringify(facts) }],
-  });
-  const text = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('\n');
-  const m = /\{[\s\S]*\}/.exec(text);
-  const parsed = m ? (JSON.parse(m[0]) as { title?: string; body?: string }) : {};
-  const title = s(parsed.title).slice(0, 70) || `${facts.title} — ${city}, ${state}`;
-  const body = s(parsed.body) || `${facts.title} in ${city}, ${state}. ${compensation}. Apply: ${applyUrl} or reply to this ad. C1 Staffing is an equal opportunity employer.`;
+  let description = s(post.jobDescription);
+  if (description.length < THIN_DESCRIPTION_CHARS) {
+    const generated = await generateDescriptionForPosting(TENANT, postId, { by: 'natalie-craigslist', force: true });
+    if (generated) description = generated;
+  }
+  if (!description) throw new Error('no job description on the post and nothing to generate one from — add a description or client notes');
+  const titleBase = s(post.postTitle) || s(post.jobTitle);
+  const payBit = Number.isFinite(pay) && pay > 0 ? ` - $${pay.toFixed(2)}/hr, weekly pay` : '';
+  const title = `${titleBase} - ${[city, state].filter(Boolean).join(', ')}${payBit}`.slice(0, 70);
+  const body = `${description.trim()}
+
+Apply Here: ${applyUrl}`;
   return {
     site, category, postUrl: craigslistPostUrl(site, slug), title, body,
     specificLocation: [city, state].filter(Boolean).join(', '),
