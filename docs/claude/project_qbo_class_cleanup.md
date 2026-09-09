@@ -1141,3 +1141,15 @@ was: Tabitha's 0708/0713-2 credits 150.60 under their bank debits, minus
 two 7/28 C1 Events ePay refunds (297.44). Corp 5010 now: Jun 0.00, Jul
 +150.60 (hers), Aug +5,209.50 (the 8/6 ePay0001 draft — not a funding,
 not a reissue; Everee exposes no billing endpoint), Sep 0.00.
+**The 8/6 ePay0001 5,209.50 = Everee's JULY platform invoice (2026-09-09).**
+Everee's monthly invoice (`C1 Events LLC_Monthly_Invoice_3138-MM.2026.pdf`,
+downloaded from the Everee app — never emailed) is drafted via the
+`ePay0001` ACH profile ~the 6th–15th of the next month and belongs on
+**5200 Payroll Platform Fees**: Apr 250.00 (5/15 #6208), May 550.50 (6/8
+#6480), Jun 1,950.00 (7/8 #7785), Jul 5,209.50 (8/6 #8634 — first month
+with state sales tax, per Everee's 7/23 notice). Tabitha attaches the PDFs
+to those purchases (Apr–Jun done 8/14); Greg to pull 3138-07 for #8634.
+Small ePay drafts (250 6/8, 45 8/21) are ad-hoc fees, also 5200. The only
+other ePay0001 activity is REFUNDS (deposits) of over-wired payroll (Nate
+8/12: "over wired $283.95 in total"). `.scratch/epay_fees_to_5200.ts`
+moves any ePay draft found on 5010 to 5200 (≤ $10K).
