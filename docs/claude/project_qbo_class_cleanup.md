@@ -1177,3 +1177,13 @@ June closes to 0.00 in 1260: three untied early-June debits (11,572.07) =
 unmatched wires 735.40. The 5/14 wire 19,161.07 = the May 15 batch
 (18,963.67, still APPROVED_FOR_FUNDING in Everee) + 197.40 — Everee's
 statuses are wrong for that test batch; May left out of the 1260 moves.
+Refunds, refined: only "Everee Inc - ePay0001" deposits (an over-wire
+coming back, e.g. 6/15 6,853.74) go to 1260; worker-named "C1 Payment" and
+"C1 Events/Select LLC - ePay0001" deposits are RETURNED worker payments
+(Everee still counts the funding) → 5010 in the entity's Division. May
+wires stay on the pre-1260 behavior. Result 2026-09-09: 1260 June in
+11,572.07 / out 11,572.07 (= 0), July +1,320.04 (over-wires incl. Tabitha's
+150.60 via EV Hold), Aug −1,076.82 (Everee netting) → balance ≈ +243 vs
+Nate's 8/12 "$283.95 over-wired" / 8/28 "92.62 to send back". Monthly
+check: `.scratch/balance_1260.ts`; per-JE check: `.scratch/june_je_check.ts
+<start> <end>`.

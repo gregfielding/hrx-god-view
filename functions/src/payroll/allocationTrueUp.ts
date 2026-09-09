@@ -187,8 +187,11 @@ export async function trueUpAllocationJes(
     // matched: credit 5010 (Corp) = bank; 1260 = bank − funded.
     // unmatched (no bank line yet / ever): funded from the Everee balance →
     // credit 1260 for the funded amount, no 5010 credit.
-    const bank = allBankMatched ? round2(bm.reduce((s2, m) => s2 + m!.bankCents / 100, 0)) : 0;
-    const held = allBankMatched ? round2(bank - everee) : round2(-everee);
+    // May (transition month) stays on the old behavior: unmatched → credit
+    // 5010 at the funded amount, nothing through 1260.
+    const preModel = String(je.TxnDate) < '2026-06-01' && !allBankMatched;
+    const bank = allBankMatched ? round2(bm.reduce((s2, m) => s2 + m!.bankCents / 100, 0)) : preModel ? everee : 0;
+    const held = allBankMatched ? round2(bank - everee) : preModel ? 0 : round2(-everee);
     if (allBankMatched && Math.abs(held) > 0.005) bankTied.push({ doc, everee, bank, held, how: bankHow, bankDates: [...new Set(bm.flatMap((m) => m!.bankDates))] });
     // Pro-rata shares depend on which wires were left over in THIS Everee
     // read, so they must pass the two-read guard; exact/split/near are
@@ -272,7 +275,7 @@ export async function trueUpAllocationJes(
         JournalEntryLineDetail: { PostingType: held > 0 ? 'Debit' : 'Credit', AccountRef: { value: ACCT_1250 } },
       });
     }
-    const creditAmt = ACCT_1250 ? bank : everee;
+    const creditAmt = ACCT_1250 || preModel ? bank : everee;
     if (creditAmt > 0.005) {
       newLines.push({
         DetailType: 'JournalEntryLineDetail',
