@@ -199,3 +199,15 @@ in the Privacy Policy itself (en/es); `/privacy`, `/terms`, `/sms-privacy`,
 catch-all; resubmit script cites the canonical URLs and quotes the sign-up
 checkbox verbatim (`PrivacyPolicyUrl=https://hrxone.com/privacy`,
 `TermsAndConditionsUrl=https://hrxone.com/terms`).
+
+## Debugger triage 2026-09-08 (357 alerts in the UTC day) — what each code was
+30003 ×127 / 30005 ×68 (unreachable / unknown handset — Denver blasts; transient,
+not stamped), 21610 ×58 (unsubscribed: 30-ish were HRX's own STOP confirmation
+— removed 2026-09-08, Twilio's messaging-service auto-reply covers it — the
+rest were blasts re-trying STOP'd numbers because the async carrier rejection
+never stamped the worker; `twilioStatusCallback` now stamps on 21610 /
+21211 / 21614 / 30006), 12200 ×55 (webhooks answered `OK` not TwiML —
+fixed in BOTH `handleInboundSms` and `twilioInboundSmsWebhook`; deploy both),
+21211 ×32 (invalid numbers, incl. the AccuSource test's 555 number), 11200 ×4
+(text-less MMS 400 — fixed), 30006 ×9, 20404 ×3, 60005 ×1. None of these
+touch the 10DLC campaign.
