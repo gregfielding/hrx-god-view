@@ -1072,3 +1072,11 @@ causes, all in `buildWireJournal`'s funding handling:
   across 2 debits, −1..+8 days). 74/105 exact; the rest are near-pairs
   where Everee's wire total moved after the bank debit (voids/reissues).
   **Bank debit is the truth for the JE credit**, not Everee's current read.
+
+**Refund sign + Other Expense (2026-09-08, late):** ☠️ a card REFUND is a
+`Purchase` with `Credit: true` (memo "Return from …") — negative on the
+P&L. The overhead allocator (and division_audit.ts) read it as a positive
+expense and credited it again → −86.00 Not Specified on 8810 (the 7/13
+Southwest return, 43.00 ×2). Both now negate `Credit:true` purchases.
+Other Expense (6xxx) is now allocated by revenue too (Greg) — nothing
+stays in Corp except what 5010/5100/5310 writers own.

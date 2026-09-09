@@ -16,7 +16,8 @@
  * WC after the accrual and payment clearing — included), plus COGS overhead (5200 platform fees, 5210
  * ConnectTeam, 5300 recruiting, 5400 supplies…) except 5010 / 5100 / 5310
  * which have their own writers, plus Other Income (9xxx — credits, so the
- * legs flip). Other Expense (6xxx financing) stays in Corp. Our own allocation JEs and Tabitha's
+ * legs flip) and Other Expense (6xxx). Nothing stays in Corp except what
+ * the dedicated writers own. Our own allocation JEs and Tabitha's
  * hand-keyed `Rev Allocation` JEs are excluded from the base; a surviving
  * `Rev Allocation` is reported so it can be deleted (it would double-count).
  *
@@ -65,6 +66,7 @@ export async function pushOverheadAllocations(
     if (/uncategorized|ask my accountant/i.test(name)) return false; // not yet booked anywhere real
     if (a.AccountType === 'Expense') return true; // 7140 included: its net Corp balance (internal WC after accrual + clearing) spreads by revenue
     if (a.AccountType === 'Other Income') return true; // 9010 card rewards / 9020 interest — by revenue too (Greg 2026-09-08); credits flip sides below
+    if (a.AccountType === 'Other Expense') return true; // 6xxx financing / misc — by revenue too (Greg 2026-09-08, later)
     if (a.AccountType === 'Cost of Goods Sold') return !(['5010', '5100', '5310'].includes(n) || /direct labor|workers'? comp|background.*screening/i.test(name));
     return false;
   };
@@ -130,7 +132,10 @@ export async function pushOverheadAllocations(
           continue;
         }
         const hdrDept = trim(t.DepartmentRef?.value);
-        const sign = ent === 'VendorCredit' || ent === 'Deposit' ? -1 : 1;
+        // A card REFUND is a Purchase with Credit:true — negative on the P&L.
+        // (2026-09-08: a 43.00 Southwest return was read as +43 and credited
+        // again → −86 in Not Specified on 8810.)
+        const sign = ent === 'VendorCredit' || ent === 'Deposit' || (ent === 'Purchase' && t.Credit === true) ? -1 : 1;
         for (const l of (t.Line ?? []) as Array<Record<string, any>>) {
           const ab = l.AccountBasedExpenseLineDetail ?? l.DepositLineDetail;
           if (ab) { addBase(date, trim(ab.AccountRef?.value), hdrDept, sign * num(l.Amount)); continue; }
@@ -214,7 +219,7 @@ export async function pushOverheadAllocations(
       TxnDate: segmentTxnDate(seg, today),
       PrivateNote:
         `Overhead allocated by revenue ratio (Event-based ${(rt.ratio * 100).toFixed(2)}% / Recurring ${((1 - rt.ratio) * 100).toFixed(2)}%, ${rt.basis} revenue by invoice Division). ` +
-        `Same account both sides; Corp / untagged overhead moved to the client Divisions. Excludes 5010/5100/5310 (own writers) and 6xxx Other Expense. ` +
+        `Same account both sides; Corp / untagged overhead moved to the client Divisions. Excludes 5010/5100/5310 (own writers). ` +
         `Segment ${seg.start}..${seg.end} (month ∩ block). [ovh:${seg.key}]`,
     };
     if (prior) {
