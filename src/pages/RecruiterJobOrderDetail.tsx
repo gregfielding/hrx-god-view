@@ -20,6 +20,7 @@ import {
   Button,
   Skeleton,
   TextField,
+  InputAdornment,
   Table,
   TableBody,
   TableCell,
@@ -79,6 +80,8 @@ import {
   Lock as LockedIcon,
   AccountBalance as AccountBalanceIcon,
   Groups as GroupsIcon,
+  Search as SearchIcon,
+  Clear as ClearIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import UniversalBackButton from '../components/common/UniversalBackButton';
@@ -416,6 +419,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [selectedShiftId, setSelectedShiftId] = useState<string>('');
   const [selectedDay, setSelectedDay] = useState<string>('');
   const [lifecycleStageFilter, setLifecycleStageFilter] = useState<'all' | RecruiterLifecycleFilterBucket>('all');
+  // Name search (Danny 2026-09-09) — case-insensitive, matches name or email.
+  const [applicantNameSearch, setApplicantNameSearch] = useState('');
   const appsStorageKey = `applications_shift_${tenantId}_${jobOrderId}`;
 
   useEffect(() => {
@@ -831,6 +836,23 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     categoryFilterCategoryMin,
   ]);
 
+  // Case-insensitive on BOTH sides (Greg 2026-09-09: an uppercase stored
+  // name must match a lowercase query) — name and email both searchable.
+  const filteredByName = useMemo(() => {
+    const q = applicantNameSearch.trim().toLowerCase();
+    if (!q) return filteredByCategoryScores;
+    return filteredByCategoryScores.filter((a) =>
+      `${a.displayName ?? ''} ${a.firstName ?? ''} ${a.lastName ?? ''} ${a.email ?? ''}`
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [filteredByCategoryScores, applicantNameSearch]);
+
+  const nameSearchEmpty =
+    applicantNameSearch.trim() !== '' &&
+    filteredByCategoryScores.length > 0 &&
+    filteredByName.length === 0;
+
   const categoryScoreFilterEmpty =
     (categoryFilterMinAvg != null ||
       (categoryFilterCategoryId && categoryFilterCategoryMin != null)) &&
@@ -1003,7 +1025,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const sortedApplicants = React.useMemo(() => {
     if (applicantsSortBy === 'interview') {
-      const data = [...filteredByCategoryScores];
+      const data = [...filteredByName];
       data.sort((a, b) => {
         const aM = toMillis(a.scoreSummary?.interviewLastAt);
         const bM = toMillis(b.scoreSummary?.interviewLastAt);
@@ -1013,7 +1035,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       return data;
     }
     if (applicantsSortBy === 'jobScore') {
-      const data = [...filteredByCategoryScores];
+      const data = [...filteredByName];
       data.sort((a, b) => {
         const aScore = a.jobScoreSummary?.jobScore ?? -1;
         const bScore = b.jobScoreSummary?.jobScore ?? -1;
@@ -1023,7 +1045,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       return data;
     }
     if (applicantsSortBy === 'category_avg') {
-      const data = [...filteredByCategoryScores];
+      const data = [...filteredByName];
       data.sort((a, b) => {
         const sa = getEffectiveCategoryScoresForApplicantRow(
           a.uid,
@@ -1043,7 +1065,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     }
     if (applicantsSortBy && PRESCREEN_CATEGORY_IDS.includes(applicantsSortBy as PrescreenCategoryId)) {
       const cat = applicantsSortBy as PrescreenCategoryId;
-      const data = [...filteredByCategoryScores];
+      const data = [...filteredByName];
       data.sort((a, b) => {
         const sa = getEffectiveCategoryScoresForApplicantRow(
           a.uid,
@@ -1064,7 +1086,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     if (applicantsSortBy === 'status' || applicantsSortBy === 'level') {
       // Status sorts by the same label the cell displays (placement status
       // wins over application status); Level sorts Candidates vs Applicants.
-      const statusLabelOf = (a: (typeof filteredByCategoryScores)[number]): string => {
+      const statusLabelOf = (a: (typeof filteredByName)[number]): string => {
         const placementStatus = assignmentStatusByUserId.get(a.uid);
         const isConfirmed = placementStatus && ['confirmed', 'active'].includes(placementStatus);
         const isAssigned = placementStatus && ['proposed', 'accepted'].includes(placementStatus);
@@ -1080,7 +1102,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           : appStatus
         );
       };
-      const data = [...filteredByCategoryScores];
+      const data = [...filteredByName];
       data.sort((a, b) => {
         const cmp =
           applicantsSortBy === 'status'
@@ -1090,16 +1112,16 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       });
       return data;
     }
-    return filteredByCategoryScores;
+    return filteredByName;
   }, [
-    filteredByCategoryScores,
+    filteredByName,
     applicantsSortBy,
     applicantsSortDirection,
     categoryScoresCurrentByUserId,
     assignmentStatusByUserId,
   ]);
 
-  const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredByCategoryScores;
+  const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredByName;
 
   // Notify parent of count changes (use displayed count)
   useEffect(() => {
@@ -1696,6 +1718,31 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
               alignItems: 'center',
             }}
           >
+            <TextField
+              size="small"
+              placeholder="Search by name"
+              value={applicantNameSearch}
+              onChange={(e) => setApplicantNameSearch(e.target.value)}
+              sx={{ minWidth: 220 }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+                endAdornment: applicantNameSearch ? (
+                  <InputAdornment position="end">
+                    <IconButton
+                      size="small"
+                      aria-label="Clear name search"
+                      onClick={() => setApplicantNameSearch('')}
+                    >
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : undefined,
+              }}
+            />
             <FormControl size="small" sx={{ minWidth: 280 }}>
               <InputLabel>Lifecycle stage</InputLabel>
               <Select
@@ -2039,6 +2086,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     <Alert severity="info" sx={{ justifyContent: 'center' }}>
                       {applicants.length === 0
                         ? 'No applications received yet for this job order.'
+                        : nameSearchEmpty
+                          ? `No applicants match "${applicantNameSearch.trim()}". Check the spelling or clear the search.`
                         : lifecycleFilterEmpty
                           ? 'No applicants match this lifecycle filter. Choose "All stages" or tap another lifecycle chip.'
                         : categoryScoreFilterEmpty
