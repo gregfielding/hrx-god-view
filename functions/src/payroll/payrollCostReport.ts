@@ -2122,6 +2122,10 @@ export async function buildWireJournal(
     // (Greg 2026-09-01: one event, split only by label naming).
     { re: /pga|lpga|lgpa/i, leaf: "26 USGA Women's Open" },
     { re: /us\s*wom[ea]n'?s?\s*open|usga/i, leaf: "26 USGA Women's Open" },
+    // bare "Womens Open" (no US/USGA prefix, no apostrophe) — 2026-06-11 note
+    { re: /\bwom[ea]n'?s?\s*open\b/i, leaf: "26 USGA Women's Open" },
+    // bare "Womens Open" (no US/USGA prefix, no apostrophe) — 2026-06-11 note
+    { re: /\bwom[ea]n'?s?\s*open\b/i, leaf: "26 USGA Women's Open" },
     { re: /suenos|sueños/i, leaf: 'Suenos Music Festival' },
     { re: /^legends\s*national\s*account$/i, leaf: 'Legends' },
     { re: /nascar.*san\s*diego|san\s*diego.*nascar/i, leaf: 'Nascar SanDiego' },
