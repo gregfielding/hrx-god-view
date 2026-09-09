@@ -47,7 +47,7 @@ async function retrieveCodeContextForIntent(userText: string): Promise<string> {
   return blocks.join('\n\n---\n\n');
 }
 
-export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, timeoutSeconds: 60, memory: '512MiB', minInstances: 1 }, async (req, res): Promise<void> => {
+export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, timeoutSeconds: 60, memory: '512MiB' }, async (req, res): Promise<void> => {
   const startedAt = Date.now();
   try {
     if (req.method === 'OPTIONS') {

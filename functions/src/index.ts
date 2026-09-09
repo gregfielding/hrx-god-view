@@ -9025,9 +9025,11 @@ export const activateCampaignTemplate = onCall(async (request) => {
 });
 
 // User Firestore triggers - Most are now handled by minimal triggers in index.ts
-// Only testUserUpdate is exported from firestoreTriggers.ts
-export { 
-  testUserUpdate
+// testUserUpdate export REMOVED 2026-09-09 (cost audit): it was a debug trigger dumping a
+// before/after copy of every user doc (27 KB, PII) into `test_logs` ~11k times/day. The
+// deployed function was deleted the same day; do not re-export.
+export {
+  // testUserUpdate
   // All other logging triggers have been moved to minimal implementations in this file
   // firestoreLogUserCreated, // TODO: Export missing
   // firestoreLogUserUpdated, // TODO: Export missing

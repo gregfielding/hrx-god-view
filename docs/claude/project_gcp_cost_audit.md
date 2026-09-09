@@ -1,6 +1,6 @@
 # gcp cost audit
 
-> "GCP/Firebase cost audit 2026-08-12 — Places field-mask fix shipped, 47M-doc crm_analysis + test_logs deletion approved+running, SerpAPI cancelled; target ~$1,500→$600-700/mo"
+> "GCP/Firebase cost audit — 2026-09-09 RE-AUDIT: the bill is ~$2,100/mo of Firestore STORAGE (8.4 TiB, billed under service name 'App Engine'); ~1.8 BILLION dead docs in context_analysis (~1.45B) + tasks_ai_analysis (~316M) + crm_analysis (41M) that the Aug audit missed; both Aug deletion runs died; testUserUpdate trigger still live. Fix = managed `gcloud firestore bulk-delete`, never a laptop script"
 
 Greg 2026-08-12: "cut our firebase/google cloud costs". Billing account "Firebase Payment" (014E66-91D309-FB59A2) covers hrx1-d3beb + rally-dash. Aug 1-12 spend $738.95, forecast $1,528/mo.
 
@@ -19,3 +19,48 @@ Greg 2026-08-12: "cut our firebase/google cloud costs". Billing account "Firebas
 **Also cancelled 2026-08-12**: SerpAPI $75/mo (2/5,000 searches used; expires 8/22; news cron deleted; task #247 = repoint DecisionMakers panel to Apollo + remove SERP callables). Hunter.io Data-platform plan: 1,000 searches + 1,000 verifications UNUSED until 2027-08 — earmarked for bounce-list verification.
 
 **Projected**: ~$1,528/mo → ~$600-700/mo. Optional not-yet-approved: trim backup retention 10d→5d after DB shrinks. Follow-up habit: glance at Places SKU + backup line next week to confirm the drops. [[feedback_email_bounce_handling]]
+
+---
+
+## 2026-09-09 re-audit (Greg: "latest charge was $2,400+")
+
+**The Aug 12 audit was wrong about the shape of the problem.** Bill has been ~$2,000/mo since at least May 2026 (May $2,024, Jun $2,091, Jul $1,919, Aug $2,527 incl. Places). Daily run-rate is a flat **$62-75/day** with no change after any Aug fix.
+
+**Where it goes (Aug 2026, from the BigQuery billing export `hrx1-d3beb.billing_export`)**:
+- Cloud Firestore Storage **$1,595** + Zonal Backup Storage **$498** = 83% of the bill. ⚠️ In this billing account Firestore SKUs are booked under **service = "App Engine"**, not "Cloud Firestore" — filter by SKU, not service, or you will miss it (the Aug audit did).
+- Places Enterprise+Atmosphere $190 (posted 8/2 as a lump; $0 so far in Sep → the field-mask fix held). Read ops $71, functions CPU $63+$13 min-instance, egress $25. All fine.
+
+**Database is 8.4 TiB** (metric `firestore.googleapis.com/storage/data_and_index_storage_bytes`, flat Jul→Sep). Backups ~16 TiB (schedule is WEEKLY Sunday, not daily; 10-day retention → two full copies overlap).
+
+**What the 8.4 TiB is** — three orphaned collections from the AI logging pipeline removed in 342401df 2025-11-24 (dev-notes/logging-refactor.md explicitly marked context_analysis "Only used for AI debugging → Delete"; last write in all three = 2025-08-28 14:07 PT; zero code references; docs are `{logId, analysis, timestamp}`):
+| collection | docs | avg doc | method |
+|---|---|---|---|
+| `context_analysis` | **~1.45 BILLION** | 341 B | ID-prefix sampling (count() times out) |
+| `tasks_ai_analysis` | **~316 MILLION** | 194 B | ID-prefix sampling |
+| `crm_analysis` | 41,231,877 | 505 B | exact count() |
+| `test_logs` | 684,513 (+135k since Aug) | 27 KB | exact; STILL GROWING |
+Sampling calibration: prefix estimate for crm_analysis = 47.1M vs true 41.2M (~15% high). Subcollection sweep (174 collection-group ids) found nothing else large (biggest legit: messageLogs 2.1M, activityLogs 219k). Scripts: `functions/.scratch/storage_census{,2,3}.ts`.
+
+**Why the Aug deletion never happened**: run 1 died at 4.19M, the nohup relaunch died at 1.8M ~90 min in (log `functions/.scratch/delete-junk.log` ends 2026-08-13 05:02Z; laptop sleep/reboot). Nobody checked. At the observed 440 deletes/s, 1.8B docs would take ~47 days from a laptop anyway — **use the managed server-side operation instead**:
+```
+gcloud firestore bulk-delete --database='(default)' --project=hrx1-d3beb \
+  --collection-ids=context_analysis,tasks_ai_analysis,crm_analysis,test_logs --async
+gcloud firestore operations list --project=hrx1-d3beb   # progress
+```
+Managed bulk delete bills as ordinary deletes (nam5 $0.02/100k) → ~$360 one-time for 1.8B docs, pays back in ~5 days. It deletes by collection-GROUP id: verified none of the four names is used as a subcollection anywhere (`test_logs/mockSms/events` is group `events`; those docs become orphans, harmless).
+
+**`testUserUpdate` IS deployed** (Aug audit said it wasn't): gen2 trigger on `users/{userId}` updated, ~77k executions/week, each writing a 27 KB before+after dump of the user doc (PII) to `test_logs`. Exported at functions/src/index.ts ~L9249. Remove the export + `gcloud functions delete testUserUpdate --region=us-central1` (also frees a Cloud Run slot).
+
+**Expected after cleanup**: storage → ~$5-10/mo, backups → ~$5/mo once the two 8-TiB weekly backups age out (≤10 days; or delete them early with `gcloud firestore backups delete`). Total ≈ **$250-300/mo** (functions ~$90, reads ~$70, egress/hosting/misc). Watch `data_and_index_storage_bytes` drop over the days after the operation.
+
+**DONE 2026-09-09 (Greg ran / approved)**:
+- Greg launched `gcloud firestore bulk-delete` on the four collections 16:45Z. Google's own estimate: **1,805,725,726 docs / 697 GB raw**. Op name in `gcloud firestore operations list` (BulkDeleteDocumentsMetadata). Early throughput was slow (~150-250 docs/s in the first 30 min); if it plateaus under ~1k/s the fallback is a parallel key-range deleter as a Cloud Run job.
+- `testUserUpdate` function DELETED (all regions, no Run service) + its export removed from index.ts. Do not re-export.
+- `chatWithGPT` min instance removed: `minInstances: 1` dropped from gptGateway.ts AND `gcloud run services update chatwithgpt --min-instances=0` applied directly (0 executions in the prior 30 days; was ~$20/mo).
+
+**Remaining levers after storage (~$300/mo → maybe $220)** — per-function CPU Sep 1-7 and a client-side read audit:
+- Firestore reads 120M/mo ($71) + Firestore→internet egress 234 GB/mo ($25) are mostly the WEB CLIENT. Full-`users`-collection `getDocs` (14.3k docs × 14.8 KB ≈ 210 MB per fire, no projection): `src/components/recruiter/RecruiterMultiSelect.tsx:42` (on mount when no `options` prop — RecruiterUserGroupDetails doesn't pass one), `src/utils/userGroupManagerCandidateUsers.ts:37` (UserGroupsTab + UserGroupDetails mounts), `src/pages/TenantViews/OrgTreeView.tsx:199` (page mount, only to count job titles). Per-keystroke `limit(500)` full-doc pulls (~7 MB each): `src/hooks/useMentionSearch.ts:40,291`, `src/components/MessageDrawer.tsx:454`; on mount: SenderManagementPage.tsx:84, MessagingTab.tsx:1905. `CompanyDirectory.tsx:143` passes `_cacheBust: Date.now()` to getUsersByTenant, defeating its 10-min cache. Worker-facing views are clean.
+- `listTenantWorkerDirectory` (8.5k user reads/call, 639 calls/wk ≈ 23M reads/mo): `src/hooks/useTenantWorkerDirectory.ts` revalidates on EVERY mount even with a warm IndexedDB cache — add a freshness gate (~15 min).
+- `evereeReconcileCron` = 20% of all function CPU (every 2h × 8.6 min, sweeps every worker across tenants; ~$12/mo). 2h cadence is a product decision (I-9 auto-clear ≤2h) — only change with Greg.
+- `fetchFollowedCompanyNews` scheduled full `users` scan + per-user subcollection query (~28.6k reads/run).
+- Everything else (Pub/Sub $3.6, Scheduler $3.9, Secret Manager $2.3, Artifact Registry $2.1, hosting) is noise.
