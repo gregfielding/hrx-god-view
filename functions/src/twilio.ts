@@ -844,6 +844,34 @@ export const checkOtp = onCall(
     });
   }
 
+  // Worker-app sign-up after a no_account sign-in (2026-09-09): the number was
+  // OTP-verified moments ago and the recovery token minted with that
+  // no_account is the possession proof (10 min, single use here). Asking for
+  // a second code sent every new app user to the legacy Phone Verification
+  // screen (Greg's device recording). Same resolvePhoneSignup as the web.
+  if (signup === true && recoveryToken && !code) {
+    const tokenRef = db.doc(`phone_signin_pending/${String(recoveryToken)}`);
+    const tokenSnap = await tokenRef.get();
+    const tok = tokenSnap.data() as { phoneE164?: string; purpose?: string; expiresAt?: number } | undefined;
+    if (!tokenSnap.exists || tok?.purpose !== 'recovery' || tok?.phoneE164 !== phoneE164 || (tok?.expiresAt ?? 0) < Date.now()) {
+      throw new HttpsError('permission-denied', 'That session expired. Start over.');
+    }
+    await tokenRef.delete();
+    const d = request.data as Record<string, unknown>;
+    return resolvePhoneSignup(phoneE164, {
+      firstName: String(d.firstName ?? ''),
+      lastName: String(d.lastName ?? ''),
+      dob: String(d.dob ?? ''),
+      preferredLanguage: String(d.preferredLanguage ?? ''),
+      signupSource: String(d.signupSource ?? 'worker_app'),
+      signupGroupId: (d.signupGroupId as string) ?? null,
+      jobContext: (d.jobContext as { tenantId?: string; tenantSlug?: string; jobId?: string } | null) ?? null,
+      ip: callerIp,
+      smsConsent: d.smsConsent === true,
+      userAgent: String(request.rawRequest?.headers?.['user-agent'] ?? '').slice(0, 300) || undefined,
+    });
+  }
+
   if (!code || !/^\d{6}$/.test(code)) {
     throw new HttpsError('invalid-argument', 'Invalid code format. Please enter a 6-digit code.');
   }
