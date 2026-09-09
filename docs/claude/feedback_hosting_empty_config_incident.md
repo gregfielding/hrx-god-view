@@ -43,3 +43,16 @@ config — the CLI happily publishes it.
 `firebase deploy --only hosting --project hrx1-d3beb`, re-run the curl
 check. The release history endpoint above shows who/when if provenance is
 unclear.
+
+## 2026-09-08 addendum — the shared checkout can be on the WRONG BRANCH
+A Claude session for AR reconciliation checked out `claude/lone-oak-ar-reconciliation-dmv2co`
+in the main repo directory. Another session kept working there for four hours:
+`git pull` fast-forwarded that branch, four commits landed on it, `git push -q origin main`
+pushed nothing (local main was untouched, so `origin/main..main` read 0), and two hosting
+deploys shipped that branch's bundle — missing a teammate's certs TDZ fix — until a later
+deploy from main replaced it (which in turn dropped the branch-only static privacy/terms
+pages Twilio was reviewing → 10DLC rejection #3). **Before any commit or deploy run
+`git branch --show-current` and require `main`** (or the branch you intend); the
+`origin/main..main` check alone is not proof you are on main. Never `git pull --rebase` a
+branch carrying a merge commit you authored — the rebase silently drops the merge's
+changes (recovered here from the reflog).

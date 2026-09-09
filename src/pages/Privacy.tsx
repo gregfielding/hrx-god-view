@@ -103,6 +103,7 @@ const Privacy: React.FC = () => {
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s4L3')}</ListItem>
         </List>
         <Typography paragraph>{t('legal.privacy.s4P2')}</Typography>
+        <Typography paragraph sx={{ fontWeight: 600 }}>{t('legal.privacy.s4P3')}</Typography>
       </Box>
 
       <Box component="section" id="cookies" sx={{ mb: 4 }}>

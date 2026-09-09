@@ -31,13 +31,29 @@
         "function": "linkRedirect"
       },
       {
+        "source": "/privacy",
+        "destination": "/privacy.html"
+      },
+      {
+        "source": "/terms",
+        "destination": "/terms.html"
+      },
+      {
+        "source": "/sms-privacy",
+        "destination": "/sms-privacy.html"
+      },
+      {
+        "source": "/consent",
+        "destination": "/consent.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
     ],
     "headers": [
       {
-        "//": "Firebase matches header rules on the REQUEST path, not the served file — so SPA routes like /crm rewrite to index.html but inherited the default max-age=3600, leaving users on stale bundles up to an hour after every deploy. Catch-all no-cache first; the /static rule below re-enables long caching for content-hashed assets.",
+        "//": "Firebase matches header rules on the REQUEST path, not the served file \u2014 so SPA routes like /crm rewrite to index.html but inherited the default max-age=3600, leaving users on stale bundles up to an hour after every deploy. Catch-all no-cache first; the /static rule below re-enables long caching for content-hashed assets.",
         "source": "**",
         "headers": [
           {
