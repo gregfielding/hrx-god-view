@@ -46,25 +46,8 @@ export async function fetchEvereeBankDebits(tenantId: string, start: string, end
     if (rows.length < 1000) break;
     pos += 1000;
   }
-  // Everee refund DEPOSITS on 5010 (a returned payment / reversed pull) —
-  // negative items, only used by the month close-out netting.
-  pos = 1;
-  for (;;) {
-    // eslint-disable-next-line no-await-in-loop
-    const r = (await qboQuery(tenantId, `SELECT * FROM Deposit WHERE TxnDate >= '${start}' AND TxnDate <= '${end}' STARTPOSITION ${pos} MAXRESULTS 1000`)) as Record<string, any>;
-    const rows: Array<Record<string, any>> = r.QueryResponse?.Deposit ?? r.Deposit ?? [];
-    for (const dep of rows) {
-      for (const l of (dep.Line ?? []) as Array<Record<string, any>>) {
-        const d = l.DepositLineDetail;
-        if (!d || String(d.AccountRef?.value) !== String(a5010.Id)) continue;
-        const memo = `${trim(dep.PrivateNote)} ${trim(l.Description)} ${trim(d.Entity?.name)}`;
-        if (!/everee|payment/i.test(memo)) continue;
-        out.push({ id: `dep-${dep.Id}`, date: String(dep.TxnDate).slice(0, 10), ent: 'ANY', cents: -Math.round((Number(l.Amount) || 0) * 100), memo: memo.trim().slice(0, 60) });
-      }
-    }
-    if (rows.length < 1000) break;
-    pos += 1000;
-  }
+  // Everee refund DEPOSITS are NOT netted here: they carry the entity's own
+  // Division (expenseDivisions) and net against the labor in that column.
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 

@@ -1133,3 +1133,11 @@ BEFORE the overhead ratio (which skips that run if anything was re-tagged
 207 purchases (149 untagged→Event, 31 Corp→Event, 22 untagged→Recurring,
 4 Corp→Recurring, 1 Event→Recurring). `.scratch/retag_8840_event.ts` is
 superseded.
+**Refund deposits (2026-09-09):** Everee/worker refund deposits on 5010 get
+the paying ENTITY's Division in `pushExpenseDivisions` (C1 Select →
+Recurring, else Event-based) and are no longer netted by the matcher — so
+a refund nets against the labor it reverses, not in Corp. July's −146.84
+was: Tabitha's 0708/0713-2 credits 150.60 under their bank debits, minus
+two 7/28 C1 Events ePay refunds (297.44). Corp 5010 now: Jun 0.00, Jul
++150.60 (hers), Aug +5,209.50 (the 8/6 ePay0001 draft — not a funding,
+not a reissue; Everee exposes no billing endpoint), Sep 0.00.

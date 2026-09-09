@@ -98,6 +98,7 @@ async function main(): Promise<void> {
     const flips = new Map<string, number>(); for (const c of (e.changes ?? []) as Array<Record<string, any>>) flips.set(`${c.from} → ${c.to}`, (flips.get(`${c.from} → ${c.to}`) ?? 0) + 1);
     console.log('by flip:', JSON.stringify([...flips.entries()]));
     if ((e.mixed ?? []).length) console.log(`mixed-family purchases (header took the larger side): ${JSON.stringify(e.mixed)}`);
+    for (const rf of (e.refunds ?? []) as Array<Record<string, any>>) console.log(`  refund deposit ${rf.date} #${rf.id} ${Number(rf.amount).toFixed(2).padStart(9)}  ${rf.from} → ${rf.to}  (${rf.memo})`);
     if (!dryRun && Number(e.changed) > 0 && phase === 'both') { console.log(`\n${e.changed} purchase(s) re-tagged. STOPPING before the ratio pass — rerun: qboReclassRerun.ts write ovh`); return; }
   }
   if (phase === 'both' || phase === 'ovh') {

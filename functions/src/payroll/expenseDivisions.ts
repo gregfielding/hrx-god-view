@@ -92,5 +92,32 @@ export async function pushExpenseDivisions(
       start += 1000;
     }
   }
-  return { ok: true, dryRun, since, months: [...byMonth.entries()].sort().map(([month, m]) => ({ month, ...m, amount: Math.round(m.amount * 100) / 100 })), changed: changes.length, changes: changes.slice(0, 500), mixed: mixed.slice(0, 100) };
+  // Everee refund DEPOSITS on 5010 (voided/returned payments): Division by
+  // the paying entity — C1 Select → Recurring, C1 Events / generic → Event-
+  // based — so the refund nets against the labor it reverses, not in Corp.
+  const a5010 = accts.find((a) => String(a.AcctNum) === '5010');
+  const refunds: Array<Record<string, unknown>> = [];
+  if (a5010) {
+    let start = 1;
+    for (;;) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = (await qboQuery(tenantId, `SELECT * FROM Deposit WHERE TxnDate >= '${since}' STARTPOSITION ${start} MAXRESULTS 1000`)) as Record<string, any>;
+      const rows: Array<Record<string, any>> = r.QueryResponse?.Deposit ?? r.Deposit ?? [];
+      for (const dep of rows) {
+        const on5010 = ((dep.Line ?? []) as Array<Record<string, any>>).filter((l) => String(l.DepositLineDetail?.AccountRef?.value) === String(a5010.Id));
+        if (!on5010.length) continue;
+        const memo = `${trim(dep.PrivateNote)} ${on5010.map((l) => `${trim(l.Description)} ${trim(l.DepositLineDetail?.Entity?.name)}`).join(' ')}`;
+        if (!/everee|epay|c1 (events|select|payment)/i.test(memo)) continue;
+        const want = /c1 select/i.test(memo) ? divisions.recurring : divisions.event;
+        if (trim(dep.DepartmentRef?.value) === want.Id) continue;
+        refunds.push({ id: String(dep.Id), date: dep.TxnDate, amount: Number(dep.TotalAmt) || 0, from: trim(dep.DepartmentRef?.name) || '(none)', to: want.Name, memo: memo.trim().slice(0, 50), status: dryRun ? 'would_update' : 'updated' });
+        if (dryRun) continue;
+        // eslint-disable-next-line no-await-in-loop
+        await qboEntityUpdate(tenantId, 'Deposit', { ...dep, DepartmentRef: { value: want.Id, name: want.Name }, sparse: false });
+      }
+      if (rows.length < 1000) break;
+      start += 1000;
+    }
+  }
+  return { ok: true, dryRun, since, refunds, months: [...byMonth.entries()].sort().map(([month, m]) => ({ month, ...m, amount: Math.round(m.amount * 100) / 100 })), changed: changes.length + refunds.length, changes: changes.slice(0, 500), mixed: mixed.slice(0, 100) };
 }
