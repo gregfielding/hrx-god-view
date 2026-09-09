@@ -52,6 +52,21 @@ this service's Sender Pool, set its inbound request URL to
 sends at this MG SID. Until then Natalie texts through the 888 (C1
 Messaging) with her signature.
 
+## ✅ Campaign APPROVED 2026-09-09 (round 5, CM0UCE7 / QE2c6890da…) — go-live steps
+`a2p-status.cjs` shows MG2dd6557d05d9be9044c996fa568a8a39 campaign **VERIFIED** (submitted 15:52Z,
+verified the same day). What changed and what's left:
+- **Code (deployed 2026-09-09):** `sendWorkerMessageInternal` routes every message whose
+  `messageTypeId` starts with `natalie_` through `NATALIE_MESSAGING_SERVICE_SID` (default MG2dd6…);
+  all other system SMS stays on C1 Messaging (888). Empty/unready pool → Twilio 21705/30034 → the
+  existing fallback resends from the 888, so this is safe before the pool is filled.
+- **Twilio (Greg, one script):** `node functions/.scratch/twilio-natalie-go-live.cjs` adds
+  PNadc75695… (+1 312 663 8247) and PN54f9b011… (+1 737 264 6753) to the MG2dd6… sender pool.
+  Idempotent. The service has `use_inbound_webhook_on_number=true` and both numbers already point
+  at `handleInboundSms`, so no inbound URL change is needed. Sticky sender is on (a worker keeps
+  getting the same number).
+- After that: send a Natalie text (e.g. a worker_status/offer via Slack) and confirm the `from` is
+  the 312 in the Twilio Messages log; error 30034 should disappear for those sends.
+
 ## Opt-out keywords (C1 Messaging) — changed 2026-09-07
 
 Standard Opt-Out Keywords now: end, optout, quit, revoke, stop, stopall,
