@@ -429,17 +429,11 @@ export async function processInboundSms(
  * Send STOP confirmation message
  */
 async function sendStopConfirmation(phoneE164: string): Promise<void> {
-  const message = 'You have been unsubscribed from SMS messages. You will no longer receive text messages from us. Reply START to opt back in.';
-  
-  try {
-    await sendWorkerMessageInternal(phoneE164, message, {
-      systemContext: true,
-      source: 'stop_confirmation',
-    });
-  } catch (error: any) {
-    logger.error(`Error sending STOP confirmation to ${phoneE164}:`, error);
-    // Don't throw - confirmation failure shouldn't break STOP processing
-  }
+  // 2026-09-08: the C1 Messaging service has Twilio's opt-out auto-replies enabled, so
+  // Twilio already answers STOP and blocks the number before this runs. Our own
+  // confirmation therefore failed with 21610 every single time (58 alerts in a day)
+  // and taught nobody anything. Keep the function as the hook point, but only log.
+  logger.info(`STOP processed for ${phoneE164}; Twilio's messaging-service auto-reply sends the confirmation (HRX send skipped to avoid 21610).`);
 }
 
 /**

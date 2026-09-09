@@ -12,6 +12,7 @@ import * as admin from 'firebase-admin';
 import { handleInboundSms } from './inboundSmsWebhook';
 import { updateMessageLogStatus } from './messageLogging';
 import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './twilioSecrets';
+import { PERMANENT_SMS_ERROR_CODES, TWILIO_UNSUBSCRIBED_RECIPIENT, recordSmsCarrierBlock, recordSmsInvalidNumber } from './smsDeliveryAlerts';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -128,6 +129,30 @@ export const twilioStatusCallback = onRequest(
         });
 
         logger.info(`Updated message log ${messageLogId} status to ${status}`);
+
+        // 2026-09-08: with a Messaging Service the send is accepted and the carrier
+        // rejection (21610 unsubscribed, 21211/21614 invalid, 30006 landline) arrives
+        // HERE asynchronously — the sender never sees it, so nothing stamped the
+        // worker and every blast re-tried them (58 × 21610 in one day). Stamp now.
+        if (status === 'failed' && ErrorCode != null) {
+          const code = String(ErrorCode);
+          const logData = messageLogDoc.data() as Record<string, unknown>;
+          const stampInput = {
+            tenantId: (logData.tenantId as string | undefined) ?? null,
+            userId: (logData.userId as string | undefined) ?? null,
+            toPhone: String(request.body.To ?? logData.to ?? logData.toPhone ?? ''),
+            errorCode: code,
+            errorMessage: ErrorMessage ? String(ErrorMessage) : undefined,
+            messageTypeId: (logData.messageTypeId as string | undefined) ?? null,
+            source: 'twilioStatusCallback',
+          };
+          try {
+            if (code === TWILIO_UNSUBSCRIBED_RECIPIENT) await recordSmsCarrierBlock(stampInput);
+            else if (PERMANENT_SMS_ERROR_CODES.has(code)) await recordSmsInvalidNumber(stampInput);
+          } catch (stampErr) {
+            logger.warn('[twilioStatusCallback] stamping permanent failure failed (non-fatal)', { err: String(stampErr) });
+          }
+        }
       } else {
         logger.warn(`No message log found for Twilio message ${MessageSid}`);
       }
