@@ -56,3 +56,17 @@ pages Twilio was reviewing → 10DLC rejection #3). **Before any commit or deplo
 `origin/main..main` check alone is not proof you are on main. Never `git pull --rebase` a
 branch carrying a merge commit you authored — the rebase silently drops the merge's
 changes (recovered here from the reflog).
+
+## Addendum 2026-09-09 — rewrite to an UNDEPLOYED function blocks hosting
+
+`firebase deploy --only hosting` uploads fine, then fails at "finalizing
+version" with `400 Cloud Run service \`jobpostingseo\` does not exist in
+region us-central1` whenever firebase.json carries a `"function":` rewrite
+whose function has never been deployed (commit 2f75d20e added the
+jobPostingSeo rewrites for /robots.txt, /sitemap.xml, /*/jobs-board,
+/*/jobs-board/* before the function existed). The previous version stays
+live (site kept serving 200), so it fails safe — but NO hosting deploy can
+land until `firebase deploy --only functions:jobPostingSeo` succeeds
+(new service → mind the Cloud Run cap; `gcloud run services list` showed
+997 on 2026-09-09) or the rewrites are removed. Deploy the function first,
+then hosting.
