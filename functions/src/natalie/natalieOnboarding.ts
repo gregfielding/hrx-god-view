@@ -242,6 +242,15 @@ async function createFollowup(token: string, channel: string, base: { userId: st
   return true;
 }
 
+/** Enroll one specific worker (scripts / tests / "follow up with X" asks). Returns false if they already have an active follow-up. */
+export async function enrollWorkerFollowup(token: string, base: { userId: string; assignmentId: string | null; jobOrderId: string | null; recruiterUid: string | null; startedAt: Date; source: FollowupDoc['source']; packageName?: string }): Promise<boolean> {
+  const cfg = await natalieConfig();
+  const channel = s(cfg.onboardingChannelId) || s(cfg.recruitingChannelId) || DEFAULT_CHANNEL;
+  const existing = (await db.collection(FOLLOWUPS).doc(base.userId).get()).data() as FollowupDoc | undefined;
+  if (existing && existing.status === 'active') return false;
+  return createFollowup(token, channel, base);
+}
+
 export async function enrollOnboardingFollowups(token: string): Promise<number> {
   const cfg = await natalieConfig();
   if (cfg.onboardingFollowups === false) return 0;
@@ -370,13 +379,21 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
     const lastText = tsToDate((f as unknown as { lastTextAt?: unknown }).lastTextAt)?.getTime() ?? 0;
     if (Date.now() - lastText < 20 * H) continue; // never two follow-up texts in one day
     if (sentThisTick >= 15) break;
+    const claimed = await db.runTransaction(async (tx) => {
+      const cur = await tx.get(d.ref);
+      const claimAt = tsToDate(cur.get('checkpointClaimAt'))?.getTime() ?? 0;
+      if (cur.get('nextCheckpoint') !== cp || cur.get('status') !== 'active' || Date.now() - claimAt < 10 * 60_000) return false;
+      tx.update(d.ref, { checkpointClaimAt: admin.firestore.FieldValue.serverTimestamp() });
+      return true;
+    }).catch(() => false);
+    if (!claimed) continue;
     const slack = f.slack ?? undefined;
     const say = async (text: string) => { if (slack?.channel) await postAsNatalie(token, { channel: slack.channel, text, threadTs: slack.ts }); };
     try {
       const snapshot = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId);
       const stamp = { at: admin.firestore.FieldValue.serverTimestamp(), workerTodo: snapshot.workerTodo, recruiterTodo: snapshot.recruiterTodo, sent: false };
       if (snapshot.background?.failed) {
-        await d.ref.set({ status: 'parked', nextCheckpoint: null, [`checkpoints.${cp}`]: stamp, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        await d.ref.set({ status: 'parked', nextCheckpoint: null, checkpoints: { [cp]: stamp }, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         await say(`:x: ${f.workerName}'s background check came back FAILED — I'm not texting them about onboarding. Recruiter decision needed: https://hrxone.com/users/${f.userId}`);
         await disarmWatch(f.userId);
         touched += 1; continue;
@@ -385,7 +402,7 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
         const closing = snapshot.recruiterTodo.length
           ? `:white_check_mark: ${f.workerName} has finished everything on their side.\n${slackSummary(snapshot)}\nOnly recruiter steps remain.`
           : `:white_check_mark: ${f.workerName} is fully onboarded — nothing left on either side.\n${slackSummary(snapshot)}`;
-        await d.ref.set({ status: 'done', nextCheckpoint: null, [`checkpoints.${cp}`]: stamp, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        await d.ref.set({ status: 'done', nextCheckpoint: null, checkpoints: { [cp]: stamp }, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         await say(closing);
         if (cp !== 'h24' || f.transcript.length) await sendSms(f, `Hi ${f.firstName}, Natalie with C1 Staffing — you're all set on your onboarding paperwork for ${f.jobTitle}. Thank you! ${SIGN}`, 'natalie_onboarding_done').catch(() => undefined);
         await disarmWatch(f.userId);
@@ -393,7 +410,7 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
         touched += 1; continue;
       }
       if (cp === 'd7') {
-        await d.ref.set({ status: 'parked', nextCheckpoint: null, [`checkpoints.${cp}`]: stamp, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        await d.ref.set({ status: 'parked', nextCheckpoint: null, checkpoints: { [cp]: stamp }, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         await say(`:hourglass: 7 days in and ${f.workerName} still hasn't finished: ${snapshot.workerTodo.join(', ')}. I've texted them ${f.transcript.filter((t) => t.dir === 'out').length} time(s)${f.lastIntent ? ` (last read as: ${f.lastIntent})` : ' with no reply'}. Parking this — say "remove ${f.firstName} from ${f.jobTitle}" if we should move on, or "keep following up with ${f.firstName}".`);
         await disarmWatch(f.userId);
         touched += 1; continue;
@@ -413,7 +430,7 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
       const transcript = [...(f.transcript ?? []), { at: new Date().toISOString(), dir: 'out' as const, text }].slice(-30);
       let next = NEXT[cp];
       while (next && (tsToDate(f.startedAt)?.getTime() ?? 0) + CHECKPOINT_HOURS[next] * H < Date.now() && next !== 'd7') next = NEXT[next];
-      await d.ref.set({ nextCheckpoint: next, [`checkpoints.${cp}`]: { ...stamp, sent: sent.success, error: sent.error ?? null }, transcript, lastTextAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      await d.ref.set({ nextCheckpoint: next, checkpoints: { [cp]: { ...stamp, sent: sent.success, error: sent.error ?? null } }, transcript, lastTextAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
       if (sent.success) await armWatch(f);
       const label = cp === 'h24' ? '24h' : '72h';
       await say(sent.success
