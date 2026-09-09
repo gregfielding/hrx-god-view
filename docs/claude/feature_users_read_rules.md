@@ -100,7 +100,8 @@ claim) saw the mirror-driven checkmarks + completion dates. Cause: the
 `everee_workers` / `everee_embed_sessions` / `everee_pay_history_cache` /
 `payroll_payment_issues` read rules only had `isHRX() || hasTenantRole(
 claims)` + own-doc branches; the client swallows the permission error
-and falls back silently. Fix (deployed): added `hasSecurityLevel(tenantId,
+and falls back silently. Fix (deployed; Daniel reloaded Claudia Vargas's record the same day and
+confirmed the checkmarks + dates show): added `hasSecurityLevel(tenantId,
 5)` (doc-based, tenant-scoped) to those four reads — Greg's rule: ALL
 internal staff (securityLevel 5+) see this. Same day, second pass (Greg: "fix the other reads"): every remaining
 `allow read` clause that had `hasTenantRole(claims)` without a doc-based
