@@ -362,6 +362,15 @@ export const savePayrollVenueMapping = onCall(
       return await pushOverheadAllocations(tenantId, request.data?.dryRun !== false);
     }
 
+    // Travel routing (Greg 2026-09-10): client class → Travel for Events
+    // (COGS), else Travel for Sales (by revenue). Level 7.
+    if (action === 'pushTravelRouting') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushTravelRouting } = await import('./travelRouting');
+      return await pushTravelRouting(tenantId, request.data?.dryRun !== false);
+    }
+
     // Direct worker payments (bank, not Everee — May 2026 cutover) → client
     // classes via override / HRX timesheets; unattributed stays Corp and is
     // returned as `punchList` for ops (Greg 2026-09-09). Level 7.
@@ -1742,6 +1751,20 @@ export async function maybeRunWeeklyClassificationHealth(
       } catch (e) {
         console.error('[classificationHealth] direct-payment allocation failed', { error: String(e) });
       }
+      // Travel routing (Greg 2026-09-10): client-classed travel → 5500 Travel
+      // for Events (COGS, Division by class); unclassed / National / Austin →
+      // 8800 Travel for Sales (overhead, by revenue). Line account moves hit
+      // the QBO query lag, so a run that moves any defers expense Divisions
+      // and overhead to the next run.
+      let travelMoved = 0;
+      try {
+        const { pushTravelRouting } = await import('./travelRouting');
+        const tr = (await pushTravelRouting(tenantId, false)) as Record<string, any>;
+        travelMoved = Number(tr.transactions) || 0;
+        if (travelMoved > 0 && postText) await postText(`✈️ Travel routing: moved ${tr.lineMoves} travel line(s) between Travel for Events and Travel for Sales by class.`);
+      } catch (e) {
+        console.error('[classificationHealth] travel routing failed', { error: String(e) });
+      }
       // Invoice Divisions first (Greg 2026-09-08): header Location = client
       // family, so the reclass legs below mirror corrected invoices.
       let invoicesRetagged = 0;
@@ -1787,7 +1810,8 @@ export async function maybeRunWeeklyClassificationHealth(
         // a run that re-tags any waits for the next run before the ratio pass
         // (same QBO query-lag reason as invoices).
         let expensesRetagged = 0;
-        try {
+        if (travelMoved > 0) console.info('[classificationHealth] travel lines moved this run — expense divisions + overhead deferred to the next run (QBO query lag)');
+        else try {
           const { pushExpenseDivisions } = await import('./expenseDivisions');
           const ed = (await pushExpenseDivisions(tenantId, false)) as Record<string, any>;
           expensesRetagged = Number(ed.changed) || 0;
@@ -1795,7 +1819,7 @@ export async function maybeRunWeeklyClassificationHealth(
         } catch (e) {
           console.error('[classificationHealth] expense divisions failed', { error: String(e) });
         }
-        if (invoicesRetagged === 0 && expensesRetagged === 0) {
+        if (invoicesRetagged === 0 && expensesRetagged === 0 && travelMoved === 0) {
           const { pushOverheadAllocations } = await import('./overheadAllocations');
           const ovh = (await pushOverheadAllocations(tenantId, false).catch((e) => ({ ok: false, error: String(e) }))) as Record<string, any>;
           const ovhMade = ((ovh.months ?? []) as Array<Record<string, any>>).filter((x) => /d$/.test(String(x.status)) && x.status !== 'already_allocated');

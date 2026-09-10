@@ -35,16 +35,23 @@ export async function pushExpenseDivisions(
   const acctRes = (await qboQuery(tenantId, 'SELECT Id, Name, AcctNum, FullyQualifiedName, AccountType FROM Account MAXRESULTS 1000')) as Record<string, any>;
   const accts = (acctRes.QueryResponse?.Account ?? acctRes.Account ?? []) as Array<Record<string, any>>;
   const plAcct = new Set<string>(accts.filter((a) => /Expense|Cost of Goods Sold/.test(String(a.AccountType))).map((a) => String(a.Id)));
-  // CLASS-DRIVEN accounts (Greg 2026-09-08): direct client spend — Travel
-  // (8800 family), client meals (8400), client-facing COGS (5210 ConnectTeam,
+  // CLASS-DRIVEN accounts (Greg 2026-09-08): direct client spend — 5500
+  // Travel for Events family (2026-09-10; travelRouting.ts moves client-
+  // classed travel there first — 8800 Travel for Sales is overhead and goes
+  // by REVENUE RATIO like G&A), client meals (8400), client-facing COGS (5210 ConnectTeam,
   // 5300 recruiting, 5400 event supplies). Everything else — G&A, occupancy,
   // software, insurance, professional services, internal payroll — is
   // allocated by REVENUE RATIO even when a line carries a client class, so
   // those purchases are kept in Corp / Unalloc. for the ratio pass.
   const classDriven = new Set<string>(accts.filter((a) => {
     const n = String(a.AcctNum ?? ''); const f = String(a.FullyQualifiedName ?? a.Name ?? '');
-    return /^88\d\d$/.test(n) || /^8400$/.test(n) || /^(5210|5300|5400)$/.test(n) || /^(8800 )?Travel(:|$)/i.test(f) || /meals & entertainment/i.test(f);
+    return /^55\d\d$/.test(n) || /^8400$/.test(n) || /^(5210|5300|5400)$/.test(n) || /^Travel for Events(:|$)/i.test(f) || /meals & entertainment/i.test(f);
   }).map((a) => String(a.Id)));
+  // Travel for Sales (8800 family) goes by revenue ratio only inside the
+  // travel-split window (travelRouting.ts runs from 2026-05-01). Earlier
+  // months keep the legacy class-driven treatment so Jan–Apr headers stay put.
+  const TRAVEL_SPLIT_FROM = '2026-05-01';
+  const salesTravel = new Set<string>(accts.filter((a) => /^88\d\d$/.test(String(a.AcctNum ?? '')) || /^Travel for Sales(:|$)/i.test(String(a.FullyQualifiedName ?? ''))).map((a) => String(a.Id)));
   const ownWriter = new Set<string>(accts.filter((a) => /^(5010|5100|5310)$/.test(String(a.AcctNum ?? ''))).map((a) => String(a.Id)));
   const itemRes = (await qboQuery(tenantId, 'SELECT Id, ExpenseAccountRef FROM Item MAXRESULTS 1000')) as Record<string, any>;
   const itemExp = new Map<string, string>(((itemRes.QueryResponse?.Item ?? itemRes.Item ?? []) as Array<Record<string, any>>).map((i) => [String(i.Id), String(i.ExpenseAccountRef?.value ?? '')]));
@@ -67,7 +74,8 @@ export async function pushExpenseDivisions(
           if (!plAcct.has(acct)) continue;
           const amt = Math.abs(Number(l.Amount) || 0);
           if (ownWriter.has(acct)) { ownAmt += amt; continue; }
-          if (!classDriven.has(acct)) { ratioAmt += amt; continue; }
+          const legacyTravel = salesTravel.has(acct) && String(t.TxnDate) < TRAVEL_SPLIT_FROM;
+          if (!classDriven.has(acct) && !legacyTravel) { ratioAmt += amt; continue; }
           const fqn = clsById.get(trim((ab ?? ib)?.ClassRef?.value)) ?? '';
           if (!fqn || OVERHEAD_CLASS_RE.test(fqn)) continue; // unclassed / overhead travel → ratio fallback
           if (RECURRING_DIVISION_RE.test(fqn)) fam.recurring += amt; else fam.event += amt;

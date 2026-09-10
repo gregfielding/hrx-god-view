@@ -407,14 +407,21 @@ export async function runExpensifyClassWriteback(
   // worker's Expensify pick still says the old name (Greg 2026-09-03:
   // "Meals" deactivated in QBO — only Travel:Travel meals going forward).
   const CATEGORY_ALIASES: Record<string, string> = {
-    meals: 'travel:travel meals',
-    fuel: 'travel:ground transport',
-    'vehicle:fuel': 'travel:ground transport',
+    meals: 'travel for sales:travel meals',
+    fuel: 'travel for sales:ground transport',
+    'vehicle:fuel': 'travel for sales:ground transport',
+    // 2026-09-10: event-staff recruitment ads merged into 5300 (COGS).
+    'advertising & marketing:recruitment (advertising to recruit event staff)': 'field staff recruitment / advertising',
+    'recruitment (advertising to recruit event staff)': 'field staff recruitment / advertising',
   };
+  // 2026-09-10: "Travel" renamed "Travel for Sales"; Expensify categories
+  // keep the old "Travel:…" names until its QBO sync refreshes. Client-
+  // classed travel is moved to 5500 Travel for Events by travelRouting.ts.
+  const legacyTravel = (cat: string): string => cat.replace(/^travel(?= *:|$)/, 'travel for sales');
   const resolveAccount = (rawCategory: string): { id: string; name: string } | null => {
     const cat = rawCategory.replace(/\\:/g, ':').replace(/^:+|:+$/g, '').trim();
     if (!cat) return null;
-    return acctByName.get(cat.toLowerCase()) ?? acctByName.get(CATEGORY_ALIASES[cat.toLowerCase()] ?? '') ?? null;
+    return acctByName.get(cat.toLowerCase()) ?? acctByName.get(CATEGORY_ALIASES[cat.toLowerCase()] ?? '') ?? acctByName.get(legacyTravel(cat.toLowerCase())) ?? null;
   };
 
   // Purchases in-window, keyed for both match paths.

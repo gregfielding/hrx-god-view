@@ -1285,3 +1285,68 @@ Comp Minimum Shortage."
   if the entity is known, override rather than rely on the mix.
 - Jan–Feb 2026 and 2025 top-ups sit on 5100/7140 untagged (Tabitha era),
   not touched (writer gate ≥ 2026-03).
+
+## Travel split: Travel for Events (COGS) vs Travel for Sales (2026-09-10)
+
+Greg: create "Travel for Events: SUBCATEGORY" in COGS; rename the existing
+Travel family "Travel for Sales"; then build rules for what goes where.
+
+**Skeleton (done 2026-09-10, `.scratch/travel_skeleton.ts`):** 5500 Travel
+for Events (Id 180, COGS / OtherCostsOfServiceCos) with 5510 Airfare (181),
+5520 Hotels (182), 5530 Travel meals (183), 5540 Ground Transport (184).
+8800 Travel (Id 51) renamed **Travel for Sales**; its subs (8810 Airfare,
+8820 Hotels, 8830 Travel meals, 8840 Ground Transport, unnumbered Travel
+Insurance) keep their names, so FQNs are now "Travel for Sales:Airfare" etc.
+
+**Rename impacts handled in code:**
+- `expensifyClassWriteback.ts` maps Expensify category → account by exact
+  FQN/Name; Expensify still sends "Travel:…" until its QBO category sync
+  refreshes → `legacyTravel()` rewrites `travel:` → `travel for sales:`, and
+  the meals/fuel aliases point at Travel for Sales. (Unmapped lines just stay
+  on Uncategorized and retry daily — no misposting.) ☠️ Expensify's own
+  category list must be re-synced from QBO (Accounting → Sync) to show the new
+  names; nothing in code does that.
+- `expenseDivisions.ts`: 55xx added to the class-driven set (88xx matched by
+  AcctNum, unaffected by the rename).
+
+**Rules (Greg 2026-09-10: "class is enough, allocate sales travel by
+revenue"):**
+- `travelRouting.ts` (runner phase `travel`, callable `pushTravelRouting`,
+  weekly job right after direct payments): line-level on Purchases + Bills
+  since 2026-05-01. Client class → matching 55xx sub; no class / National /
+  Corp / overhead / retired Austin → matching 88xx sub (Travel Insurance →
+  5500 parent). Two-way, idempotent. First write 2026-09-10: 394 lines,
+  $48,460.23 → Travel for Events (May 321.65, Jun 23,744.55, Jul 12,005.80,
+  Aug 10,172.51, Sep 2,215.72).
+- 5500 family is CLASS-DRIVEN in `expenseDivisions.ts` (Sodexo / Indeed Flex
+  → Recurring, else Event-based). 8800 Travel for Sales is a RATIO account
+  from 2026-05-01: a sales-travel purchase parked in a client Division goes
+  back to Corp and `overheadAllocations.ts` spreads it by revenue.
+- ☠️ Scope footgun hit on the first run: dropping 88xx from the class-driven
+  set while the writer's `since` = 2026-01-01 flipped 48 Jan–Apr purchases
+  ($4,561.66) Event-based → Corp. Restored the same day
+  (`.scratch/restore_janapr_travel_divisions.ts`, matched by
+  MetaData.LastUpdatedTime); the writer now keeps legacy class-driven travel
+  before `TRAVEL_SPLIT_FROM = '2026-05-01'`.
+- Weekly job: a run where the router moved any lines defers expense
+  Divisions + overhead to the next run (QBO query lag).
+- Only signal is the class: QBO books every card to one "Credit Cards
+  Payable" account and the Expensify classSync ledger has no cardholder, so
+  a sales trip tagged to a client lands in Travel for Events. Refine later by
+  adding the owner email to the Expensify exporter template and joining
+  `expensify_card_map/{last4}`.
+
+## Event-staff recruitment ads → COGS 5300 (2026-09-10)
+
+Greg: "move 8010 above the gross profit line and into COGS." The 8010
+balance in the P&L was entirely its sub **Advertising & marketing:Recruitment
+(Advertising to recruit Event Staff)** (Id 1150040042, no number: Indeed +
+Craigslist job ads, Jul 1,017.59 / Aug 3,353.44 / Sep 541.44). That is the
+same thing as the existing COGS account **5300 Field Staff Recruitment /
+Advertising** (also Indeed + Craigslist), so no new GL number: the travel
+router's account-merge map moves every line on that sub to 5300 (class-
+independent, since 2026-05-01, weekly), the Expensify writeback aliases the
+old category to 5300, and the overhead writer re-trues its Jul–Sep legs onto
+5300. The sub is to be made inactive once nothing references it. The 8010
+parent itself only held small Jan–Mar promo buys (lanyards, monogram, Zazzle,
+Shutterstock ≈ $368) — real marketing, left below gross profit.

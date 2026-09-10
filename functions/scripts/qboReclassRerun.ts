@@ -30,8 +30,8 @@ const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
 async function main(): Promise<void> {
   const mode = process.argv[2];
   const phase = process.argv[3] ?? 'both';
-  if ((mode !== 'dry' && mode !== 'write') || !['both', 'invdiv', 'expdiv', 'reclass', 'trueup', 'dpay', 'wc', 'scrn', 'ovh'].includes(phase)) {
-    console.error('usage: qboReclassRerun.ts <dry|write> [invdiv|expdiv|reclass|trueup|dpay|wc|scrn|ovh]');
+  if ((mode !== 'dry' && mode !== 'write') || !['both', 'invdiv', 'expdiv', 'reclass', 'trueup', 'dpay', 'wc', 'scrn', 'ovh', 'travel'].includes(phase)) {
+    console.error('usage: qboReclassRerun.ts <dry|write> [invdiv|expdiv|reclass|trueup|dpay|wc|scrn|ovh|travel]');
     process.exit(2);
   }
   const dryRun = mode === 'dry';
@@ -61,6 +61,13 @@ async function main(): Promise<void> {
     for (const m of (r.months ?? []) as Array<Record<string, any>>) {
       console.log(`${String(m.month).padEnd(12)} ${String(m.dates ?? '').padEnd(24)} ${String(m.status).padEnd(26)} total ${Number(m.amount ?? 0).toFixed(2)}  classes ${m.classes ?? ''}${m.docNumber ? '  doc ' + m.docNumber : ''}`);
     }
+  }
+  if (phase === 'travel') {
+    const { pushTravelRouting } = await import('../src/payroll/travelRouting');
+    const t = (await pushTravelRouting(TENANT, dryRun, { since: process.argv[4] })) as Record<string, any>;
+    console.log(`\n=== travel routing (${mode}) since ${t.since} — ${t.lineMoves} line moves in ${t.transactions} transactions ===`);
+    for (const m of (t.byMonth ?? []) as Array<Record<string, any>>) console.log(`  ${m.month}  → Travel for Events ${Number(m.toEvents).toFixed(2).padStart(10)}   → Travel for Sales ${Number(m.toSales).toFixed(2).padStart(10)}   recruitment → 5300 ${Number(m.merged ?? 0).toFixed(2).padStart(9)}   (${m.n} lines)`);
+    console.log('  by class:'); for (const c of ((t.byClass ?? []) as Array<Record<string, any>>).slice(0, 30)) console.log(`    ${Number(c.amount).toFixed(2).padStart(10)}  ${c.key}`);
   }
   if (phase === 'both' || phase === 'dpay') {
     const { pushDirectPaymentAllocations } = await import('../src/payroll/directPaymentAllocations');
