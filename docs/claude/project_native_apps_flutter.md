@@ -660,5 +660,10 @@ Design:
   into `functions/.scratch/` first. ASC's visible "Choose File" is a
   button; the real target is the hidden `input[type=file]` (find it by
   "hidden file input" — the first ref returned is the button).
+- ASC scrambles screenshot order when several files go into one upload
+  (it keeps completion order). Upload one file per call, in order, with a
+  ~5 s wait between — then verify order via the "Screenshot NN-….png"
+  thumbnail buttons. Only the first 3 show on the install sheet.
 - ASC shows a "Review New Social Media Questions on Age Ratings" banner;
-  check App Information → Age Rating before resubmitting.
+  checked 2026-09-10: App Information → Age Ratings is 4+ with no required
+  action, so it does not block resubmission.
