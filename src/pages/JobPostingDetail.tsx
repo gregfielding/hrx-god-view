@@ -392,11 +392,16 @@ const JobPostingDetail: React.FC = () => {
               jobDescription_i18n: jobOrderData.jobDescription_i18n ?? jobOrderData.jobOrderDescription_i18n,
               companyName: jobOrderData.companyName || '',
               worksiteName: jobOrderData.worksiteName || '',
-              worksiteAddress: jobOrderData.worksiteAddress || {
-                street: '',
-                city: jobOrderData.worksiteAddress?.city || '',
-                state: jobOrderData.worksiteAddress?.state || '',
-                zipCode: jobOrderData.worksiteAddress?.zipCode || '',
+              worksiteAddress: {
+                ...(jobOrderData.worksiteAddress || {
+                  street: '',
+                  city: jobOrderData.worksiteAddress?.city || '',
+                  state: jobOrderData.worksiteAddress?.state || '',
+                  zipCode: jobOrderData.worksiteAddress?.zipCode || '',
+                }),
+                // worksiteCoordinates is where JOs actually keep coords (2026-09-09).
+                coordinates:
+                  jobOrderData.worksiteAddress?.coordinates ?? jobOrderData.worksiteCoordinates ?? undefined,
               },
               startDate: startDate,
               endDate: endDate,

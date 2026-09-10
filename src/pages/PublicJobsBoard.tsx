@@ -545,7 +545,9 @@ const PublicJobsBoard: React.FC = () => {
         state: worksiteAddress.state ?? '',
         zipCode: worksiteAddress.zipCode ?? '',
         country: worksiteAddress.country ?? 'US',
-        coordinates: worksiteAddress.coordinates
+        // JOs carry coords as `worksiteCoordinates` (recruiter page self-backfill)
+        // long before worksiteAddress.coordinates exists (2026-09-09).
+        coordinates: worksiteAddress.coordinates ?? jobOrder.worksiteCoordinates
       };
     }
     

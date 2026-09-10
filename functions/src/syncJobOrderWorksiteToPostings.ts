@@ -33,6 +33,8 @@ interface ResolvedWorksite {
   worksiteId: string;
   worksiteName: string;
   worksiteAddress: Record<string, unknown>;
+  /** Where the coordinates came from when this run had to fill them in. */
+  coordinatesSource: string;
   companyId: string;
   companyName: string;
 }
@@ -76,13 +78,96 @@ async function resolveWorksite(
     }
   }
 
+  // Coordinates (2026-09-09, Greg: "job orders all have worksite addresses
+  // with coords — make this work"). Precedence: JO.worksiteAddress.coordinates
+  // → JO.worksiteCoordinates (self-backfilled by the recruiter JO page) →
+  // location doc → server geocode of the street address. Without this every
+  // posting converted from a JO landed on the board with no coordinates and
+  // "Nearest" could not place it (127 of 207 active postings, 2026-09-09).
+  let coordinatesSource = '';
+  if (!hasLatLng(worksiteAddress.coordinates)) {
+    const joCoords = normalizeLatLng(jo.worksiteCoordinates);
+    if (joCoords) {
+      worksiteAddress = { ...worksiteAddress, coordinates: joCoords };
+      coordinatesSource = 'job_order.worksiteCoordinates';
+    }
+  }
+  if (!hasLatLng(worksiteAddress.coordinates) && worksiteId) {
+    try {
+      const locSnap = await db.doc(`tenants/${tenantId}/locations/${worksiteId}`).get();
+      const loc = (locSnap.data() || {}) as Record<string, any>;
+      const locCoords = normalizeLatLng(loc.address?.coordinates ?? loc.coordinates);
+      if (locCoords) {
+        worksiteAddress = { ...worksiteAddress, coordinates: locCoords };
+        coordinatesSource = 'location_doc';
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+  if (!hasLatLng(worksiteAddress.coordinates)) {
+    const geo = await serverGeocodeAddress(worksiteAddress);
+    if (geo) {
+      worksiteAddress = { ...worksiteAddress, coordinates: geo };
+      coordinatesSource = 'server_geocode';
+    }
+  }
+
   return {
     worksiteId,
     worksiteName,
     worksiteAddress,
+    coordinatesSource,
     companyId: String(jo.companyId ?? '').trim(),
     companyName: String(jo.companyName ?? '').trim(),
   };
+}
+
+function normalizeLatLng(v: unknown): { lat: number; lng: number } | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  const lat = Number(o.lat ?? o.latitude);
+  const lng = Number(o.lng ?? o.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return null;
+  return { lat, lng };
+}
+
+function hasLatLng(v: unknown): boolean {
+  return normalizeLatLng(v) !== null;
+}
+
+/** Geocode a street address with the server key (Geocoding API only, no
+ *  referrer restriction — same key the Fieldglass parser uses). Rejects hits
+ *  whose state disagrees with the address (partial matches elsewhere). */
+async function serverGeocodeAddress(
+  addr: Record<string, unknown>,
+): Promise<{ lat: number; lng: number } | null> {
+  const key = String(process.env.GOOGLE_MAPS_SERVER_KEY ?? '').trim();
+  const city = String(addr.city ?? '').trim();
+  const state = String(addr.state ?? '').trim();
+  if (!key || !city || !state) return null;
+  const q = [addr.street, city, state, addr.zipCode ?? addr.zip]
+    .map((v) => String(v ?? '').trim())
+    .filter(Boolean)
+    .join(', ');
+  try {
+    const res = await fetch(
+      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&region=us&key=${key}`,
+    );
+    const json = (await res.json()) as {
+      status?: string;
+      results?: Array<{ geometry?: { location?: { lat: number; lng: number } }; address_components?: Array<{ short_name?: string; types?: string[] }> }>;
+    };
+    const hit = json.results?.[0];
+    const loc = hit?.geometry?.location;
+    if (!loc) return null;
+    const hitState = hit?.address_components?.find((c) => c.types?.includes('administrative_area_level_1'))?.short_name;
+    if (hitState && state.length === 2 && hitState.toUpperCase() !== state.toUpperCase()) return null;
+    return { lat: loc.lat, lng: loc.lng };
+  } catch (e) {
+    logger.warn('syncJobOrderWorksiteToPostings.geocode_failed', { q, err: String(e) });
+    return null;
+  }
 }
 
 export const syncJobOrderWorksiteToPostings = onDocumentWritten(
@@ -100,7 +185,15 @@ export const syncJobOrderWorksiteToPostings = onDocumentWritten(
     const addrChanged =
       JSON.stringify(before?.worksiteAddress ?? null) !==
       JSON.stringify(after?.worksiteAddress ?? null);
-    if (before && !fieldChanged && !addrChanged) return;
+    const coordsChanged =
+      JSON.stringify(before?.worksiteCoordinates ?? null) !==
+      JSON.stringify(after?.worksiteCoordinates ?? null);
+    // A JO whose address still carries no coordinates gets them resolved on
+    // any write (once stamped, this stops firing).
+    const joLacksCoords =
+      !hasLatLng((after?.worksiteAddress as Record<string, unknown> | undefined)?.coordinates) &&
+      Boolean((after?.worksiteAddress as Record<string, unknown> | undefined)?.city);
+    if (before && !fieldChanged && !addrChanged && !coordsChanged && !joLacksCoords) return;
 
     const { tenantId, jobOrderId } = event.params as {
       tenantId: string;
@@ -108,6 +201,21 @@ export const syncJobOrderWorksiteToPostings = onDocumentWritten(
     };
 
     const resolved = await resolveWorksite(tenantId, after as Record<string, any>);
+
+    // Stamp the JO itself when this run had to find the coordinates: the
+    // recruiter "post to board" path copies JO.worksiteAddress verbatim, so
+    // the JO must carry them. The write re-fires this trigger once; the
+    // second pass finds coordinates present and does not write again.
+    if (resolved.coordinatesSource && hasLatLng(resolved.worksiteAddress.coordinates)) {
+      await event.data!.after!.ref.set(
+        {
+          worksiteAddress: { coordinates: resolved.worksiteAddress.coordinates },
+          worksiteCoordinates: resolved.worksiteAddress.coordinates,
+          worksiteCoordinatesSource: resolved.coordinatesSource,
+        },
+        { merge: true },
+      );
+    }
     if (!resolved.worksiteId && !resolved.worksiteName) return; // nothing authoritative to stamp
 
     const snap = await db
