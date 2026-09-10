@@ -30,7 +30,7 @@ import {
   LocationOn as LocationOnIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, documentId } from 'firebase/firestore';
 
 import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import JobPostForm from '../../components/JobPostForm';
@@ -321,11 +321,20 @@ const EditJobPost: React.FC = () => {
     }
 
     try {
-      // Fetch users by their IDs
-      const usersRef = collection(db, 'users');
-      const usersSnapshot = await getDocs(usersRef);
-      
-      const users = usersSnapshot.docs
+      // Fetch only the applicants' user docs by ID, in chunks of 30 (the
+      // Firestore `in` limit), instead of reading the entire users collection.
+      // Sorted ids keep the result in document-id order, as the scan returned it.
+      const idList = Array.from(userIds).sort();
+      const idChunks: string[][] = [];
+      for (let i = 0; i < idList.length; i += 30) idChunks.push(idList.slice(i, i + 30));
+      const chunkSnapshots = await Promise.all(
+        idChunks.map((ids) =>
+          getDocs(query(collection(db, 'users'), where(documentId(), 'in', ids))),
+        ),
+      );
+      const applicantDocs = ([] as any[]).concat(...chunkSnapshots.map((snap) => snap.docs));
+
+      const users = applicantDocs
         .map((doc) => ({ id: doc.id, ...doc.data() }))
         .filter((user: any) => userIds.has(user.id))
         .map((user: any) => {

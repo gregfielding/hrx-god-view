@@ -21,7 +21,7 @@ import {
   InputAdornment,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
-import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { fetchTenantStaffCandidateDocs } from '../../utils/tenantStaffUsers';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useDirectMessenger } from '../../contexts/DirectMessengerContext';
@@ -68,17 +68,14 @@ const PeopleList: React.FC<PeopleListProps> = ({ searchQuery: externalSearchQuer
 
     const loadPeople = async () => {
       try {
-        const usersRef = collection(db, 'users');
-        
-        // Query users that belong to this tenant
-        // We'll get all users and filter client-side for now
-        // In production, you might want to use a more efficient query
-        const usersSnapshot = await getDocs(usersRef);
+        // Indexed staff queries instead of every user doc; the tenant +
+        // level 5–7 filter below is unchanged.
+        const staffCandidateDocs = await fetchTenantStaffCandidateDocs(db, tenantId);
         
         const peopleList: Person[] = [];
         const seenUids = new Set<string>();
 
-        usersSnapshot.docs.forEach((doc) => {
+        staffCandidateDocs.forEach((doc) => {
           const userData = doc.data();
           const uid = doc.id;
 

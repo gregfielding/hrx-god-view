@@ -12,9 +12,9 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Autocomplete, Chip, CircularProgress, TextField } from '@mui/material';
-import { collection, getDocs } from 'firebase/firestore';
 
 import { db } from '../../firebase';
+import { fetchTenantStaffCandidateDocs } from '../../utils/tenantStaffUsers';
 
 export type RecruiterOption = { id: string; label: string };
 
@@ -39,7 +39,9 @@ export interface RecruiterMultiSelectProps {
  *   - security level 5, 6, or 7 in this tenant
  */
 async function loadRecruiters(tenantId: string): Promise<RecruiterOption[]> {
-  const snap = await getDocs(collection(db, 'users'));
+  // Indexed staff queries (~16 docs) instead of the whole users collection;
+  // the recruiter filter below is unchanged.
+  const candidateDocs = await fetchTenantStaffCandidateDocs(db, tenantId);
   const out: RecruiterOption[] = [];
   const toLabel = (d: Record<string, unknown>) => {
     const first = typeof d.firstName === 'string' ? d.firstName : '';
@@ -48,7 +50,7 @@ async function loadRecruiters(tenantId: string): Promise<RecruiterOption[]> {
     const combined = `${first} ${last}`.trim();
     return combined || (email ? email.split('@')[0] : 'Unknown');
   };
-  snap.docs.forEach((d) => {
+  candidateDocs.forEach((d) => {
     const data = d.data() as Record<string, any>;
     const hasTenant =
       data.tenantId === tenantId ||

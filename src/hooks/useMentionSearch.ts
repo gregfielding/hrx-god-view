@@ -5,8 +5,10 @@
  */
 
 import { useCallback } from 'react';
-import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
+import { collection, query, getDocs, limit, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
+import { getTenantStaffCandidateDocsCached } from '../utils/tenantStaffUsers';
+import { getTenantWorkerDirectoryForSearch } from '../utils/tenantWorkerDirectoryLoader';
 import type { MentionableEntity, MentionType } from '../types/crossSystemMentions';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -33,14 +35,13 @@ export function useMentionSearch(): UseMentionSearchResult {
     try {
       // Search for internal team members (securityLevel 5-7) in the users collection
       const searchTerm = (searchQuery || '').toLowerCase().trim();
-      const usersRef = collection(db, 'users');
-      
-      // Fetch users and filter by securityLevel 5-7 and tenant membership
-      const usersQuery = query(usersRef, limit(500)); // Fetch more to filter client-side
-      const snapshot = await getDocs(usersQuery);
+      // Indexed staff queries (~16 docs), shared per tenant for 5 min so
+      // per-keystroke searches don't re-read. The old limit(500) scan read
+      // ~7 MB per keystroke and only ever saw ~3% of users.
+      const staffDocs = await getTenantStaffCandidateDocsCached(db, tenantId);
       const results: MentionableEntity[] = [];
-      
-      for (const doc of snapshot.docs) {
+
+      for (const doc of staffDocs) {
         const data = doc.data();
         const uid = doc.id;
         
@@ -285,43 +286,21 @@ export function useMentionSearch(): UseMentionSearchResult {
     try {
       // Search for workers (securityLevel 1-4) in the users collection
       const searchTerm = (searchQuery || '').toLowerCase().trim();
-      const usersRef = collection(db, 'users');
-      
-      // Fetch users and filter by securityLevel 1-4 and tenant membership
-      const usersQuery = query(usersRef, limit(500)); // Fetch more to filter client-side
-      const snapshot = await getDocs(usersQuery);
+      // Workers come from the tenant worker directory: compact entries for
+      // every listable worker (tenantIds.{tid}.securityLevel 0–4), IndexedDB-
+      // cached so a warm search costs zero reads. The old limit(500) scan read
+      // ~7 MB per keystroke and only ever saw ~3% of users.
+      const workers = await getTenantWorkerDirectoryForSearch(tenantId);
       const results: MentionableEntity[] = [];
-      
-      for (const doc of snapshot.docs) {
-        const data = doc.data();
-        const uid = doc.id;
-        
-        // Check if user is in the tenant
-        const userTenantIds = data?.tenantIds || {};
-        const userTenantData = userTenantIds[tenantId];
-        const isInTenant = 
-          !!userTenantData || 
-          data?.activeTenantId === tenantId || 
-          data?.tenantId === tenantId;
-        
-        if (!isInTenant) {
-          continue;
-        }
-        
-        // Get security level from tenant-specific data or global
-        const securityLevel = userTenantData?.securityLevel || data?.securityLevel;
-        const securityLevelNum = parseInt(securityLevel || '0', 10);
-        
-        // Only include workers (securityLevel 1-4)
-        if (securityLevelNum < 1 || securityLevelNum > 4) {
-          continue;
-        }
-        
+
+      for (const w of workers) {
+        const uid = w.id;
+
         // Extract searchable fields
-        const email = (data?.email || '').toLowerCase();
-        const firstName = (data?.firstName || '').toLowerCase();
-        const lastName = (data?.lastName || '').toLowerCase();
-        const displayName = (data?.displayName || '').toLowerCase();
+        const email = (w.email || '').toLowerCase();
+        const firstName = (w.firstName || '').toLowerCase();
+        const lastName = (w.lastName || '').toLowerCase();
+        const displayName = (w.displayName || '').toLowerCase();
         const username = email.split('@')[0] || '';
         
         // If no search term, include all workers (up to limit)
@@ -335,17 +314,17 @@ export function useMentionSearch(): UseMentionSearchResult {
           email.startsWith(searchTerm)
         ) {
           const fullName =
-            displayName ||
-            `${data?.firstName || ''} ${data?.lastName || ''}`.trim() ||
+            w.displayName ||
+            `${w.firstName || ''} ${w.lastName || ''}`.trim() ||
             email.split('@')[0] ||
             'Unknown';
-          
+
+          // The directory carries no avatar; the mention list falls back to the default avatar.
           results.push({
             id: uid,
             type: 'worker',
             label: fullName,
-            slug: username || email.split('@')[0] || 'worker',
-            avatarUrl: data?.avatar || data?.avatarUrl,
+            slug: username || 'worker',
           });
           
           if (results.length >= limitCount) {

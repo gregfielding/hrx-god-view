@@ -52,6 +52,7 @@ import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import ComputerIcon from '@mui/icons-material/Computer';
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, limit } from 'firebase/firestore';
+import { fetchTenantStaffCandidateDocs } from '../../utils/tenantStaffUsers';
 import { db } from '../../firebase';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../../firebase';
@@ -1901,19 +1902,19 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
       }
 
       // Load recruiters: must have tenant ID, security level 5-7, and recruiter: true
-      // Get all users and filter client-side to avoid index requirements
-      const allUsersQuery = query(collection(db, 'users'), limit(500));
-      const allUsersSnapshot = await getDocs(allUsersQuery);
+      // Indexed staff queries (~16 docs) instead of 500 arbitrary user docs
+      // (which could also miss recruiters); the filter below is unchanged.
+      const staffCandidateDocs = await fetchTenantStaffCandidateDocs(db, tenantId);
 
       console.log(
-        `Loading recruiters for tenant ${tenantId}, total users: ${allUsersSnapshot.docs.length}`,
+        `Loading recruiters for tenant ${tenantId}, staff candidates: ${staffCandidateDocs.length}`,
       );
 
       // Filter to recruiters with:
       // 1. User has this tenant ID
       // 2. Security level 5-7 (check both root and tenant-specific)
       // 3. recruiter: true
-      const recruitersList = allUsersSnapshot.docs
+      const recruitersList = staffCandidateDocs
         .filter((doc) => {
           const data = doc.data();
 

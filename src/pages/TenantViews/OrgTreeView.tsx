@@ -6,7 +6,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import SecurityIcon from '@mui/icons-material/Security';
-import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, query, where, getCountFromServer } from 'firebase/firestore';
 
 import { db } from '../../firebase';
 
@@ -195,18 +195,34 @@ const OrgTreeView: React.FC<OrgTreeViewProps> = ({ tenantId }) => {
         const settingsSnap = await getDoc(doc(db, 'tenants', tenantId, 'settings', 'main'));
         const jobTitles = settingsSnap.exists() ? (settingsSnap.data().jobTitles || []) : [];
         
-        // Fetch workforce to count people per job title
-        const workforceSnap = await getDocs(collection(db, 'users'));
-        const workforce = workforceSnap.docs
-          .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter((user: any) => user.tenantId === tenantId && user.role === 'Worker');
-        
-        // Count people per job title
+        // Headcount per job title via server-side count aggregations (billed
+        // 1 read per 1,000 index entries) instead of reading every user doc.
+        // Only titles rendered in the tree need a count.
         const jobTitleCounts: Record<string, number> = {};
-        workforce.forEach((worker: any) => {
-          const jobTitle = worker.jobTitle || 'Unknown';
-          jobTitleCounts[jobTitle] = (jobTitleCounts[jobTitle] || 0) + 1;
-        });
+        const titleNames: string[] = Array.from(
+          new Set<string>(
+            jobTitles
+              .map((jobTitle: any) => jobTitle?.title || jobTitle)
+              .filter((title: any): title is string => typeof title === 'string' && title.length > 0),
+          ),
+        );
+        await Promise.all(
+          titleNames.map(async (title) => {
+            try {
+              const countSnap = await getCountFromServer(
+                query(
+                  collection(db, 'users'),
+                  where('tenantId', '==', tenantId),
+                  where('role', '==', 'Worker'),
+                  where('jobTitle', '==', title),
+                ),
+              );
+              jobTitleCounts[title] = countSnap.data().count;
+            } catch (countErr) {
+              console.warn('OrgTreeView: headcount query failed for', title, countErr);
+            }
+          }),
+        );
         
         // Create job title nodes
         const jobTitleNodes = jobTitles.map((jobTitle: any) => ({

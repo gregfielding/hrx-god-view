@@ -1,5 +1,5 @@
 import type { Firestore } from 'firebase/firestore';
-import { collection, getDocs } from 'firebase/firestore';
+import { fetchTenantStaffCandidateDocs } from './tenantStaffUsers';
 
 /**
  * Tenant access — same idea as `SenderManagementPage` / internal team lists.
@@ -34,8 +34,10 @@ export async function fetchAgencyUserGroupManagerCandidates(
   db: Firestore,
   tenantId: string,
 ): Promise<any[]> {
-  const snapshot = await getDocs(collection(db, 'users'));
-  const rows = snapshot.docs
+  // Indexed staff queries (~16 docs) instead of the whole users collection;
+  // the tenant-access + level filter below is unchanged.
+  const candidateDocs = await fetchTenantStaffCandidateDocs(db, tenantId);
+  const rows = candidateDocs
     .map((d) => ({ id: d.id, ...d.data() }))
     .filter((user: Record<string, any>) => {
       if (!hasTenantAccess(user, tenantId)) return false;

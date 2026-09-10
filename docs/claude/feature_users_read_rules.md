@@ -118,3 +118,48 @@ staff can write there without claims (the worker_i9_supporting_documents
 `update` clause already had it). Rule for new collections:
 staff reads = `isHRX() || hasSecurityLevel(tenantId, 5) || hasTenantRole(...)`,
 never claims alone.
+
+## 2026-09-10 — full `users` scans replaced (cost)
+
+Admin surfaces that read the WHOLE collection (14.4k docs × ~15 KB ≈ 210 MB
+per load) or `limit(500)` user docs per keystroke were converted (Greg:
+"fix the admin pages loading the whole users collection"). Use these
+instead of any unfiltered `users` read:
+
+- **Staff (level 5–7) lists** → `src/utils/tenantStaffUsers.ts`:
+  `fetchTenantStaffCandidateDocs(db, tenantId, { includeRecruiterFlag })`
+  runs `tenantIds.{T}.securityLevel IN ['5','6','7',5,6,7]` + root
+  `securityLevel IN [...]` (+ `recruiter IN [true,'true']` map/root) and
+  returns ~16 de-duplicated docs in doc-id order. ⚠️ The root queries span
+  all tenants — callers keep their own tenant/level filter.
+  `getTenantStaffCandidateDocsCached` (5 min, per tenant) for per-keystroke
+  search; `isTenantStaffUser(user, tenantId)` for the standard filter.
+  Proof: `functions/.scratch/staff_query_equivalence{,2}.ts` — identical
+  people for every original filter, all 4 tenants, zero misses.
+- **Worker lists/search** → the worker directory: `useTenantWorkerDirectory`
+  in components, `getTenantWorkerDirectoryForSearch(tenantId)`
+  (`src/utils/tenantWorkerDirectoryLoader.ts`) in plain async code. Shares
+  the IndexedDB cache; a warm search costs zero reads.
+- **Known ids** → `documentId() in` chunks of 30. **Counts** →
+  `getCountFromServer`.
+
+Converted: RecruiterMultiSelect, userGroupManagerCandidateUsers
+(UserGroupsTab/UserGroupDetails), SenderManagementPage, MessagingTab
+recruiter-numbers list, ManageSalespeopleDialog (internal team), EditJobPost
+applicants, OrgTreeView headcounts (C1 has 0 job titles → 0 queries),
+useMentionSearch (staff + workers), MessageDrawer recipient search (now
+tenant-scoped, capped at 50 people), PeopleList (dormant).
+
+Behavior notes: the old `limit(500)` searches only ever saw the first 500
+user docs by id (~3% of users), so mention/recipient search and the
+SenderManagement / MessagingTab staff lists now find people they used to
+miss. Worker mention results carry no avatar (the directory has none).
+
+`useTenantWorkerDirectory(tenantId, { revalidateIfOlderThanMs })` — default
+0 keeps always-revalidate. Only AddRetroactiveWorkerDialog opts in (10 min).
+☠️ Don't opt `/users/all` in: its text search reads ONLY the directory, so a
+just-applied applicant would be unfindable until the next refresh.
+
+Deliberately left: MessagingTab `loadTestRecipients` (`limit(500)` on tab
+open, a picker over all tenant users — needs a design, not a swap);
+CompanyDirectory's `_cacheBust` on `getUsersByTenant` (0 calls/week).
