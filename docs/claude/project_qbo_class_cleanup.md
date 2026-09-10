@@ -1377,3 +1377,14 @@ those are moved to Event area."
   8214 97.19).
 - Downstream unchanged: 55xx class-driven Division (unclassed event travel
   in Corp gets spread by revenue by the overhead writer), 88xx by revenue.
+
+## Chart tidy: 8020 + 8110 nested under 8100 (2026-09-10)
+
+Greg: "8020 Website & Digital and 8110 Google Workspace should both be
+nested within 8100 Software & Subscriptions." Done via Account update
+(SubAccount + ParentRef → Id 108); both were already Expense type, numbers
+unchanged. FQNs are now "Software & Subscriptions:Website & Digital" (Id
+1150040039) and "Software & Subscriptions:Google Workspace" (Id 1150040044),
+alongside the existing subs Adobe Products, C1 App, LLM Software. No code
+matches these names; the Expensify writeback still resolves the leaf Name.
+Both stay revenue-ratio overhead.
