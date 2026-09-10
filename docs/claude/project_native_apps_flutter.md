@@ -537,3 +537,28 @@ later** (see "Build 9 sign-up was dead" above); rebuild both binaries with
 in `c1_app/store/APP_REVIEW_REPLY_2026-09.md`; Play 1.0.0 (8) still in
 review. Both need the new build (10+) uploaded; Play's in-review release
 gets replaced by a new Production release.
+
+## Keyboard dismissal (2026-09-10, Greg: "keyboard stays up, tapping off doesn't close it")
+
+☠️ Flutter does NOT unfocus a text field on an outside touch on iOS/Android
+(`EditableTextTapOutsideAction`: "On mobile platforms, we don't unfocus on
+touch events"), and the app had zero dismissal code — any tapped field kept
+the keyboard until the screen was left. Fix (c1_app, build 13+):
+- `lib/shared/widgets/keyboard_dismiss_on_tap.dart`, mounted once in the
+  MaterialApp `builder` (above the Navigator → covers routes, dialogs,
+  sheets). A `Listener` (never enters the gesture arena) on pointer-down:
+  if a text field owns focus and the touch is not inside a
+  `RenderTapRegion` with `groupId == EditableText`, unfocus. So empty-space
+  taps, buttons, tabs and scroll starts all close the keyboard; tapping
+  field→field just moves focus (no flicker); Autocomplete option lists and
+  the selection toolbar are inside `TextFieldTapRegion`, so they still work.
+- Multi-field forms (sign-up, personal details, cert / experience /
+  education sheets, replace-bank-account sheet, phone recovery) set
+  `textInputAction: TextInputAction.next` on every field but the last, so
+  the return key walks the form and Done on the last field closes it.
+  Phone/number keyboards on iOS have no return key — the tap-outside rule
+  is what closes those.
+- Don't add per-screen `GestureDetector(onTap: unfocus)` wrappers; the root
+  handles it. Autofocus stays only on sign-in steps (phone, SMS code,
+  recovery name), where typing is the screen's whole purpose.
+Web needs no change (browsers dismiss natively).
