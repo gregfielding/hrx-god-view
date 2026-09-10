@@ -588,5 +588,9 @@ under the shell bar (EN|ES · logo · help · bell). Now (c1_app, build 13+):
   on 2026-09-04). Each page's body already opens with its context line.
 - NEW inner screens must use `shellAwareAppBar` — a bare `AppBar` brings
   the second row back.
+- Shipped as **1.0.0 (13)** (2026-09-10, c1_app fbb5638): keyboard
+  dismissal + single top bar. 11 and 12 were never uploaded. Archive:
+  `~/Library/Developer/Xcode/Archives/2026-09-10/C1 Staffing 1.0.0 (13).xcarchive`.
+  Widget tests: `test/shared/worker_page_app_bar_test.dart`.
 - Tests: `test/shared/keyboard_dismiss_on_tap_test.dart` covers iOS focus /
   dismissal / field-to-field and that the shell drops the title row.
