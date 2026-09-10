@@ -100,16 +100,20 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
     void verify(otp);
   });
   // 18+ (W-2 staffing, Greg 2026-08-25). Server enforces the same rule.
+  // Accepts MM/DD/YYYY (slashes, dashes or dots), bare MMDDYYYY and YYYY-MM-DD: a worker
+  // who typed 04051990 sat on a dead "Text me a code" button (Deborah, 2026-09-10).
   const dobIso = (() => {
     const t = dob.trim();
-    const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    const m = t.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/) ?? t.match(/^(\d{2})(\d{2})(\d{4})$/);
     return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : t;
   })();
-  const dobAdult = (() => {
+  const dobAge = (() => {
     const m = dobIso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!m) return false;
+    if (!m) return null;
     const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    if (Number.isNaN(d.getTime())) return false;
+    if (d.getFullYear() !== Number(m[1]) || d.getMonth() !== Number(m[2]) - 1 || d.getDate() !== Number(m[3])) {
+      return null;
+    }
     const now = new Date();
     let age = now.getFullYear() - d.getFullYear();
     if (
@@ -117,10 +121,12 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
       (now.getMonth() === d.getMonth() && now.getDate() < d.getDate())
     )
       age -= 1;
-    return age >= 18 && age <= 100;
+    return age;
   })();
+  const dobAdult = dobAge != null && dobAge >= 18 && dobAge <= 100;
   const dobOk = !dobRequired || dobAdult;
-  const underage = dobRequired && dobIso.length === 10 && !dobAdult;
+  const underage = dobRequired && dobAge != null && dobAge < 18;
+  const dobUnreadable = dobRequired && Boolean(dob.trim()) && dobAge == null;
   const ready = Boolean(firstName.trim() && lastName.trim() && phoneE164 && dobOk);
 
   const finishSignIn = async (result: Record<string, unknown>) => {
@@ -168,7 +174,7 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
         signup: true,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
-        dob: dob.trim(),
+        dob: dobAge != null ? dobIso : dob.trim(),
         preferredLanguage: getLanguage(),
         smsConsent,
         aiConsent,
@@ -272,7 +278,11 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
             color={underage ? 'error' : 'text.secondary'}
             sx={{ display: 'block', mt: 1 }}
           >
-            {underage ? t('phoneSignup.mustBe18') : t('phoneSignup.fillNamePhone')}
+            {underage
+              ? t('phoneSignup.mustBe18')
+              : dobUnreadable
+                ? t('phoneSignup.dobFormat')
+                : t('phoneSignup.fillNamePhone')}
           </Typography>
         )}
 

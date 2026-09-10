@@ -2177,6 +2177,7 @@
     "subtitle": "Sin contraseña — te enviaremos un código de 6 dígitos por texto. Si ya trabajaste con C1, esto te conecta a tu cuenta existente.",
     "sendCode": "Envíame un código",
     "fillNamePhone": "Primero ingresa tu nombre, apellido, número de celular y fecha de nacimiento arriba.",
+    "dobFormat": "Escribe tu fecha de nacimiento como MM/DD/AAAA, por ejemplo 04/05/1990.",
     "codeLabel": "Código de 6 dígitos",
     "verify": "Verificar",
     "resend": "Reenviar código",
