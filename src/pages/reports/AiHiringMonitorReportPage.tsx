@@ -165,8 +165,9 @@ const AiHiringMonitorReportPage: React.FC = () => {
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2, maxWidth: 820 }}>
         Applicants to Illinois postings: how often each self-identified group reaches Tier 1–2 and gets hired,
         compared with the best-performing group. A ratio under 0.80 (the four-fifths rule of thumb) is flagged for
-        review. Groups with fewer than {report?.minGroupSize ?? 5} people aren&apos;t compared. Self-identification is
-        voluntary, so these numbers cover only workers who answered.
+        review. Groups with fewer than {report?.minGroupSize ?? 5} people aren&apos;t compared, and neither is an outcome
+        with fewer than {(report as { minSelectionsToCompare?: number } | null)?.minSelectionsToCompare ?? 10}{' '}
+        selections overall. Self-identification is voluntary, so race and sex numbers cover only workers who answered.
       </Typography>
 
       {loading ? (

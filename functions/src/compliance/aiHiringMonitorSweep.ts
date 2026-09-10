@@ -23,6 +23,7 @@ import { resolveGlobalTier } from '../tierAutomation/applicantPromotion';
 import {
   DEFAULT_MIN_GROUP_SIZE,
   FOUR_FIFTHS_THRESHOLD,
+  MIN_SELECTIONS_TO_COMPARE,
   ageBandFromDob,
   computeSelectionRates,
   isIllinoisPosting,
@@ -256,6 +257,7 @@ async function writeIllinoisReport(db: admin.firestore.Firestore, tenantId: stri
     selfIdResponses,
     minGroupSize: DEFAULT_MIN_GROUP_SIZE,
     fourFifthsThreshold: FOUR_FIFTHS_THRESHOLD,
+    minSelectionsToCompare: MIN_SELECTIONS_TO_COMPARE,
     raceEthnicity: computeSelectionRates(applicants, (a) => a.raceEthnicity),
     sex: computeSelectionRates(applicants, (a) => a.sex),
     ageBand: computeSelectionRates(applicants, (a) => a.ageBand),

@@ -27,6 +27,12 @@ export type AgeBand = 'under_40' | '40_plus';
 
 export const FOUR_FIFTHS_THRESHOLD = 0.8;
 export const DEFAULT_MIN_GROUP_SIZE = 5;
+/**
+ * An outcome with fewer selections than this across comparable groups isn't
+ * compared: at 2 promotions in 541 vs 1 in 160 the ratio is pure noise (seen on
+ * the first Illinois run, 2026-09-10).
+ */
+export const MIN_SELECTIONS_TO_COMPARE = 10;
 
 export interface MonitorApplicant {
   raceEthnicity: string | null;
@@ -103,8 +109,12 @@ export function computeSelectionRates(
   }
 
   const comparable = [...tallies.values()].filter((t) => t.applicants >= minGroupSize);
-  const bestPromotion = Math.max(0, ...comparable.map((t) => t.promoted / t.applicants));
-  const bestHire = Math.max(0, ...comparable.map((t) => t.hired / t.applicants));
+  const bestRate = (selected: (t: { applicants: number; promoted: number; hired: number }) => number): number =>
+    comparable.reduce((sum, t) => sum + selected(t), 0) < MIN_SELECTIONS_TO_COMPARE
+      ? 0
+      : Math.max(0, ...comparable.map((t) => selected(t) / t.applicants));
+  const bestPromotion = bestRate((t) => t.promoted);
+  const bestHire = bestRate((t) => t.hired);
 
   const groups: GroupRate[] = [...tallies.entries()]
     .map(([group, t]) => {
