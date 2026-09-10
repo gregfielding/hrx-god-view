@@ -529,9 +529,19 @@ later** (see "Build 9 sign-up was dead" above); rebuild both binaries with
   error gone on-device; the string-key fix was not re-run end-to-end.
 - Foreground push toast uses a floating SnackBar via the root messenger —
   re-check it renders now that the theme is fixed-style.
-- QA cleanup: `functions/.scratch/cleanup_qa_account_20260909.ts` (Firestore)
-  + `delete_qa_auth_20260909.ts` (Auth; needs
-  `gcloud auth application-default set-quota-project hrx1-d3beb` once).
+- QA cleanup: `functions/.scratch/clear_qa_0101_20260910.ts` (Firestore:
+  users doc, tenant applications, interviews, deletion request, consent).
+  ☠️ The Admin SDK Auth calls FAIL locally with "identitytoolkit requires a
+  quota project" even after `gcloud auth application-default
+  set-quota-project`, and the 2026-09-09 script swallowed that error
+  (`.catch(() => null)`) and reported the QA Auth user "gone" — it was
+  never deleted, so the next sign-up with +15555550101 silently reused the
+  old uid (2026-09-10). Delete Auth users via REST with the gcloud user
+  token + quota header instead, and never `.catch(() => null)` a lookup
+  you use to prove deletion:
+  `curl -X POST https://identitytoolkit.googleapis.com/v1/projects/hrx1-d3beb/accounts:delete -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "x-goog-user-project: hrx1-d3beb" -H "Content-Type: application/json" -d '{"localId":"<uid>"}'`
+  (look up first with `accounts:lookup` `{"phoneNumber":["+1555…"]}`).
+  ☠️ In zsh don't name the shell variable `UID` (read-only).
 
 **Store status**: Apple 1.0.0 (9) rejected 2.1 (info needed) — reply draft
 in `c1_app/store/APP_REVIEW_REPLY_2026-09.md`; Play 1.0.0 (8) still in
