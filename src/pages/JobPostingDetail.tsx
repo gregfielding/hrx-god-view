@@ -3897,6 +3897,14 @@ const JobPostingDetail: React.FC = () => {
               </Card>
             );
           })()}
+          {/* E-Verify participation badge — every posting that requires
+              E-Verify shows it, small, at the bottom (Greg 2026-09-09;
+              replaces the retired apply-step question). */}
+          {posting?.eVerifyRequired ? (
+            <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-start' }}>
+              <Box component="img" src="/img/everify.png" alt="E-Verify" sx={{ height: 32, width: 'auto' }} />
+            </Box>
+          ) : null}
         </Box>
 
         {/*

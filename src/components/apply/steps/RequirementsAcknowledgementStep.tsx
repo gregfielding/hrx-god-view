@@ -156,7 +156,6 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
   const showScreeningPackageOnForm =
     (jobPosting as any)?.showScreeningPackageOnPost === true && screeningPkgServices.length > 0;
   // Always show E-Verify if it's required
-  const showEVerify = jobPosting?.eVerifyRequired === true;
   // Show language/physical/uniform/PPE questions if they exist (not just if show flag is true)
   const showLanguages = (jobPosting?.showLanguages === true || requiredLanguages.length > 0);
   const showPhysicalRequirements = (jobPosting?.showPhysicalRequirements === true || requiredPhysical.length > 0);
@@ -360,25 +359,8 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
   return (
     <Box sx={{ pb: 5 }}>
       <Stack spacing={3}>
-        {showEVerify && showQ('everify', hasVal(value?.eVerifyComfort)) && (
-          <Box>
-            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
-              <Typography variant="h6" sx={{ fontWeight: 700 }}>{t('apply.eVerify')}</Typography>
-              <Box component="img" src="/img/everify.png" alt={t('apply.eVerify')} sx={{ height: 28, width: 'auto' }} />
-            </Stack>
-            <Typography color="text.secondary" sx={{ mb: 1.5 }}>
-              {t('apply.eVerifyDescription')}
-            </Typography>
-            <YesNoMaybeButtons
-              value={value?.eVerifyComfort || ''}
-              onChange={(val) => {
-                touch('everify');
-                onChange({ ...value, eVerifyComfort: val });
-                debouncedWriteUser({ comfortableEVerify: val });
-              }}
-            />
-          </Box>
-        )}
+        {/* E-Verify comfort question retired 2026-09-09 (Greg) — the posting
+            shows the E-Verify participation badge instead. */}
         {/* Drug Screening */}
         {showDrugScreening && showQ('drug', drugAnswered) && (
           <Box>

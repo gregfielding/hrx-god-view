@@ -591,6 +591,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     if (hiringEntityName && /C1 Events LLC/i.test(hiringEntityName)) {
       indices = indices.filter((i) => i !== 4);
     }
+    // E-Verify comfort step retired 2026-09-09 (Greg: not something we should
+    // ask before an offer). Postings that require E-Verify show the
+    // participation badge instead (JobPostingDetail / PublicJobsBoard).
+    indices = indices.filter((i) => i !== 3);
 
     const isAuthenticated = Boolean(auth.currentUser?.uid || uid);
     const profile = userProfile || {};
@@ -748,7 +752,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
     const needsDrug = Boolean(posting?.showDrugScreening || posting?.drugScreeningRequired);
     const needsBackground = Boolean(posting?.showBackgroundChecks || posting?.backgroundCheckRequired);
-    const needsEVerifyOnPosting = Boolean(posting?.eVerifyRequired);
     const additionalScreenings = Array.isArray(posting?.additionalScreenings) ? posting.additionalScreenings : [];
     const showAdditional = Boolean(posting?.showAdditionalScreenings) && additionalScreenings.length > 0;
     const requiredLanguages = toStringList(posting?.languages || (requirements as any).languages);
@@ -767,7 +770,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         (!hasValue(requirementsForm.backgroundScreeningComfort) ||
           (requirementsForm.backgroundScreeningComfort === 'Maybe' &&
             !hasValue(requirementsForm.backgroundExplanation)))) ||
-      (needsEVerifyOnPosting && !hasValue(requirementsForm.eVerifyComfort)) ||
       missingAdditional ||
       ((posting?.showLanguages || requiredLanguages.length > 0) && !hasValue(requirementsForm.languagesComfort)) ||
       ((posting?.showPhysicalRequirements || requiredPhysical.length > 0) &&
@@ -1635,9 +1637,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     const backgroundNeedsExplanation =
       req.backgroundScreeningComfort === 'Maybe' && !(req.backgroundExplanation || '').trim();
 
-    // 4) E-Verify
-    const needsEVerify = !!posting?.eVerifyRequired;
-    const eVerifyAnswered = typeof req.eVerifyComfort === 'string' && req.eVerifyComfort.length > 0;
 
     // 5) Additional screenings (only if enabled)
     const showAdditional = posting?.showAdditionalScreenings === true;
@@ -1654,7 +1653,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       certs: missingCerts,
       drug: needsDrug && (!drugAnswered || drugNeedsExplanation),
       background: needsBackground && (!backgroundAnswered || backgroundNeedsExplanation),
-      everify: needsEVerify && !eVerifyAnswered,
+      // Question retired 2026-09-09 — never blocks.
+      everify: false,
       additional: missingAdditional,
     } as const;
   };
@@ -1870,18 +1870,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         );
         setSaving(false);
         return;
-      }
-      if (actualStep === 3) {
-        const ev = String(
-          formDataRef.current?.requirements?.eVerifyComfort ||
-            formData?.requirements?.eVerifyComfort ||
-            '',
-        ).trim();
-        if (!ev) {
-          alert(t('apply.eVerifyComfortRequired'));
-          setSaving(false);
-          return;
-        }
       }
       // Create account after Personal Info step if not authenticated
       if (actualStep === 0 && !auth.currentUser) {
