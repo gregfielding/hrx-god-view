@@ -64,6 +64,8 @@ export async function pushOverheadAllocations(
     const n = String(a.AcctNum ?? '');
     const name = String(a.Name ?? '');
     if (/uncategorized|ask my accountant/i.test(name)) return false; // not yet booked anywhere real
+    // 8800 Travel for Sales gets its Division from the class (Greg 2026-09-10), not the ratio.
+    if (/^88\d\d$/.test(n) || /^Travel for Sales(:|$)/i.test(String(a.FullyQualifiedName ?? ''))) return false;
     if (a.AccountType === 'Expense') return true; // 7140 included: its net Corp balance (internal WC after accrual + clearing) spreads by revenue
     if (a.AccountType === 'Other Income') return true; // 9010 card rewards / 9020 interest — by revenue too (Greg 2026-09-08); credits flip sides below
     if (a.AccountType === 'Other Expense') return true; // 6xxx financing / misc — by revenue too (Greg 2026-09-08, later)

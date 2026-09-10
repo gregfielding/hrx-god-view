@@ -1406,3 +1406,18 @@ view.
   Corp, 12 from none); Jan–Apr untouched.
 - Same day, Greg: "Technology & Software" (unnumbered top-level Expense) also
   nested under 8100 → "Software & Subscriptions:Technology & Software".
+
+## Travel for Sales Division by class too (Greg 2026-09-10, final tweak)
+
+"On travel for sales.. if the CLASS involves Indeed Flex (or family of
+companies), or Sodexo, then each item would be in the Recurring division.
+Otherwise, Event Based division." So ALL travel now follows one Division
+rule (from 2026-05-01): class matches `RECURRING_DIVISION_RE` (Sodexo /
+Indeed Flex family) → Recurring; anything else, including no class /
+National / Austin → Event-based. Nothing in either travel family is spread
+by revenue: `overheadAllocations.ts` excludes 55xx and 88xx;
+`expenseDivisions.ts` treats 88xx as class-driven (unclassed → Event-based
+from 2026-05-01; Jan–Apr legacy). Which ACCOUNT (Events vs Sales) is still
+the cardholder rule in `travelRouting.ts`. First write: 148 May–Sep
+purchases (109 Corp → Event-based, 28 Corp → Recurring, 11 none →
+Event-based).

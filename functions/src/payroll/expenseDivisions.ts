@@ -47,9 +47,10 @@ export async function pushExpenseDivisions(
     const n = String(a.AcctNum ?? ''); const f = String(a.FullyQualifiedName ?? a.Name ?? '');
     return /^55\d\d$/.test(n) || /^8400$/.test(n) || /^(5210|5300|5400)$/.test(n) || /^Travel for Events(:|$)/i.test(f) || /meals & entertainment/i.test(f);
   }).map((a) => String(a.Id)));
-  // Travel for Sales (8800 family) goes by revenue ratio only inside the
-  // travel-split window (travelRouting.ts runs from 2026-05-01). Earlier
-  // months keep the legacy class-driven treatment so Jan–Apr headers stay put.
+  // Travel for Sales (8800 family) — Division by class like event travel
+  // (Greg 2026-09-10, final): Sodexo / Indeed Flex → Recurring, else
+  // Event-based. Unclassed lines count as Event-based only from the split
+  // date; Jan–Apr keep the legacy behaviour (unclassed leaves the header).
   const TRAVEL_SPLIT_FROM = '2026-05-01';
   const salesTravel = new Set<string>(accts.filter((a) => /^88\d\d$/.test(String(a.AcctNum ?? '')) || /^Travel for Sales(:|$)/i.test(String(a.FullyQualifiedName ?? ''))).map((a) => String(a.Id)));
   // Travel for Events is ALWAYS event delivery (Greg 2026-09-10): a 55xx line
@@ -78,11 +79,13 @@ export async function pushExpenseDivisions(
           if (!plAcct.has(acct)) continue;
           const amt = Math.abs(Number(l.Amount) || 0);
           if (ownWriter.has(acct)) { ownAmt += amt; continue; }
-          const legacyTravel = salesTravel.has(acct) && String(t.TxnDate) < TRAVEL_SPLIT_FROM;
-          if (!classDriven.has(acct) && !legacyTravel) { ratioAmt += amt; continue; }
+          // All travel (5500 Events + 8800 Sales) is class-driven; from the
+          // split date an unclassed line counts as Event-based (Greg 2026-09-10:
+          // Sodexo / Indeed Flex family → Recurring, everything else Event-based).
+          if (!classDriven.has(acct) && !salesTravel.has(acct)) { ratioAmt += amt; continue; }
           const fqn = clsById.get(trim((ab ?? ib)?.ClassRef?.value)) ?? '';
           if (!fqn || OVERHEAD_CLASS_RE.test(fqn)) {
-            if (eventsTravel.has(acct)) fam.event += amt; // unclassed event travel → Event-based
+            if (eventsTravel.has(acct) || (salesTravel.has(acct) && String(t.TxnDate) >= TRAVEL_SPLIT_FROM)) fam.event += amt; // unclassed travel → Event-based
             continue; // other unclassed class-driven lines → ratio fallback
           }
           if (RECURRING_DIVISION_RE.test(fqn)) fam.recurring += amt; else fam.event += amt;
