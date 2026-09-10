@@ -1421,3 +1421,19 @@ from 2026-05-01; Jan–Apr legacy). Which ACCOUNT (Events vs Sales) is still
 the cardholder rule in `travelRouting.ts`. First write: 148 May–Sep
 purchases (109 Corp → Event-based, 28 Corp → Recurring, 11 none →
 Event-based).
+
+## Indeed + Craigslist → ALWAYS 5300, by revenue (Greg 2026-09-10)
+
+Sept had $504.17 in Uncategorized Expense (9/9 Craigslist 3.00 + Indeed
+501.17, card feed). Greg: "indeed and craigslist are ALWAYS 5300 Field Staff
+Recruitment / Advertising and allocated by revenue."
+- `travelRouting.ts` `MERCHANT_ACCOUNT_RULES`: any Purchase/Bill expense line
+  (Expense / COGS / Other Expense incl. Uncategorized, except own-writer
+  5010/5100/5310) whose payee, memo or line description matches Indeed (not
+  "Indeed Flex" — a customer) or Craigslist moves to 5300. Takes precedence
+  over the recruitment-sub merge and travel routing. Since 2026-05-01, weekly.
+- `expenseDivisions.ts`: 5300 is no longer class-driven from 2026-05-01 → its
+  purchases sit in Corp and `overheadAllocations.ts` spreads them by revenue.
+  Jan–Apr legacy (class-driven) kept, so those headers don't flip.
+- Not moved: Jan–Apr 2026 Indeed ads on 7300 Recruitment — Internal Hires
+  (~$7.3K) — outside the May+ scope; ask Greg before touching.

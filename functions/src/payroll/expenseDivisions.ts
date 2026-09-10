@@ -45,7 +45,7 @@ export async function pushExpenseDivisions(
   // those purchases are kept in Corp / Unalloc. for the ratio pass.
   const classDriven = new Set<string>(accts.filter((a) => {
     const n = String(a.AcctNum ?? ''); const f = String(a.FullyQualifiedName ?? a.Name ?? '');
-    return /^55\d\d$/.test(n) || /^8400$/.test(n) || /^(5210|5300|5400)$/.test(n) || /^Travel for Events(:|$)/i.test(f) || /meals & entertainment/i.test(f);
+    return /^55\d\d$/.test(n) || /^8400$/.test(n) || /^(5210|5400)$/.test(n) || /^Travel for Events(:|$)/i.test(f) || /meals & entertainment/i.test(f);
   }).map((a) => String(a.Id)));
   // Travel for Sales (8800 family) — Division by class like event travel
   // (Greg 2026-09-10, final): Sodexo / Indeed Flex → Recurring, else
@@ -57,6 +57,7 @@ export async function pushExpenseDivisions(
   // with no client class (or National / retired Austin) counts as Event-based
   // — never Corp, never the revenue ratio.
   const eventsTravel = new Set<string>(accts.filter((a) => /^55\d\d$/.test(String(a.AcctNum ?? '')) || /^Travel for Events(:|$)/i.test(String(a.FullyQualifiedName ?? ''))).map((a) => String(a.Id)));
+  const recruit5300 = new Set<string>(accts.filter((a) => String(a.AcctNum ?? '') === '5300').map((a) => String(a.Id)));
   const ownWriter = new Set<string>(accts.filter((a) => /^(5010|5100|5310)$/.test(String(a.AcctNum ?? ''))).map((a) => String(a.Id)));
   const itemRes = (await qboQuery(tenantId, 'SELECT Id, ExpenseAccountRef FROM Item MAXRESULTS 1000')) as Record<string, any>;
   const itemExp = new Map<string, string>(((itemRes.QueryResponse?.Item ?? itemRes.Item ?? []) as Array<Record<string, any>>).map((i) => [String(i.Id), String(i.ExpenseAccountRef?.value ?? '')]));
@@ -82,7 +83,10 @@ export async function pushExpenseDivisions(
           // All travel (5500 Events + 8800 Sales) is class-driven; from the
           // split date an unclassed line counts as Event-based (Greg 2026-09-10:
           // Sodexo / Indeed Flex family → Recurring, everything else Event-based).
-          if (!classDriven.has(acct) && !salesTravel.has(acct)) { ratioAmt += amt; continue; }
+          // 5300 Field Staff Recruitment / Advertising is ALWAYS by revenue from
+          // the split date (Greg 2026-09-10); Jan–Apr keep the legacy class rule.
+          const legacyClassDriven = recruit5300.has(acct) && String(t.TxnDate) < TRAVEL_SPLIT_FROM;
+          if (!classDriven.has(acct) && !salesTravel.has(acct) && !legacyClassDriven) { ratioAmt += amt; continue; }
           const fqn = clsById.get(trim((ab ?? ib)?.ClassRef?.value)) ?? '';
           if (!fqn || OVERHEAD_CLASS_RE.test(fqn)) {
             if (eventsTravel.has(acct) || (salesTravel.has(acct) && String(t.TxnDate) >= TRAVEL_SPLIT_FROM)) fam.event += amt; // unclassed travel → Event-based

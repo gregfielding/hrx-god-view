@@ -35,6 +35,13 @@ const EVENT_TRAVELERS = new Set(['dr', 'r.govea', 'mk']); // Danny, Rosa, Mark
 const SALES_TRAVELERS = new Set(['g.fielding', 'dm']); // Greg (+ Corporate Card), Donna
 const TRAVELER_LABEL: Record<string, string> = { dr: 'Danny', 'r.govea': 'Rosa', mk: 'Mark', 'g.fielding': 'Greg', dm: 'Donna' };
 const VENUESMART_CLASS_RE = /^venue smart(:|$)/i;
+// Merchant → account rules (Greg 2026-09-10): Indeed and Craigslist job ads
+// are ALWAYS 5300 Field Staff Recruitment / Advertising (allocated by revenue),
+// whatever account or category they landed on. "Indeed Flex" is a customer.
+const MERCHANT_ACCOUNT_RULES: Array<{ re: RegExp; acctNum: string; label: string }> = [
+  { re: /\bindeed\b(?!\s*flex)|\bcraigs?\s*list\b|\bcraigsli/i, acctNum: '5300', label: 'Indeed / Craigslist → 5300' },
+];
+const OWN_WRITER_ACCTS = new Set(['5010', '5100', '5310']);
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 export const SALES_TRAVEL_CLASS_RE = /^(national|corp|overhead)$|^austin\b/i;
 
@@ -62,6 +69,8 @@ export async function pushTravelRouting(
   // the 8010 sub "Recruitment (Advertising to recruit Event Staff)" (Indeed /
   // Craigslist) duplicates 5300 Field Staff Recruitment / Advertising, so its
   // lines move there regardless of class.
+  const merchantTargets = MERCHANT_ACCOUNT_RULES.map((r) => ({ ...r, acct: byNum(r.acctNum) })).filter((r) => r.acct);
+  const plExpense = new Set(accts.filter((a) => ['Expense', 'Cost of Goods Sold', 'Other Expense'].includes(trim(a.AccountType)) && !OWN_WRITER_ACCTS.has(trim(a.AcctNum))).map((a) => trim(a.Id)));
   const remap = new Map<string, Record<string, any>>();
   const fieldRecruit = byNum('5300');
   const recruitSub = accts.find((a) => /^recruitment \(advertising to recruit event staff\)$/i.test(trim(a.Name)));
@@ -95,7 +104,7 @@ export async function pushTravelRouting(
   const byPerson = new Map<string, number>();
 
   const moves: Array<Record<string, unknown>> = [];
-  const byMonth = new Map<string, { toEvents: number; toSales: number; merged: number; n: number }>();
+  const byMonth = new Map<string, { toEvents: number; toSales: number; merged: number; merchant: number; n: number }>();
   const byClass = new Map<string, number>();
   let updatedTxns = 0;
   for (const ent of ['Purchase', 'Bill']) {
@@ -105,6 +114,7 @@ export async function pushTravelRouting(
       const rows: Array<Record<string, any>> = r.QueryResponse?.[ent] ?? r[ent] ?? [];
       for (const t of rows) {
         const traveler = ent === 'Purchase' ? travelerOf(t) : null;
+        const hdrText = `${trim(t.EntityRef?.name ?? t.VendorRef?.name)} ${trim(t.PrivateNote)}`;
         const who = traveler ? TRAVELER_LABEL[traveler] ?? traveler : 'class rule';
         let changed = false;
         const lines = ((t.Line ?? []) as Array<Record<string, any>>).map((l) => {
@@ -113,8 +123,10 @@ export async function pushTravelRouting(
           const acct = trim(d.AccountRef?.value);
           const fqn = clsById.get(trim(d.ClassRef?.value)) ?? '';
           let target: Record<string, any> | undefined;
-          let dir: 'toEvents' | 'toSales' | 'merged' = 'toEvents';
-          if (remap.has(acct)) { target = remap.get(acct); dir = 'merged'; }
+          let dir: 'toEvents' | 'toSales' | 'merged' | 'merchant' = 'toEvents';
+          const mRule = plExpense.has(acct) ? merchantTargets.find((r) => r.re.test(`${hdrText} ${trim(l.Description)}`)) : undefined;
+          if (mRule) { if (trim(mRule.acct!.Id) !== acct) { target = mRule.acct; dir = 'merchant'; } }
+          else if (remap.has(acct)) { target = remap.get(acct); dir = 'merged'; }
           else if (toEvents.has(acct) || toSales.has(acct)) {
             const want = wantFamily(traveler, fqn);
             if (want === 'events' && toEvents.has(acct)) { target = toEvents.get(acct); dir = 'toEvents'; }
@@ -124,7 +136,7 @@ export async function pushTravelRouting(
           changed = true;
           const amt = (ent === 'Purchase' && t.Credit === true ? -1 : 1) * (Number(l.Amount) || 0);
           const month = trim(t.TxnDate).slice(0, 7);
-          const m = byMonth.get(month) ?? { toEvents: 0, toSales: 0, merged: 0, n: 0 };
+          const m = byMonth.get(month) ?? { toEvents: 0, toSales: 0, merged: 0, merchant: 0, n: 0 };
           m[dir] = round2(m[dir] + amt); m.n += 1; byMonth.set(month, m);
           byPerson.set(`${dir} ${who}`, round2((byPerson.get(`${dir} ${who}`) ?? 0) + amt));
           byClass.set(`${dir} ${fqn || '(no class)'}`, round2((byClass.get(`${dir} ${fqn || '(no class)'}`) ?? 0) + amt));
