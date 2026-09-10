@@ -23,6 +23,15 @@
 4. The drain flips 'posted' → 'expired' at expiry and nudges the #recruiting thread 2 days before.
 5. Replies: Craigslist relays to Natalie's mailbox; she triages like any applicant email.
 
+## Craigslist form settings (Greg 2026-09-10 — use these every time)
+- Job posts ("job offered"): **employment type: full-time**, **experience level: entry level**.
+- Contact info: leave the account email, choose **no replies to this email** (applicants apply
+  through the Apply Here link, which lands in HRX), and tick **remember contact preferences for
+  future postings**.
+- Leave phone, address, and the posting-detail checkboxes off. One category only (general labor
+  for jobs; Chicago charged $45 per category on 2026-09-10).
+- Chicago posts ask for a sub-area; Romeoville/Will County went to **south chicagoland**.
+
 ## Natalie tools
 `craigslist_queue` (all enabled posts with status/site/category/postUrl/liveUrl/expiry),
 `craigslist_mark_posted {postId, liveUrl}`. Prompt rule: she never claims to have published.
@@ -39,7 +48,7 @@
   post.craigslist.org — use coordinate clicks from a screenshot. `form_input` works on the real
   inputs (title, city, ZIP, description textarea, compensation). The area combobox is a styled
   SPAN over a hidden `select[name=n]`; leaving it at the site default ("denver, CO") is fine. Pick
-  "use CL mail relay". The preview page is the last stop before "publish" → payment; leave that
+  "no replies to this email" (Greg 2026-09-10; was the CL mail relay). The preview page is the last stop before "publish" → payment; leave that
   click to Greg.
 - **Delivery status 2026-09-09:** OnTrac Denver Warehouse Operative gig (post Xu8hmPdNbCu8gLtP8ufM)
   published by Greg (CL id 7963535589), live URL recorded via `craigslistMarkPosted`

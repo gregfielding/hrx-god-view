@@ -80,8 +80,8 @@ export async function drainCraigslistDrafts(token: string): Promise<number> {
       const text = [
         `Craigslist draft for *${draft.title}* (post ${s(post.jobPostId) || d.id}, ${draft.site} · ${draft.category}):`,
         '```' + draft.body + '```',
-        `Location: ${draft.specificLocation} · Compensation: ${draft.compensation} · Contact email: ${draft.contactEmail}`,
-        `Publish it here: ${draft.postUrl} — then paste the live URL into the post's Craigslist URL field (<https://hrxone.com/jobs/job-orders|HRX>). Craigslist charges per post (Denver labor gigs $7; jobs more). Replies go to the email on the Craigslist account you post from (Greg's account → g.fielding@), so forward applicant replies to me or use the Apply Here link.`,
+        `Location: ${draft.specificLocation} · Compensation: ${draft.compensation}`,
+        `Publish it here: ${draft.postUrl} — Craigslist settings (Greg 2026-09-10): job posts are *full-time* and *entry level*; email option *no replies to this email* with *remember contact preferences* ticked, since applicants use the Apply Here link. Then paste the live URL into the post's Craigslist URL field (<https://hrxone.com/jobs/job-orders|HRX>). Craigslist charges per post (Denver labor gigs $7; Chicago jobs $45 per category).`,
       ].join('\n');
       const res = await postAsNatalie(token, { channel, text });
       const next: CraigslistPosting = { ...cl, enabled: true, status: 'ready', draft, lastError: null, slackTs: res.ts ?? cl.slackTs ?? null };
