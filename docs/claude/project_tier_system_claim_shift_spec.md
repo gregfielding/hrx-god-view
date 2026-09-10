@@ -500,8 +500,10 @@ keep hiring qualified applicants until we hit 30").
   `c1_select_llc` + Sodexo Basic Package (23923), 0 applicants; the busiest
   JO (207 applicants) previewed in 7s and every applicant was Tier 3 — pools
   fill only as promotion lifts applicants (tenant ≈ 14.2k T3 / 16 T1 / 6 T2).
-- **No plan is turned on yet** — the recruiter sets the numbers. Turning one
-  on = real Everee onboarding + AccuSource spend within the hour.
+- **First plan ON 2026-09-10 (Greg)**: #524 Warehouse Workers (OnTrac
+  Chicago Branch, `VajVmjbflVyInZuptErY`) — 10 needed + 5 backups at 2× =
+  hire up to 30, Tier 2 moderately (60%). Turning a plan on = real Everee
+  onboarding + AccuSource spend within the hour.
 - **Open**: JO #524 is Romeoville, IL — automated score-based hiring there
   raises the Illinois AEDT notice question (see
   [[project_tiered_shift_access]] compliance note).
