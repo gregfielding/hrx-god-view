@@ -507,6 +507,21 @@ later** (see "Build 9 sign-up was dead" above); rebuild both binaries with
 - OPEN (design nit): Profile → preferences only offers Hospitality /
   Industrial (matches the web's legacy target-industry subset).
 
+**OPEN after the pass**
+- No way back into a PENDING interview: leaving it (draft auto-saved) shows
+  nothing on Home or on the submitted job ("Application Submitted" only).
+  The web surfaces a "finish your interview" action item; the app's action
+  items didn't for this account. Needs a dashboard item or a button on the
+  submitted job.
+- Trimmed-interview submit verified by unit test
+  (`test/features/prescreen/prescreen_submission_test.dart`) + the array
+  error gone on-device; the string-key fix was not re-run end-to-end.
+- Foreground push toast uses a floating SnackBar via the root messenger —
+  re-check it renders now that the theme is fixed-style.
+- QA cleanup: `functions/.scratch/cleanup_qa_account_20260909.ts` (Firestore)
+  + `delete_qa_auth_20260909.ts` (Auth; needs
+  `gcloud auth application-default set-quota-project hrx1-d3beb` once).
+
 **Store status**: Apple 1.0.0 (9) rejected 2.1 (info needed) — reply draft
 in `c1_app/store/APP_REVIEW_REPLY_2026-09.md`; Play 1.0.0 (8) still in
 review. Both need the new build (10+) uploaded; Play's in-review release
