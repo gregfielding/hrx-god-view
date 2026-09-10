@@ -1404,3 +1404,5 @@ view.
 - `overheadAllocations.ts`: 55xx excluded from the revenue-ratio base.
 - First write: 111 May–Aug purchases ($18,380.06) → Event-based (99 from
   Corp, 12 from none); Jan–Apr untouched.
+- Same day, Greg: "Technology & Software" (unnumbered top-level Expense) also
+  nested under 8100 → "Software & Subscriptions:Technology & Software".
