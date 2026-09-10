@@ -42,13 +42,14 @@ function computeTargetReady(
 }
 
 /**
- * Job Order → Hiring: the editable hiring plan, then Zones 1–2 read-only (policy source, effective policy,
- * progress & blockers, funnel links).
+ * Job Order → Hiring: the hiring plan. The AI auto-advance panels (effective
+ * policy, funnel, pipeline metrics, AI decisions) render only once
+ * JOB_ORDER_HIRING_AUTOMATION_ENABLED launches — until then they described
+ * automation that never runs (Greg 2026-09-10: "Most of it is not necessary").
  */
 const JobOrderHiringTab: React.FC<Props> = ({ jobOrder, tenantId, onSaved }) => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [tenantData, setTenantData] = useState<Record<string, unknown> | null>(null);
   const [jobOrderRaw, setJobOrderRaw] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
@@ -59,17 +60,13 @@ const JobOrderHiringTab: React.FC<Props> = ({ jobOrder, tenantId, onSaved }) => 
     let cancelled = false;
     void (async () => {
       try {
-        const [jobSnap, tenantSnap] = await Promise.all([
-          getDoc(doc(db, 'tenants', tenantId, 'job_orders', jobOrder.id)),
-          getDoc(doc(db, 'tenants', tenantId)),
-        ]);
+        const jobSnap = await getDoc(doc(db, 'tenants', tenantId, 'job_orders', jobOrder.id));
         if (cancelled) return;
         setJobOrderRaw(jobSnap.exists() ? (jobSnap.data() as Record<string, unknown>) : {});
-        setTenantData(tenantSnap.exists() ? (tenantSnap.data() as Record<string, unknown>) : {});
         setLoadError(null);
       } catch (e) {
         if (!cancelled) {
-          setLoadError(e instanceof Error ? e.message : 'Failed to load policy');
+          setLoadError(e instanceof Error ? e.message : 'The job order could not be loaded.');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -80,6 +77,57 @@ const JobOrderHiringTab: React.FC<Props> = ({ jobOrder, tenantId, onSaved }) => 
     };
   }, [jobOrder?.id, tenantId]);
 
+  if (!jobOrder?.id) {
+    return <Alert severity="info">Open a job order to set up its hiring plan.</Alert>;
+  }
+
+  if (loading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  return (
+    <Stack spacing={2}>
+      {loadError ? <Alert severity="warning">{loadError}</Alert> : null}
+      <JobOrderHiringPlanCard
+        tenantId={tenantId}
+        jobOrderId={jobOrder.id}
+        jobOrderRaw={jobOrderRaw}
+        onSaved={onSaved}
+      />
+      {JOB_ORDER_HIRING_AUTOMATION_ENABLED ? (
+        <JobOrderHiringAutomationPanels jobOrder={jobOrder} tenantId={tenantId} jobOrderRaw={jobOrderRaw} />
+      ) : null}
+    </Stack>
+  );
+};
+
+/** AI auto-advance policy + funnel panels — mounted (and querying) only when hiring automation is launched. */
+const JobOrderHiringAutomationPanels: React.FC<{
+  jobOrder: JobOrder;
+  tenantId: string;
+  jobOrderRaw: Record<string, unknown> | null;
+}> = ({ jobOrder, tenantId, jobOrderRaw }) => {
+  const [tenantData, setTenantData] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    let cancelled = false;
+    getDoc(doc(db, 'tenants', tenantId))
+      .then((snap) => {
+        if (!cancelled) setTenantData(snap.exists() ? (snap.data() as Record<string, unknown>) : {});
+      })
+      .catch(() => {
+        if (!cancelled) setTenantData({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
   const effectivePolicy = useMemo((): EffectiveJobOrderHiringPolicy | null => {
     if (!tenantData || !jobOrderRaw) return null;
     return resolveEffectiveJobOrderHiringPolicy(tenantData, jobOrderRaw);
@@ -87,7 +135,7 @@ const JobOrderHiringTab: React.FC<Props> = ({ jobOrder, tenantId, onSaved }) => 
 
   const workerAiPrescreenRequired = effectivePolicy?.resolvedInterview.workerAiPrescreenRequired ?? true;
 
-  const panel = useJobOrderHiringControlPanelData(tenantId, jobOrder?.id ?? null, workerAiPrescreenRequired);
+  const panel = useJobOrderHiringControlPanelData(tenantId, jobOrder.id, workerAiPrescreenRequired);
 
   const recentDecisionUserIds = useMemo(
     () =>
@@ -115,48 +163,8 @@ const JobOrderHiringTab: React.FC<Props> = ({ jobOrder, tenantId, onSaved }) => 
     return panel.ready / panel.interviewed;
   }, [panel.interviewed, panel.ready]);
 
-  if (!jobOrder?.id) {
-    return <Alert severity="info">Open a job order to view hiring progress.</Alert>;
-  }
-
-  if (loading) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
-        <CircularProgress />
-      </Box>
-    );
-  }
-
   return (
     <Stack spacing={2}>
-      <Typography variant="h6">{jobOrder.jobOrderName || 'Job order'} — hiring</Typography>
-      <Typography variant="body2" color="text.secondary">
-        Policy and funnel summary for this job order. Applicant rows and actions live only on the Applications tab.
-        Worker AI pre-screen category scores (six categories, 0–100) are read-only on each applicant’s Interview column
-        and in Recent decisions when present on the application.
-      </Typography>
-
-      {loadError ? (
-        <Alert severity="warning">
-          {loadError} (effective policy may be incomplete until tenant and job order load.)
-        </Alert>
-      ) : null}
-
-      <JobOrderHiringPlanCard
-        tenantId={tenantId}
-        jobOrderId={jobOrder.id}
-        jobOrderRaw={jobOrderRaw}
-        onSaved={onSaved}
-      />
-
-      {!JOB_ORDER_HIRING_AUTOMATION_ENABLED ? (
-        <Alert severity="warning" sx={{ borderRadius: 1 }}>
-          <strong>AI auto-advance is paused at launch.</strong> Targets and thresholds below reflect saved policy, but
-          auto-advance, phase 6 queueing, and gig fallback stay off until enabled. The hiring plan above runs on its
-          own.
-        </Alert>
-      ) : null}
-
       {panel.error ? (
         <Alert severity="warning">
           Live metrics: {panel.error} (counts may be incomplete until the query succeeds.)

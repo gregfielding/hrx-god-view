@@ -467,6 +467,10 @@ keep hiring qualified applicants until we hit 30").
   hourly — earn-back hours are the only way back. Before this, a Tier 2→3
   penalized worker with a qualifying scorecard would have been re-promoted
   the next night once the mode went automatic.
+- **Hiring tab simplified (Greg, same day: "Most of it is not necessary")**:
+  the tab is just the plan card. The AI auto-advance panels (effective policy,
+  funnel, pipeline metrics, AI decisions) live in `JobOrderHiringAutomationPanels`
+  and mount — and query — only when `JOB_ORDER_HIRING_AUTOMATION_ENABLED` is true.
 - **Settings — JO → Hiring tab → "Hiring plan" card**:
   `job_orders/{id}.hiringPlan {enabled, workersNeeded, backupWorkers,
   poolMultiplier (1–10), tier2Intensity none|selective|moderate|aggressive,
