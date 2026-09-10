@@ -67,6 +67,7 @@ async function main(): Promise<void> {
     const t = (await pushTravelRouting(TENANT, dryRun, { since: process.argv[4] })) as Record<string, any>;
     console.log(`\n=== travel routing (${mode}) since ${t.since} — ${t.lineMoves} line moves in ${t.transactions} transactions ===`);
     for (const m of (t.byMonth ?? []) as Array<Record<string, any>>) console.log(`  ${m.month}  → Travel for Events ${Number(m.toEvents).toFixed(2).padStart(10)}   → Travel for Sales ${Number(m.toSales).toFixed(2).padStart(10)}   recruitment → 5300 ${Number(m.merged ?? 0).toFixed(2).padStart(9)}   (${m.n} lines)`);
+    console.log('  by traveler:'); for (const c of (t.byPerson ?? []) as Array<Record<string, any>>) console.log(`    ${Number(c.amount).toFixed(2).padStart(10)}  ${c.key}`);
     console.log('  by class:'); for (const c of ((t.byClass ?? []) as Array<Record<string, any>>).slice(0, 30)) console.log(`    ${Number(c.amount).toFixed(2).padStart(10)}  ${c.key}`);
   }
   if (phase === 'both' || phase === 'dpay') {

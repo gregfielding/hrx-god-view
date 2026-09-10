@@ -1350,3 +1350,28 @@ old category to 5300, and the overhead writer re-trues its Jul–Sep legs onto
 5300. The sub is to be made inactive once nothing references it. The 8010
 parent itself only held small Jan–Mar promo buys (lanyards, monogram, Zazzle,
 Shutterstock ≈ $368) — real marketing, left below gross profit.
+
+## Travel: CARDHOLDER rule supersedes class-only (Greg 2026-09-10, late)
+
+Greg: "ALL expenses in the travel family by Danny, Rosa, or Mark always go in
+the Event area. All travel family expenses by Greg or Donna ALWAYS go in the
+Sales area, with the exception that if Venuesmart is added as the class …
+those are moved to Event area."
+
+- `travelRouting.ts` `wantFamily()`: cardholder Danny (dr@) / Rosa
+  (r.govea@) / Mark (mk@) → Travel for Events; Greg (g.fielding@, includes
+  the "Corporate Card" 3038 whose map email is Greg's) / Donna (dm@) →
+  Travel for Sales unless the line's class is `Venue Smart` or
+  `Venue Smart:*` → Events. Everyone else (e.g. Maria Rabadan's inactive
+  card 8778), unmapped cards, and charges without a card descriptor
+  (Expensify expense reports "Imported from Expensify", Bills) keep the
+  class rule (client class → Events, else Sales).
+- Cardholder source: Relay descriptor "**NNNN Paid by <Name>" via
+  `parsePurchase` (expensifyPush.ts) → `expensify_card_map/{last4}.email`
+  local-part; an unmapped last4 falls back to the cardholder first name only
+  when that name belongs to exactly one mapped person.
+- Coverage check May–Sep 2026 (597 travel lines): all but ~$3.8K resolved
+  to a person (Maria 2,839.31, no card 504.23, unmapped 5474 339.01 /
+  8214 97.19).
+- Downstream unchanged: 55xx class-driven Division (unclassed event travel
+  in Corp gets spread by revenue by the overhead writer), 88xx by revenue.
