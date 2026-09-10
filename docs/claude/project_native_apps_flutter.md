@@ -562,3 +562,31 @@ the keyboard until the screen was left. Fix (c1_app, build 13+):
   handles it. Autofocus stays only on sign-in steps (phone, SMS code,
   recovery name), where typing is the screen's whole purpose.
 Web needs no change (browsers dismiss natively).
+
+## One top bar: back arrow lives in the shell bar (2026-09-10, Greg: "real estate is valuable, especially with the keyboard up")
+
+Inner screens used to draw their own 56pt AppBar (back arrow + page title)
+under the shell bar (EN|ES · logo · help · bell). Now (c1_app, build 13+):
+- `WorkerShellScaffold` shows a back arrow LEFT of EN | ES whenever the
+  current path is not the tab's root page (`branch.routes.first.path`).
+  Visibility is path-based on purpose: the branch Navigator hasn't rebuilt
+  when the shell bar builds, so `canPop()` lags a frame and left a stale
+  arrow on tab roots. Tap = `maybePop()` on the current branch navigator
+  (honours `PopScope`: the interview steps back a question, headshot
+  capture hands its photo back), or `goBranch(index, initialLocation:
+  true)` when there is nothing to pop (deep link into a detail page) —
+  same as the old job/assignment `_navigateBack`.
+- Every inner `Scaffold.appBar` goes through
+  `shellAwareAppBar(context, AppBar(...))`
+  (`lib/shared/widgets/worker_page_app_bar.dart`). Inside the shell
+  (`WorkerShellChrome` InheritedWidget wraps `navigationShell`) it returns
+  null → no second row. Exceptions kept as slim rows: an AppBar `bottom`
+  (Documents' TabBar) and real `actions` (Notifications' "Mark all as
+  read"). A `LanguageSelector` action is dropped (duplicate of EN|ES).
+  Outside the shell (sign-in, sign-up, unlock) the AppBar renders as before.
+- Page titles are gone inside the shell (same call Greg made for tab roots
+  on 2026-09-04). Each page's body already opens with its context line.
+- NEW inner screens must use `shellAwareAppBar` — a bare `AppBar` brings
+  the second row back.
+- Tests: `test/shared/keyboard_dismiss_on_tap_test.dart` covers iOS focus /
+  dismissal / field-to-field and that the shell drops the title row.
