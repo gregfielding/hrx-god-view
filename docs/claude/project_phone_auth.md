@@ -315,3 +315,18 @@ Fix: signup stamps `activeTenantId` + `tenantIds.C1 {Applicant, '2', addedAt}`
 and auto interview invite are create-only; Everee address push needs an
 incomplete→complete address; abandon-nudge sweep max 2 texts/worker, 72h apart,
 only no-address + no-submitted-app).
+
+## ☠️ Date of birth typed without slashes kept "Text me a code" disabled (fixed 2026-09-10)
+
+Found via Deborah / Keith Burks: `PhoneSignupGate` only parsed `MM/DD/YYYY` with
+slashes (or ISO), so `04051990` left the send-code button disabled while the hint
+still said "enter your name, phone and date of birth" — the worker had filled
+everything and nobody could tell why. No users doc and no sendOtp call existed
+for him, which is the signature of this client-side gate.
+Fix (hrx 28304e4b, c1_app 3a6793f): web + app accept slashes, dashes, dots and
+bare `MMDDYYYY`; web rejects impossible dates, sends checkOtp an ISO date (server
+`normalizeDobIso` in functions/src/twilio.ts only understands `M/D/YYYY` or ISO —
+a raw `04051990` would be silently dropped server-side), and shows
+`phoneSignup.dobFormat` ("Enter your date of birth as MM/DD/YYYY…") when the date
+is the blocker. Support triage: a stuck signup with no users doc and no sendOtp
+log is a client-side validation gate, not an SMS problem.
