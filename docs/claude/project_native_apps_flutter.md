@@ -470,11 +470,25 @@ later** (see "Build 9 sign-up was dead" above); rebuild both binaries with
   the app sent nothing for trimmed multi-select keys, the server requires
   arrays; the web's answer state starts with `[]`. App now always sends
   every multi-select key as an array (b4a59bb).
+- Second server rejection right behind it: "Missing or invalid field:
+  motivation" — the 13-step fast path never asks motivation/pressure, and
+  the server validates every REQUIRED_KEY as a string. App now seeds every
+  required string key with '' (web `emptyAnswers()` shape) and conditional
+  clears blank instead of dropping keys. Keep `prescreenRequiredStringKeys`
+  + `prescreenMultiSelectKeys` in `prescreen_flow.dart` in sync with the
+  server's REQUIRED_KEYS.
 - System/app-bar Back steps to the previous question (PopScope); it only
   leaves from the first question. Greg's back-tap on the last step had
-  dumped him on Home.
+  dumped him on Home. Verified on the simulator.
+- SnackBars: `SnackBarBehavior.fixed` DOES render (verified: "Work
+  experience added"); floating never did. Keep fixed.
 
 **Profile**
+- ☠️ HARD CRASH on Add Work Experience / Add Education: entries carried
+  `FieldValue.serverTimestamp()` inside the array and Firestore iOS throws
+  FIRInvalidArgumentException (app killed to the home screen). Never put
+  serverTimestamp() inside an array element — `Timestamp.now()` there
+  (71490f6 + the education serializer follow-up).
 - Home Address editor opened EMPTY for app-created accounts: it read
   `homeAddress.line1/postalCode/coordinates.*` while sign-up wrote
   `street/zip/latitude/longitude`. Editor reads both; sign-up now also
@@ -483,12 +497,11 @@ later** (see "Build 9 sign-up was dead" above); rebuild both binaries with
   `users/{uid}/certifications/{file}` but the Storage rule is
   `users/{uid}/certifications/{certSlug}/{fileName}` (web shape). Fixed +
   failures now show a dialog (d6357fd).
-- ☠️ SnackBars never rendered anywhere in the shell (verified on video:
-  saves, validation errors and the upload failure were all silent).
-  Root cause not pinned; `SnackBarThemeData.behavior` switched from
-  floating to fixed (verify after rebuild). Belt-and-braces: profile
-  saves pop back to the list on success; the deletion request confirms
-  with a dialog.
+- ☠️ Floating SnackBars never rendered anywhere in the shell (verified on
+  video: saves, validation errors and the upload failure were all silent).
+  `SnackBarThemeData.behavior` = fixed renders. Belt-and-braces: profile
+  saves pop back to the list on success; save failures and the deletion
+  request are dialogs.
 - Personal details: phone shown formatted; the "last 4 of SSN" subtitle
   removed (the field doesn't exist; last4SSN is an Everee mirror).
 - OPEN (design nit): Profile → preferences only offers Hospitality /
