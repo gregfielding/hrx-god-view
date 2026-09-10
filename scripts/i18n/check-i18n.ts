@@ -94,7 +94,8 @@ function main(): void {
     for (const [file, keys] of fileToKeys) {
       for (const key of keys) {
         if (!I18N_KEY_REGEX.test(key)) continue; // skip t("hex"), t("\n"), etc.
-        if (!enKeySet.has(key)) {
+        // Plural families (key_one / key_other) resolve from the bare key when count is passed.
+        if (!enKeySet.has(key) && !enKeySet.has(`${key}_other`)) {
           console.error(`[i18n] Unknown key in ${file}: ${key}`);
           failed = true;
         }
