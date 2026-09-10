@@ -650,6 +650,10 @@ Design:
 - ☠️ **Google Play published 1.0.0 (8) to Production (US) on 2026-09-10.**
   Build 8 has no Places key, so sign-up is dead on the live Android app.
   Fix = Play Console → Production → Create new release → build-14 AAB.
+  DONE 2026-09-10: Production 14 (1.0.0) full rollout sent for review.
+  Gotcha: 14 was first uploaded to Closed testing - Alpha by mistake; a
+  second Upload fails "Version code 14 has already been used" — use
+  Add from library on the Production release instead.
   Managed publishing is OFF: any saved listing edit goes live after review.
 - Store screenshots refreshed on build 14 (`c1_app/store/screenshots/`,
   commit e7372af): iPhone 6.9" + 6.5" + Play 9:16 (7, EN+ES) and iPad 13"
