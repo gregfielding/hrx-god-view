@@ -14,9 +14,9 @@
  * CARDHOLDER RULE (Greg 2026-09-10, supersedes class-only): travel charged
  * by Danny, Rosa or Mark → always Travel for Events; by Greg (incl. the
  * Corporate Card) or Donna → Travel for Sales UNLESS the line is classed to
- * Venue Smart (e.g. Greg's FIFA KC trips for VenueSmart) → Events. Anyone
- * else, and charges with no card descriptor (Expensify expense reports,
- * Bills), keep the class rule. Cardholder = Relay descriptor "**NNNN Paid
+ * Venue Smart (e.g. Greg's FIFA KC trips for VenueSmart) → Events. EVERYONE
+ * else → Events too (Greg 2026-09-10: Maria, unmapped cards, Expensify
+ * expense reports with no card, Bills — "anything misc, put as Events"). Cardholder = Relay descriptor "**NNNN Paid
  * by <Name>" (parsePurchase) → expensify_card_map/{last4}.email; unmapped
  * last4 falls back to a unique cardholder-name match.
  */
@@ -68,7 +68,6 @@ export async function pushTravelRouting(
   if (fieldRecruit && recruitSub) remap.set(trim(recruitSub.Id), fieldRecruit);
   const cr = (await qboQuery(tenantId, 'SELECT Id, FullyQualifiedName FROM Class WHERE Active IN (true, false) MAXRESULTS 1000')) as Record<string, any>;
   const clsById = new Map<string, string>(((cr.QueryResponse?.Class ?? cr.Class ?? []) as Array<Record<string, any>>).map((c) => [trim(c.Id), trim(c.FullyQualifiedName)]));
-  const isSales = (fqn: string): boolean => !fqn || SALES_TRAVEL_CLASS_RE.test(fqn);
   const cardSnap = await db.collection(`tenants/${tenantId}/expensify_card_map`).get();
   const cardOwner = new Map<string, string>();
   const nameOwners = new Map<string, Set<string>>(); // first name → locals
@@ -91,7 +90,7 @@ export async function pushTravelRouting(
   const wantFamily = (traveler: string | null, fqn: string): 'events' | 'sales' => {
     if (traveler && EVENT_TRAVELERS.has(traveler)) return 'events';
     if (traveler && SALES_TRAVELERS.has(traveler)) return VENUESMART_CLASS_RE.test(fqn) ? 'events' : 'sales';
-    return isSales(fqn) ? 'sales' : 'events';
+    return 'events'; // misc travelers, unmapped cards, no-card expense reports, Bills
   };
   const byPerson = new Map<string, number>();
 

@@ -1362,10 +1362,12 @@ those are moved to Event area."
   (r.govea@) / Mark (mk@) → Travel for Events; Greg (g.fielding@, includes
   the "Corporate Card" 3038 whose map email is Greg's) / Donna (dm@) →
   Travel for Sales unless the line's class is `Venue Smart` or
-  `Venue Smart:*` → Events. Everyone else (e.g. Maria Rabadan's inactive
-  card 8778), unmapped cards, and charges without a card descriptor
-  (Expensify expense reports "Imported from Expensify", Bills) keep the
-  class rule (client class → Events, else Sales).
+  `Venue Smart:*` → Events. EVERYONE ELSE → Travel for Events (Greg,
+  later the same evening: "anything misc (not greg or donna), put as
+  Events") — Maria Rabadan's inactive card 8778, unmapped cards, charges
+  without a card descriptor (Expensify expense reports "Imported from
+  Expensify"), Bills. The class only matters for Venue Smart on Greg/Donna
+  lines.
 - Cardholder source: Relay descriptor "**NNNN Paid by <Name>" via
   `parsePurchase` (expensifyPush.ts) → `expensify_card_map/{last4}.email`
   local-part; an unmapped last4 falls back to the cardholder first name only
