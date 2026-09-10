@@ -89,6 +89,14 @@ function EmploymentV2Tab({
     return () => window.clearTimeout(t);
   }, [entityKey, scrollAfterEntityTab]);
 
+  // Spinner only on the first load for this worker: a refetch must not
+  // unmount the Start On-call dialog, or its error disappears with it.
+  const loadKey = `${uid}|${tenantId}`;
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!loading) setLoadedKey(loadKey);
+  }, [loading, loadKey]);
+
   const handleBannerNavigateToFix = (args: {
     entityKey: EmploymentEntityKey | null;
     scrollElementId: string;
@@ -109,7 +117,7 @@ function EmploymentV2Tab({
     );
   }
 
-  if (loading && !error) {
+  if (loading && !error && loadedKey !== loadKey) {
     return (
       <Box sx={{ py: 4, pb: '32px', display: 'flex', justifyContent: 'center' }}>
         <CircularProgress />
