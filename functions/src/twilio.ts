@@ -645,6 +645,14 @@ async function resolvePhoneSignup(
       // (found 2026-08-25). '2' = applicant, same as the legacy signup path.
       securityLevel: '2',
       orgType: 'Tenant',
+      // Membership must be stamped here, not at application submit: the
+      // recruiter directory, applicant rows and the on-call onboarding guard
+      // all require tenantIds.{t}, and workers who quit the wizard never
+      // submit. Phone signup is C1's flow.
+      activeTenantId: TENANT_C1,
+      tenantIds: {
+        [TENANT_C1]: { role: 'Applicant', securityLevel: '2', addedAt: now },
+      },
       preferredLanguage,
       isActive: true,
       skills: [],
