@@ -446,9 +446,20 @@ later** (see "Build 9 sign-up was dead" above); rebuild both binaries with
   worksite location doc was missing (job-order → posting conversions) —
   backfilled with the server geocoding key
   (`functions/.scratch/backfill_posting_coords_20260909.ts`, dry-run with
-  `DRY=1`). OPEN: nothing stamps coordinates on NEW job-order-derived
-  postings; re-run the backfill script periodically or add it to the
-  posting-creation path (a new trigger needs a Cloud Run slot).
+  `DRY=1`). Then made permanent (Greg pushed back on "re-run it
+  periodically" — 602b3354): job orders keep their coords as
+  `worksiteCoordinates` (self-backfilled by the recruiter JO page; 99 of 164
+  open JOs had it, 0 had `worksiteAddress.coordinates`). The existing
+  `syncJobOrderWorksiteToPostings` trigger now resolves coordinates
+  (JO.worksiteAddress.coordinates → JO.worksiteCoordinates → location doc →
+  server geocode with `GOOGLE_MAPS_SERVER_KEY`, state-matched), writes them
+  back onto the JO (`worksiteAddress.coordinates` + `worksiteCoordinates` +
+  `worksiteCoordinatesSource`) and re-stamps every linked posting; it also
+  fires for any JO write while the JO still lacks coordinates. One-off
+  `functions/.scratch/stamp_jo_coords_20260909.ts` stamped all 164 open JOs
+  (99 from worksiteCoordinates, 65 geocoded, 0 unresolved). Web
+  `convertJobOrderToPosting` / JobPostingDetail and the app's job repository
+  also read `worksiteCoordinates` directly.
 
 **Apply wizard**
 - E-Verify "are you comfortable" question REMOVED (app bd665b0 + web
