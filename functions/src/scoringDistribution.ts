@@ -93,9 +93,13 @@ export async function computeDistributionForTenant(tenantId: string): Promise<{
   const qualityScores: number[] = [];
 
   try {
+    // Projection: only the four score fields. Loading 15k FULL user docs here exhausted the 1GiB heap
+    // every night from 2026-09-05 (the day three more passes started riding this job), so none of
+    // scoring / tier sweep / Mass PN / WC hygiene ever completed. With select() the payload is tiny.
     const usersSnap = await db
       .collection('users')
       .where(`tenantIds.${tenantId}.securityLevel`, 'in', SECURITY_LEVELS)
+      .select('scoreSummary.aiScore', 'scoreSummary.completenessScore', 'scoreSummary.responsivenessScore', 'scoreSummary.qualityScore')
       .limit(15000)
       .get();
 
@@ -168,7 +172,9 @@ export const scheduledScoringDistribution = onSchedule(
     schedule: '0 3 * * *', // 3 AM daily
     timeZone: 'America/New_York',
     maxInstances: 1,
-    memory: '1GiB',
+    // 2GiB (was 1GiB): OOM'd nightly 2026-09-05 → 09-10. The tier sweep also loads the tenant's
+    // users + backgroundChecks and WC hygiene loads 45 days of timesheet entries in the same process.
+    memory: '2GiB',
     timeoutSeconds: 540,
   },
   async () => {

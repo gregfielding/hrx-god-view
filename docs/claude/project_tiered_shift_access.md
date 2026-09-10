@@ -18,7 +18,7 @@
 > Hiring & AI); shared scorer `shared/workerTierScoring.ts` (mirrored; functions
 > reaches it via the `functions/src/shared` symlink); sweep
 > `functions/src/tierAutomation/tierPromotionSweep.ts` rides
-> scheduledScoringDistribution (3 AM ET; bumped to 1GiB/540s). Screening points
+> scheduledScoringDistribution (3 AM ET; 2GiB/540s since 2026-09-10 — it OOM'd at 1GiB EVERY night 09-05→09-10, so the tier sweep never ran in that window; see project_wc_classification.md). Screening points
 > score COMPLETION (Greg's seriousness signal, not clearance) from AccuSource
 > `backgroundChecks` mapped by candidateId — the user-doc order arrays are
 > near-empty legacy (1 hit in 14k). Profile completion falls back to a port of

@@ -153,6 +153,16 @@ request for <Entity>". Manual sends: "Submit to Eddie" button on
 /reports/wc-coverage (books-gated callable emailMassPn mode; file
 byte-identical to Export).
 
+**☠️ 2026-09-10 — the nightly host job OOM'd every night 09-05 → 09-10.** `scheduledScoringDistribution`
+(1GiB) crashed in its FIRST pass: `computeDistributionForTenant` loaded ~14k FULL user docs (~800MB heap)
+to read four score fields. Nothing after it ran — no scoring percentiles, no tier sweep proposals, no WC
+hygiene (Everee additions sync / 8040 reclassify). Mass PN lost nothing (first auto-send seeded ~09-19).
+Fix: `.select('scoreSummary.aiScore', …)` projection (measured 30MB for 14,192 docs) + memory 2GiB,
+because the tier sweep still loads full user docs + all backgroundChecks and hygiene loads 45 days of
+timesheet entries in the same process. **Rule: anything that rides this job must not load whole
+collections of full docs — project with select() or paginate.** Check a job that "rides" another is
+actually completing: grep logs for `scheduledScoringDistribution: done`.
+
 **Nightly WC hygiene SHIPPED 2026-09-05 PM (Greg "build it all"):**
 `runNightlyWcHygieneForTenant` (functions/src/workersComp/nightlyWcHygiene.ts)
 rides scheduledScoringDistribution: (1) ADDITIONS-ONLY Everee sync per W-2
