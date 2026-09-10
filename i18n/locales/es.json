@@ -62,7 +62,7 @@
     "dashboard": "Panel",
     "home": "Inicio",
     "inbox": "Bandeja de entrada",
-    "myAssignments": "Horario",
+    "myAssignments": "Asignaciones",
     "myApplications": "Mis solicitudes",
     "jobsBoard": "Bolsa de trabajo",
     "jobReadiness": "Preparación laboral",
@@ -91,7 +91,7 @@
     "findWork": "Buscar turnos",
     "viewApplications": "Ver solicitudes",
     "prescreen": "Preselección",
-    "payroll": "Nómina"
+    "payroll": "Pago"
   },
   "workerAccount": {
     "sectionProfile": "Perfil",

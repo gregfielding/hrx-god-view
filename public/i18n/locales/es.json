@@ -1,4 +1,46 @@
 {
+  "aiHiring": {
+    "noticeTitle": "Cómo usamos la IA en la contratación",
+    "noticeBody": "Este trabajo está en Illinois. C1 usa herramientas automatizadas, incluida la inteligencia artificial, para la preselección y el trabajo administrativo: califican tus respuestas de la entrevista de preselección y tu perfil, lo que puede subirte de nivel e incluirte en nuestro grupo de trabajadores disponibles. Un reclutador de C1 habla con cada solicitante antes de que empiece a trabajar.",
+    "noticeData": "Qué usan: tu solicitud, tu perfil, tus respuestas de preselección y el estado de tus verificaciones.",
+    "noticeRights": "En cualquier momento puedes pedir que un reclutador revise tu solicitud o solicitar una adaptación.",
+    "askRecruiter": "Hablar con un reclutador",
+    "selfIdCta": "Autoidentificación voluntaria",
+    "continueToInterview": "Continuar a la entrevista",
+    "signInToRequest": "Inicia sesión para hablar con un reclutador o responder la autoidentificación voluntaria.",
+    "kindReview": "Revisar mi solicitud",
+    "kindAccommodation": "Solicitar una adaptación",
+    "reviewHelp": "Un reclutador revisará tu solicitud personalmente y se comunicará contigo.",
+    "accommodationHelp": "Cuéntanos qué necesitas para la solicitud, la entrevista o el trabajo. Un reclutador se comunicará contigo.",
+    "detailsLabel": "Detalles (opcional)",
+    "sendRequest": "Enviar solicitud",
+    "requestSent": "Solicitud enviada. Un reclutador se comunicará contigo.",
+    "requestFailed": "No se pudo enviar la solicitud ({code}). Inténtalo de nuevo.",
+    "cancel": "Cancelar",
+    "done": "Listo",
+    "selfIdIntro": "C1 revisa que nuestras herramientas de contratación traten a todos por igual. Responder es opcional y no afecta tu solicitud. Los reclutadores nunca ven tus respuestas; solo se revisan los totales generales.",
+    "raceLabel": "Raza / origen étnico",
+    "sexLabel": "Sexo",
+    "race": {
+      "hispanic_latino": "Hispano o latino",
+      "white": "Blanco",
+      "black_african_american": "Negro o afroamericano",
+      "asian": "Asiático",
+      "american_indian_alaska_native": "Indígena americano o nativo de Alaska",
+      "native_hawaiian_pacific_islander": "Nativo de Hawái u otras islas del Pacífico",
+      "two_or_more": "Dos o más razas",
+      "decline": "Prefiero no responder"
+    },
+    "sex": {
+      "male": "Masculino",
+      "female": "Femenino",
+      "nonbinary": "No binario",
+      "decline": "Prefiero no responder"
+    },
+    "saveAnswers": "Guardar respuestas",
+    "saved": "Guardado. Gracias.",
+    "saveFailed": "No se pudieron guardar tus respuestas ({code}). Inténtalo de nuevo."
+  },
   "common": {
     "save": "Guardar",
     "cancel": "Cancelar",
@@ -20,7 +62,7 @@
     "dashboard": "Panel",
     "home": "Inicio",
     "inbox": "Bandeja de entrada",
-    "myAssignments": "Horario",
+    "myAssignments": "Asignaciones",
     "myApplications": "Mis solicitudes",
     "jobsBoard": "Bolsa de trabajo",
     "jobReadiness": "Preparación laboral",
@@ -49,7 +91,7 @@
     "findWork": "Buscar turnos",
     "viewApplications": "Ver solicitudes",
     "prescreen": "Preselección",
-    "payroll": "Nómina"
+    "payroll": "Pago"
   },
   "workerAccount": {
     "sectionProfile": "Perfil",

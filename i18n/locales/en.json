@@ -62,7 +62,7 @@
     "dashboard": "Dashboard",
     "home": "Home",
     "inbox": "Inbox",
-    "myAssignments": "Schedule",
+    "myAssignments": "Assignments",
     "myApplications": "My Applications",
     "jobsBoard": "Jobs Board",
     "jobReadiness": "Job Readiness",
@@ -91,7 +91,7 @@
     "findWork": "Find Shifts",
     "viewApplications": "View Applications",
     "prescreen": "Pre-screen",
-    "payroll": "Payroll"
+    "payroll": "Pay"
   },
   "workerAccount": {
     "sectionProfile": "Profile",
