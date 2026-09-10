@@ -604,3 +604,44 @@ under the shell bar (EN|ES · logo · help · bell). Now (c1_app, build 13+):
   Widget tests: `test/shared/worker_page_app_bar_test.dart`.
 - Tests: `test/shared/keyboard_dismiss_on_tap_test.dart` covers iOS focus /
   dismissal / field-to-field and that the shell drops the title row.
+
+## Third-party AI consent (2026-09-10, Greg: "consent at sign-up, build 14")
+
+Why: App Store guideline 5.1.2(i) requires disclosing, and getting explicit
+permission for, personal data sent to a third-party AI. Worker-app features
+that call Anthropic (Claude): Get help answers (`workerSupportAssistant`),
+resume reading (`parseResumeHttp` → `parseResumeCore`), the prescreen
+answer-quality check (`claudeNarrativeQuality` via
+`composePrescreenAiBundle`), and recruiter fit scoring
+(`calculateApplicantFitScore`). Interview outcomes (advance / review / hold /
+reject) are all RECOMMENDATIONS for a recruiter
+(`recommendedActionsPhase1`) — nothing hires or rejects automatically; keep
+it that way or the App Review reply becomes false.
+
+Design:
+- Record: `users/{uid}.userAgreements.aiProcessing = {agreed, version:
+  '2026-09-10', timestamp, source}`.
+- Asked: optional unchecked checkbox at sign-up — app `SignupEntryScreen`
+  (sent as `aiConsent` to `checkOtp`, stamped server-side in
+  `resolvePhoneSignup`; legacy email path stamps client-side) and web
+  `PhoneSignupGate` (same `aiConsent` payload). Existing app accounts with
+  no record get a one-time Allow / Don't allow dialog from
+  `WorkerShellScaffold` (waits for the language dialog). Changeable in app
+  Profile → About & Legal (`SwitchListTile`).
+  Helper: c1_app `lib/features/profile/presentation/widgets/ai_consent.dart`.
+- Enforced server-side on an EXPLICIT decline only
+  (`functions/src/utils/aiProcessingConsent.ts`): support assistant returns
+  an escalate-to-a-person answer, resume parse returns 403
+  `ai_processing_declined`, prescreen uses the rules evaluator, fit score
+  returns a neutral 50. `loadAiProcessingDeclined` fails CLOSED on a read
+  error. Accounts that never chose (existing web workers) keep current
+  behavior, covered by the privacy policy; the app always asks first.
+- Privacy policy: `legal.privacy.s3L7` (use) + `s4L4` (Anthropic sharing,
+  no training, decline path), EN/ES, Privacy.tsx renders them, static
+  `/legal/privacy.html` regenerated. Last updated 2026-09-10.
+- ☠️ A NEW AI call on worker data must check `aiProcessingDeclined` first.
+- Tabs renamed the same day: Schedule → Assignments, Payroll → Pay (app
+  `navSchedule`/`navPayroll`, web `nav.myAssignments`/`nav.payroll`).
+- Demo account (Alex Rivera, +15555550100) has a San Jose home address
+  (distances show) and NO AI choice on purpose — reviewers see the one-time
+  prompt. If testing flips it, remove `userAgreements.aiProcessing` again.

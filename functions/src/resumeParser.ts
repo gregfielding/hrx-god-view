@@ -1,3 +1,4 @@
+import { loadAiProcessingDeclined } from './utils/aiProcessingConsent';
 import * as crypto from 'crypto';
 import * as functions from 'firebase-functions';
 import { onRequest } from 'firebase-functions/v2/https';
@@ -1175,6 +1176,18 @@ export const parseResumeHttp = onRequest({
     if (!allowed) {
       res.set('Access-Control-Allow-Origin', corsOrigin);
       res.status(403).json({ error: 'Unauthorized to parse resume for this user' });
+      return;
+    }
+
+    // AI-processing consent (App Store 5.1.2(i), 2026-09-10): a worker who
+    // declined never has their resume sent to Claude.
+    if (await loadAiProcessingDeclined(String(userId))) {
+      res.set('Access-Control-Allow-Origin', corsOrigin);
+      res.status(403).json({
+        error:
+          'AI resume reading is turned off in your privacy choices. Turn on AI assistance in Profile, About & Legal, or add your work history by hand.',
+        code: 'ai_processing_declined',
+      });
       return;
     }
 

@@ -89,6 +89,8 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
   const [existingNotice, setExistingNotice] = useState(false);
   // Twilio 10DLC (2026-09-09): SMS consent is a separate, unchecked, optional box shown where the number is collected.
   const [smsConsent, setSmsConsent] = useState(false);
+  // Third-party AI consent, its own unchecked box (App Store 5.1.2(i) parity with the app, 2026-09-10).
+  const [aiConsent, setAiConsent] = useState(false);
 
   const phoneE164 = toE164(phone);
 
@@ -169,6 +171,7 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
         dob: dob.trim(),
         preferredLanguage: getLanguage(),
         smsConsent,
+        aiConsent,
         signupSource,
         signupGroupId,
         jobContext,
@@ -236,6 +239,19 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
                     <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>,{' '}
                     <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link>{' '}
                     &amp; <Link href="/consent" target="_blank" rel="noopener">SMS Consent</Link>.
+                  </Typography>
+                </Box>
+              }
+            />
+            <FormControlLabel
+              sx={{ alignItems: 'flex-start', mt: 1 }}
+              control={<Checkbox checked={aiConsent} onChange={(e) => setAiConsent(e.target.checked)} sx={{ mt: -0.5 }} inputProps={{ 'aria-label': t('phoneSignup.aiConsentLabel') }} />}
+              label={
+                <Box>
+                  <Typography variant="body2">{t('phoneSignup.aiConsentLabel')}</Typography>
+                  <Typography variant="caption" color="text.secondary" component="div">
+                    {t('phoneSignup.aiConsentDisclosure')}{' '}
+                    <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
                   </Typography>
                 </Box>
               }

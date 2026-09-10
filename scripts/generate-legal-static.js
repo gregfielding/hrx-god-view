@@ -118,7 +118,7 @@ function renderPage(kind, docsByLocale) {
       <h1>${esc(doc.title || title)}</h1>
       <p class="meta">
         ${esc(doc.effectiveDate || '')} October 21, 2025 &middot;
-        ${esc(doc.lastUpdated || '')} October 21, 2025
+        ${esc(doc.lastUpdated || '')} September 10, 2026
       </p>
       <p class="meta">${esc(doc.appliesTo || '')}</p>
       <p class="intro">${esc(doc.introAlert || '')}</p>

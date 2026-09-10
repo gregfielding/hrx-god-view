@@ -1888,7 +1888,9 @@
       "linksTerms": "Terms of Use",
       "linksSMS": "SMS Consent",
       "linksSMSPrivacy": "SMS Privacy Notice",
-      "s2L4": "Mobile app data: if you use the C1 Staffing mobile app, we collect a push notification token so we can send you shift and payroll alerts, a device identifier, and crash and performance diagnostics. With your permission, the app also accesses your camera and photo library so you can take or upload a profile photo, documents, and certifications, and your device location so we can sort nearby jobs and show distance. You can revoke any of these permissions at any time in your device settings."
+      "s2L4": "Mobile app data: if you use the C1 Staffing mobile app, we collect a push notification token so we can send you shift and payroll alerts, a device identifier, and crash and performance diagnostics. With your permission, the app also accesses your camera and photo library so you can take or upload a profile photo, documents, and certifications, and your device location so we can sort nearby jobs and show distance. You can revoke any of these permissions at any time in your device settings.",
+      "s3L7": "Use AI assistance, only if you allow it: an AI service answers questions you send through in-app help, reads resumes you upload to fill in your profile, and reviews interview answers and profiles to give recruiters recommendations. AI output is advisory; a person makes every hiring decision. You can allow or decline this at sign-up and change it anytime in the app under Profile, About & Legal.",
+      "s4L4": "AI service providers: if you allow AI assistance, the information described above is sent to Anthropic (Claude) to perform those tasks for us. Anthropic processes it under its commercial terms, does not use it to train its models, and does not sell it. If you decline, it is not sent: your questions go to our team, uploaded resumes are not read by AI, and interview answers are reviewed with rule-based scoring only."
     },
     "terms": {
       "title": "Terms of Use",
@@ -2185,7 +2187,9 @@
     "smsConsentLabel": "Yes, text me about jobs, shifts, onboarding and my application (optional)",
     "smsConsentDisclosure": "By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One at the number above, including application updates, interview scheduling, onboarding reminders, shift offers and confirmations, payroll alerts, and account security messages. Message and data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment or of creating an account.",
     "smsConsentLinks": "See our",
-    "otpNote": "Tapping \"Text me a code\" sends one verification code to this number (message and data rates may apply)."
+    "otpNote": "Tapping \"Text me a code\" sends one verification code to this number (message and data rates may apply).",
+    "aiConsentLabel": "Allow AI assistance (optional)",
+    "aiConsentDisclosure": "C1 Staffing uses AI from Anthropic (Claude) to answer questions you send through Get help, read resumes you upload to fill in your profile, and review your quick-interview answers and profile to help recruiters match you with jobs. If you allow it, that information is sent to Anthropic only for those purposes and is not used to train its models. A recruiter makes every hiring decision. You can change this later. See our"
   },
   "workerPayroll": {
     "bankFirst": {

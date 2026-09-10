@@ -1,3 +1,4 @@
+import { AI_PROCESSING_CONSENT_VERSION } from './utils/aiProcessingConsent';
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
@@ -514,6 +515,8 @@ async function resolvePhoneSignup(
     ip: string;
     /** The separate, unchecked-by-default SMS box on the sign-up form (Twilio 10DLC: consent may not be bundled into account creation). */
     smsConsent?: boolean;
+    /** Separate, unchecked-by-default AI-processing checkbox (App Store 5.1.2(i), 2026-09-10). */
+    aiConsent?: boolean;
     userAgent?: string;
   },
 ): Promise<Record<string, unknown>> {
@@ -603,6 +606,7 @@ async function resolvePhoneSignup(
   // SMS consent is its OWN checkbox (2026-09-09): record exactly what the worker chose.
   const smsConsent = opts.smsConsent === true;
   const smsConsentStamp = { agreed: smsConsent, version: '2026-09-09', timestamp: agreementStamp.timestamp, source: 'phone_signup_checkbox' };
+  const aiProcessingStamp = { agreed: opts.aiConsent === true, version: AI_PROCESSING_CONSENT_VERSION, timestamp: agreementStamp.timestamp, source: 'phone_signup_checkbox' };
   // Wizard base-profile shape (apply/Wizard.tsx step 0) — email is null and
   // OPTIONAL now; Everee's flow collects it later when payroll needs it.
   await db.doc(`users/${uid}`).set(
@@ -672,6 +676,7 @@ async function resolvePhoneSignup(
       userAgreements: {
         termsOfUse: agreementStamp,
         smsConsent: smsConsentStamp,
+        aiProcessing: aiProcessingStamp,
         privacyPolicy: { acknowledged: true, version: '2025-10-21', timestamp: agreementStamp.timestamp },
       },
     },
@@ -876,6 +881,7 @@ export const checkOtp = onCall(
       jobContext: (d.jobContext as { tenantId?: string; tenantSlug?: string; jobId?: string } | null) ?? null,
       ip: callerIp,
       smsConsent: d.smsConsent === true,
+      aiConsent: d.aiConsent === true,
       userAgent: String(request.rawRequest?.headers?.['user-agent'] ?? '').slice(0, 300) || undefined,
     });
   }
@@ -903,6 +909,7 @@ export const checkOtp = onCall(
         jobContext: (d.jobContext as { tenantId?: string; tenantSlug?: string; jobId?: string } | null) ?? null,
         ip: callerIp,
         smsConsent: d.smsConsent === true,
+      aiConsent: d.aiConsent === true,
         userAgent: String(request.rawRequest?.headers?.['user-agent'] ?? '').slice(0, 300) || undefined,
       });
     }
@@ -948,6 +955,7 @@ export const checkOtp = onCall(
         jobContext: (d.jobContext as { tenantId?: string; tenantSlug?: string; jobId?: string } | null) ?? null,
         ip: callerIp,
         smsConsent: d.smsConsent === true,
+      aiConsent: d.aiConsent === true,
         userAgent: String(request.rawRequest?.headers?.['user-agent'] ?? '').slice(0, 300) || undefined,
       });
     }

@@ -1,3 +1,4 @@
+import { aiProcessingDeclined } from './utils/aiProcessingConsent';
 import * as admin from 'firebase-admin';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
@@ -222,6 +223,9 @@ async function calculateFitScoreWithAI(
   userData: any,
   jobOrder: any
 ): Promise<{ score: number; reasoning: string }> {
+  if (aiProcessingDeclined(userData)) {
+    return { score: 50, reasoning: 'AI fit scoring skipped: worker declined AI processing' };
+  }
   
   // Build lightweight prompt
   const prompt = `Score applicant fit (0-100) for job.
