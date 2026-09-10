@@ -409,3 +409,92 @@ Recording findings that need no code: Greg's phone showed a BBC News banner
 mid-recording (turn on Do Not Disturb), and the sign-in flow sends the SMS
 code BEFORE it knows whether the number has an account (by design —
 `sendOtp` then `checkOtp` returns candidates/none).
+
+## QA pass 2026-09-09 (Greg's device recordings + Claude on the iPhone 17 Pro simulator)
+
+Greg recorded two device walkthroughs and then asked for a full simulator
+pass (sign-up → apply → interview → every Profile screen). Everything below
+is fixed in c1_app unless marked OPEN. Build for the stores = **1.0.0+10 or
+later** (see "Build 9 sign-up was dead" above); rebuild both binaries with
+`tool/build_release.sh` after the last commit before uploading.
+
+**Sign-up / sign-in**
+- Sign-up after a phone sign-in with no account now lands on Home: the
+  server creates the account phone-verified via `checkOtp({signup:true,
+  recoveryToken})` (functions 7034fa45, deployed) and the app links the
+  email/password credential afterwards (c1_app cb0e5d9). Before, the app
+  created an email/password user with `phoneVerified:false` and the router
+  forced the legacy Phone Verification screen — a second SMS code for a
+  number verified a minute earlier.
+- "Create account" on the email sign-in screen now routes through the phone
+  sign-in (015c6ff); the email-first client sign-up path is only reachable
+  from a verified number.
+- "Sign in with email instead" was a dead link (router allowed only
+  /login, /signup, /forgot-password when signed out) — a616a1d.
+- Phone prefilled + locked on the sign-up form; "Use a different number" no
+  longer clips; padding fixed (cb1e586, a616a1d).
+- QA test phone: `+15555550101` / `246810` added to
+  `app_config/phone_auth.testPhones` (same fixed-code mechanism as the demo
+  `+15555550100`). Throwaway accounts created with it must be deleted
+  afterwards (auth user + users doc + tenant application) — see cleanup
+  script `functions/.scratch/cleanup_qa_account_20260909.ts`.
+
+**Jobs board**
+- "Nearest" now works: (a) the app reads `homeAddress.latitude/longitude`
+  (sign-up's shape) and prefers the home address over device GPS
+  (00c4342); (b) 127 of 207 active postings had NO coordinates and their
+  worksite location doc was missing (job-order → posting conversions) —
+  backfilled with the server geocoding key
+  (`functions/.scratch/backfill_posting_coords_20260909.ts`, dry-run with
+  `DRY=1`). OPEN: nothing stamps coordinates on NEW job-order-derived
+  postings; re-run the backfill script periodically or add it to the
+  posting-creation path (a new trigger needs a Cloud Run slot).
+
+**Apply wizard**
+- E-Verify "are you comfortable" question REMOVED (app bd665b0 + web
+  f61cff50, hosting deployed): asks about work authorization before an
+  offer. Postings that require E-Verify show the E-Verify participation
+  badge (small, bottom) on job detail in both apps instead
+  (`assets/branding/everify.png` = `public/img/everify.png`).
+- Removed: the E-Verify line on the requirements step, the "available to
+  start date" field. Footer reads "Skip" on any empty optional step
+  (resume, photo, skills, education, certifications), "Submit" on the last
+  step. Choice buttons are outlined until selected, solid when selected.
+  Apply header shows worksite city/state instead of "Location to be
+  confirmed". Photo step: the in-card "Skip for now" (which only revealed
+  a note) is gone; the footer Skip advances.
+
+**Quick interview (prescreen)**
+- Job-specific interviews (position packs trim the opening block) failed
+  at submit with "opening_target_work_types must be an array of strings":
+  the app sent nothing for trimmed multi-select keys, the server requires
+  arrays; the web's answer state starts with `[]`. App now always sends
+  every multi-select key as an array (b4a59bb).
+- System/app-bar Back steps to the previous question (PopScope); it only
+  leaves from the first question. Greg's back-tap on the last step had
+  dumped him on Home.
+
+**Profile**
+- Home Address editor opened EMPTY for app-created accounts: it read
+  `homeAddress.line1/postalCode/coordinates.*` while sign-up wrote
+  `street/zip/latitude/longitude`. Editor reads both; sign-up now also
+  writes `homeAddress.coordinates{lat,lng}` + `homeLat/homeLng` (510ae74).
+- Certification uploads were ALL permission-denied: the app wrote
+  `users/{uid}/certifications/{file}` but the Storage rule is
+  `users/{uid}/certifications/{certSlug}/{fileName}` (web shape). Fixed +
+  failures now show a dialog (d6357fd).
+- ☠️ SnackBars never rendered anywhere in the shell (verified on video:
+  saves, validation errors and the upload failure were all silent).
+  Root cause not pinned; `SnackBarThemeData.behavior` switched from
+  floating to fixed (verify after rebuild). Belt-and-braces: profile
+  saves pop back to the list on success; the deletion request confirms
+  with a dialog.
+- Personal details: phone shown formatted; the "last 4 of SSN" subtitle
+  removed (the field doesn't exist; last4SSN is an Everee mirror).
+- OPEN (design nit): Profile → preferences only offers Hospitality /
+  Industrial (matches the web's legacy target-industry subset).
+
+**Store status**: Apple 1.0.0 (9) rejected 2.1 (info needed) — reply draft
+in `c1_app/store/APP_REVIEW_REPLY_2026-09.md`; Play 1.0.0 (8) still in
+review. Both need the new build (10+) uploaded; Play's in-review release
+gets replaced by a new Production release.
