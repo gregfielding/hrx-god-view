@@ -84,6 +84,7 @@ import {
   Clear as ClearIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { ReviewRequestChips, useOpenReviewRequestsByUserId } from '../components/recruiter/ApplicantReviewRequests';
 import UniversalBackButton from '../components/common/UniversalBackButton';
 import { format, formatDistanceToNow } from 'date-fns';
 import {
@@ -452,6 +453,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
   const [assignmentStatusByUserId, setAssignmentStatusByUserId] = useState<Map<string, string>>(new Map());
   const [refreshingScores, setRefreshingScores] = useState(false);
+  const reviewRequestsByUserId = useOpenReviewRequestsByUserId(tenantId, jobOrderId);
 
   // Favorites hook for starring applicants
   const { isFavorite, toggleFavorite } = useFavorites('users');
@@ -2218,6 +2220,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                         </Tooltip>
                       );
                     })()}
+                    <ReviewRequestChips tenantId={tenantId} requests={reviewRequestsByUserId.get(applicant.uid)} />
                     <Menu
                       anchorEl={statusMenuAnchor[rowId]}
                       open={Boolean(statusMenuAnchor[rowId])}

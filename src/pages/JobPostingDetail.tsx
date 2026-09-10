@@ -90,6 +90,8 @@ import AuthDialog from '../components/AuthDialog';
 import { langToggleStyle } from './authMinimalStyles';
 import WorkerBottomSheet from '../components/worker/WorkerBottomSheet';
 import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
+import AiHiringNoticeCard from '../components/worker/aiHiring/AiHiringNoticeCard';
+import { isIllinoisPosting } from '../shared/illinoisAiHiring';
 
 const JobPostingDetail: React.FC = () => {
   const { postId, tenantSlug } = useParams<{ postId: string; tenantSlug?: string }>();
@@ -3488,6 +3490,17 @@ const JobPostingDetail: React.FC = () => {
                 </Typography>
               </CardContent>
             </Card>
+          ) : null}
+
+          {isIllinoisPosting(posting) ? (
+            <Box sx={{ mb: 2 }}>
+              <AiHiringNoticeCard
+                tenantId={resolvedTenantId}
+                jobId={postId ?? null}
+                jobOrderId={posting.jobOrderId ?? null}
+                postingTitle={posting.postTitle || posting.jobTitle || null}
+              />
+            </Box>
           ) : null}
 
           {/* Location — address, map preview, Get Directions, optional distance */}

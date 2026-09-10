@@ -1,4 +1,46 @@
 {
+  "aiHiring": {
+    "noticeTitle": "How we use AI in hiring",
+    "noticeBody": "This job is in Illinois. C1 uses automated tools, including AI, for prescreening and back-office work: they score your prescreen interview answers and profile, which can move you up a tier and into our on-call worker pool. A C1 recruiter speaks with every applicant before they start work.",
+    "noticeData": "What they use: your application, profile, prescreen answers, and screening status.",
+    "noticeRights": "You can ask a recruiter to review your application or request an accommodation at any time.",
+    "askRecruiter": "Ask a recruiter",
+    "selfIdCta": "Voluntary self-identification",
+    "continueToInterview": "Continue to the interview",
+    "signInToRequest": "Sign in to ask a recruiter or answer voluntary self-identification.",
+    "kindReview": "Review my application",
+    "kindAccommodation": "Request an accommodation",
+    "reviewHelp": "A recruiter will review your application personally and contact you.",
+    "accommodationHelp": "Tell us what you need for the application, the interview, or the job. A recruiter will contact you.",
+    "detailsLabel": "Details (optional)",
+    "sendRequest": "Send request",
+    "requestSent": "Request sent. A recruiter will contact you.",
+    "requestFailed": "Your request couldn't be sent ({code}). Try again.",
+    "cancel": "Cancel",
+    "done": "Done",
+    "selfIdIntro": "C1 checks that our hiring tools treat everyone fairly. Answering is optional and won't affect your application. Recruiters never see your answers — only overall totals are reviewed.",
+    "raceLabel": "Race / ethnicity",
+    "sexLabel": "Sex",
+    "race": {
+      "hispanic_latino": "Hispanic or Latino",
+      "white": "White",
+      "black_african_american": "Black or African American",
+      "asian": "Asian",
+      "american_indian_alaska_native": "American Indian or Alaska Native",
+      "native_hawaiian_pacific_islander": "Native Hawaiian or Other Pacific Islander",
+      "two_or_more": "Two or more races",
+      "decline": "I prefer not to answer"
+    },
+    "sex": {
+      "male": "Male",
+      "female": "Female",
+      "nonbinary": "Nonbinary",
+      "decline": "I prefer not to answer"
+    },
+    "saveAnswers": "Save answers",
+    "saved": "Saved. Thank you.",
+    "saveFailed": "Your answers couldn't be saved ({code}). Try again."
+  },
   "common": {
     "save": "Save",
     "cancel": "Cancel",

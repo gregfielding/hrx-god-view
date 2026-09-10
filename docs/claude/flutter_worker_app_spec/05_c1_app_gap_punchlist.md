@@ -266,6 +266,17 @@ now requires a same-session Flutter update or a punch-list entry here.
 [[project-payroll-help-desk]] for the full decision. One help door,
 grounded assistant, one queue, no dead ends; standalone web Q&A retired.
 
+## 2026-09-10 — Illinois AI-in-hiring (web + app shipped together)
+See [[project_illinois_ai_hiring]]. App pieces: `AiHiringNoticeCard` (job
+detail under the hero, apply wizard review step, application detail); the
+prescreen `_Phase.notice` gate stamping `users/{uid}.aiHiringNotice`;
+`showRecruiterReviewRequestSheet` → `tenants/{t}/recruiter_review_requests`;
+`VoluntarySelfIdScreen` (`/c1/workers/profile/self-identification` →
+`eeo_self_identifications/{uid}`). `JobPostingModel.worksiteState` now falls
+back to the posting's top-level `state`. One deliberate asymmetry, not a gap:
+web My Applications rows get an "Ask a recruiter" action; app Schedule rows
+don't, because app application detail carries the full notice card.
+
 ## Watchouts
 - **Cold-start Riverpod race — MITIGATED, not fully fixed (c1_app
   013ada7, 2026-08-29)**: intermittent cold-boot red screen "Concurrent

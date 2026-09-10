@@ -16,6 +16,8 @@ import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 import { extractDateFromShiftDate } from '../utils/gigShiftApplicationLimits';
 import WorkerApplicationListCard from '../components/worker/applications/WorkerApplicationListCard';
 import WorkerPageHeader from '../components/worker/WorkerPageHeader';
+import AskRecruiterButton from '../components/worker/aiHiring/AskRecruiterButton';
+import { postingStateCode } from '../shared/illinoisAiHiring';
 
 /** Combine YYYY-MM-DD with optional time (HH:mm string or Timestamp) for list display. */
 function combineShiftDateAndTime(shiftDateStr: string, startTime: unknown): Date | null {
@@ -42,10 +44,13 @@ interface Application {
   id: string;
   tenantId: string;
   jobId: string;
+  jobOrderId?: string;
   jobTitle?: string;
   postTitle?: string;
   companyName?: string;
   location?: string;
+  /** Worksite state code — Illinois applications get the "Ask a recruiter" action. */
+  stateCode?: string;
   payRate?: number;
   status: string;
   submittedAt: Date;
@@ -236,10 +241,24 @@ const UserApplications: React.FC<UserApplicationsProps> = ({ embedded = false })
               }
             }
 
+            let stateCode = postingStateCode({
+              worksiteAddress: appData.worksiteAddress ?? appData.worksite,
+            });
+            if (!stateCode) {
+              try {
+                const postingSnap = await getDoc(doc(db, 'tenants', tenantId, 'job_postings', jobId));
+                if (postingSnap.exists()) stateCode = postingStateCode(postingSnap.data());
+              } catch (_) {
+                // State only drives the Illinois "Ask a recruiter" action.
+              }
+            }
+
             loadedApplications.push({
               id: appSnap.id,
               tenantId,
               jobId,
+              jobOrderId: typeof appData.jobOrderId === 'string' ? appData.jobOrderId : undefined,
+              stateCode,
               jobTitle,
               postTitle: postTitle || jobTitle,
               companyName,
@@ -465,6 +484,18 @@ const UserApplications: React.FC<UserApplicationsProps> = ({ embedded = false })
                   openJob(app);
                 }}
                 onWithdraw={(e) => handleWithdraw(e, app)}
+                extraActions={
+                  app.stateCode === 'IL' ? (
+                    <AskRecruiterButton
+                      label={t('aiHiring.askRecruiter')}
+                      tenantId={app.tenantId}
+                      jobId={app.jobId}
+                      jobOrderId={app.jobOrderId ?? null}
+                      applicationId={app.id}
+                      postingTitle={title}
+                    />
+                  ) : undefined
+                }
               />
             );
           })}

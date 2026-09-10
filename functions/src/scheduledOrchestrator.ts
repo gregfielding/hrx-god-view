@@ -554,8 +554,36 @@ const SUBTASKS: SubtaskConfig[] = [
     handler: runJobOrderHiringPlanSweepSubtask,
     maxDurationMs: 90000,
     runParallel: false
+  },
+  {
+    // Illinois AI-in-hiring (Greg 2026-09-10): alerts recruiters to worker
+    // "Ask a recruiter" requests hourly and refreshes the daily hiring-rate
+    // report. Tenants with no requests or Illinois postings cost ~3 queries/hour.
+    name: 'ai_hiring_monitor_sweep',
+    enabled: isFeatureEnabled('ai_hiring_monitor_sweep', CONFIG.ENABLE_AI_HIRING_MONITOR_SWEEP),
+    envFlag: 'ENABLE_AI_HIRING_MONITOR_SWEEP',
+    handler: runAiHiringMonitorSweepSubtask,
+    maxDurationMs: 60000,
+    runParallel: false
   }
 ];
+
+async function runAiHiringMonitorSweepSubtask(): Promise<SubtaskResult> {
+  const start = Date.now();
+  try {
+    const { runAiHiringMonitorSweep } = await import('./compliance/aiHiringMonitorSweep');
+    const totals = await runAiHiringMonitorSweep(db);
+    return {
+      success: totals.errors === 0,
+      durationMs: Date.now() - start,
+      itemsProcessed: totals.requestsNotified + totals.reportsWritten,
+      errors: totals.errors,
+      message: `requestsNotified=${totals.requestsNotified} reports=${totals.reportsWritten}`
+    };
+  } catch (error: any) {
+    return { success: false, durationMs: Date.now() - start, message: error.message };
+  }
+}
 
 async function runJobOrderHiringPlanSweepSubtask(): Promise<SubtaskResult> {
   const start = Date.now();

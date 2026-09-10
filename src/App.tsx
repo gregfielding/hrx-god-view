@@ -207,6 +207,7 @@ const DataHealthPage = lazy(() => import('./pages/reports/DataHealthPage'));
 const I9StatusReportPage = lazy(() => import('./pages/reports/I9StatusReportPage'));
 const AcaLookbackReportPage = lazy(() => import('./pages/reports/AcaLookbackReportPage'));
 const TaxSickLeaveReportPage = lazy(() => import('./pages/reports/TaxSickLeaveReportPage'));
+const AiHiringMonitorReportPage = lazy(() => import('./pages/reports/AiHiringMonitorReportPage'));
 const QboClassesPage = lazy(() => import('./pages/reports/QboClassesPage'));
 const ClassificationAuditPage = lazy(() => import('./pages/reports/ClassificationAuditPage'));
 const ExpenseReconPage = lazy(() => import('./pages/reports/ExpenseReconPage'));
@@ -926,7 +927,7 @@ function App() {
             </ProtectedRoute>
           }
         />
-        {['i9-status', 'aca-lookback', 'tax-liability'].map((slug) => (
+        {['i9-status', 'aca-lookback', 'tax-liability', 'ai-hiring-illinois'].map((slug) => (
           <Route
             key={slug}
             path={`reports/${slug}`}
@@ -937,6 +938,8 @@ function App() {
                     <I9StatusReportPage />
                   ) : slug === 'aca-lookback' ? (
                     <AcaLookbackReportPage />
+                  ) : slug === 'ai-hiring-illinois' ? (
+                    <AiHiringMonitorReportPage />
                   ) : (
                     <TaxSickLeaveReportPage />
                   )}

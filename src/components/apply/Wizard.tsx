@@ -79,6 +79,8 @@ import { getRequirementPackV1 } from '../../data/jobRequirementPacksV1';
 import { computeJobScoreSummaryV1 } from '../../utils/jobScoreV1';
 import { getUserScore } from '../../utils/scoreSummary';
 import { useT } from '../../i18n';
+import AiHiringNoticeCard from '../worker/aiHiring/AiHiringNoticeCard';
+import { isIllinoisPosting } from '../../shared/illinoisAiHiring';
 import { buildCanonicalWorkerProfileWritePatch, expandDottedKeys } from '../../utils/workerReadinessWriteModel';
 import { buildCanonicalHomeAddressFromWizardPersonal } from '../../utils/buildCanonicalHomeAddress';
 import { isApplyHomeAddressValid } from '../../utils/applyHomeAddressValid';
@@ -3966,6 +3968,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           >
             {renderStep()}
           </Box>
+
+          {isLastVisibleStep && !accountOnly && jobId && isIllinoisPosting(posting) ? (
+            <Box sx={{ mt: 2, px: { xs: 2, md: 3 } }}>
+              <AiHiringNoticeCard
+                tenantId={tenantId}
+                jobId={jobId}
+                jobOrderId={posting?.jobOrderId ?? null}
+                postingTitle={posting?.postTitle || posting?.jobTitle || null}
+              />
+            </Box>
+          ) : null}
 
           {/* Back/Next bar directly under form */}
           <Box

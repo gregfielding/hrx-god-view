@@ -1164,12 +1164,54 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Voluntary self-identification (Illinois AI-in-hiring, 2026-09-10): the
+    // worker's own answers. Recruiters never read these — only the worker and
+    // HRX; the daily hiring-rate report reads them server-side (admin SDK).
+    match /eeo_self_identifications/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isHRX());
+      allow create, update: if request.auth != null && request.auth.uid == uid &&
+        request.resource.data.keys().hasOnly(['uid', 'raceEthnicity', 'sex', 'version', 'source', 'createdAt', 'updatedAt']) &&
+        request.resource.data.uid == uid &&
+        (request.resource.data.raceEthnicity == null ||
+          request.resource.data.raceEthnicity in ['hispanic_latino', 'white', 'black_african_american', 'asian', 'american_indian_alaska_native', 'native_hawaiian_pacific_islander', 'two_or_more', 'decline']) &&
+        (request.resource.data.sex == null ||
+          request.resource.data.sex in ['male', 'female', 'nonbinary', 'decline']);
+      allow delete: if false;
+    }
+
     // --- TENANTS (Unified Agencies and Customers) ---
     match /tenants/{tenantId} {
       allow read, write: if isHRX();
       allow read: if isAssignedToTenant(tenantId);
       allow create: if isHRX() && validateTenantSlug();
       allow update: if isHRX() && (resource.data.slug == request.resource.data.slug || validateTenantSlug());
+
+      // --- RECRUITER REVIEW REQUESTS (Illinois AI-in-hiring, 2026-09-10) ---
+      // A worker asks for a person to review their application or requests an
+      // accommodation. Details can be medical, so reads stay with the worker and
+      // recruiting staff; the orchestrator stamps notifiedAt server-side.
+      match /recruiter_review_requests/{requestId} {
+        allow create: if request.auth != null &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.tenantId == tenantId &&
+          request.resource.data.keys().hasOnly(['tenantId', 'userId', 'kind', 'details', 'applicationId', 'jobId', 'jobOrderId', 'postingTitle', 'stateCode', 'status', 'source', 'notifiedAt', 'createdAt', 'updatedAt']) &&
+          request.resource.data.kind in ['review', 'accommodation'] &&
+          request.resource.data.status == 'open' &&
+          request.resource.data.notifiedAt == null &&
+          request.resource.data.details is string &&
+          request.resource.data.details.size() <= 2000;
+        allow read: if request.auth != null &&
+          (resource.data.userId == request.auth.uid || isHRX() || isTenantAdmin(tenantId) ||
+            (isAssignedToTenant(tenantId) && hasRecruiterAccess()));
+        allow update: if isHRX() || isTenantAdmin(tenantId) || (isAssignedToTenant(tenantId) && hasRecruiterAccess());
+        allow delete: if false;
+      }
+
+      // --- COMPLIANCE REPORTS (server-written aggregates; managers and up) ---
+      match /compliance_reports/{reportId} {
+        allow read: if hasSecurityLevel(tenantId, 6);
+        allow write: if false;
+      }
 
       // --- ADJUDICATION CASES (background-check compliance, policy v1.1) ---
       // Conviction-history content: reads restricted to staff (L5+/admin),

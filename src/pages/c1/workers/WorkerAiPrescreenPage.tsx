@@ -25,7 +25,9 @@ import {
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import AiHiringNoticeCard from '../../../components/worker/aiHiring/AiHiringNoticeCard';
+import { AI_HIRING_NOTICE_VERSION, isIllinoisPosting } from '../../../shared/illinoisAiHiring';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
@@ -922,6 +924,56 @@ const WorkerAiPrescreenPage: React.FC = () => {
     };
   }, [applicationId, tenantId, user?.uid]);
 
+  /**
+   * Illinois AI-in-hiring (Greg 2026-09-10): the AI-use notice comes before the
+   * interview for an Illinois application until the worker acknowledges the
+   * current version. Lookup failures never block the interview; the posting,
+   * apply wizard and My Applications carry the same notice.
+   */
+  const [aiHiringNotice, setAiHiringNotice] = useState<{
+    jobId: string | null;
+    jobOrderId: string | null;
+    title: string;
+  } | null>(null);
+  const [aiHiringNoticeAcknowledged, setAiHiringNoticeAcknowledged] = useState(false);
+  useEffect(() => {
+    if (!applicationId || !tenantId || !user?.uid) {
+      setAiHiringNotice(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const appSnap = await getDoc(doc(db, 'tenants', tenantId, 'applications', applicationId));
+        if (!appSnap.exists() || cancelled) return;
+        const app = appSnap.data() as Record<string, unknown>;
+        if (String(app.userId || app.candidateId || '').trim() !== user.uid) return;
+        const jobId = String(app.jobId || '').trim();
+        const jobOrderId = String(app.jobOrderId || '').trim();
+        let source: Record<string, unknown> | null = null;
+        if (jobId) {
+          const postingSnap = await getDoc(doc(db, 'tenants', tenantId, 'job_postings', jobId));
+          if (postingSnap.exists()) source = postingSnap.data() as Record<string, unknown>;
+        }
+        if (!source && jobOrderId) {
+          const jobOrderSnap = await getDoc(doc(db, 'tenants', tenantId, 'job_orders', jobOrderId));
+          if (jobOrderSnap.exists()) source = jobOrderSnap.data() as Record<string, unknown>;
+        }
+        if (cancelled || !source || !isIllinoisPosting(source)) return;
+        setAiHiringNotice({
+          jobId: jobId || null,
+          jobOrderId: jobOrderId || null,
+          title: String(source.postTitle || source.jobTitle || source.jobOrderName || '').trim(),
+        });
+      } catch {
+        // Notice lookup never blocks the interview.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applicationId, tenantId, user?.uid]);
+
   useEffect(() => {
     if (!user?.uid) {
       setDynamicSteps([]);
@@ -1362,6 +1414,55 @@ const WorkerAiPrescreenPage: React.FC = () => {
           saveLabel={t('workerAiPrescreen.addressGate.save')}
           savingLabel={t('workerAiPrescreen.addressGate.saving')}
           onSaved={() => setAddressGateDone(true)}
+        />
+      </Box>
+    );
+  }
+
+  const aiHiringNoticeDone =
+    aiHiringNoticeAcknowledged ||
+    (userDoc?.aiHiringNotice as { version?: unknown } | undefined)?.version === AI_HIRING_NOTICE_VERSION;
+
+  if (aiHiringNotice && !aiHiringNoticeDone && !done) {
+    const acknowledge = async () => {
+      setAiHiringNoticeAcknowledged(true);
+      if (!user?.uid) return;
+      try {
+        await setDoc(
+          doc(db, 'users', user.uid),
+          {
+            aiHiringNotice: {
+              version: AI_HIRING_NOTICE_VERSION,
+              acknowledgedAt: serverTimestamp(),
+              source: 'web_prescreen',
+              applicationId,
+            },
+          },
+          { merge: true },
+        );
+      } catch {
+        // The acknowledgement is a record, never a blocker.
+      }
+    };
+    return (
+      <Box sx={{ p: { xs: 1.5, sm: 2 }, maxWidth: 560, mx: 'auto' }}>
+        {renderFramingHeader()}
+        <AiHiringNoticeCard
+          tenantId={tenantId}
+          jobId={aiHiringNotice.jobId}
+          jobOrderId={aiHiringNotice.jobOrderId}
+          applicationId={applicationId}
+          postingTitle={aiHiringNotice.title}
+          footer={
+            <Button
+              fullWidth
+              variant="contained"
+              sx={{ mt: 2, py: 1.25, fontWeight: 600 }}
+              onClick={() => void acknowledge()}
+            >
+              {t('aiHiring.continueToInterview')}
+            </Button>
+          }
         />
       </Box>
     );
