@@ -645,3 +645,20 @@ Design:
 - Demo account (Alex Rivera, +15555550100) has a San Jose home address
   (distances show) and NO AI choice on purpose — reviewers see the one-time
   prompt. If testing flips it, remove `userAgreements.aiProcessing` again.
+
+## Store status 2026-09-10 (evening)
+- ☠️ **Google Play published 1.0.0 (8) to Production (US) on 2026-09-10.**
+  Build 8 has no Places key, so sign-up is dead on the live Android app.
+  Fix = Play Console → Production → Create new release → build-14 AAB.
+  Managed publishing is OFF: any saved listing edit goes live after review.
+- Store screenshots refreshed on build 14 (`c1_app/store/screenshots/`,
+  commit e7372af): iPhone 6.9" + 6.5" + Play 9:16 (7, EN+ES) and iPad 13"
+  (5, incl. Assignments). ASC version 1.0.0 iPhone 6.5" + iPad 13" sets
+  replaced. Play phone screenshots deliberately NOT swapped yet — do it
+  with the build-14 release so the live listing matches the live build.
+- Chrome's file_upload only reads the session's working dir: copy files
+  into `functions/.scratch/` first. ASC's visible "Choose File" is a
+  button; the real target is the hidden `input[type=file]` (find it by
+  "hidden file input" — the first ref returned is the button).
+- ASC shows a "Review New Social Media Questions on Age Ratings" banner;
+  check App Information → Age Rating before resubmitting.
