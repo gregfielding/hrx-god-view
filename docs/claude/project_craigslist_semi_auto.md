@@ -58,6 +58,12 @@
   `select[name=n]` with value "SF bay area", then a sub-area radio page, then a neighborhood page).
   The Children's Creativity Museum CORT order (8zdLxX4CwnqPQw0ez6GM) only has a private draft post
   with no description or pay rate — not postable until a recruiter publishes it.
+- **Delivery 2026-09-10:** OnTrac Romeoville Warehouse Workers (#524, post OLKTeyT9pdFPnHlMaUbd)
+  published by Greg as a job (CL id 7964233401, $45, chicago > south chicagoland > general labor,
+  full-time / entry level / no replies), live URL recorded via `craigslistMarkPosted`
+  (`functions/.scratch/cl-mark-posted-524.ts`). Claude filled the form in Greg's Chrome only after
+  the session left Auto mode — the Auto-mode classifier blocked typing into and submitting the
+  Craigslist form even with Greg's go-ahead in chat.
 - The form's existing `craigslistUrl` field doubles as the "live URL" input; `craigslist.status`
   is set to 'posted' by the tool or (TODO) by the form when a craigslist.org URL is pasted.
 - Site map covers the metros C1 works in; unknown cities fall back to the state default.
