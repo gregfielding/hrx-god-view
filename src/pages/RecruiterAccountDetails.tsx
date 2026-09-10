@@ -1850,6 +1850,48 @@ const RecruiterAccountDetails: React.FC = () => {
   /** Full parent account doc for Order Defaults → Order Details inheritance (national → child). */
   const [orderDefaultsInheritanceParent, setOrderDefaultsInheritanceParent] = useState<RecruiterAccount | null>(null);
 
+  // Worksite link for CHILD accounts (Greg, 2026-07-22): manual child
+  // accounts had no UI to set companyId/companyLocationId — the fields the
+  // gig-JO factory and the header's worksite card read. The Autocomplete can
+  // only show a linked location once its options exist, so they load on
+  // mount when a location is linked (and on open otherwise). Declared above
+  // the loading early-return: hooks below it crashed fresh-fetch loads with
+  // React #310 (2026-07-23).
+  const inheritedCompanyIdForWorksite =
+    ((orderDefaultsInheritanceParent?.associations?.companyIds ?? []) as string[])[0] ??
+    ((account?.associations?.companyIds ?? []) as string[])[0] ??
+    null;
+  const loadWorksiteLinkOptions = async (): Promise<void> => {
+    if (!tenantId || !inheritedCompanyIdForWorksite || worksiteLinkOptions.length > 0) return;
+    setWorksiteLinkLoading(true);
+    try {
+      const snap = await getDocs(
+        collection(db, 'tenants', tenantId, 'crm_companies', inheritedCompanyIdForWorksite, 'locations'),
+      );
+      const opts = snap.docs
+        .map((d) => {
+          const l = d.data() as Record<string, any>;
+          return {
+            id: d.id,
+            name: String(l.name ?? l.nickname ?? '').trim() || d.id,
+            subtitle: [l.address ?? l.street, l.city, [l.state, l.zipCode ?? l.zip].filter(Boolean).join(' ')]
+              .filter(Boolean)
+              .join(', '),
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setWorksiteLinkOptions(opts);
+    } catch (err) {
+      console.warn('Failed to load company locations for worksite link', err);
+    } finally {
+      setWorksiteLinkLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (account?.companyLocationId) void loadWorksiteLinkOptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, inheritedCompanyIdForWorksite, account?.companyLocationId]);
+
   /** Entity (Employer of Record) is the source of truth for E-Verify; we look it up and show read-only. */
   const displayEntityId = account ? (isChildAccount && parentDefaults != null ? parentDefaults.hiringEntityId : (account.hiringEntityId ?? null)) : null;
   const { entity: displayEntity, loading: displayEntityLoading } = useEntity(tenantId, displayEntityId);
@@ -5395,43 +5437,6 @@ const RecruiterAccountDetails: React.FC = () => {
         </Stack>
       </Box>
     );
-  };
-
-  // Worksite link for CHILD accounts (Greg, 2026-07-22): manual child
-  // accounts had no UI to set companyId/companyLocationId — the fields
-  // the gig-JO factory and the header's worksite card read (auto-created
-  // children get them stamped by the location trigger). Options load
-  // lazily from the inherited company's locations when opened. The
-  // useState pair lives with the top state cluster — declaring it here,
-  // below the loading early-return, crashed fresh-fetch loads with
-  // React #310 (2026-07-23).
-  const inheritedCompanyIdForWorksite =
-    ((orderDefaultsInheritanceParent?.associations?.companyIds ?? []) as string[])[0] ??
-    ((account?.associations?.companyIds ?? []) as string[])[0] ??
-    null;
-  const loadWorksiteLinkOptions = async (): Promise<void> => {
-    if (!tenantId || !inheritedCompanyIdForWorksite || worksiteLinkOptions.length > 0) return;
-    setWorksiteLinkLoading(true);
-    try {
-      const snap = await getDocs(
-        collection(db, 'tenants', tenantId, 'crm_companies', inheritedCompanyIdForWorksite, 'locations'),
-      );
-      const opts = snap.docs
-        .map((d) => {
-          const l = d.data() as Record<string, any>;
-          return {
-            id: d.id,
-            name: String(l.name ?? l.nickname ?? '').trim() || d.id,
-            subtitle: [l.address ?? l.street, l.city, l.state].filter(Boolean).join(', '),
-          };
-        })
-        .sort((a, b) => a.name.localeCompare(b.name));
-      setWorksiteLinkOptions(opts);
-    } catch (err) {
-      console.warn('Failed to load company locations for worksite link', err);
-    } finally {
-      setWorksiteLinkLoading(false);
-    }
   };
 
   /** Shared with Edit Account Details modal and Cascading Data → Account Details card. */
