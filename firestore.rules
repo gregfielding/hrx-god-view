@@ -2267,7 +2267,17 @@ service cloud.firestore {
           // Allow public read for job board display
           allow read: if true;
         }
-        
+
+        // --- HIRING PLAN (server-written by job_order_hiring_plan_sweep) ---
+        match /hiring_plan/{docId} {
+          allow read: if isHRX() || isTenantAdmin(tenantId) || (isAssignedToTenant(tenantId) && hasRecruiterAccess());
+          allow write: if false;
+        }
+        match /hiring_plan_hires/{userId} {
+          allow read: if isHRX() || isTenantAdmin(tenantId) || (isAssignedToTenant(tenantId) && hasRecruiterAccess());
+          allow write: if false;
+        }
+
         // --- APPLICATIONS (Job Order Subcollection - Phase 2 / career jobs) ---
         match /applications/{applicationId} {
           allow read, write: if isHRX() || isTenantAdmin(tenantId);

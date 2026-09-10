@@ -258,6 +258,10 @@ export async function runTierPromotionSweepForTenant(
         continue;
       }
 
+      // A live no-show penalty is repaid through earn-back hours, never by
+      // the scorecard.
+      if (penalty) continue;
+
       // A human already ruled on this worker — respect it.
       if (existing && (existing.status === 'dismissed' || existing.status === 'approved')) continue;
 

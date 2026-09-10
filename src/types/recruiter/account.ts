@@ -251,8 +251,6 @@ export interface RecruiterAccount {
     autoOnboardDownToTier?: 0 | 1 | 2;
     /** Daily auto-onboard budget for this account family (default 25). */
     maxAutoOnboardsPerDay?: number;
-    /** Hourly sweep may auto-apply qualifying Tier 3→2 promotions for this account's pool. */
-    autoPromoteApplicants?: boolean;
     lastSweepAt?: unknown;
     lastSweepStats?: {
       pooledApplications?: number;

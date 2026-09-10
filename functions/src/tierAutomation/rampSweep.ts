@@ -11,12 +11,10 @@
  *      on (their applications predate the opt-in — no write, no trigger);
  *   2. budget-capped skips (the trigger deliberately does not stamp on
  *      cap, so the next sweep after midnight retries);
- *   3. account-scoped Tier 3→2 auto-promotion for ramp accounts
- *      (`autoPromoteApplicants`): the tenant-wide nightly sweep may sit
- *      in 'propose' mode, but a ramp account has explicitly asked for
- *      automatic movement of ITS applicant pool — same shared scorer,
- *      same threshold config, same promotion/audit shape, and human
- *      decisions on proposals (dismissed/approved) are still respected.
+ *   3. same-hour Tier 3→2 promotion for the pool. Promotion is user-based
+ *      (Greg 2026-09-10): one tenant rule, applied only when the tenant's
+ *      tier automation mode is 'automatic'. The sweep evaluates its
+ *      applicants now rather than waiting for the nightly run.
  *
  * COST: tenants without opted-in accounts cost two account queries per
  * hour. Pool scans are capped (chunked 'in' queries; per-account query
@@ -26,14 +24,10 @@
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 
-import {
-  extractTierScoreSignals,
-  normalizeTierAutomationConfig,
-  scoreTierPromotion,
-} from '../shared/workerTierScoring';
+import { normalizeTierAutomationConfig } from '../shared/workerTierScoring';
+import { promoteToTier2IfQualified, resolveGlobalTier } from './applicantPromotion';
 import { maybeAutoOnboardTierTwoApplicant, resolveAutoOnboardPolicy } from './tier2AutoOnboard';
 
-const ENGINE_ACTOR = { id: 'hrx-tier-engine', name: 'HRX Tier Engine' };
 const SWEEP_STATUSES = new Set(['submitted', 'waitlisted']);
 const MAX_JOB_DOCS_PER_ACCOUNT = 300;
 const MAX_APPLICATIONS_PER_ACCOUNT = 600;
@@ -50,52 +44,10 @@ export interface RampSweepTotals {
 
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 
-function resolveGlobalTier(data: Record<string, unknown>): number {
-  const tiers = (data.workerTiers ?? {}) as Record<string, unknown>;
-  const g = Number(tiers.global);
-  return g === 1 || g === 2 ? g : 3;
-}
-
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
-}
-
-async function hasAppPushToken(db: admin.firestore.Firestore, uid: string): Promise<boolean> {
-  const snap = await db
-    .collection('users')
-    .doc(uid)
-    .collection('pushTokens')
-    .where('platform', 'in', ['iOS', 'Android', 'ios', 'android'])
-    .limit(1)
-    .get();
-  return !snap.empty;
-}
-
-/** AccuSource completions for one candidate (same signals the nightly sweep maps tenant-wide). */
-async function screeningCompletionsFor(
-  db: admin.firestore.Firestore,
-  tenantId: string,
-  uid: string,
-): Promise<{ bg: boolean; drug: boolean }> {
-  const snap = await db
-    .collection('backgroundChecks')
-    .where('tenantId', '==', tenantId)
-    .where('candidateId', '==', uid)
-    .limit(25)
-    .get();
-  let bg = false;
-  let drug = false;
-  for (const d of snap.docs) {
-    const b = d.data() as Record<string, unknown>;
-    const hrxStatus = String(b.hrxStatus ?? '');
-    if (b.finalReportReady === true || b.orderCompleted === true || hrxStatus === 'report_ready' || hrxStatus === 'completed') {
-      bg = true;
-    }
-    if (b.drugReportReady === true || hrxStatus === 'drug_report_ready') drug = true;
-  }
-  return { bg, drug };
 }
 
 interface PooledApplication {
@@ -159,98 +111,6 @@ async function collectPool(
   return { pool: [...byId.values()], truncated };
 }
 
-/** Account-scoped automatic Tier 3→2 promotion, same shape as the nightly sweep's automatic mode. */
-async function maybePromoteForRamp(
-  db: admin.firestore.Firestore,
-  tenantId: string,
-  uid: string,
-  userData: Record<string, unknown>,
-  tierConfig: ReturnType<typeof normalizeTierAutomationConfig>,
-  accountLabel: string,
-): Promise<boolean> {
-  const proposalRef = db.doc(`tenants/${tenantId}/tier_promotion_proposals/${uid}`);
-  const proposalSnap = await proposalRef.get();
-  const proposalStatus = str((proposalSnap.data() ?? {}).status);
-  // A human already ruled on this worker — the ramp never overrides.
-  if (proposalStatus === 'dismissed' || proposalStatus === 'approved') return false;
-
-  const now = new Date();
-  const { bg, drug } = await screeningCompletionsFor(db, tenantId, uid);
-  const baseOpts = { backgroundCheckCompleted: bg, drugScreenCompleted: drug };
-  let card = scoreTierPromotion(
-    extractTierScoreSignals(userData, { ...baseOpts, appInstalled: null }),
-    tierConfig,
-    now,
-  );
-  const appFactorActive = now.toISOString().slice(0, 10) >= tierConfig.appInstalledEffectiveFrom;
-  if (appFactorActive && !card.qualifies && card.total + tierConfig.points.appInstalled >= tierConfig.threshold) {
-    const installed = await hasAppPushToken(db, uid);
-    card = scoreTierPromotion(
-      extractTierScoreSignals(userData, { ...baseOpts, appInstalled: installed }),
-      tierConfig,
-      now,
-    );
-  }
-  if (!card.qualifies) return false;
-
-  const name =
-    `${str(userData.firstName)} ${str(userData.lastName)}`.trim() || str(userData.displayName) || uid;
-  const batch = db.batch();
-  batch.update(db.doc(`users/${uid}`), {
-    'workerTiers.global': 2,
-    'workerTiers.updatedAt': admin.firestore.FieldValue.serverTimestamp(),
-    'workerTiers.lastChange': {
-      from: 3,
-      to: 2,
-      at: admin.firestore.Timestamp.now(),
-      byId: ENGINE_ACTOR.id,
-      byName: ENGINE_ACTOR.name,
-      source: 'auto_threshold',
-      reason: `Scorecard ${card.total}/${card.maxPossible}, threshold ${card.threshold} (ramp account: ${accountLabel})`,
-    },
-  });
-  batch.set(db.collection(`users/${uid}/activityLogs`).doc(), {
-    action: 'Tier Change',
-    actionType: 'security_change',
-    description: `Tier changed from Tier 3 to Tier 2 by ${ENGINE_ACTOR.name} (ramp-account threshold promotion, ${accountLabel}) — scorecard ${card.total}/${card.maxPossible}, threshold ${card.threshold}`,
-    severity: 'low',
-    source: 'system',
-    metadata: {
-      targetType: 'workerTier',
-      from: 3,
-      to: 2,
-      changeSource: 'auto_threshold',
-      changedById: ENGINE_ACTOR.id,
-      changedByName: ENGINE_ACTOR.name,
-      rampAccount: accountLabel,
-    },
-    timestamp: admin.firestore.FieldValue.serverTimestamp(),
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
-  batch.set(
-    proposalRef,
-    {
-      uid,
-      name,
-      status: 'auto_applied',
-      scorecard: {
-        total: card.total,
-        maxPossible: card.maxPossible,
-        threshold: card.threshold,
-        factors: card.factors.map((f) => ({ key: f.key, label: f.label, earned: f.earned, max: f.max, detail: f.detail })),
-      },
-      appliedAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastEvaluatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      createdAt: proposalSnap.exists
-        ? ((proposalSnap.data() ?? {}).createdAt ?? admin.firestore.FieldValue.serverTimestamp())
-        : admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
-  await batch.commit();
-  return true;
-}
-
 export async function runTierRampSweep(db: admin.firestore.Firestore): Promise<RampSweepTotals> {
   const totals: RampSweepTotals = {
     tenants: 0,
@@ -311,14 +171,20 @@ export async function runTierRampSweep(db: admin.firestore.Firestore): Promise<R
           if (u.exists) users.set(p.userId, (u.data() ?? {}) as Record<string, unknown>);
         }
 
-        // Account-scoped promotion pass (Tier 3 → 2) before onboarding,
-        // so freshly promoted workers onboard in this same run.
-        if (policy.autoPromote) {
+        // Promotion pass before onboarding, so freshly promoted workers
+        // onboard in this same run.
+        if (tierConfig.mode === 'automatic') {
           for (const [uid, u] of users) {
             if (resolveGlobalTier(u) !== 3) continue;
             try {
               // eslint-disable-next-line no-await-in-loop
-              const promoted = await maybePromoteForRamp(db, tenantId, uid, u, tierConfig, accountLabel);
+              const promoted = await promoteToTier2IfQualified(db, {
+                tenantId,
+                uid,
+                userData: u,
+                tierConfig,
+                contextLabel: `account ${accountLabel}`,
+              });
               if (promoted) {
                 totals.promoted++;
                 accountPromoted++;

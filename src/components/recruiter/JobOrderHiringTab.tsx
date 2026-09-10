@@ -12,6 +12,7 @@ import JobOrderHiringRecentDecisions from './jobOrderHiring/JobOrderHiringRecent
 import JobOrderHiringPolicySourceStrip from './jobOrderHiring/JobOrderHiringPolicySourceStrip';
 import JobOrderHiringEffectivePolicyCard from './jobOrderHiring/JobOrderHiringEffectivePolicyCard';
 import JobOrderHiringProgressAndBlockers from './jobOrderHiring/JobOrderHiringProgressAndBlockers';
+import JobOrderHiringPlanCard from './jobOrderHiring/JobOrderHiringPlanCard';
 import {
   resolveEffectiveJobOrderHiringPolicy,
   type EffectiveJobOrderHiringPolicy,
@@ -41,10 +42,10 @@ function computeTargetReady(
 }
 
 /**
- * Job Order → Hiring: Zones 1–2 read-only (policy source, effective policy, progress & blockers, funnel links).
- * Configuration editor ships in a later phase.
+ * Job Order → Hiring: the editable hiring plan, then Zones 1–2 read-only (policy source, effective policy,
+ * progress & blockers, funnel links).
  */
-const JobOrderHiringTab: React.FC<Props> = ({ jobOrder, tenantId }) => {
+const JobOrderHiringTab: React.FC<Props> = ({ jobOrder, tenantId, onSaved }) => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tenantData, setTenantData] = useState<Record<string, unknown> | null>(null);
@@ -141,10 +142,18 @@ const JobOrderHiringTab: React.FC<Props> = ({ jobOrder, tenantId }) => {
         </Alert>
       ) : null}
 
+      <JobOrderHiringPlanCard
+        tenantId={tenantId}
+        jobOrderId={jobOrder.id}
+        jobOrderRaw={jobOrderRaw}
+        onSaved={onSaved}
+      />
+
       {!JOB_ORDER_HIRING_AUTOMATION_ENABLED ? (
         <Alert severity="warning" sx={{ borderRadius: 1 }}>
-          <strong>Hiring automation is paused at launch.</strong> Targets and thresholds below reflect saved policy, but
-          auto-advance, phase 6 queueing, and gig fallback stay off until enabled.
+          <strong>AI auto-advance is paused at launch.</strong> Targets and thresholds below reflect saved policy, but
+          auto-advance, phase 6 queueing, and gig fallback stay off until enabled. The hiring plan above runs on its
+          own.
         </Alert>
       ) : null}
 

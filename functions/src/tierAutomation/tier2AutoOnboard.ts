@@ -39,10 +39,8 @@ function str(v: unknown): string {
  *     (autoOnboardTier2 === true ⇒ 2).
  *   - maxAutoOnboardsPerDay: budget guard, default 25 — this is real
  *     screening spend per head.
- *   - autoPromoteApplicants: hourly sweep may auto-apply qualifying
- *     Tier 3→2 promotions for this account's applicant pool (defaults
- *     ON whenever ramp is on; the tenant-wide sweep stays in its own
- *     mode).
+ * Tier promotion is NOT an account setting (Greg 2026-09-10: user-based) —
+ * it follows the tenant's tier automation mode.
  * Field-by-field inheritance: child explicit beats parent explicit
  * beats defaults. `policyAccountId` = the account whose config supplied
  * the tier setting — the daily budget counter lives THERE, so a
@@ -52,7 +50,6 @@ function str(v: unknown): string {
 export interface AutoOnboardPolicy {
   downToTier: 0 | 1 | 2;
   maxPerDay: number;
-  autoPromote: boolean;
   policyAccountId: string;
 }
 
@@ -78,10 +75,6 @@ export function resolveAutoOnboardPolicy(
     const n = Number(ta?.[key]);
     return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
   };
-  const readBool = (doc: Record<string, unknown> | null, key: string): boolean | null => {
-    const ta = (doc?.tierAutomation ?? null) as Record<string, unknown> | null;
-    return typeof ta?.[key] === 'boolean' ? (ta[key] as boolean) : null;
-  };
   const childTier = readTier(account);
   const tier = childTier ?? readTier(parent) ?? 0;
   const policyAccountId = childTier != null || !parentAccountId ? accountId : parentAccountId;
@@ -91,10 +84,6 @@ export function resolveAutoOnboardPolicy(
       readNum(account, 'maxAutoOnboardsPerDay') ??
       readNum(parent, 'maxAutoOnboardsPerDay') ??
       DEFAULT_MAX_AUTO_ONBOARDS_PER_DAY,
-    autoPromote:
-      readBool(account, 'autoPromoteApplicants') ??
-      readBool(parent, 'autoPromoteApplicants') ??
-      tier > 0,
     policyAccountId,
   };
 }

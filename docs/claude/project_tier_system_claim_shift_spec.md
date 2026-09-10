@@ -427,9 +427,10 @@ hosting deployed; curl 200 postflight.
   (ENABLE_TIER_RAMP_SWEEP, default on; ~2 account queries/tenant/hour when
   nothing is opted in): backfills EXISTING applicants (submitted/waitlisted,
   postings + JOs of the account family, chunked 'in' queries, caps logged),
-  auto-applies qualifying Tier 3→2 promotions scoped to ramp accounts'
-  pools (shared scorer, tenant threshold config, dismissed/approved
-  proposals respected), then funnels eligible applicants through the SAME
+  evaluates Tier 3→2 promotion for the pool (since 2026-09-10 only when the
+  tenant mode is 'automatic', via the shared `applicantPromotion` helper;
+  dismissed/approved proposals respected), then funnels eligible applicants
+  through the SAME
   `maybeAutoOnboardTierTwoApplicant` path as the live trigger. Stamps
   `tierAutomation.lastSweepAt/lastSweepStats`.
 - **Verified end-to-end on prod** with a synthetic account (created →
@@ -443,6 +444,67 @@ hosting deployed; curl 200 postflight.
 - Footgun fixed en route: the old UI switch wrote dot-keys into local
   state that nested reads never saw; `updateTierAutomation` batches
   fields into one updateDoc and merges the nested map.
+- **Superseded 2026-09-10**: the "ramp accounts get scoped automatic
+  promotion" model is gone — promotion is user-based and the tenant mode is
+  now 'automatic' (next section).
+
+## ✅ JOB-ORDER HIRING PLAN SHIPPED 2026-09-10 (OnTrac)
+
+Greg's model: tier promotion is user-based and automatic; hiring is decided
+per job order ("the job wants 10, we want 5 backups… hire 2x that total —
+keep hiring qualified applicants until we hit 30").
+
+- **Promotion is automatic tenant-wide**: `tenants/{t}/settings/tierAutomation.mode`
+  flipped propose → automatic on 2026-09-10 (threshold 70). The nightly sweep
+  applies it; the 147 pending proposals apply on the next nightly run if they
+  still qualify. The hourly hiring sweeps (ramp + hiring plan) call
+  `tierAutomation/applicantPromotion.promoteToTier2IfQualified` for their
+  applicants, so a qualifying applicant is promoted and hired within the hour —
+  only while the tenant mode is automatic. The account-level
+  `autoPromoteApplicants` override was removed.
+- **Penalty fix (same day)**: a worker with a live no-show penalty
+  (`workerTiers.penalty`) is never re-promoted by the scorecard, nightly or
+  hourly — earn-back hours are the only way back. Before this, a Tier 2→3
+  penalized worker with a qualifying scorecard would have been re-promoted
+  the next night once the mode went automatic.
+- **Settings — JO → Hiring tab → "Hiring plan" card**:
+  `job_orders/{id}.hiringPlan {enabled, workersNeeded, backupWorkers,
+  poolMultiplier (1–10), tier2Intensity none|selective|moderate|aggressive,
+  updatedAt, updatedBy}`. Max hires = ceil((needed + backups) × multiplier).
+- **Selection rules** (pure `tierAutomation/jobOrderHiringPlan.ts`, mocha
+  tests in `__tests__/tierAutomation/`): Tier 1 always onboarded + screened
+  unless already done (counts toward the max, never held back by it); Tier 2
+  fills the slots under the max, limited to ceil(25/60/100% × the JO's Tier 2
+  applicants), already-hired first, then tier scorecard total, earliest
+  applicant breaking ties; Tier 3 never. "Hired" = a live
+  `entity_employments` row at the JO's hiring entity, or the plan's own
+  `onboarded` stamp.
+- **Hourly `job_order_hiring_plan_sweep`** (orchestrator subtask,
+  ENABLE_JOB_ORDER_HIRING_PLAN_SWEEP default on, 90s self-budget, 15
+  actions per JO per run): OPEN JOs with the plan on. Live applicants =
+  submitted/accepted/confirmed/waitlisted on the JO or its postings. Hire =
+  `runStartOnCallEmploymentFlow` (actor `system:job_order_hiring_plan`,
+  triggerSource `job_order_hiring_plan`) with the package cascade JO →
+  account → national; already employed but unscreened → screening-only order
+  through `createBackgroundCheckInternal`. A package is ordered only when there
+  is no valid same-package completion AND no in-flight order of any package.
+- **Run output never touches the JO doc** (eight triggers listen on JO
+  writes): `job_orders/{id}/hiring_plan/state {lastRunAt, stats}` plus the
+  per-worker attempt log `hiring_plan_hires/{uid}` (started / ok / failed /
+  screening_paused; failures retry after 6h; three failures or a screening
+  pause wait for a recruiter). Firestore rules: recruiter read, no client
+  writes.
+- **Dry run**: `previewJobOrderHiringPlan(db, tenantId, jobOrderId,
+  planOverride?)` does the same gathering + selection with no promotions,
+  hires, orders or writes. Prod check 2026-09-10: JO #524 resolves
+  `c1_select_llc` + Sodexo Basic Package (23923), 0 applicants; the busiest
+  JO (207 applicants) previewed in 7s and every applicant was Tier 3 — pools
+  fill only as promotion lifts applicants (tenant ≈ 14.2k T3 / 16 T1 / 6 T2).
+- **No plan is turned on yet** — the recruiter sets the numbers. Turning one
+  on = real Everee onboarding + AccuSource spend within the hour.
+- **Open**: JO #524 is Romeoville, IL — automated score-based hiring there
+  raises the Illinois AEDT notice question (see
+  [[project_tiered_shift_access]] compliance note).
 
 ## Credential verification (built 2026-09-08)
 

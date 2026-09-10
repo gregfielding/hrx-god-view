@@ -534,16 +534,45 @@ const SUBTASKS: SubtaskConfig[] = [
   },
   {
     // Account ramp mode (Greg 2026-09-07): backfills auto-onboarding for
-    // existing applicants of opted-in accounts + account-scoped Tier 3→2
-    // promotion. Tenants with no opted-in accounts cost two queries/hour.
+    // existing applicants of opted-in accounts + same-hour Tier 3→2
+    // promotion (tenant mode 'automatic' only). Tenants with no opted-in
+    // accounts cost two queries/hour.
     name: 'tier_ramp_sweep',
     enabled: isFeatureEnabled('tier_ramp_sweep', CONFIG.ENABLE_TIER_RAMP_SWEEP),
     envFlag: 'ENABLE_TIER_RAMP_SWEEP',
     handler: runTierRampSweepSubtask,
     maxDurationMs: 180000,
     runParallel: false
+  },
+  {
+    // Job-order hiring plans (Greg 2026-09-10): hires qualified applicants on
+    // open JOs with hiringPlan.enabled up to the plan's max. Self-limits to a
+    // 90s budget; tenants with no enabled plans cost one query/hour.
+    name: 'job_order_hiring_plan_sweep',
+    enabled: isFeatureEnabled('job_order_hiring_plan_sweep', CONFIG.ENABLE_JOB_ORDER_HIRING_PLAN_SWEEP),
+    envFlag: 'ENABLE_JOB_ORDER_HIRING_PLAN_SWEEP',
+    handler: runJobOrderHiringPlanSweepSubtask,
+    maxDurationMs: 90000,
+    runParallel: false
   }
 ];
+
+async function runJobOrderHiringPlanSweepSubtask(): Promise<SubtaskResult> {
+  const start = Date.now();
+  try {
+    const { runJobOrderHiringPlanSweep } = await import('./tierAutomation/jobOrderHiringPlanSweep');
+    const totals = await runJobOrderHiringPlanSweep(db);
+    return {
+      success: totals.errors === 0,
+      durationMs: Date.now() - start,
+      itemsProcessed: totals.onboardsStarted + totals.screeningsOrdered + totals.promoted,
+      errors: totals.errors + totals.failures,
+      message: `plans=${totals.plans} applicants=${totals.applicants} promoted=${totals.promoted} onboards=${totals.onboardsStarted} screenings=${totals.screeningsOrdered} failures=${totals.failures}`
+    };
+  } catch (error: any) {
+    return { success: false, durationMs: Date.now() - start, message: error.message };
+  }
+}
 
 /**
  * Scheduled Orchestrator - Central scheduler that manages all periodic tasks
