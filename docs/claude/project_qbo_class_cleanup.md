@@ -1244,3 +1244,44 @@ Footguns met today:
 - `WIRE_LABEL_ALIASES` is now module-scope/exported from
   payrollCostReport.ts (was local to buildWireJournal; the duplicated
   "Womens Open" entry was removed).
+
+## ☠️ 7140 is ONLY C1 Resources — InSource $5,000 minimum (2026-09-10)
+
+Greg flagged June 7140 = 1,805.77 as high. It was 405.74 (June C1 Resources
+premium, correct) + **1,400.03 = InSource's $5,000 monthly minimum top-up
+for May** (portal May: Events 1,737.75 + Resources 671.03 + Select
+1,191.19 = 3,599.97; the 6/9 bank pulls total exactly 5,000.00).
+
+**How InSource bills the minimum.** When the entity premiums for a payroll
+month total < $5,000, the shortfall is invoiced to **C1 Workforce LLC**
+(an entity with no payroll; the portal shows its invoices as $0.00). Proof:
+bank pulls sum to exactly 5,000.00 in Oct/Nov/Dec 2025, Jan/Feb/Mar/May
+2026; the "ACH Returned — C1 Workforce LLC January/February 2026 Premium"
+emails (Maggie Holcombe) carry 3,768.11 and 2,692.05 (+$35 fee), exactly
+5,000 − portal. April and Jun+ premiums exceed 5,000 → no top-up. The
+pre-renewal writer comment already said top-ups "stay on 7140 as real
+cost" — that was wrong under Greg's rule.
+
+**Rules (Greg 2026-09-10):** "Internal should ONLY be C1 Resources." "If
+there are charges unrelated to a specific entity, then those should be
+added to a new GL account number and allocated by revenue. Title Workers
+Comp Minimum Shortage."
+
+**Writer changes (`wcAllocations.ts`):**
+- `INSOURCE_MONTHLY_MINIMUM = 5000`; top-up = max(0, 5000 − portal total)
+  is accrued in its premium month (pro-rata by segment days) as a debit to
+  **Workers Comp Minimum Shortage** (AcctNum 5110, same type/level as 5100,
+  created by the writer if missing), Corp, credit 2410. `WC Pay` now clears
+  min(bank premium, portal + top-up). The overhead writer then allocates the
+  Corp balance by revenue (it's not one of the excluded 5010/5100/5310).
+- Non-premium InSource bank lines on 7140 since 2026-03 (state ASSESSMENTS,
+  UNLIMITED WOS) get one `WC Fee MMDD <purchaseId>` JE each
+  `[wcfee:<purchaseId>]`: Events share → 5100 Event-based, Select share →
+  5100 Recurring by the entity premium mix of the memo month (WOS: latest
+  carrier month before the bank date); the Resources share stays on 7140.
+  Assessments are computed per entity (Eddie 7/22: C1 Resources now gets its
+  own assessment invoice), so premium mix is the right proxy. WOS is a
+  per-policy-year $500 fee; the Jan 2026 one was invoiced to C1 Select —
+  if the entity is known, override rather than rely on the mix.
+- Jan–Feb 2026 and 2025 top-ups sit on 5100/7140 untagged (Tabitha era),
+  not touched (writer gate ≥ 2026-03).

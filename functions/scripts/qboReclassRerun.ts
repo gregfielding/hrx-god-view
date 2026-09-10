@@ -85,6 +85,7 @@ async function main(): Promise<void> {
     if (w.accountNote) console.log('accrual account:', w.accountNote);
     console.log('payment clearing (WC Pay — debit 2410 / credit 7140 Corp on the bank date):');
     for (const p of (w.payments ?? []) as Array<Record<string, any>>) console.log(`  ${p.month}  paid ${p.date}  ${String(p.status).padEnd(16)} ${Number(p.amount).toFixed(2).padStart(10)}${p.unmatchedOn7140 !== undefined ? `  stays on 7140: ${Number(p.unmatchedOn7140).toFixed(2)}` : ''}`);
+    for (const f of (w.fees ?? []) as Array<Record<string, any>>) console.log(`  fee #${f.id} ${f.date} ${String(f.status).padEnd(16)} ${Number(f.amount).toFixed(2).padStart(9)}  basis ${f.basis ?? '-'} → Event ${Number(f.event ?? 0).toFixed(2)} / Recurring ${Number(f.recurring ?? 0).toFixed(2)} / stays 7140 ${Number(f.resources ?? 0).toFixed(2)}  ${f.memo ?? ''}`);
     console.log('carrier months (wc_carrier_invoices):', (w.carrierMonths ?? []).join(', '));
     console.log('reconciliation — InSource bank lines on 7140 by premium month vs portal (events+select+resources):');
     for (const r of (w.reconciliation ?? []) as Array<Record<string, any>>) {

@@ -18,8 +18,17 @@
  * Per carrier payment (bank lines memo "INSOURCE - <MONTH> 2026 PREMIUM",
  * one line per entity, dated in M+1): `WC Pay` JE dated the bank date —
  *   debit  2410 Accrued Workers' Comp / credit 7140 Corp, for the matched
- *   premium (min(bank premium, portal total)). $5,000-minimum top-ups,
- *   "UNLIMITED WOS" fees and ASSESSMENTS stay on 7140 as real cost.
+ *   premium (min(bank premium, portal total + minimum top-up)).
+ * ☠️ 7140 is ONLY C1 Resources (Greg 2026-09-10). InSource bills a $5,000
+ *   MONTHLY MINIMUM: when Events+Select+Resources premium < $5,000 the
+ *   shortfall is invoiced to C1 Workforce LLC (portal shows $0.00 for it;
+ *   proof: the Jan/Feb 2026 "ACH Returned — C1 Workforce LLC" emails =
+ *   exactly 5,000 − portal). It belongs to no entity, so it is accrued in
+ *   its premium month to "Workers Comp Minimum Shortage" (Corp) and the
+ *   overhead writer allocates it by revenue (Greg 2026-09-10). Non-premium InSource lines on
+ *   7140 (state ASSESSMENTS, UNLIMITED WOS) get a `WC Fee` JE per bank line
+ *   moving the Events/Select shares to 5100 [wcfee:<purchaseId>]; only the
+ *   Resources share stays on 7140.
  *   Idempotent via [wcpay:YYYY-MM] (premium month).
  *
  * Amounts = the ACTUAL entity premiums from the InSource portal, kept in
@@ -30,9 +39,7 @@
  * 10–15% low on Events and high on Recurring every month). A month with no
  * carrier doc yet falls back to the matrix estimate, labelled
  * `estimated_matrix`, and self-trues once the invoice is entered.
- * 7140 keeps: C1 Resources premium, unmatched InSource lines (WOS fee,
- * assessments), and the one-month cash lag (premium for M is debited in
- * M+1). Idempotent per segment via [wcalloc:YYYY-MM/B<n>] in PrivateNote.
+ * 7140 keeps: C1 Resources premium and the Resources share of fees. Idempotent per segment via [wcalloc:YYYY-MM/B<n>] in PrivateNote.
  *
  * Class per entry: JO → payroll_jo_date_splits window → account-kind
  * mapping/rules → JO name (fuzzy classFor). Known limit: date-splits are
@@ -55,6 +62,11 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 // JO names whose fuzzy class match fails (same purpose as the wire
 // builder's WIRE_LABEL_ALIASES, kept local).
+// InSource pay-as-you-go minimum per payroll month across all C1 entities.
+const INSOURCE_MONTHLY_MINIMUM = 5000;
+const insourceTopUp = (a: { events: number; select: number; resources: number }): number =>
+  round2(Math.max(0, INSOURCE_MONTHLY_MINIMUM - (a.events + a.select + a.resources)));
+
 const WC_LEAF_ALIASES: Array<{ re: RegExp; leaf: string }> = [
   { re: /fifa.*kansas city|kc.*fifa/i, leaf: 'FIFA KC' },
   { re: /women'?s? open/i, leaf: "26 USGA Women's Open" },
@@ -79,7 +91,7 @@ export async function pushWcAllocations(
       })
     );
   };
-  const acctRes = (await qboQuery(tenantId, 'SELECT Id, Name, AccountType FROM Account MAXRESULTS 1000')) as Record<string, any>;
+  const acctRes = (await qboQuery(tenantId, 'SELECT * FROM Account MAXRESULTS 1000')) as Record<string, any>;
   const accts: Array<Record<string, any>> = acctRes.QueryResponse?.Account ?? acctRes.Account ?? [];
   const fieldAcct = accts.find((a) => /workers'? comp.*field/i.test(String(a.Name)));
   const internalAcct = accts.find((a) => /workers'? comp.*internal/i.test(String(a.Name)));
@@ -105,6 +117,27 @@ export async function pushWcAllocations(
     }
   }
   const LIAB = String(accruedWc.Id);
+  // Entity-less InSource charges ($5,000 monthly minimum top-up) → their own
+  // account, same type/level as 5100, allocated by revenue downstream.
+  let minAcct = accts.find((a) => /minimum shortage/i.test(String(a.Name)));
+  if (!minAcct) {
+    const used = new Set(accts.map((a) => trim(a.AcctNum)));
+    const acctNum = ['5110', '5105', '5120', '5190'].find((n) => !used.has(n)) ?? '';
+    if (dryRun) {
+      accountNote = `${accountNote ? `${accountNote}; ` : ''}would create account "Workers Comp Minimum Shortage" (${acctNum}, ${fieldAcct.AccountType})`;
+      minAcct = { Id: 'NEW', Name: 'Workers Comp Minimum Shortage' };
+    } else {
+      const created = (await qboEntityCreate(tenantId, 'Account', {
+        Name: 'Workers Comp Minimum Shortage', ...(acctNum ? { AcctNum: acctNum } : {}),
+        AccountType: fieldAcct.AccountType, ...(fieldAcct.AccountSubType ? { AccountSubType: fieldAcct.AccountSubType } : {}),
+        ...(fieldAcct.SubAccount && fieldAcct.ParentRef?.value ? { SubAccount: true, ParentRef: { value: String(fieldAcct.ParentRef.value) } } : {}),
+        Description: 'InSource $5,000 monthly WC minimum top-up (billed to C1 Workforce LLC); allocated by revenue',
+      })) as Record<string, any>;
+      minAcct = created.Account ?? created;
+      accountNote = `${accountNote ? `${accountNote}; ` : ''}created account "Workers Comp Minimum Shortage" (${acctNum}) Id ${minAcct!.Id}`;
+    }
+  }
+  const MIN_ACCT = String(minAcct!.Id);
   // Divisions per class family (Tabitha matrix, Greg 2026-09-06); the
   // 7140 credit is the internal-staff side → Corp/Unalloc. when present.
   const divisions = await fetchQboDivisions(tenantId);
@@ -237,7 +270,7 @@ export async function pushWcAllocations(
   // Per segment: leaf → cents, built from actuals where a carrier doc exists,
   // else from the matrix estimate.
   type Split = { leaf: string; cls?: Record<string, any>; cents: number; family: 'event' | 'recurring' };
-  const planBySeg = new Map<string, { splits: Split[]; resourcesCents: number; source: 'actual_insource' | 'estimated_matrix'; note: string }>();
+  const planBySeg = new Map<string, { splits: Split[]; resourcesCents: number; topUpCents: number; source: 'actual_insource' | 'estimated_matrix'; note: string }>();
   const daysBetween = (a: string, b: string): number => Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + 1;
   const splitPennies = (total: number, weights: Array<{ leaf: string; cls?: Record<string, any>; w: number; family: 'event' | 'recurring' }>): Split[] => {
     const wsum = weights.reduce((a, x) => a + x.w, 0);
@@ -261,7 +294,7 @@ export async function pushWcAllocations(
         const ws = wBySeg.get(seg.key) ?? [];
         const total = round2(ws.reduce((a, x) => a + x.w, 0));
         if (total < 0.01) continue;
-        planBySeg.set(seg.key, { splits: splitPennies(total, ws), resourcesCents: 0, source: 'estimated_matrix', note: `no wc_carrier_invoices/${ym} yet — matrix estimate (field only)` });
+        planBySeg.set(seg.key, { splits: splitPennies(total, ws), resourcesCents: 0, topUpCents: 0, source: 'estimated_matrix', note: `no wc_carrier_invoices/${ym} yet — matrix estimate (field only)` });
       }
       continue;
     }
@@ -269,8 +302,19 @@ export async function pushWcAllocations(
     if (act.resources >= 0.01) {
       const perSeg = splitPennies(act.resources, segs.map((seg) => ({ leaf: seg.key, w: daysBetween(seg.start, seg.end), family: 'event' as const })));
       for (const ps of perSeg) {
-        const plan = planBySeg.get(ps.leaf) ?? { splits: [], resourcesCents: 0, source: 'actual_insource' as const, note: `InSource ${ym}: Events ${act.events.toFixed(2)} / Select ${act.select.toFixed(2)} / Resources ${act.resources.toFixed(2)}` };
+        const plan = planBySeg.get(ps.leaf) ?? { splits: [], resourcesCents: 0, topUpCents: 0, source: 'actual_insource' as const, note: `InSource ${ym}: Events ${act.events.toFixed(2)} / Select ${act.select.toFixed(2)} / Resources ${act.resources.toFixed(2)}` };
         plan.resourcesCents += ps.cents;
+        planBySeg.set(ps.leaf, plan);
+      }
+    }
+    // $5,000 monthly minimum top-up (billed to C1 Workforce LLC) — no entity,
+    // pro-rata by segment days onto Workers Comp Minimum Shortage (Corp).
+    const topUp = insourceTopUp(act);
+    if (topUp >= 0.01) {
+      const perSeg = splitPennies(topUp, segs.map((seg) => ({ leaf: seg.key, w: daysBetween(seg.start, seg.end), family: 'event' as const })));
+      for (const ps of perSeg) {
+        const plan = planBySeg.get(ps.leaf) ?? { splits: [], resourcesCents: 0, topUpCents: 0, source: 'actual_insource' as const, note: `InSource ${ym}: Events ${act.events.toFixed(2)} / Select ${act.select.toFixed(2)} / Resources ${act.resources.toFixed(2)}` };
+        plan.topUpCents += ps.cents;
         planBySeg.set(ps.leaf, plan);
       }
     }
@@ -290,7 +334,7 @@ export async function pushWcAllocations(
         const splits = ws.length
           ? splitPennies(ps.cents / 100, ws)
           : [{ leaf: family === 'event' ? '(unclassed — no matrix weights)' : 'Sodexo', cls: family === 'event' ? undefined : classFor('Sodexo'), cents: ps.cents, family }];
-        const plan = planBySeg.get(seg.key) ?? { splits: [], resourcesCents: 0, source: 'actual_insource' as const, note: `InSource ${ym}: Events ${act.events.toFixed(2)} / Select ${act.select.toFixed(2)} / Resources ${act.resources.toFixed(2)}` };
+        const plan = planBySeg.get(seg.key) ?? { splits: [], resourcesCents: 0, topUpCents: 0, source: 'actual_insource' as const, note: `InSource ${ym}: Events ${act.events.toFixed(2)} / Select ${act.select.toFixed(2)} / Resources ${act.resources.toFixed(2)}` };
         plan.splits.push(...splits);
         planBySeg.set(seg.key, plan);
       }
@@ -300,6 +344,7 @@ export async function pushWcAllocations(
   // existing [wcalloc:] JEs
   const existing = new Map<string, Record<string, any>>();
   const existingPay = new Map<string, Record<string, any>>();
+  const existingFee = new Map<string, Record<string, any>>();
   let start = 1;
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
@@ -308,6 +353,7 @@ export async function pushWcAllocations(
     for (const je of rows) {
       for (const m of trim(je.PrivateNote).matchAll(/\[wcalloc:([^\]]+)\]/g)) existing.set(trim(m[1]), je);
       for (const m of trim(je.PrivateNote).matchAll(/\[wcpay:([^\]]+)\]/g)) existingPay.set(trim(m[1]), je);
+      for (const m of trim(je.PrivateNote).matchAll(/\[wcfee:([^\]]+)\]/g)) existingFee.set(trim(m[1]), je);
     }
     if (rows.length < 1000) break;
     start += 1000;
@@ -321,6 +367,7 @@ export async function pushWcAllocations(
   // "INSOURCE - MAY 2026 PREMIUM") vs the carrier docs.
   const MONTHS: Record<string, string> = { JANUARY: '01', FEBRUARY: '02', MARCH: '03', APRIL: '04', MAY: '05', JUNE: '06', JULY: '07', AUGUST: '08', SEPTEMBER: '09', OCTOBER: '10', NOVEMBER: '11', DECEMBER: '12' };
   const bankByMonth = new Map<string, { premium: number; other: number; lines: Array<{ date: string; amount: number; memo: string }> }>();
+  const feeLines: Array<{ id: string; date: string; amount: number; memo: string; memoMonth: string | null }> = [];
   let pstart = 1;
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
@@ -337,6 +384,9 @@ export async function pushWcAllocations(
       const ym = mm ? `${mm[2]}-${MONTHS[mm[1]]}` : String(p.TxnDate).slice(0, 7);
       const b = bankByMonth.get(ym) ?? { premium: 0, other: 0, lines: [] };
       if (mm && mm[3] === 'PREMIUM') b.premium = round2(b.premium + amt); else b.other = round2(b.other + amt);
+      if (!(mm && mm[3] === 'PREMIUM') && String(p.TxnDate) >= '2026-03-01') {
+        feeLines.push({ id: String(p.Id), date: String(p.TxnDate).slice(0, 10), amount: round2(amt), memo: memo.replace(/\\.*$/, '').trim(), memoMonth: mm ? ym : null });
+      }
       b.lines.push({ date: String(p.TxnDate), amount: round2(amt), memo: memo.slice(0, 60) });
       bankByMonth.set(ym, b);
     }
@@ -358,7 +408,8 @@ export async function pushWcAllocations(
     const seg = segByKey.get(segKey)!;
     const month = segKey;
     const fieldCents = plan.splits.reduce((a, x) => a + x.cents, 0);
-    const totalCents = fieldCents + plan.resourcesCents;
+    const topUpCents = plan.topUpCents;
+    const totalCents = fieldCents + plan.resourcesCents + topUpCents;
     const total = totalCents / 100;
     if (totalCents < 1) continue;
     const prior = priors.get(month);
@@ -384,6 +435,14 @@ export async function pushWcAllocations(
         JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: String(internalAcct.Id) }, ...corpDept },
       });
     }
+    if (topUpCents > 0) {
+      wantLines.push({
+        DetailType: 'JournalEntryLineDetail',
+        Amount: topUpCents / 100,
+        Description: `InSource $5,000 monthly minimum top-up (${month}; billed to C1 Workforce LLC) — allocated by revenue`,
+        JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: MIN_ACCT }, ...corpDept },
+      });
+    }
     wantLines.push({
       DetailType: 'JournalEntryLineDetail',
       Amount: total,
@@ -399,6 +458,7 @@ export async function pushWcAllocations(
     results.push({
       month, dates: `${seg.start}..${seg.end}`, amount: total, status: dryRun ? `would_${action}` : `${action}d`, source: plan.source, note: plan.note,
       resources: plan.resourcesCents / 100,
+      topUp: topUpCents / 100,
       splits: plan.splits.map((x) => ({ leaf: x.leaf, family: x.family, amount: x.cents / 100, hasClass: Boolean(x.cls) })),
     });
     if (dryRun) continue;
@@ -407,7 +467,7 @@ export async function pushWcAllocations(
       TxnDate: segmentTxnDate(seg, today),
       PrivateNote:
         `Workers' comp premium accrued for the payroll month: field share to 5100 per class ` +
-        `(C1 Events → Event-based, C1 Select → Recurring), C1 Resources to 7140 (internal), credit 2410 Accrued Workers' Comp. ` +
+        `(C1 Events → Event-based, C1 Select → Recurring), C1 Resources to 7140 (internal), InSource $5,000 minimum top-up to Workers Comp Minimum Shortage (Corp, allocated by revenue), credit 2410 Accrued Workers' Comp. ` +
         `${plan.note}. Cleared by the InSource bank debit next month (WC Pay). ` +
         `Segment ${seg.start}..${seg.end} (month ∩ block). [wcalloc:${seg.key}]`,
     };
@@ -425,7 +485,8 @@ export async function pushWcAllocations(
   const payments: Array<Record<string, unknown>> = [];
   for (const r of reconciliation) {
     if (r.month < '2026-03' || r.portalTotal === null || r.bankPremium <= 0) continue;
-    const amount = round2(Math.min(r.bankPremium, r.portalTotal));
+    const car = carrier.get(r.month);
+    const amount = round2(Math.min(r.bankPremium, r.portalTotal + (car ? insourceTopUp(car) : 0)));
     const premLines = r.lines.filter((l) => /PREMIUM/i.test(l.memo));
     const txnDate = premLines.map((l) => l.date).sort().slice(-1)[0] ?? r.lines.map((l) => l.date).sort().slice(-1)[0];
     const lines = [
@@ -440,7 +501,7 @@ export async function pushWcAllocations(
       continue;
     }
     const action = prior ? 'true_up' : 'create';
-    payments.push({ month: r.month, date: txnDate, amount, status: dryRun ? `would_${action}` : `${action}d`, bankPremium: r.bankPremium, unmatchedOn7140: round2(r.bankPremium - amount + r.bankOther) });
+    payments.push({ month: r.month, date: txnDate, amount, status: dryRun ? `would_${action}` : `${action}d`, bankPremium: r.bankPremium, unmatchedOn7140: round2(r.bankPremium - amount) });
     if (dryRun) continue;
     const header = {
       DocNumber: docNumber,
@@ -455,6 +516,52 @@ export async function pushWcAllocations(
       await qboEntityCreate(tenantId, 'JournalEntry', { ...header, Line: lines });
     }
   }
-  return { ok: true, dryRun, months: results, payments, accountNote, excluded8040, carrierMonths: [...carrier.keys()].sort(), reconciliation };
+
+  // Non-premium InSource charges on 7140 (state ASSESSMENTS, UNLIMITED WOS):
+  // only C1 Resources' share is internal (Greg 2026-09-10). One `WC Fee` JE
+  // per bank line moves the Events / Select shares to 5100 by the entity
+  // premium mix of the memo month (else the latest carrier month before it).
+  const fees: Array<Record<string, unknown>> = [];
+  const carrierMonths = [...carrier.keys()].sort();
+  for (const f of feeLines.sort((a, b) => a.date.localeCompare(b.date))) {
+    const d0 = new Date(`${f.date.slice(0, 7)}-01T00:00:00Z`);
+    d0.setUTCMonth(d0.getUTCMonth() - 1);
+    const prevYm = d0.toISOString().slice(0, 7);
+    const basis = f.memoMonth ?? carrierMonths.filter((m) => m <= prevYm).slice(-1)[0];
+    const act = basis ? carrier.get(basis) : undefined;
+    if (!act) { fees.push({ id: f.id, date: f.date, amount: f.amount, memo: f.memo, status: 'no_carrier_month' }); continue; }
+    const parts = splitPennies(f.amount, [
+      { leaf: 'event', w: act.events, family: 'event' as const },
+      { leaf: 'recurring', w: act.select, family: 'recurring' as const },
+      { leaf: 'resources', w: act.resources, family: 'event' as const },
+    ]);
+    const c = (k: string): number => parts.find((x) => x.leaf === k)?.cents ?? 0;
+    const evC = c('event'); const reC = c('recurring'); const moved = evC + reC;
+    const info = { id: f.id, date: f.date, amount: f.amount, memo: f.memo, basis, event: evC / 100, recurring: reC / 100, resources: c('resources') / 100 };
+    if (moved <= 0) { fees.push({ ...info, status: 'all_resources' }); continue; }
+    const lines: Array<Record<string, any>> = [];
+    if (evC > 0) lines.push({ DetailType: 'JournalEntryLineDetail', Amount: evC / 100, Description: `${f.memo} — C1 Events share (${basis} premium mix)`, JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: String(fieldAcct.Id) }, DepartmentRef: { value: divisions.event.Id, name: divisions.event.Name } } });
+    if (reC > 0) lines.push({ DetailType: 'JournalEntryLineDetail', Amount: reC / 100, Description: `${f.memo} — C1 Select share (${basis} premium mix)`, JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: String(fieldAcct.Id) }, DepartmentRef: { value: divisions.recurring.Id, name: divisions.recurring.Name } } });
+    lines.push({ DetailType: 'JournalEntryLineDetail', Amount: moved / 100, Description: `${f.memo} — non-Resources share moved off 7140 (Resources ${(c('resources') / 100).toFixed(2)} stays)`, JournalEntryLineDetail: { PostingType: 'Credit', AccountRef: { value: String(internalAcct.Id) }, ...corpDept } });
+    const want = lines.map((l) => { const d = l.JournalEntryLineDetail as Record<string, any>; return legKey(trim(d.AccountRef?.value), '', trim(d.DepartmentRef?.value), trim(d.PostingType), Math.round(num(l.Amount) * 100)); }).sort().join(';');
+    const prior = existingFee.get(f.id);
+    if (prior && jeLegs(prior).sort().join(';') === want && trim(prior.TxnDate) === f.date) { fees.push({ ...info, status: 'already_moved' }); continue; }
+    const action = prior ? 'true_up' : 'create';
+    fees.push({ ...info, status: dryRun ? `would_${action}` : `${action}d` });
+    if (dryRun) continue;
+    const header = {
+      DocNumber: `WC Fee ${f.date.slice(5, 7)}${f.date.slice(8, 10)} ${f.id}`.slice(0, 21),
+      TxnDate: f.date,
+      PrivateNote: `InSource ${f.memo} (bank ${f.date}, purchase #${f.id}): 7140 is only C1 Resources (Greg 2026-09-10) — Events share → 5100 Event-based, Select share → 5100 Recurring by the ${basis} entity premium mix. [wcfee:${f.id}]`,
+    };
+    if (prior) {
+      // eslint-disable-next-line no-await-in-loop
+      await qboEntityUpdate(tenantId, 'JournalEntry', { ...prior, ...header, Line: lines, sparse: false });
+    } else {
+      // eslint-disable-next-line no-await-in-loop
+      await qboEntityCreate(tenantId, 'JournalEntry', { ...header, Line: lines });
+    }
+  }
+  return { ok: true, dryRun, months: results, payments, fees, accountNote, excluded8040, carrierMonths, reconciliation };
 
 }
