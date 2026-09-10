@@ -52,6 +52,10 @@ export async function pushExpenseDivisions(
   // months keep the legacy class-driven treatment so Jan–Apr headers stay put.
   const TRAVEL_SPLIT_FROM = '2026-05-01';
   const salesTravel = new Set<string>(accts.filter((a) => /^88\d\d$/.test(String(a.AcctNum ?? '')) || /^Travel for Sales(:|$)/i.test(String(a.FullyQualifiedName ?? ''))).map((a) => String(a.Id)));
+  // Travel for Events is ALWAYS event delivery (Greg 2026-09-10): a 55xx line
+  // with no client class (or National / retired Austin) counts as Event-based
+  // — never Corp, never the revenue ratio.
+  const eventsTravel = new Set<string>(accts.filter((a) => /^55\d\d$/.test(String(a.AcctNum ?? '')) || /^Travel for Events(:|$)/i.test(String(a.FullyQualifiedName ?? ''))).map((a) => String(a.Id)));
   const ownWriter = new Set<string>(accts.filter((a) => /^(5010|5100|5310)$/.test(String(a.AcctNum ?? ''))).map((a) => String(a.Id)));
   const itemRes = (await qboQuery(tenantId, 'SELECT Id, ExpenseAccountRef FROM Item MAXRESULTS 1000')) as Record<string, any>;
   const itemExp = new Map<string, string>(((itemRes.QueryResponse?.Item ?? itemRes.Item ?? []) as Array<Record<string, any>>).map((i) => [String(i.Id), String(i.ExpenseAccountRef?.value ?? '')]));
@@ -77,7 +81,10 @@ export async function pushExpenseDivisions(
           const legacyTravel = salesTravel.has(acct) && String(t.TxnDate) < TRAVEL_SPLIT_FROM;
           if (!classDriven.has(acct) && !legacyTravel) { ratioAmt += amt; continue; }
           const fqn = clsById.get(trim((ab ?? ib)?.ClassRef?.value)) ?? '';
-          if (!fqn || OVERHEAD_CLASS_RE.test(fqn)) continue; // unclassed / overhead travel → ratio fallback
+          if (!fqn || OVERHEAD_CLASS_RE.test(fqn)) {
+            if (eventsTravel.has(acct)) fam.event += amt; // unclassed event travel → Event-based
+            continue; // other unclassed class-driven lines → ratio fallback
+          }
           if (RECURRING_DIVISION_RE.test(fqn)) fam.recurring += amt; else fam.event += amt;
         }
         const classed = fam.event + fam.recurring;

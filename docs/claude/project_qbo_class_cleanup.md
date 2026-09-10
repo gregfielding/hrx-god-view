@@ -1388,3 +1388,19 @@ unchanged. FQNs are now "Software & Subscriptions:Website & Digital" (Id
 alongside the existing subs Adobe Products, C1 App, LLM Software. No code
 matches these names; the Expensify writeback still resolves the leaf Name.
 Both stay revenue-ratio overhead.
+
+## Travel for Events is ALWAYS Event-based when unclassed (2026-09-10, late)
+
+Greg (P&L by Division Jun–Aug showed 5530/5540 125.57 in Corp and 5510
+−35.00 Not specified): "all event travel will ALWAYS be Travel Events."
+Cause: after the cardholder rule, Rosa/Mark/misc travel with no client class
+landed on 55xx, but 55xx was class-driven only — unclassed lines left the
+purchase header in Corp / none, and the overhead writer then spread them by
+revenue (partly into Recurring), leaving segment residue in the multi-month
+view.
+- `expenseDivisions.ts`: a 55xx line with no class / National / Austin counts
+  as the EVENT family → header Event-based. Sodexo / Indeed Flex classed
+  event travel still → Recurring (the 2026-09-08 class rule).
+- `overheadAllocations.ts`: 55xx excluded from the revenue-ratio base.
+- First write: 111 May–Aug purchases ($18,380.06) → Event-based (99 from
+  Corp, 12 from none); Jan–Apr untouched.

@@ -70,7 +70,9 @@ export async function pushOverheadAllocations(
     // COGS: only the three own-writer accounts are excluded (by number, or by
     // their exact names — "5201 Direct Labor Fees (VenueSmart)" is a fee
     // sub-account and must be allocated).
-    if (a.AccountType === 'Cost of Goods Sold') return !(['5010', '5100', '5310'].includes(n) || /^(direct labor — field staff|workers'? comp — field staff|background & drug screening)$/i.test(name));
+    // 5500 Travel for Events is never spread by revenue (Greg 2026-09-10) —
+    // expenseDivisions puts it in the client's Division or Event-based.
+    if (a.AccountType === 'Cost of Goods Sold') return !(['5010', '5100', '5310'].includes(n) || /^55\d\d$/.test(n) || /^Travel for Events(:|$)/i.test(String(a.FullyQualifiedName ?? '')) || /^(direct labor — field staff|workers'? comp — field staff|background & drug screening)$/i.test(name));
     return false;
   };
   const label = (id: string): string => { const a = acctById.get(id); return a ? `${a.AcctNum ? a.AcctNum + ' ' : ''}${a.FullyQualifiedName}` : `#${id}`; };
