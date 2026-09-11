@@ -38,6 +38,7 @@ import { latestBackgroundCheckDoc } from './natalieFill';
 import { C1_EVENTS_ENTITY_ID, loadEventsSetupSteps, eventsSetupDone, placeApplicantOnAppliedShift } from './eventsApplicantSetup';
 import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 import { PERSONAS, effectivePersona, loadPersonaRuntime, scopePersona, smsSignature, tokenFor, workerLanguage, type PersonaId, type PersonaRuntime, type PersonaTokens } from './personas';
+import { applyLiveSignals, backgroundIsRelevant, readLiveSignals } from './onboardingLiveSignals';
 
 const db = admin.firestore();
 const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
@@ -171,7 +172,7 @@ export function stepsWithoutAssignment(args: {
   ];
 }
 
-export async function buildOnboardingSnapshot(tenantId: string, userId: string, assignmentId: string | null, opts: { hiringEntityId?: string | null } = {}): Promise<OnboardingSnapshot> {
+export async function buildOnboardingSnapshot(tenantId: string, userId: string, assignmentId: string | null, opts: { hiringEntityId?: string | null; jobOrderId?: string | null; startedAt?: Date | null } = {}): Promise<OnboardingSnapshot> {
   const asg = assignmentId ? (await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).get()).data() ?? null : null;
   const hiringEntityId = s(asg?.hiringEntityId) || s(asg?.entityId) || s(opts.hiringEntityId);
   const steps: OnboardingStep[] = [];
@@ -200,6 +201,26 @@ export async function buildOnboardingSnapshot(tenantId: string, userId: string, 
       employment: (employmentSnap?.data() ?? null) as Record<string, unknown> | null,
     }));
   }
+  // ☠️ A stale `readinessSnapshotV1` must never claim something Everee/payroll already show as done: Greg's C1
+  // Events account has been complete in Everee since 2026-04-30 and was still texted "I-9, payroll, handbook,
+  // policies open" (31 of 86 open follow-ups would have). Live signals only UPGRADE a step, and Everee's own
+  // i9Applicable/w4Applicable retire the W-2 steps for 1099 workers. See onboardingLiveSignals.ts.
+  if (steps.length && hiringEntityId) {
+    const liveKey = ENTITY_KEYS[hiringEntityId];
+    const [paLive, evLive, eeLive] = await Promise.all([
+      liveKey ? db.doc(`tenants/${tenantId}/worker_payroll_accounts/${userId}__${liveKey}`).get() : Promise.resolve(null),
+      db.doc(`tenants/${tenantId}/everee_workers/${hiringEntityId}__${userId}`).get(),
+      liveKey ? db.doc(`tenants/${tenantId}/entity_employments/${userId}__${liveKey}`).get() : Promise.resolve(null),
+    ]);
+    const live = readLiveSignals({
+      payrollAccount: (paLive?.data() ?? null) as Record<string, unknown> | null,
+      evereeMirror: (evLive.get('readinessMirror') ?? null) as Record<string, unknown> | null,
+      employment: (eeLive?.data() ?? null) as Record<string, unknown> | null,
+    });
+    const merged = applyLiveSignals(steps, live);
+    steps.length = 0;
+    steps.push(...merged);
+  }
   const everee = { inviteSent: steps.some((x) => x.key === 'payroll_setup' && x.status !== 'missing'), complete: steps.some((x) => x.key === 'payroll_setup' && x.status === 'complete') };
   // C1 Select only: E-Verify is the employer's step after I-9 Section 2.
   if (hiringEntityId === 'c1_select_llc') {
@@ -210,8 +231,16 @@ export async function buildOnboardingSnapshot(tenantId: string, userId: string, 
     if (!sec2Done) steps.push({ key: 'i9_section_2', label: 'I-9 Section 2 (employer)', status: 'missing', actor: 'recruiter' });
     steps.push({ key: 'e_verify', label: 'E-Verify (C1 Select)', status: everifyDone ? 'complete' : 'missing', actor: 'recruiter' });
   }
-  const bgDoc = await latestBackgroundCheckDoc(tenantId, userId);
-  const bg = bgDoc ? (bgDoc.data() as Record<string, unknown>) : null;
+  const bgDocRaw = await latestBackgroundCheckDoc(tenantId, userId);
+  const bgRaw = bgDocRaw ? (bgDocRaw.data() as Record<string, unknown>) : null;
+  // A stale awaiting_applicant order from another job order kept "your background form hasn't been started"
+  // alive forever (Greg's June CORT Basic cited during a September Venue Smart onboarding).
+  const bgUsable = backgroundIsRelevant(
+    bgRaw ? { hrxStatus: bgRaw.hrxStatus, createdAt: tsToDate(bgRaw.createdAt), jobOrderId: bgRaw.jobOrderId } : null,
+    { jobOrderId: opts.jobOrderId ?? null, startedAt: opts.startedAt ?? null },
+  );
+  const bgDoc = bgUsable ? bgDocRaw : null;
+  const bg = bgUsable ? bgRaw : null;
   const hrxStatus = s(bg?.hrxStatus);
   const formDone = Boolean(bg) && (bg?.profileCompleted === true || ['submitted', 'in_progress', 'report_ready', 'drug_report_ready', 'completed'].includes(hrxStatus));
   const background = bg
@@ -638,7 +667,7 @@ export async function runOnboardingCheckpoints(tokensIn: string | PersonaTokens)
     const lang = f.lang === 'es' ? 'es' : 'en';
     const say = async (text: string) => { if (slack?.channel) await postAsNatalie(who.token, { channel: slack.channel, text, threadTs: slack.ts }); };
     try {
-      const snapshot = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId, { hiringEntityId: f.hiringEntityId });
+      const snapshot = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId, { hiringEntityId: f.hiringEntityId, jobOrderId: f.jobOrderId, startedAt: tsToDate(f.startedAt) });
       const stamp = { at: admin.firestore.FieldValue.serverTimestamp(), workerTodo: snapshot.workerTodo, recruiterTodo: snapshot.recruiterTodo, sent: false };
       if (snapshot.background?.failed) {
         await d.ref.set({ status: 'parked', nextCheckpoint: null, checkpoints: { [cp]: stamp }, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -793,7 +822,7 @@ export async function drainSmsConversations(tokensIn: string | PersonaTokens): P
     const lang = f.lang === 'es' ? 'es' : 'en';
     const say = async (text: string) => { if (slack?.channel) await postAsNatalie(who.token, { channel: slack.channel, text, threadTs: slack.ts }); };
     try {
-      const snap = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId, { hiringEntityId: f.hiringEntityId });
+      const snap = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId, { hiringEntityId: f.hiringEntityId, jobOrderId: f.jobOrderId, startedAt: tsToDate(f.startedAt) });
       const decision = await decideReply({ ...f, transcript: [...(f.transcript ?? []), { at: new Date().toISOString(), dir: 'in', text: inbound }] }, snap, inbound, who.persona);
       const notes: string[] = [];
       const sent = await sendSms(f, decision.reply, `${P.smsPrefix}onboarding_reply`);
@@ -878,7 +907,7 @@ export async function runClaimVerifications(tokensIn: string | PersonaTokens): P
     const slack = f.slack ?? undefined;
     const say = async (text: string) => { if (slack?.channel) await postAsNatalie(who.token, { channel: slack.channel, text, threadTs: slack.ts }); };
     try {
-      const snap = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId, { hiringEntityId: f.hiringEntityId });
+      const snap = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId, { hiringEntityId: f.hiringEntityId, jobOrderId: f.jobOrderId, startedAt: tsToDate(f.startedAt) });
       const claimed = f.verifyClaim?.items ?? [];
       const stillOpen = claimed.length ? snap.workerTodo.filter((x) => claimed.includes(x)) : snap.workerTodo;
       if (!stillOpen.length) {
