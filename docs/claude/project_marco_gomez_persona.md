@@ -157,10 +157,10 @@ the first attempt died on another session's uncommitted WIP). m.gomez@ is an OAu
 Allow → "Marco's mailbox is connected" → `tenants/{T}/integrations/marcoMailbox`. Scopes include
 `gmail.settings.basic` so the signature (`.scratch/marco-signature.html`) can be set by API. The OAuth app is
 in Testing mode → refresh tokens expire after 7 days (same as Natalie) until publishing status is In production.
-**Signature NOT set yet**: `https://hrxone.com/brand/marco-gomez-512.jpg` still serves the SPA index.html (200
-text/html) because no hosting deploy has shipped since the image was committed. Once it serves image/jpeg, run
-`functions/.scratch/marco_signature_set.ts` (checks the scope + that the URL is an image, `sendAs.patch`es the
-template, reads it back). Gmail never adds signatures to API sends, so Marco's automated emails use the
+**Signature ✅ SET 2026-09-11** via `functions/.scratch/marco_signature_set.ts` (checks the scope + that the
+headshot URL serves image/jpeg, `sendAs.patch`es `.scratch/marco-signature.html`, reads it back). The headshot
+went live with another session's 14:08 hosting deploy — before that the URL served the SPA index.html (200
+text/html), which a plain status check doesn't catch; check the content-type. Gmail never adds signatures to API sends, so Marco's automated emails use the
 plain-text signature in `sendEmail` either way.
 
 ## One-time steps to go live (in order)
@@ -170,8 +170,8 @@ plain-text signature in `sendEmail` either way.
    Natalie's first two tokens were Greg's): `https://slack.com/oauth/v2/authorize?client_id=<marco app client id>&user_scope=chat:write,channels:read,groups:read,channels:history,groups:history,users:read,im:write,im:history,im:read,mpim:history,mpim:read&redirect_uri=https://hrxone.com/slack/oauth/callback`
    → exchange the code with a copy of `.scratch/slack-natalie-token-exchange.cjs` writing
    `MARCO_SLACK_USER_TOKEN` (new version; the check must show user `U0C14BDAX2P`).
-3. **Twilio**: add PN54f9b0115d73f7b3dd34eee89b3ad82f (+1 737 264 6753) to MG2dd6557d05d9be9044c996fa568a8a39's
-   sender pool (the go-live script already lists it); consider pointing the 737's voice URL at Rosa.
+3. ✅ **Twilio** (2026-09-11): +1 737 264 6753 added to MG2dd6557d05d9be9044c996fa568a8a39's sender pool (pool =
+   737 + 312, sends pinned per persona). Still open: the 737's voice URL plays the Twilio demo — point it at Rosa.
 4. **Slack channel**: create `#events-recruiting` (Rosa, Mark, Maria, Marco) and set
    `tenants/BCiP2bQ9CgVOCTfV6MhD/app_config/marco.homeChannelId`.
 5. **Deploy** (log it): `functions:natalieSlackInbox,functions:handleInboundSms,functions:twilioInboundSmsWebhook,functions:dispatchScheduledWorkerReminders`

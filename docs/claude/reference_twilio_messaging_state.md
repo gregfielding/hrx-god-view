@@ -12,7 +12,7 @@ Account "My first Twilio account" (Greg), verified via Claude-in-Chrome 2026-09-
 | +1 312 500 4352 | Local | direct webhook → `handleInboundSms` | main inbound line; NOT on any messaging service, NOT A2P registered |
 | +1 415 429 3750 | Local | Low Volume Mixed service MG98999c80df5bb34ceeb0af83d9b206b3 (campaign FAILED) | Greg: may become a general company line |
 | +1 312 663 8247 | Local | direct webhook → `handleInboundSms`; sole number in MG2dd6…'s sender pool (A2P campaign VERIFIED 2026-09-09) | Natalie Brooks (automation persona), bought 2026-09-06; outbound live from this number for every `natalie_*` message type |
-| +1 737 264 6753 | Local (Austin overlay; Twilio had zero 512 inventory 2026-09-08) | direct webhook → `handleInboundSms`, voice → demo.twilio.com welcome (same as 312) | "Natalie Brooks (automation) #2 — 737", bought 2026-09-08 (PN54f9b011…). **RESERVED for the next persona (Rosa's support), per Greg 2026-09-09** — not in any messaging service, not A2P-registered; do not add it to Natalie's pool |
+| +1 737 264 6753 | Local (Austin overlay; Twilio had zero 512 inventory 2026-09-08) | direct webhook → `handleInboundSms`, voice → demo.twilio.com welcome (same as 312) | **Marco Gomez** (second persona, works for Rosa — project_marco_gomez_persona.md), bought 2026-09-08 (PN54f9b011…). **In MG2dd6…'s sender pool since 2026-09-11** (Greg approved) alongside the 312; every `marco_*` message is pinned `From` this number (twilio.ts `personaSmsRoute`) |
 
 ## Messaging services
 
@@ -75,6 +75,17 @@ verified the same day). What changed and what's left:
   to a messaging service with an approved campaign (a second campaign, or MG2dd6… if the use case
   matches). 21703 is not in PERMANENT_SMS_ERROR_CODES, so the failed test did not stamp the
   recipient. 21703 was added to the sync fallback list next to 21705/30034.
+
+## 2026-09-11: two personas share MG2dd6… — sends are pinned per persona
+Pool = +1 737 264 6753 (Marco) + +1 312 663 8247 (Natalie) (`node functions/.scratch/twilio-natalie-go-live.cjs`,
+idempotent). The 2026-09-09 "737 stays out of Natalie's pool" rule is superseded: with both numbers in one
+service, sticky sender could text a Natalie message from the 737, so `sendWorkerMessageInternal` now passes
+`from` = the persona's number together with `messagingServiceSid` for every `natalie_*` / `marco_*`
+messageTypeId (`personaForMessageType` in natalie/personas.ts). Before the pin shipped, only functions deployed
+2026-09-11 13:50+ sent persona types (natalieSlackInbox, handleInboundSms/twilioInboundSmsWebhook) — checked
+before adding the 737. Errors 21606/21712 (From not in the pool) fall back to the 888 like 21703/21705/30034.
+Staff texting either number get a persona conversation (`personaConversations.ts`), replies typed
+`{prefix}staff_reply` (exempt from the worker early-funnel + duplicate guards).
 
 ## Opt-out keywords (C1 Messaging) — changed 2026-09-07
 
