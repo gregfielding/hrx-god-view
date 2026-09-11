@@ -4,7 +4,7 @@ import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineSecret } from 'firebase-functions/params';
 import { drainOpsAlertsToSlack } from './messaging/smsDeliveryAlerts';
-import { drainFlexTeamAsks, enqueueFlexTeamAsk, NATALIE_SLACK_USER_TOKEN } from './messaging/slackAsNatalie';
+import { drainFlexTeamAsks, enqueueFlexTeamAsk, isFlexLinkedAssignment, NATALIE_SLACK_USER_TOKEN } from './messaging/slackAsNatalie';
 import { enqueueRecruiterEscalation } from './natalie/natalieAudit';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
@@ -14,6 +14,14 @@ import { sendWorkerMessageInternal } from './twilio';
 import { shouldSendNotification } from './utils/notificationSettings';
 import { markLifecycleEventIfFirst, releaseLifecycleEvent } from './messaging/lifecycleDedupe';
 import { planReminderSchedule } from './cadence/reminderSchedulePlanner';
+import {
+  decideLateCheckin,
+  lateCheckinPrecheckReason,
+  lateCheckinWorkDate,
+  postStartStaleWindowMs,
+  type FlexTimesheetRow,
+} from './cadence/postStartGates';
+import { stampCheckInFromPunch } from './integrations/indeedFlex/timesheetGridFeed';
 import {
   DAILY_CONFIRM_DOC_RETENTION_DAYS,
   DAILY_CONFIRM_HORIZON_DAYS,
@@ -1450,40 +1458,24 @@ function buildReminderMessage(
  * canonical bucket we can use as messageTypeId on outbound SMS/push. Each new
  * cadence type keeps its own id so downstream observability can distinguish
  * 2h_instructions vs 15m_clockin vs 0h_checkin.
+ *
+ * Every current step maps to itself; only the legacy types are renamed. This
+ * used to be an if-chain that fell through to 'assignment_reminder_2h', which
+ * silently swallowed the T+15 late check-in (added 2026-09-07 without a case):
+ * its SMS dedupe key collided with the real 2h reminder, it picked up that
+ * step's copy override and it logged as the wrong message type. The switch
+ * makes a new ShiftReminderType canonical by construction.
  */
-function toCanonicalReminderType(
-  reminderType: ReminderType,
-):
-  | 'assignment_reminder_24h'
-  | 'assignment_reminder_2h'
-  | 'assignment_reminder_2h_instructions'
-  | 'assignment_reminder_15m_clockin'
-  | 'assignment_checkin_0h'
-  | 'assignment_noshow_check'
-  | 'assignment_reminder_23h_escalate'
-  | 'assignment_reminder_22h_final'
-  | 'assignment_reconfirm_4h'
-  | 'assignment_confirm_now'
-  | 'career_first_day'
-  | 'openshift_welcome'
-  | 'openshift_weekly_digest'
-  | 'gig_claim_confirmation' {
-  if (reminderType === 'gig_claim_confirmation') return 'gig_claim_confirmation';
-  if (reminderType === 'assignment_reminder_24h' || reminderType === 'shift_reminder_24h') {
-    return 'assignment_reminder_24h';
+function toCanonicalReminderType(reminderType: ReminderType): ShiftReminderType {
+  switch (reminderType) {
+    case 'shift_reminder_24h':
+      return 'assignment_reminder_24h';
+    case 'shift_reminder_4h':
+    case 'daily_confirm_topup':
+      return 'assignment_reminder_2h';
+    default:
+      return reminderType;
   }
-  if (reminderType === 'assignment_confirm_now') return 'assignment_confirm_now';
-  if (reminderType === 'assignment_reminder_2h_instructions') return 'assignment_reminder_2h_instructions';
-  if (reminderType === 'assignment_reminder_15m_clockin') return 'assignment_reminder_15m_clockin';
-  if (reminderType === 'assignment_checkin_0h') return 'assignment_checkin_0h';
-  if (reminderType === 'assignment_noshow_check') return 'assignment_noshow_check';
-  if (reminderType === 'assignment_reminder_23h_escalate') return 'assignment_reminder_23h_escalate';
-  if (reminderType === 'assignment_reminder_22h_final') return 'assignment_reminder_22h_final';
-  if (reminderType === 'assignment_reconfirm_4h') return 'assignment_reconfirm_4h';
-  if (reminderType === 'career_first_day') return 'career_first_day';
-  if (reminderType === 'openshift_welcome') return 'openshift_welcome';
-  if (reminderType === 'openshift_weekly_digest') return 'openshift_weekly_digest';
-  return 'assignment_reminder_2h';
 }
 
 /**
@@ -1571,6 +1563,130 @@ async function runDailyConfirmTopUp(
       willRetry: !exceeded,
     });
   }
+}
+
+/**
+ * T+15 late check-in gate (2026-09-11). Returns true when the doc was dismissed
+ * (cancelled with a `late_checkin_*` reason); false means send. Decisions are
+ * pure (cadence/postStartGates.ts); this does the reads and the check-in stamp.
+ * Fails closed: a failed lookup dismisses rather than telling an on-time worker
+ * "we don't see you clocked in".
+ */
+async function dismissLateCheckinWithoutSignal(args: {
+  docSnap: admin.firestore.QueryDocumentSnapshot;
+  reminder: ReminderDoc;
+  assignmentData: Record<string, unknown>;
+  cortState: string;
+  reminderWorkDate: string;
+  startMs: number;
+}): Promise<boolean> {
+  const { docSnap, reminder, assignmentData, cortState, reminderWorkDate, startMs } = args;
+  const { tenantId, assignmentId, workerId } = reminder;
+  const dismiss = async (reason: string, extra: Record<string, unknown> = {}): Promise<true> => {
+    logger.info('[worker_shift_reminders] late_checkin dismissed', {
+      reason,
+      assignmentId,
+      userId: workerId,
+      cortState,
+      ...extra,
+    });
+    await docSnap.ref.update({
+      status: 'cancelled',
+      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      cancelReason: reason,
+      lastError: reason,
+      lock: admin.firestore.FieldValue.delete(),
+    });
+    return true;
+  };
+
+  // Signal: Flex ids on the assignment, or the shift's Flex clock-in link —
+  // read fresh when the doc was planned before the link was set.
+  const flexLinkedAssignment = isFlexLinkedAssignment(assignmentData);
+  let clockInUrl = normalize(reminder.payload?.clockInUrl);
+  if (!clockInUrl && !flexLinkedAssignment) {
+    const extras = await fetchShiftPayloadExtras({
+      tenantId,
+      jobOrderId: reminder.payload?.jobOrderId,
+      shiftId: reminder.payload?.shiftId,
+    });
+    clockInUrl = normalize(extras.clockInUrl);
+  }
+  const precheck = lateCheckinPrecheckReason({ cortState, flexLinkedAssignment, clockInUrl });
+  if (precheck) return dismiss(precheck, { workDate: reminderWorkDate || null });
+
+  const timezone =
+    normalize(reminder.resolvedTimezone) || normalize(reminder.payload?.timezone) || resolveTimezone(assignmentData, null);
+  const workDate = lateCheckinWorkDate(reminderWorkDate, startMs, timezone);
+  let rows: FlexTimesheetRow[];
+  let feedCapturedAt: unknown;
+  try {
+    // Equality-only pairs — served by single-field indexes (verified in prod
+    // 2026-09-11). By worker too: a punch the ingest matched to the worker but
+    // no assignment still means they're on site.
+    const timesheets = db.collection(`tenants/${tenantId}/indeed_flex_timesheets`);
+    const [byAssignment, byWorker, health] = await Promise.all([
+      timesheets.where('hrxAssignmentId', '==', assignmentId).where('workDate', '==', workDate).get(),
+      workerId
+        ? timesheets.where('hrxUserId', '==', workerId).where('workDate', '==', workDate).get()
+        : Promise.resolve(null),
+      db.doc(`tenants/${tenantId}/integration_health/indeed_flex_timesheets`).get(),
+    ]);
+    const byId = new Map<string, FlexTimesheetRow>();
+    for (const d of [...byAssignment.docs, ...(byWorker?.docs ?? [])]) byId.set(d.id, { ...d.data(), id: d.id });
+    rows = [...byId.values()];
+    feedCapturedAt = health.exists ? health.get('capturedAt') : null;
+  } catch (err) {
+    return dismiss('late_checkin_lookup_failed', { workDate, error: String(err) });
+  }
+
+  const decision = decideLateCheckin({ assignmentId, rows, feedCapturedAt, startMs });
+  if (decision.kind === 'clocked_in') {
+    const row = decision.row;
+    const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
+    let stamped = false;
+    try {
+      stamped = await stampCheckInFromPunch(db, {
+        tenantId,
+        assignmentId,
+        userId: workerId,
+        workDate,
+        flexEntryId: str(row.flexEntryId) ?? row.id,
+        clockIn: str(row.clockIn),
+        clockOut: str(row.clockOut),
+        breakSeconds: typeof row.breakSeconds === 'number' ? row.breakSeconds : null,
+        breakPaid: typeof row.breakPaid === 'boolean' ? row.breakPaid : null,
+        flexStatus: str(row.status),
+      });
+    } catch (err) {
+      logger.warn('[worker_shift_reminders] late_checkin check-in stamp failed', { assignmentId, workDate, error: String(err) });
+    }
+    return dismiss('late_checkin_clocked_in', { workDate, flexEntryId: row.id, stamped });
+  }
+  if (decision.kind === 'clocked_in_unmatched') {
+    return dismiss('late_checkin_clocked_in_unmatched', { workDate, flexEntryId: decision.row.id });
+  }
+  if (decision.kind === 'feed_stale') {
+    return dismiss('late_checkin_feed_stale', {
+      workDate,
+      feedCapturedAt: decision.feedCapturedAtMs === null ? null : new Date(decision.feedCapturedAtMs).toISOString(),
+      startAt: new Date(startMs).toISOString(),
+    });
+  }
+  logger.info('[worker_shift_reminders] late_checkin sending', {
+    assignmentId,
+    userId: workerId,
+    workDate,
+    cortState,
+    feedCapturedAt: isoOrNull(feedCapturedAt),
+  });
+  return false;
+}
+
+function isoOrNull(v: unknown): string | null {
+  const ms = typeof v === 'number' ? v : toTimestamp(v)?.toMillis();
+  return typeof ms === 'number' && Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
 async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapshot): Promise<void> {
@@ -1728,32 +1844,22 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     );
 
   // Most reminders are pre-shift and must be suppressed once the shift has
-  // started. The exceptions are:
-  //   - T+0 check-in (scheduled AT start — "start is now" is the fire cond.)
-  //   - T+30 no-show check (scheduled AFTER start by design — Phase 2B)
-  // We still guard against wildly-stale reminders by requiring the scheduled
-  // time to be within a bounded grace window from start.
-  const CHECKIN_STALE_WINDOW_MS = 2 * 60 * 60 * 1000; // 2h for check-in
-  const NOSHOW_STALE_WINDOW_MS = 6 * 60 * 60 * 1000;  // 6h for no-show alert
+  // started. The exceptions — T+0 check-in, T+15 late check-in, T+30 no-show
+  // check — may still dispatch inside a bounded grace window from start
+  // (cadence/postStartGates.ts). The late check-in was missing from this list
+  // from 2026-09-07 to 2026-09-11, so it never sent.
   const nowMs = Date.now();
-  const isPostStartReminder =
-    reminder.reminderType === 'assignment_checkin_0h' ||
-    reminder.reminderType === 'assignment_noshow_check';
+  const postStartWindowMs = postStartStaleWindowMs(reminder.reminderType);
   // Open-shift lifecycle messages are inherently post-start: standing-crew
   // assignments started weeks or months ago and the digest recurs weekly.
   const isOpenShiftLifecycle =
     reminder.reminderType === 'openshift_welcome' ||
     reminder.reminderType === 'openshift_weekly_digest';
-  const allowPostStart = isPostStartReminder || isOpenShiftLifecycle;
-  const staleWindow =
-    reminder.reminderType === 'assignment_noshow_check'
-      ? NOSHOW_STALE_WINDOW_MS
-      : CHECKIN_STALE_WINDOW_MS;
+  const allowPostStart = postStartWindowMs !== null || isOpenShiftLifecycle;
   const startInPast = !!assignmentStart && assignmentStart.toMillis() <= nowMs;
-  const checkinStale = allowPostStart
-    && !isOpenShiftLifecycle
+  const checkinStale = postStartWindowMs !== null
     && !!assignmentStart
-    && (nowMs - assignmentStart.toMillis()) > staleWindow;
+    && (nowMs - assignmentStart.toMillis()) > postStartWindowMs;
   const startPastBlocks = startInPast && (!allowPostStart || checkinStale);
 
   if (!isConfirmedStatus(assignmentStatus) || isCancelLikeStatus(assignmentStatus) || !assignmentStart || startPastBlocks) {
@@ -1914,6 +2020,22 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       startAt: reminder.payload.startTime,
       detail: "They haven't answered my confirmation texts for that day, so I'm sending a last call now. I'll post here if they reply.",
     });
+  }
+
+  // T+15 late check-in (2026-09-11): sends only where a real clock-in feed
+  // exists and has looked since the shift started; otherwise dismissed.
+  if (
+    reminder.reminderType === 'assignment_late_checkin_15m' &&
+    (await dismissLateCheckinWithoutSignal({
+      docSnap,
+      reminder,
+      assignmentData,
+      cortState,
+      reminderWorkDate,
+      startMs: assignmentStart.toMillis(),
+    }))
+  ) {
+    return;
   }
 
   // Phase 2B: silent dispatch for assignment_noshow_check.
@@ -2450,6 +2572,41 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
           logger.warn('[worker_shift_reminders] lastAskedAt stamp failed', {
             assignmentId: reminder.assignmentId,
             reminderType: canonicalReminderType,
+            error: String(err),
+          });
+        }
+      }
+
+      // T+15 late check-in (2026-09-11): record Natalie's ask for the T+30
+      // escalation detail, the morning brief, worker_status and the Worker
+      // Confirmations dashboard ("Natalie texted HH:MM"). lastAskedAt makes a
+      // NO / HERE reply bind to this shift or workday instead of the next one
+      // (cadenceReplyHandler.pickCancellableCadence). Only when a text or push
+      // reached the worker; best-effort like the stamp above.
+      if (canonicalReminderType === 'assignment_late_checkin_15m' && (smsSuccess || pushSuccess)) {
+        const patch = {
+          lateCheckinTextedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lateCheckinTextedVia: { channel: smsSuccess ? 'sms' : 'push', reminderDocId: docSnap.id },
+          lastAskedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastAskedReminderType: canonicalReminderType,
+        };
+        try {
+          if (reminderWorkDate) {
+            await applyDailyDayPatch({
+              tenantId: reminder.tenantId,
+              assignmentId: reminder.assignmentId,
+              workDate: reminderWorkDate,
+              patch,
+            });
+          } else {
+            await db
+              .doc(`tenants/${reminder.tenantId}/assignments/${reminder.assignmentId}`)
+              .set({ cortConfirmation: patch }, { merge: true });
+          }
+        } catch (err) {
+          logger.warn('[worker_shift_reminders] lateCheckinTextedAt stamp failed', {
+            assignmentId: reminder.assignmentId,
+            workDate: reminderWorkDate || null,
             error: String(err),
           });
         }

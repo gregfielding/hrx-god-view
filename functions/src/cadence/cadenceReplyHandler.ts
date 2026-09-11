@@ -272,6 +272,9 @@ export function pickPendingCadence(cadences: ActiveCadence[]): ActiveCadence | n
   return candidates[0];
 }
 
+/** How long a started shift stays cancellable when we asked about it after start. */
+const POST_START_ASK_CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
+
 /**
  * Cancellation lookup — like pickPendingCadence but ALSO matches `confirmed`
  * future shifts. A worker who replied YES yesterday and texts CANCEL today
@@ -279,12 +282,21 @@ export function pickPendingCadence(cadences: ActiveCadence[]): ActiveCadence | n
  * filter dropped this reply, it fell through to the compliance STOP handler
  * (CANCEL is a STOP synonym), and the worker was silently unsubscribed from
  * ALL SMS while the shift stayed marked confirmed.
+ *
+ * Also matches a shift that started within the last 6h if we asked about it
+ * AFTER it started (2026-09-11). The T+15 late check-in says "reply NO if you
+ * can't make it", and the future-only filter bound that NO to the worker's
+ * NEXT shift: a CORT Woodridge crew member's 5:20 AM Monday NO would have
+ * cancelled Tuesday. Ask recency still decides, so once tomorrow's ask has
+ * gone out, a NO is about tomorrow.
  */
-function pickCancellableCadence(cadences: ActiveCadence[]): ActiveCadence | null {
+export function pickCancellableCadence(cadences: ActiveCadence[]): ActiveCadence | null {
   const now = Date.now();
-  const candidates = cadences.filter(
-    (c) => (c.state === 'pending' || c.state === 'confirmed') && c.startMs > now,
-  );
+  const candidates = cadences.filter((c) => {
+    if (c.state !== 'pending' && c.state !== 'confirmed') return false;
+    if (c.startMs > now) return true;
+    return c.lastAskedAtMs >= c.startMs && now - c.startMs <= POST_START_ASK_CANCEL_WINDOW_MS;
+  });
   if (candidates.length === 0) return null;
   candidates.sort(compareByAskThenStart);
   return candidates[0];

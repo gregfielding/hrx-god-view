@@ -281,24 +281,32 @@ timesheet grid row, then clock-outs at the end of the day" + the plus-15
 
 ## Late check-in ask + Flex no-show unmute (2026-09-07, session 2)
 
+> ☠️ **Correction 2026-09-11:** the dispatcher gate and the Flex no-show
+> unmute below were never committed. b8164ac4 shipped only the step, copy,
+> registry entry and dashboard, so every late check-in doc was cancelled as
+> `assignment_start_in_past` and the probe stayed muted everywhere. The gate
+> was BUILT on 2026-09-11 with a feed-freshness guard, and the probe was
+> deliberately kept muted. The authoritative description is
+> [[project_shift_confirmation_cadence]] → "T+15 late check-in gate (built)".
+
 - **`assignment_late_checkin_15m`** (offset -0.25h) added to `gig_standard`,
   `cort_gig` (via the spread) and `career_placement` (Greg: "not just for
-  gigs"). Dispatcher gate (workerShiftRemindersV2.ts): dismiss if cortState is
-  checked_in/no_show/cancelled; dismiss `late_checkin_no_clockin_signal`
-  unless `isFlexLinkedAssignment` (assignmentSource 'indeed_flex_portal' /
-  flexWorkerId / flexJobId, or the shift's `clockInUrl` contains
-  time.indeed.com or carries flexJobId/flexRequestId); fresh
-  `findFlexClockIn` query on `indeed_flex_timesheets` (hrxAssignmentId +
-  workDate in the assignment tz) → if a punch exists stamp checked_in and
-  dismiss `late_checkin_clocked_in`; else stamp
-  `cortConfirmation.lateCheckinTextedAt/Via` and send. Copy in
+  gigs"). Planned dispatcher gate (built 2026-09-11, see correction): dismiss
+  if the day is checked_in/no_show/cancelled; dismiss
+  `late_checkin_no_clockin_signal` unless `isFlexLinkedAssignment` or the
+  shift's `clockInUrl` contains time.indeed.com / flexJobId / flexRequestId;
+  fresh lookup on `indeed_flex_timesheets` (hrxAssignmentId + workDate, plus
+  hrxUserId + workDate as built) → punch exists: stamp checked_in, dismiss
+  `late_checkin_clocked_in`; else (as built: only if the feed captured after
+  start + 5 min) send and stamp `lateCheckinTextedAt/Via`. Copy in
   cadenceMessages.ts (EN/ES), signed "Natalie, C1 Staffing recruiting
   assistant", asks HERE / NO — never says no-show. Registry entry added.
   Sends via the normal path = the 888 (Greg: interim) until the 10DLC
   campaign is approved.
-- **No-show probe unmuted for Flex-linked assignments only**
-  (`flexLinkedForProbe` short-circuits `isNoShowDetectionEnabled`); other
-  accounts stay muted (no clock-in signal).
+- ~~No-show probe unmuted for Flex-linked assignments only~~ — **not done.**
+  Never committed; on 2026-09-11 Greg chose to keep the T+30 probe muted
+  everywhere (a punch landing after the probe can't clear a detector-set
+  `no_show`).
 - **Dashboard** (`WorkerConfirmationsDashboard.tsx`): derived `late` status
   (start ≥15 min ago and <6h, not checked_in/cancelled/no_show; start from
   `startDateTime` else startDate+startTime viewer-local), red chip "Late —

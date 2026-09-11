@@ -344,12 +344,13 @@ as a cadence failure.
   Messaging Service opt-out list too.
 - New step `assignment_late_checkin_15m` (T+15m, worker-facing, Flex-linked
   only, signed by Natalie) between `assignment_checkin_0h` and the T+30 probe
-  — on gig_standard, cort_gig AND career_placement. Details in
-  [[project_portal_worker]] ("Late check-in ask").
-- T+30 no-show probe is UNMUTED for Flex-linked assignments (real clock-in
-  feed via the portal worker's 10-minute timesheet watch); still muted
-  elsewhere. **⚠️ CORRECTED 2026-09-11 — see below: that dispatcher gate
-  was never committed.**
+  — on gig_standard, cort_gig AND career_placement. **Its dispatcher gate
+  wasn't committed until 2026-09-11** — see "T+15 late check-in gate (built)"
+  at the end of this doc ([[project_portal_worker]] "Late check-in ask" is the
+  9/07 plan).
+- ~~T+30 no-show probe is UNMUTED for Flex-linked assignments~~ — never
+  committed. The probe is still muted everywhere, and on 2026-09-11 Greg chose
+  to keep it that way (see the built section).
 
 ## 2026-09-11 — Career daily-confirm opt-in (CORT Woodridge)
 
@@ -407,8 +408,9 @@ that silently blocked every future ask.
   compare).
 - Timeline for a 5 AM crew day (cort_gig): ask 8 AM the day before → nudges
   10 AM / noon while silent → re-confirm 5 PM → worksite details + clock-in
-  link 4:45 AM → HERE ask 5:00 → late check-in 5:15 (cancelled at dispatch,
-  see correction) → no-show probe 5:30 (muted). A worker who confirms at 8 AM
+  link 4:45 AM → HERE ask 5:00 → late check-in 5:15 (only if the Flex feed
+  shows no punch after a fresh capture — see the built section) → no-show
+  probe 5:30 (muted). A worker who confirms at 8 AM
   still gets ~5 texts/workday; confirmed days skip the ask ladder.
 
 **Per-day state.** `assignment.cortConfirmationDays[YYYY-MM-DD]` =
@@ -458,14 +460,16 @@ only once hosting is deployed.
 
 **☠️ Correction — the 2026-09-07 late check-in "dispatcher gate" was never
 committed.** b8164ac4 added the step, copy, and dashboard only;
-`findFlexClockIn` / `flexLinkedForProbe` / the Flex no-show unmute exist only
+`findFlexClockIn` / `flexLinkedForProbe` / the Flex no-show unmute existed only
 in docs. On main — and in the deployed dispatcher, whose source was diffed
-byte-for-byte on 2026-09-11 — `assignment_late_checkin_15m` is cancelled at
-dispatch as `assignment_start_in_past` (it isn't in the post-start
-allow-list), nothing writes `lateCheckinTextedAt`, and the T+30 probe is
+byte-for-byte on 2026-09-11 — `assignment_late_checkin_15m` was cancelled at
+dispatch as `assignment_start_in_past` (it wasn't in the post-start
+allow-list), nothing wrote `lateCheckinTextedAt`, and the T+30 probe was
 muted everywhere (`messagingConfig/noShowDetection` absent). Verify
 "deployed" claims against the function's source zip
 (`gcloud functions describe … buildConfig.source.storageSource`), not docs.
+**The gate was built later the same day — see "T+15 late check-in gate
+(built)" below; the T+30 probe stays muted everywhere by Greg's choice.**
 
 **Rollout 2026-09-11** (Greg approved go-live, track `cort_gig`, hosting):
 - Commits `db60fb5f` (build) + `e4ba6363` (phantom-day fix), both on main.
@@ -514,6 +518,91 @@ muted everywhere (`messagingConfig/noShowDetection` absent). Verify
   5 PM re-confirm → Mon 4:45 AM details + clock-in → 5:00 HERE — plus the
   Sat 1 AM top-up.
 - Rough edges still open: on a 5 AM start the worksite-details and clock-in
-  texts both land at 4:45 AM (the planner caps T-2h at T-15m); the T+15 late
-  check-in doc is always cancelled at dispatch (correction above); a confirmed
-  worker still gets ~4–5 texts per workday.
+  texts both land at 4:45 AM (the planner caps T-2h at T-15m); a confirmed
+  worker still gets ~4–5 texts per workday. (The always-cancelled T+15 late
+  check-in was fixed the same day — next section.)
+
+## 2026-09-11 — T+15 late check-in gate (built)
+
+Greg, after the correction above: build the gate **with a feed-freshness
+guard**; keep the T+30 no-show probe **muted everywhere** (no
+`flexLinkedForProbe`).
+
+**Why the guard** (read-only prod probes, 2026-09-11):
+- Only the 4 Woodridge crew members carried the step; every upcoming gig
+  assignment resolved `default` (no late step). `isFlexLinkedAssignment` is
+  FALSE for all 4 (`assignmentSource: applicants`) — they're Flex-linked only
+  through the shift's `time.indeed.com` clockInUrl (present on
+  `payload.clockInUrl`).
+- Punch → HRX lag on the two live samples: 16 and 55 min (the other samples
+  were redeploy backfills, hours to days late). The clock-in watch runs on
+  Greg's MacBook (`portal_workers/greg-macbook`), every 10 min 05:00–24:00 CT,
+  and had 27–70 min gaps between 6 and 8 AM CT on 9/10–9/11 (174 runs in 48h,
+  all succeeded). "No punch in `indeed_flex_timesheets`" only means something
+  right after a fresh capture.
+- ☠️ `stampCheckInFromPunch` never upgrades `no_show` → `checked_in`. An
+  unmuted probe that fires before a lagging punch lands leaves a permanent false
+  no-show, DMs recruiters, stops that day's texts, and queues a Flex ask that
+  posts to #dev (`app_config/indeed_flex.flexTeamAskChannelId` is unset). Fix
+  that before un-muting anything.
+
+**Dispatch gate** (`cadence/postStartGates.ts`, pure, tests in
+`__tests__/cadence/postStartGates.test.ts`; Firestore side is
+`dismissLateCheckinWithoutSignal` in workerShiftRemindersV2.ts):
+1. `postStartStaleWindowMs` is the post-start allow-list — the late check-in is
+   on it now (45 min; T+0 2h, T+30 6h). A new negative-offset step must be
+   added there; a test walks gig_standard / cort_gig / career_placement.
+2. Day already `checked_in` / `no_show` / `cancelled` →
+   `late_checkin_state_*` (crews read `cortConfirmationDays[workDate]`; the
+   earlier `daily_day_state_*` suppression usually catches it first).
+3. No clock-in signal → `late_checkin_no_clockin_signal`. Signal =
+   `isFlexLinkedAssignment` OR the shift clockInUrl contains time.indeed.com /
+   flexJobId / flexRequestId (payload first, fresh shift read if absent).
+4. Lookup `indeed_flex_timesheets`: hrxAssignmentId == id AND workDate == day,
+   merged with hrxUserId == worker AND workDate == day. Equality pairs on
+   single-field indexes, verified in prod. workDate = the doc's `workDate` for
+   crews, else the start's worksite-local date. A query error →
+   `late_checkin_lookup_failed` (fails closed).
+5. Punch on THIS assignment (status not cancel/declined/no-show) →
+   `stampCheckInFromPunch` (per-day for crews) → `late_checkin_clocked_in`.
+   Punch matched to the worker but no assignment →
+   `late_checkin_clocked_in_unmatched`, no stamp. A punch beats a stale feed.
+6. `integration_health/indeed_flex_timesheets.capturedAt` (epoch ms, last
+   capture wins) earlier than start + 5 min → `late_checkin_feed_stale`. A
+   sleeping laptop means silence, never "we don't see you clocked in".
+7. Otherwise send. After SMS or push succeeds, stamp `lateCheckinTextedAt`,
+   `lateCheckinTextedVia {channel, reminderDocId}`, `lastAskedAt`,
+   `lastAskedReminderType` — on the day entry via `applyDailyDayPatch` for
+   crews, on `cortConfirmation` otherwise. Readers: the T+30 escalation detail,
+   natalieBrief, natalieTools `worker_status`, the Worker Confirmations
+   dashboard.
+
+Dismissals are `status: cancelled` + `cancelReason`, logged as
+`late_checkin dismissed` / `late_checkin sending` (logger → jsonPayload; grep
+with `--format=json`). Coverage check after a few mornings: count reasons per
+day — lots of `feed_stale` means the watch is missing the 5 AM window.
+
+**☠️ A NO after start cancelled the worker's NEXT shift (found while building
+this; fixed).** The late check-in is the first cadence text sent after start
+that invites NO. `pickCancellableCadence` only matched future shifts, so that
+NO skipped today: a Woodridge crew member's 5:20 AM Monday NO would have
+cancelled Tuesday, alerted recruiters and queued a Flex ask. It now also
+matches a pending/confirmed shift that started ≤6h ago when `lastAskedAt ≥
+start` (only the late check-in asks after start); ask recency still decides,
+so after tomorrow's 8 AM ask a NO is about tomorrow. Tests:
+`cadence/__tests__/cadenceCancelRouting.test.ts`. Still open: "yes, on my way"
+after the late ask goes through `pickPendingCadence` first and confirms the
+next PENDING day (harmless state, confusing receipt).
+
+**☠️ `toCanonicalReminderType` fell through to `assignment_reminder_2h`** for
+any type without an explicit case — the late check-in included. Had the gate
+shipped alone, the late check-in's per-channel dedupe key would have collided
+with a career's real `assignment_reminder_2h` ("already sent", no text), taken
+that step's sequence copy override, and logged under the wrong messageTypeId.
+It's now a switch that maps every `ShiftReminderType` to itself (only legacy
+names are renamed), so a new step is canonical by construction.
+
+Deploy targets: `dispatchScheduledWorkerReminders` + the inbound pair
+`handleInboundSms` / `twilioInboundSmsWebhook` (the reply handler ships in
+both). `onAssignmentConfirmedScheduleReminders` unchanged — profiles didn't
+change. First live late check-ins: Mon 2026-09-14 5:15 AM CT (Woodridge).
