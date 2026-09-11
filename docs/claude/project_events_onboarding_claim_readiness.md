@@ -1,6 +1,6 @@
 # Onboarding + Claim readiness — C1 Events hire-everyone, gate at Claim (decided 2026-09-11)
 
-**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) COMMITTED 2026-09-11 (4faec962) — DEPLOY PENDING; S1/S2/S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
+**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1/S2/S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
 store review. Companion to [[project_tier_system_claim_shift_spec]] (Claim
 Shift v1) and [[project_worker_onboarding_everee]] (the completion curve).
 Build slices at the bottom; web + app ship together (parity rule).
@@ -115,16 +115,14 @@ Read-only scripts: `functions/.scratch/verify_events_readiness_signal{,2}.ts`,
   gets by the known ids; any query must filter on that field to be
   list-provable.
 
-## S3 COMMITTED 2026-09-11 (commit 4faec962) — deploy pending
+## ✅ S3 SHIPPED 2026-09-11 (commit 4faec962, deployed 13:09 PT from b8480560)
 
 `scoreTierPromotion` now returns `qualifies: total >= threshold &&
 interviewScore100 != null` plus `blockedBy: 'no_interview'` (shared/ +
 src/shared/; functions/src/shared is a symlink). 5 mocha tests in
 `functions/src/__tests__/tierAutomation/workerTierScoring.test.ts`.
-**⚠️ NOT YET DEPLOYED** (the deploy was held for Greg's OK): it takes effect
-only when `scheduledOrchestrator` (ramp + hiring-plan sweeps) and
-`scheduledScoringDistribution` (nightly promotion sweep) — the only callers —
-are redeployed. Until then production still promotes on score alone.
+Deployed `scheduledOrchestrator` (ramp + hiring-plan sweeps) and
+`scheduledScoringDistribution` (nightly promotion sweep) — the only callers.
 Impact at ship: Tier 1 = 16 (all interviewed), Tier 2 = 172 (1 without an
 interview — left as is, no demotion), pending proposals 1 (unaffected).
 
