@@ -241,6 +241,9 @@ interface FollowupDoc {
   lastIntent: string | null; createdAt: admin.firestore.FieldValue; updatedAt: admin.firestore.FieldValue;
   /** Owner (personas.ts: Marco = C1 Events minus Oakland Arena) and the worker's language, stamped at enrollment. Older docs: natalie / en. */
   persona?: PersonaId; lang?: 'en' | 'es';
+  /** "I already did it" re-check (Greg 2026-09-11): when to look again, and what they claimed. */
+  verifyAt?: admin.firestore.Timestamp | null;
+  verifyClaim?: { at: string; items: string[]; text: string } | null;
 }
 
 /** Enrolling late (e.g. first deploy, or an instance created days ago): start at the checkpoint that is still meaningful. */
@@ -528,6 +531,29 @@ export function composeDoneText(f: Pick<FollowupDoc, 'firstName' | 'jobTitle'>, 
     : `Hi ${f.firstName}, ${me} with C1 Staffing — you're all set on your onboarding paperwork for ${f.jobTitle}. Thank you! ${smsSignature(persona)}`;
 }
 
+/**
+ * How long after "I already did it" she looks again. Long enough for an AccuSource/Everee webhook to
+ * land, short enough that the worker still has the thread open (Greg 2026-09-11: Michelle D. replied
+ * "Ok I filled it out" while her background form still showed not started).
+ */
+const VERIFY_DELAY_MS = 25 * 60_000;
+
+/** Pure: the re-check text when HRX still shows the item the worker said they finished. */
+export function composeClaimRecheckText(
+  f: Pick<FollowupDoc, 'firstName'>,
+  stillOpen: string[],
+  opts: { persona?: PersonaId; lang?: 'en' | 'es' } = {},
+): string {
+  const persona = opts.persona ?? 'natalie';
+  const me = PERSONAS[persona].firstName;
+  const name = f.firstName || '';
+  if (opts.lang === 'es') {
+    const items = listify(stillOpen.map((x) => ES_ITEM[x] ?? x), 'y');
+    return `${name ? `Hola ${name}` : 'Hola'}, soy ${me} de C1 Staffing. Gracias por avisarme — pero en nuestro sistema todavía aparece pendiente: ${items}. A veces se completa otra parte del registro por error. ¿Puedes revisarlo? Respóndeme si algo no te funciona. ${smsSignature(persona, 'es')}`;
+  }
+  return `${name ? `Hi ${name}` : 'Hi'} — ${me} with C1 Staffing. Thanks for letting me know! On our side this still shows as not done: ${listify(stillOpen)}. Sometimes a different part of the setup gets finished by mistake. Could you take one more look? Reply here if something isn't working. ${smsSignature(persona)}`;
+}
+
 async function sendSms(f: FollowupDoc, text: string, messageTypeId: string): Promise<{ success: boolean; error?: string }> {
   const { sendWorkerMessageInternal } = await import('../twilio');
   const r = await sendWorkerMessageInternal(f.phoneE164, text, { tenantId: f.tenantId, userId: f.userId, source: 'system', messageTypeId, systemContext: true } as never);
@@ -777,6 +803,7 @@ export async function drainSmsConversations(tokensIn: string | PersonaTokens): P
       }
       const cfg = await natalieConfig();
       let status: FollowupDoc['status'] = f.status;
+      let verify: FollowupDoc['verifyClaim'] = null;
       if (decision.intent === 'declined') {
         status = 'declined';
         if (cfg.autoRemoveOnDecline === true && f.jobOrderId) {
@@ -787,9 +814,19 @@ export async function drainSmsConversations(tokensIn: string | PersonaTokens): P
           notes.push(`:x: ${f.firstName} is declining — tell me "remove ${f.firstName} from ${f.jobTitle}" and I'll cancel their assignment and line up someone else`);
         }
       } else if (decision.intent === 'says_done') {
-        notes.push(`says it's done — I'll confirm at the next check${snap.workerTodo.length ? ` (HRX still shows: ${snap.workerTodo.join(', ')})` : ''}`);
+        if (snap.workerTodo.length) {
+          // Never argue in the reply (the prompt thanks them); look again once the webhooks have had time.
+          verify = { at: new Date().toISOString(), items: snap.workerTodo, text: inbound.slice(0, 200) };
+          notes.push(`says it's done, but HRX still shows: ${snap.workerTodo.join(', ')} — re-checking in ${Math.round(VERIFY_DELAY_MS / 60_000)} min and re-sending the link if it still hasn't landed`);
+        } else {
+          notes.push("says it's done and HRX agrees — nothing open on their side");
+        }
       }
-      await fRef.set({ transcript, lastIntent: decision.intent, lastInboundAt: admin.firestore.FieldValue.serverTimestamp(), status, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      await fRef.set({
+        transcript, lastIntent: decision.intent, lastInboundAt: admin.firestore.FieldValue.serverTimestamp(), status,
+        ...(verify ? { verifyAt: admin.firestore.Timestamp.fromMillis(Date.now() + VERIFY_DELAY_MS), verifyClaim: verify } : {}),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
       await d.ref.update({ status: 'handled', intent: decision.intent, reply: decision.reply, actions: decision.actions, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
       await say(`Me → ${f.firstName}: "${decision.reply}"${sent.success ? '' : ` (send failed: ${sent.error})`}\n_read as: ${decision.intent.replace(/_/g, ' ')}_${notes.length ? `\n${notes.map((n) => `• ${n}`).join('\n')}` : ''}`);
       await recordNatalieAction({ tenantId: f.tenantId, persona: who.persona, kind: 'onboarding_sms_reply', summary: `Replied to ${f.workerName} (${decision.intent}): "${decision.reply.slice(0, 100)}"`, userId: f.userId, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, slack, input: { inbound }, result: { intent: decision.intent, actions: decision.actions } });
@@ -797,6 +834,78 @@ export async function drainSmsConversations(tokensIn: string | PersonaTokens): P
     } catch (err) {
       logger.warn('[natalie] sms conversation failed', { userId, err: String(err) });
       await d.ref.update({ status: 'failed', lastError: String(err).slice(0, 300), updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    }
+  }
+  return handled;
+}
+
+// ---------------------------------------------------------------------------------------------
+// "I already did it" re-check: trust the worker in the reply, verify against HRX ~25 min later.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Greg 2026-09-11: "this is a perfect example of when Natalie needs to reach out — maybe she needs to
+ * give her the link again". A worker who says they finished is never argued with on the spot; this
+ * pass looks again once the AccuSource / Everee webhooks have had time. Still open → she re-sends the
+ * exact link once (the background form link, and the Everee invite when that is what they claimed).
+ * Cleared → a :white_check_mark: in the thread and no text. One re-check per claim either way.
+ */
+export async function runClaimVerifications(tokensIn: string | PersonaTokens): Promise<number> {
+  const tokens = asTokens(tokensIn);
+  await runtimeOf(tokens);
+  const due = await db.collection(FOLLOWUPS).where('verifyAt', '<=', admin.firestore.Timestamp.now()).limit(20).get();
+  const clear = { verifyAt: admin.firestore.FieldValue.delete(), verifyClaim: admin.firestore.FieldValue.delete(), updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+  let handled = 0;
+  for (const d of due.docs) {
+    const f = d.data() as FollowupDoc;
+    if (!['active', 'parked'].includes(f.status)) { await d.ref.set(clear, { merge: true }); continue; }
+    if (!inTextingHours(f.tz || 'America/Denver')) continue; // keep the claim armed until their daytime
+    const who = tokenFor(tokens, f.persona ?? 'natalie');
+    const P = PERSONAS[who.persona];
+    const lang = f.lang === 'es' ? 'es' : 'en';
+    const slack = f.slack ?? undefined;
+    const say = async (text: string) => { if (slack?.channel) await postAsNatalie(who.token, { channel: slack.channel, text, threadTs: slack.ts }); };
+    try {
+      const snap = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId, { hiringEntityId: f.hiringEntityId });
+      const claimed = f.verifyClaim?.items ?? [];
+      const stillOpen = claimed.length ? snap.workerTodo.filter((x) => claimed.includes(x)) : snap.workerTodo;
+      if (!stillOpen.length) {
+        await d.ref.set(clear, { merge: true });
+        await say(`:white_check_mark: ${f.firstName} said they finished and HRX now agrees${claimed.length ? ` (${claimed.join(', ')})` : ''} — nothing re-sent.`);
+        handled += 1;
+        continue;
+      }
+      const bgOpen = snap.background && !snap.background.formDone && snap.background.portalLink;
+      const notes: string[] = [];
+      let text: string;
+      let messageTypeId: string;
+      if (bgOpen) {
+        const { portalLinkText } = await import('./natalieFill');
+        text = portalLinkText(f.firstName, snap.background!.portalLink, snap.background!.packageName, true, { persona: who.persona, lang });
+        messageTypeId = `${P.smsPrefix}bg_portal_link`;
+      } else {
+        text = composeClaimRecheckText(f, stillOpen, { persona: who.persona, lang });
+        messageTypeId = `${P.smsPrefix}onboarding_reply`;
+      }
+      const sent = await sendSms(f, text, messageTypeId);
+      if (stillOpen.some((x) => /I-9|Everee|tax|handbook|policies/.test(x)) && f.hiringEntityId) {
+        try {
+          const { runPayrollOnboardingInviteResend } = await import('../messaging/payrollInviteResend');
+          const r = await runPayrollOnboardingInviteResend({ tenantId: f.tenantId, userId: f.userId, hiringEntityId: f.hiringEntityId, initiatedByUid: who.persona, assignmentId: f.assignmentId });
+          notes.push(r.ok ? 'also re-sent their Everee onboarding invite' : `Everee resend skipped (${s((r as { skipReason?: string }).skipReason) || 'not ok'})`);
+        } catch (e) { notes.push(`Everee resend failed: ${String(e).slice(0, 100)}`); }
+      }
+      const transcript = [...(f.transcript ?? []), { at: new Date().toISOString(), dir: 'out' as const, text }].slice(-30);
+      await d.ref.set({ ...clear, transcript, ...(sent.success ? { lastTextAt: admin.firestore.FieldValue.serverTimestamp() } : {}) }, { merge: true });
+      if (sent.success) await armWatch(f);
+      await say(sent.success
+        ? `:repeat: ${f.firstName} said they finished, but HRX still shows: ${stillOpen.join(', ')}. I re-sent ${bgOpen ? 'the AccuSource form link' : 'the details'}.${notes.length ? ` ${notes.join('; ')}.` : ''}\n${slackSummary(snap)}`
+        : `:warning: ${f.firstName} said they finished but HRX still shows: ${stillOpen.join(', ')} — my re-send failed (${sent.error || 'unknown'}).\n${slackSummary(snap)}`);
+      await recordNatalieAction({ tenantId: f.tenantId, persona: who.persona, kind: 'onboarding_claim_recheck', summary: sent.success ? `Re-sent ${bgOpen ? 'the AccuSource link' : 'the open items'} to ${f.workerName} — still open: ${stillOpen.join(', ')}` : `Could not re-send to ${f.workerName} (${sent.error})`, userId: f.userId, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, slack, result: { stillOpen, claimed } });
+      handled += 1;
+    } catch (err) {
+      logger.warn('[natalie] claim verification failed', { userId: f.userId, err: String(err) });
+      await d.ref.set(clear, { merge: true }).catch(() => undefined);
     }
   }
   return handled;

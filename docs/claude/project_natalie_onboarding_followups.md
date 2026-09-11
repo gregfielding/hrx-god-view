@@ -89,6 +89,15 @@ ahead (`firstCheckpointFor`) so nobody gets the 24h and 72h texts back to back.
 (`resend_background_link`, `resend_everee_invite`, `escalate`). She sends the reply, performs the
 actions, appends to the follow-up `transcript`, and posts `Me → Name: "…" _read as: …_` in the
 worker's Slack thread (the raw inbound is already relayed there by the existing watch relay).
+- **says_done → re-check (Greg 2026-09-11)**: the reply never argues ("thanks, I'll confirm on our
+  side"), but when HRX still shows the claimed item open the follow-up is stamped
+  `verifyAt` (+25 min) + `verifyClaim {at, items, text}`. `runClaimVerifications` (same tick, after
+  `drainSmsConversations`) rebuilds the snapshot: cleared → :white_check_mark: in the thread, no text;
+  still open → ONE re-send (the AccuSource link via `portalLinkText(reminder)`, else
+  `composeClaimRecheckText`; an Everee/tax/I-9 claim also re-sends the Everee invite) and a `:repeat:`
+  line in Slack. Texting hours apply (the claim stays armed until their daytime); the 20h
+  no-double-text guard does NOT — the worker just engaged. Trigger case: Michelle D. replied "Ok I
+  filled it out" while her background form still read not started (probably her Everee onboarding).
 - **declined** → follow-up status `declined`; Slack: ":x: … tell me 'remove NAME from JOB'". With
   `app_config/natalie.autoRemoveOnDecline === true` she removes immediately instead.
 - Removal = `removeWorkerFromJob`: live assignments on that job order → `status: 'cancelled'`,

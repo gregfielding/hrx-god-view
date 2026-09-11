@@ -475,10 +475,12 @@ export async function drainNatalieOutbox(tokensIn: string | PersonaTokens): Prom
   // Onboarding + screening follow-ups (Greg 2026-09-09): enroll new onboarding starts / screening
   // orders, run the 24h / 72h / 7d checks, and answer worker replies by text.
   try {
-    const { enrollOnboardingFollowups, runOnboardingCheckpoints, drainSmsConversations } = await import('./natalieOnboarding');
+    const { enrollOnboardingFollowups, runOnboardingCheckpoints, drainSmsConversations, runClaimVerifications } = await import('./natalieOnboarding');
     await enrollOnboardingFollowups(tokens);
     await runOnboardingCheckpoints(tokens);
     await drainSmsConversations(tokens);
+    // "I already did it" claims, re-checked against HRX once the webhooks have had time (2026-09-11).
+    await runClaimVerifications(tokens);
   } catch (e) { logger.warn('[natalie] onboarding followup drain failed', { err: String(e) }); }
   try { await drainAcceptFills(token); } catch (e) { logger.warn('[natalie] accept fill drain failed', { err: String(e) }); }
   try { await drainCraigslistDrafts(token); } catch (e) { logger.warn('[natalie] craigslist drain failed', { err: String(e) }); }

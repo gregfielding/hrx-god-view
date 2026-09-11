@@ -1,4 +1,21 @@
-import { composeCheckpointText, drugFromCheck, firstCheckpointFor, stepsWithoutAssignment, type OnboardingSnapshot } from '../../natalie/natalieOnboarding';
+import { composeCheckpointText, composeClaimRecheckText, drugFromCheck, firstCheckpointFor, stepsWithoutAssignment, type OnboardingSnapshot } from '../../natalie/natalieOnboarding';
+
+describe('composeClaimRecheckText ("I already did it" re-check)', () => {
+  it('thanks them, names what HRX still shows, and asks for one more look', () => {
+    const t = composeClaimRecheckText({ firstName: 'Michelle' }, ['AccuSource background form (Sodexo Basic Package)']);
+    expect(t).toMatch(/^Hi Michelle/);
+    expect(t).toMatch(/Thanks for letting me know/);
+    expect(t).toMatch(/still shows as not done: AccuSource background form \(Sodexo Basic Package\)/);
+    expect(t).not.toMatch(/did not|didn't actually/i);
+    expect(t.endsWith('— Natalie, C1 Staffing')).toBe(true);
+  });
+  it('lists several open items and writes Spanish when that is the worker language', () => {
+    expect(composeClaimRecheckText({ firstName: 'Ana' }, ['tax forms (W-4)', 'I-9 (your section)'])).toMatch(/tax forms \(W-4\) and I-9 \(your section\)/);
+    const es = composeClaimRecheckText({ firstName: 'Ana' }, ['tax forms (W-4)'], { lang: 'es' });
+    expect(es).toMatch(/^Hola Ana/);
+    expect(es).toMatch(/todavía aparece pendiente/);
+  });
+});
 
 describe('firstCheckpointFor (1h check added 2026-09-11)', () => {
   const now = Date.parse('2026-09-11T20:00:00Z');
