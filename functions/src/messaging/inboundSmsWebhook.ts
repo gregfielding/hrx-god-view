@@ -97,6 +97,19 @@ export const handleInboundSms = onRequest(
         logger.warn('[sms_inbound_raw] write failed (non-blocking)', { err: rawErr?.message || String(rawErr) });
       }
 
+      // Staff texting a persona's own number (Rosa → Marco's 737, anyone → Natalie's 312): the persona
+      // answers with full context in the next natalieSlackInbox tick (personaConversations.ts). STOP/HELP
+      // keywords never route here. Fail-open: on any error the text continues through the normal pipeline.
+      try {
+        const { enqueueStaffSms } = await import('../natalie/personaConversations');
+        if (await enqueueStaffSms({ from: fromNumber, to: toNumber, body: messageBody, messageSid: messageSid ? String(messageSid) : undefined })) {
+          response.status(200).type('text/xml').send('<Response></Response>');
+          return;
+        }
+      } catch (staffErr: any) {
+        logger.warn('[persona-sms] staff routing failed (non-blocking)', { err: staffErr?.message || String(staffErr) });
+      }
+
       // Natalie's SMS watches (2026-09-07): when she texted someone an offer
       // from Slack/Claude, relay their reply into that Slack thread. Fail-open.
       try {

@@ -302,7 +302,18 @@ export const natalieSlackInbox = onSchedule(
       const m = await pollPersonaInbox('marco', marcoToken, runtime).catch((err) => { logger.error('[marco] inbox poll failed', { err: String(err) }); return { answered: 0, skipped: 0 }; });
       if (m.answered || m.skipped) logger.info('[marco] tick', m);
     }
+    // Staff ↔ persona texts first (Rosa texting Marco shouldn't wait behind a Worker Reach blast), email after the outbox.
+    const conversations = await import('./personaConversations');
+    try {
+      await conversations.loadStaffDirectory({ refresh: true });
+      const sms = await conversations.drainStaffSms(runtime);
+      if (sms) logger.info('[persona] staff texts answered', { sms });
+    } catch (err) { logger.warn('[persona] staff sms drain failed', { err: String(err) }); }
     const outbox = await drainNatalieOutbox({ natalie: token, marco: marcoToken || undefined, runtime });
     if (outbox.followups || outbox.escalations || outbox.relays || outbox.techIssues) logger.info('[natalie] outbox drained', outbox);
+    try {
+      const email = await conversations.drainStaffEmail(runtime);
+      if (email) logger.info('[persona] staff emails answered', { email });
+    } catch (err) { logger.warn('[persona] staff email drain failed', { err: String(err) }); }
   },
 );

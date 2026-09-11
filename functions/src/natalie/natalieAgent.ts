@@ -81,6 +81,14 @@ export function systemPromptFor(persona: PersonaId, opts: { marcoLive?: boolean 
   return opts.marcoLive ? `${NATALIE_SYSTEM_PROMPT}${MARCO_HANDOFF_NOTE}` : NATALIE_SYSTEM_PROMPT;
 }
 
+/** Where the conversation happens (personaConversations.ts: staff texting / emailing a persona). Slack is the default. */
+export type ConversationSurface = 'slack' | 'sms' | 'email';
+const SURFACE_NOTES: Record<ConversationSurface, string> = {
+  slack: '',
+  sms: `\n\nThis conversation is by TEXT MESSAGE (SMS) with a C1 staff member, not Slack — the history is your text thread with them, and a short reply like "yes" answers your last question. Reply in plain text only: no Slack formatting, no *bold*, no <url|text> links (write the bare URL). Keep it under 480 characters when you can; for long lists give the few that matter and offer the rest. No sign-off.`,
+  email: `\n\nThis conversation is by EMAIL with a C1 staff member, not Slack — the history is the email thread. Reply with a short plain-text email body: greet them by first name, then the answer. No Slack formatting, no <url|text> links (write bare URLs). Your signature is added automatically, so don't sign.`,
+};
+
 export interface NatalieTurn {
   role: 'user' | 'assistant';
   text: string;
@@ -112,6 +120,7 @@ export async function answerAsNatalie(args: {
   ctx: NatalieToolContext;
   /** Marco is switched on (personas.loadPersonaRuntime) — Natalie then hands C1 Events asks to him. */
   marcoLive?: boolean;
+  surface?: ConversationSurface;
 }): Promise<NatalieAnswer> {
   const persona: PersonaId = args.ctx.persona ?? 'natalie';
   const messages: Anthropic.Beta.BetaMessageParam[] = [
@@ -127,7 +136,7 @@ export async function answerAsNatalie(args: {
     const res = await client().beta.messages.create({
       model: NATALIE_MODEL,
       max_tokens: 4096,
-      system: [{ type: 'text', text: systemPromptFor(persona, { marcoLive: args.marcoLive }), cache_control: { type: 'ephemeral' } }],
+      system: [{ type: 'text', text: `${systemPromptFor(persona, { marcoLive: args.marcoLive })}${SURFACE_NOTES[args.surface ?? 'slack']}`, cache_control: { type: 'ephemeral' } }],
       tools: toolsFor(persona),
       tool_choice: round < MAX_TOOL_ROUNDS ? { type: 'auto' } : { type: 'none' },
       thinking: { type: 'adaptive' },

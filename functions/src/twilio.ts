@@ -58,6 +58,11 @@ import { PERSONAS, personaForMessageType } from './natalie/personas';
  * retries from the 888. Override/disable with env NATALIE_MESSAGING_SERVICE_SID (empty string = off).
  */
 const NATALIE_MESSAGING_SERVICE_SID = process.env.NATALIE_MESSAGING_SERVICE_SID ?? 'MG2dd6557d05d9be9044c996fa568a8a39';
+/** Persona replies to staff (natalie/personaConversations.ts) are a conversation, not worker outreach — the early-funnel and duplicate guards don't apply. */
+function isStaffReplyMessage(messageTypeId?: string): boolean {
+  return Boolean(personaForMessageType(messageTypeId)) && String(messageTypeId).endsWith('_staff_reply');
+}
+
 function personaSmsRoute(messageTypeId?: string): { serviceSid: string; from: string } | null {
   const persona = personaForMessageType(messageTypeId);
   if (!persona || !NATALIE_MESSAGING_SERVICE_SID) return null;
@@ -1230,7 +1235,7 @@ export async function sendWorkerMessageInternal(
 
     // Early-funnel SMS coordination (same policy as routingOrchestrator deliverSms).
     // Runs even when phone lookup failed, as long as context carries tenantId + userId.
-    if (tenantId && recipientUserId && context?.messageTypeId) {
+    if (tenantId && recipientUserId && context?.messageTypeId && !isStaffReplyMessage(context.messageTypeId)) {
       const { checkEarlyFunnelSmsGate } = await import('./messaging/earlyFunnelSmsPolicy');
       const gate = await checkEarlyFunnelSmsGate({
         tenantId,
@@ -1278,7 +1283,7 @@ export async function sendWorkerMessageInternal(
     }
 
     // Same messageTypeId + same user within 60s (last-line defense; orchestrator uses deliverSms).
-    if (tenantId && recipientUserId && context?.messageTypeId) {
+    if (tenantId && recipientUserId && context?.messageTypeId && !isStaffReplyMessage(context.messageTypeId)) {
       const { checkSmsDuplicateMessageTypeGuard } = await import('./messaging/smsDuplicateMessageGuard');
       const dup = await checkSmsDuplicateMessageTypeGuard({
         tenantId,

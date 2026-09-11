@@ -141,6 +141,10 @@ function plainText(msg: gmail_v1.Schema$Message): string {
   return (cut > 0 ? raw.slice(0, cut) : raw).trim().slice(0, 1500);
 }
 
+/** For personaConversations (staff email threads). */
+export const messageHeader = header;
+export const messagePlainText = plainText;
+
 const AUTOMATED_SENDER = /noreply|no-reply|notifications?@|donotreply|mailer-daemon|fieldglass\.net|indeedflex\.com|@indeed\.com/i;
 
 export interface InboxItem {

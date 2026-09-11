@@ -128,6 +128,36 @@ is live, else Natalie's — so flipping `enabled` off hands everything back with
 - Routing is by the worker's watch/follow-up doc (one per worker), not by which number they texted — the
   scope rule already guarantees one owner per worker.
 
+## Staff ↔ persona conversations by SMS and email (Greg 2026-09-11: "Rosa will be texting Marco a lot")
+Both personas, `functions/src/natalie/personaConversations.ts` (tests: `__tests__/natalie/personaConversations.test.ts`):
+- **Who**: `app_config/persona_staff_directory` (rebuilt hourly by the tick, or on first use) = users with
+  tenant securityLevel ≥ 5 AND a `@c1staffing.com` email, not `isAutomationPersona`, not inactive. Phones
+  normalized from `phoneE164` or the raw `phone` (Rosa only has `phone`). Level-7 client contacts (Rocco /
+  Marty Mazzella at venuesmartllc.com / tisales.com) and outside bookkeepers are excluded by the domain rule.
+- **SMS**: `handleInboundSms` → `enqueueStaffSms` right after the raw audit copy: persona = the number texted
+  (737 → Marco, 312 → Natalie), sender in the directory, not a STOP/HELP/START keyword (a plain "yes" IS
+  routed) → `persona_sms_inbox/{MessageSid}` and the webhook returns (no worker pipeline). The tick answers
+  BEFORE the outbox (`drainStaffSms`, ≤5/tick, transaction-claimed) with `answerAsNatalie(surface: 'sms')`;
+  history = `persona_sms_threads/{persona}__{phone}`; reply `{prefix}staff_reply` from the persona's number,
+  plain text ≤1200 chars. `twilio.ts` exempts `*_staff_reply` from the worker early-funnel + 60s duplicate
+  guards (only inside `sendWorkerMessageInternal`). Works before Marco is switched on (identity = the number
+  texted); until the 737 is in the A2P pool his replies fall back to the 888.
+- **Email**: `drainStaffEmail` (after the outbox) reads each CONNECTED persona mailbox:
+  `in:inbox is:unread newer_than:2d from:c1staffing.com`; sender must be in the directory; ledger
+  `persona_email_handled/{persona}__{messageId}` (create() = claim); history = the whole Gmail thread
+  (persona's own messages = assistant turns); reply in-thread via `sendEmail(…, persona)`, marked read.
+  Everyone else's mail is left unread for a human. ☠️ Natalie's mailbox is connected, so staff email to
+  n.brooks@ is answered automatically from this deploy on.
+- Tools asked for by text/email have no Slack thread, so portal follow-ups aren't posted back.
+
+## Gmail connect (Marco)
+`gmailOAuthCallback` handles `state.purpose === 'marcoMailbox'` (deployed 2026-09-11 from a clean worktree —
+the first attempt died on another session's uncommitted WIP). m.gomez@ is an OAuth test user (Greg). Open
+`functions/.scratch/marco-gmail-consent-url.txt` in an Incognito window signed into Google as m.gomez@ →
+Allow → "Marco's mailbox is connected" → `tenants/{T}/integrations/marcoMailbox`. Scopes include
+`gmail.settings.basic` so the signature (`.scratch/marco-signature.html`) can be set by API. The OAuth app is
+in Testing mode → refresh tokens expire after 7 days (same as Natalie) until publishing status is In production.
+
 ## One-time steps to go live (in order)
 1. **Slack app**: create "Marco Gomez (HRX)" from `functions/.scratch/slack-marco-app-manifest.json`
    (api.slack.com, as Greg); copy its client secret into Secret Manager `SLACK_MARCO_CLIENT_SECRET`.
