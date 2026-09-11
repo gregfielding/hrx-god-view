@@ -36,6 +36,7 @@ import { recordNatalieAction, type SlackRef } from './natalieAudit';
 import { NATALIE_MODEL } from './natalieAgent';
 import { latestBackgroundCheckDoc } from './natalieFill';
 import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
+import { PERSONAS, effectivePersona, loadPersonaRuntime, scopePersona, smsSignature, tokenFor, workerLanguage, type PersonaId, type PersonaRuntime, type PersonaTokens } from './personas';
 
 const db = admin.firestore();
 const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
@@ -61,7 +62,6 @@ const phoneOf = (u: Record<string, unknown>): string => {
   const d = s(u.phone).replace(/\D/g, '');
   return d.length === 10 ? `+1${d}` : d.length === 11 && d.startsWith('1') ? `+${d}` : '';
 };
-const SIGN = '— Natalie, C1 Staffing';
 
 function stateTz(state: string): string {
   const st = (state || '').toUpperCase();
@@ -77,6 +77,13 @@ const inTextingHours = (tz: string): boolean => { const h = localHour(tz); retur
 
 async function natalieConfig(): Promise<Record<string, unknown>> {
   return ((await db.doc(`tenants/${TENANT}/app_config/natalie`).get()).data() ?? {}) as Record<string, unknown>;
+}
+
+/** Scripts pass Natalie's token alone; the tick passes every persona's. */
+const asTokens = (t: string | PersonaTokens): PersonaTokens => (typeof t === 'string' ? { natalie: t } : t);
+async function runtimeOf(tokens: PersonaTokens): Promise<PersonaRuntime> {
+  if (!tokens.runtime) tokens.runtime = await loadPersonaRuntime(TENANT, Boolean(tokens.marco));
+  return tokens.runtime;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -226,6 +233,8 @@ interface FollowupDoc {
   nextCheckpoint: 'h1' | 'h24' | 'h72' | 'd7' | null; checkpoints: Record<string, unknown>;
   slack: SlackRef | null; transcript: Array<{ at: string; dir: 'out' | 'in'; text: string }>;
   lastIntent: string | null; createdAt: admin.firestore.FieldValue; updatedAt: admin.firestore.FieldValue;
+  /** Owner (personas.ts: Marco = C1 Events minus Oakland Arena) and the worker's language, stamped at enrollment. Older docs: natalie / en. */
+  persona?: PersonaId; lang?: 'en' | 'es';
 }
 
 /** Enrolling late (e.g. first deploy, or an instance created days ago): start at the checkpoint that is still meaningful. */
@@ -250,9 +259,9 @@ async function latestActiveAssignment(tenantId: string, userId: string): Promise
 }
 
 /** One Slack thread per job order per day (bulk placements would otherwise open a thread per worker). */
-async function threadFor(token: string, channel: string, key: { jobOrderId: string | null; jobTitle: string; site: string; recruiterName: string; entity: string; source: FollowupDoc['source'] }): Promise<SlackRef> {
+async function threadFor(token: string, channel: string, key: { jobOrderId: string | null; jobTitle: string; site: string; recruiterName: string; entity: string; source: FollowupDoc['source']; persona: PersonaId }): Promise<SlackRef> {
   const day = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Denver' });
-  const id = `${key.jobOrderId || 'no-order'}__${day}`;
+  const id = `${key.persona === 'marco' ? 'marco__' : ''}${key.jobOrderId || 'no-order'}__${day}`;
   const ref = db.collection('natalie_onboarding_threads').doc(id);
   const cur = (await ref.get()).data() as { channel?: string; ts?: string } | undefined;
   if (cur?.ts) return { channel: cur.channel || channel, ts: cur.ts };
@@ -268,7 +277,7 @@ async function threadFor(token: string, channel: string, key: { jobOrderId: stri
 type FollowupBase = { userId: string; assignmentId: string | null; jobOrderId: string | null; recruiterUid: string | null; startedAt: Date; source: FollowupDoc['source']; packageName?: string; hiringEntityId?: string | null };
 
 /** Job title / site / state / hiring entity for a follow-up: the assignment when there is one, else the job order (hiring-plan hires). */
-async function followupContext(tenantId: string, base: FollowupBase): Promise<{ asg: Record<string, unknown>; jobTitle: string; site: string; state: string; entity: string; jobOrderId: string | null }> {
+async function followupContext(tenantId: string, base: FollowupBase): Promise<{ asg: Record<string, unknown>; jobTitle: string; site: string; state: string; entity: string; jobOrderId: string | null; scope: PersonaId }> {
   const asg = base.assignmentId ? (await db.doc(`tenants/${tenantId}/assignments/${base.assignmentId}`).get()).data() ?? {} : {};
   const jo = !base.assignmentId && base.jobOrderId ? (await db.doc(`tenants/${tenantId}/job_orders/${base.jobOrderId}`).get()).data() ?? {} : {};
   const addr = (asg.worksiteAddress ?? jo.worksiteAddress ?? {}) as Record<string, unknown>;
@@ -279,19 +288,22 @@ async function followupContext(tenantId: string, base: FollowupBase): Promise<{ 
     state: s(addr.state),
     entity: s(asg.hiringEntityId) || s(asg.entityId) || s(base.hiringEntityId) || s(jo.hiringEntityId),
     jobOrderId: base.jobOrderId || s(asg.jobOrderId) || null,
+    scope: scopePersona(Object.keys(asg).length ? asg : { ...jo, hiringEntityId: s(jo.hiringEntityId) || s(base.hiringEntityId), locationId: jo.worksiteId }),
   };
 }
 
-async function createFollowup(token: string, channel: string, base: FollowupBase): Promise<boolean> {
+async function createFollowup(tokens: PersonaTokens, runtime: PersonaRuntime, natalieChannel: string, base: FollowupBase): Promise<boolean> {
   const tenantId = TENANT;
   const u = (await db.doc(`users/${base.userId}`).get()).data() ?? {};
   const workerName = `${s(u.firstName)} ${s(u.lastName)}`.trim() || base.userId;
-  const { asg, jobTitle, site, state: siteState, entity, jobOrderId } = await followupContext(tenantId, base);
+  const { asg, jobTitle, site, state: siteState, entity, jobOrderId, scope } = await followupContext(tenantId, base);
+  const { persona, token } = tokenFor(tokens, effectivePersona(scope, runtime));
+  const channel = persona === 'marco' ? runtime.marcoChannel : natalieChannel;
   const state = siteState || s(u.state) || s((u.address as Record<string, unknown> | undefined)?.state);
   const phone = phoneOf(u);
   const rName = await recruiterName(s(base.recruiterUid));
   const who = `<${PUBLIC_APP_ORIGIN}/users/${base.userId}|${workerName}>`;
-  const thread = await threadFor(token, channel, { jobOrderId, jobTitle, site, recruiterName: rName, entity, source: base.source });
+  const thread = await threadFor(token, channel, { jobOrderId, jobTitle, site, recruiterName: rName, entity, source: base.source, persona });
   const first = firstCheckpointFor(base.startedAt);
   const firstLabel = CHECKPOINT_LABEL[first];
   const startedLabel = base.startedAt.toLocaleString('en-US', { timeZone: 'America/Denver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -308,22 +320,27 @@ async function createFollowup(token: string, channel: string, base: FollowupBase
     startedAt: admin.firestore.Timestamp.fromDate(base.startedAt), tz: stateTz(state), status: phone ? 'active' : 'no_phone',
     nextCheckpoint: first, checkpoints: {}, slack: thread,
     transcript: [], lastIntent: null, createdAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    persona, lang: workerLanguage(u),
   };
   await db.collection(FOLLOWUPS).doc(base.userId).set(doc);
-  await recordNatalieAction({ tenantId, kind: 'onboarding_followup_armed', summary: `Following up on ${workerName}'s onboarding${jobTitle ? ` for ${jobTitle}` : ''} (24h / 72h checks)`, userId: base.userId, jobOrderId: doc.jobOrderId, assignmentId: base.assignmentId, slack: doc.slack ?? undefined });
+  await recordNatalieAction({ tenantId, persona, kind: 'onboarding_followup_armed', summary: `Following up on ${workerName}'s onboarding${jobTitle ? ` for ${jobTitle}` : ''} (24h / 72h checks)`, userId: base.userId, jobOrderId: doc.jobOrderId, assignmentId: base.assignmentId, slack: doc.slack ?? undefined });
   return true;
 }
 
 /** Enroll one specific worker (scripts / tests / "follow up with X" asks). Returns false if they already have an active follow-up. */
-export async function enrollWorkerFollowup(token: string, base: FollowupBase): Promise<boolean> {
+export async function enrollWorkerFollowup(tokensIn: string | PersonaTokens, base: FollowupBase): Promise<boolean> {
+  const tokens = asTokens(tokensIn);
+  const runtime = await runtimeOf(tokens);
   const cfg = await natalieConfig();
   const channel = s(cfg.onboardingChannelId) || s(cfg.recruitingChannelId) || DEFAULT_CHANNEL;
   const existing = (await db.collection(FOLLOWUPS).doc(base.userId).get()).data() as FollowupDoc | undefined;
   if (existing && existing.status === 'active') return false;
-  return createFollowup(token, channel, base);
+  return createFollowup(tokens, runtime, channel, base);
 }
 
-export async function enrollOnboardingFollowups(token: string): Promise<number> {
+export async function enrollOnboardingFollowups(tokensIn: string | PersonaTokens): Promise<number> {
+  const tokens = asTokens(tokensIn);
+  const runtime = await runtimeOf(tokens);
   const cfg = await natalieConfig();
   if (cfg.onboardingFollowups === false) return 0;
   const channel = s(cfg.onboardingChannelId) || s(cfg.recruitingChannelId) || DEFAULT_CHANNEL;
@@ -339,7 +356,7 @@ export async function enrollOnboardingFollowups(token: string): Promise<number> 
     const startedAt = tsToDate(x.createdAt) ?? new Date();
     const existing = (await db.collection(FOLLOWUPS).doc(userId).get()).data() as FollowupDoc | undefined;
     if (existing && (existing.status === 'active' || (tsToDate(existing.startedAt)?.getTime() ?? 0) >= startedAt.getTime() - 60_000)) continue;
-    const ok = await createFollowup(token, channel, { userId, assignmentId: s(x.assignmentId) || d.id, jobOrderId: s(x.jobOrderId) || null, recruiterUid: s((x.createdBy as Record<string, unknown> | undefined)?.userId) || null, startedAt, source: 'onboarding_instance' });
+    const ok = await createFollowup(tokens, runtime, channel, { userId, assignmentId: s(x.assignmentId) || d.id, jobOrderId: s(x.jobOrderId) || null, recruiterUid: s((x.createdBy as Record<string, unknown> | undefined)?.userId) || null, startedAt, source: 'onboarding_instance' });
     if (ok) created += 1;
     if (created >= 10) break; // spread Slack posts across ticks
   }
@@ -366,7 +383,7 @@ export async function enrollOnboardingFollowups(token: string): Promise<number> 
         continue;
       }
       if (existing && (tsToDate(existing.startedAt)?.getTime() ?? 0) >= startedAt.getTime() - 60_000) continue;
-      if (await createFollowup(token, channel, base)) created += 1;
+      if (await createFollowup(tokens, runtime, channel, base)) created += 1;
     }
   }
   // 3) Screenings ordered by a human (Natalie's own orders already carry bgFollowup on the SMS watch).
@@ -382,7 +399,7 @@ export async function enrollOnboardingFollowups(token: string): Promise<number> 
     const startedAt = tsToDate(x.createdAt) ?? new Date();
     if (existing && (tsToDate(existing.startedAt)?.getTime() ?? 0) >= startedAt.getTime() - 60_000) continue;
     const asg = await latestActiveAssignment(TENANT, userId);
-    const ok = await createFollowup(token, channel, { userId, assignmentId: asg?.id ?? null, jobOrderId: s(asg?.data.jobOrderId) || s(x.jobOrderId) || null, recruiterUid: s(x.createdBy) || s(x.requestedBy) || null, startedAt, source: 'background_check', packageName: s(x.requestedPackageName) });
+    const ok = await createFollowup(tokens, runtime, channel, { userId, assignmentId: asg?.id ?? null, jobOrderId: s(asg?.data.jobOrderId) || s(x.jobOrderId) || null, recruiterUid: s(x.createdBy) || s(x.requestedBy) || null, startedAt, source: 'background_check', packageName: s(x.requestedPackageName) });
     if (ok) created += 1;
   }
   return created;
@@ -395,24 +412,33 @@ export async function enrollOnboardingFollowups(token: string): Promise<number> 
 
 const CHECKPOINT_HOURS: Record<string, number> = { h1: 1, h24: 24, h72: 72, d7: 24 * 7 };
 const NEXT: Record<string, FollowupDoc['nextCheckpoint']> = { h1: 'h24', h24: 'h72', h72: 'd7', d7: null };
-const CHECKPOINT_MESSAGE_TYPE: Record<string, string> = { h1: 'natalie_onboarding_1h', h24: 'natalie_onboarding_24h', h72: 'natalie_onboarding_72h' };
+/** Appended to the persona's SMS prefix: natalie_onboarding_24h, marco_onboarding_24h … */
+const CHECKPOINT_MESSAGE_SUFFIX: Record<string, string> = { h1: 'onboarding_1h', h24: 'onboarding_24h', h72: 'onboarding_72h' };
 
-function listify(items: string[]): string {
+function listify(items: string[], and = 'and'): string {
   if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+  return `${items.slice(0, -1).join(', ')} ${and} ${items[items.length - 1]}`;
 }
 
-export function composeCheckpointText(f: Pick<FollowupDoc, 'firstName' | 'jobTitle'>, snap: OnboardingSnapshot, checkpoint: string): string {
+const ES_ITEM: Record<string, string> = {
+  'I-9': 'I-9', 'direct deposit': 'depósito directo', 'tax forms': 'formularios de impuestos', handbook: 'manual', policies: 'políticas',
+  'work authorization declaration': 'declaración de autorización para trabajar',
+};
+
+export function composeCheckpointText(f: Pick<FollowupDoc, 'firstName' | 'jobTitle'>, snap: OnboardingSnapshot, checkpoint: string, opts: { persona?: PersonaId; lang?: 'en' | 'es' } = {}): string {
+  const persona = opts.persona ?? 'natalie';
+  if (opts.lang === 'es') return composeCheckpointTextEs(f, snap, checkpoint, persona);
+  const me = PERSONAS[persona].firstName;
   const name = f.firstName || 'there';
   const parts: string[] = [];
   const forJob = f.jobTitle && f.jobTitle !== 'your assignment' ? ` for ${f.jobTitle}` : ' with C1';
   const intro = checkpoint === 'h1'
-    ? `Hi ${name}, it's Natalie with C1 Staffing — welcome aboard${forJob}! Here's what's left to get you ready to work.`
+    ? `Hi ${name}, it's ${me} with C1 Staffing — welcome aboard${forJob}! Here's what's left to get you ready to work.`
     : checkpoint === 'h24'
-    ? `Hi ${name}, it's Natalie with C1 Staffing. Quick check on your onboarding${forJob}.`
+    ? `Hi ${name}, it's ${me} with C1 Staffing. Quick check on your onboarding${forJob}.`
     : checkpoint === 'h72'
-      ? `Hi ${name}, Natalie with C1 Staffing again — a few onboarding items are still open${forJob} and we can't schedule you until they're done.`
-      : `Hi ${name}, it's Natalie with C1 Staffing. Last check on your onboarding${forJob} — is there something in the way?`;
+      ? `Hi ${name}, ${me} with C1 Staffing again — a few onboarding items are still open${forJob} and we can't schedule you until they're done.`
+      : `Hi ${name}, it's ${me} with C1 Staffing. Last check on your onboarding${forJob} — is there something in the way?`;
   parts.push(intro);
   const bgOpen = snap.background && !snap.background.formDone;
   const drugOpen = snap.drug.ordered && snap.drug.status === 'pending' && snap.background?.formDone;
@@ -427,7 +453,44 @@ export function composeCheckpointText(f: Pick<FollowupDoc, 'firstName' | 'jobTit
   if (bgOpen) parts.push(`Your background check form hasn't been started: ${snap.background!.portalLink || 'check your texts for the AccuSource link'} (about 5 min).`);
   if (drugOpen) parts.push(`Heads up: your background form is done but the drug screen is a separate second step — look for the ${snap.drug.lab || 'lab'} registration email from AccuSource and get it done in the next couple of days.`);
   parts.push('Reply here if you need a link or have questions.');
-  return `${parts.join(' ')} ${SIGN}`;
+  return `${parts.join(' ')} ${smsSignature(persona)}`;
+}
+
+/** Spanish checkpoint text (workers whose preferredLanguage is es). Same content as the English one. */
+function composeCheckpointTextEs(f: Pick<FollowupDoc, 'firstName' | 'jobTitle'>, snap: OnboardingSnapshot, checkpoint: string, persona: PersonaId): string {
+  const me = PERSONAS[persona].firstName;
+  const hola = f.firstName ? `Hola ${f.firstName}` : 'Hola';
+  const forJob = f.jobTitle && f.jobTitle !== 'your assignment' ? ` (${f.jobTitle})` : '';
+  const parts: string[] = [];
+  parts.push(checkpoint === 'h1'
+    ? `${hola}, soy ${me} de C1 Staffing — ¡te damos la bienvenida${forJob}! Esto es lo que falta para que puedas empezar a trabajar.`
+    : checkpoint === 'h24'
+      ? `${hola}, soy ${me} de C1 Staffing. Una revisión rápida de tu registro${forJob}.`
+      : checkpoint === 'h72'
+        ? `${hola}, ${me} de C1 Staffing otra vez — todavía faltan algunos pasos de tu registro${forJob} y no podemos programarte hasta completarlos.`
+        : `${hola}, soy ${me} de C1 Staffing. Última revisión de tu registro${forJob} — ¿hay algo que te lo impida?`);
+  const bgOpen = snap.background && !snap.background.formDone;
+  const drugOpen = snap.drug.ordered && snap.drug.status === 'pending' && snap.background?.formDone;
+  const other = snap.workerTodo.filter((x) => !/AccuSource|drug screen/.test(x));
+  const evereeBits = other.filter((x) => /I-9|Everee|tax|handbook|policies/.test(x)).map((x) => x.replace(/^I-9 \(your section\)$/, 'I-9').replace(/^Everee payroll setup \(direct deposit\)$/, 'direct deposit').replace(/^tax forms \(W-4\)$/, 'tax forms').replace(/^handbook signature$/, 'handbook').replace(/^policies acknowledgment$/, 'policies')).map((x) => ES_ITEM[x] ?? x);
+  const rest = other.filter((x) => !/I-9|Everee|tax|handbook|policies/.test(x)).map((x) => ES_ITEM[x] ?? x);
+  const items: string[] = [];
+  if (evereeBits.length) items.push(`tu registro en Everee (${listify(evereeBits, 'y')})${snap.everee.inviteSent ? ' — el enlace está en tus mensajes o correo; te lo puedo reenviar' : ''}`);
+  if (rest.length) items.push(listify(rest, 'y'));
+  if (items.length) parts.push(`Pendiente con nosotros: ${items.join('; ')}.`);
+  if (bgOpen) parts.push(`No has empezado tu formulario de verificación de antecedentes: ${snap.background!.portalLink || 'busca el enlace de AccuSource en tus mensajes'} (unos 5 min).`);
+  if (drugOpen) parts.push(`Importante: tu formulario de antecedentes ya está listo, pero la prueba de drogas es un segundo paso aparte — busca el correo de registro de ${snap.drug.lab || 'el laboratorio'} que manda AccuSource y hazla en los próximos días.`);
+  parts.push('Responde aquí si necesitas un enlace o tienes preguntas.');
+  return `${parts.join(' ')} ${smsSignature(persona, 'es')}`;
+}
+
+/** Pure: the "you're all set" text when the worker's side is done. */
+export function composeDoneText(f: Pick<FollowupDoc, 'firstName' | 'jobTitle'>, opts: { persona?: PersonaId; lang?: 'en' | 'es' } = {}): string {
+  const persona = opts.persona ?? 'natalie';
+  const me = PERSONAS[persona].firstName;
+  return opts.lang === 'es'
+    ? `Hola ${f.firstName}, ${me} de C1 Staffing — ya completaste tu papeleo de registro para ${f.jobTitle}. ¡Gracias! ${smsSignature(persona, 'es')}`
+    : `Hi ${f.firstName}, ${me} with C1 Staffing — you're all set on your onboarding paperwork for ${f.jobTitle}. Thank you! ${smsSignature(persona)}`;
 }
 
 async function sendSms(f: FollowupDoc, text: string, messageTypeId: string): Promise<{ success: boolean; error?: string }> {
@@ -441,7 +504,7 @@ async function armWatch(f: FollowupDoc): Promise<void> {
   const cur = (await ref.get()).data() ?? {};
   const hasLiveOffer = Boolean(cur.offer) && s(cur.status) === 'active';
   await ref.set({
-    tenantId: f.tenantId, userId: f.userId, phoneE164: f.phoneE164, workerName: f.workerName,
+    tenantId: f.tenantId, userId: f.userId, phoneE164: f.phoneE164, workerName: f.workerName, persona: f.persona ?? 'natalie',
     ...(hasLiveOffer ? {} : { status: 'active', slack: f.slack ?? null, context: `onboarding follow-up ${f.jobTitle}`.trim() }),
     onboardingFollowup: { active: true, since: admin.firestore.FieldValue.serverTimestamp() },
     expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 10 * 86400_000),
@@ -467,7 +530,9 @@ function slackSummary(snap: OnboardingSnapshot): string {
   return lines.join('\n');
 }
 
-export async function runOnboardingCheckpoints(token: string): Promise<number> {
+export async function runOnboardingCheckpoints(tokensIn: string | PersonaTokens): Promise<number> {
+  const tokens = asTokens(tokensIn);
+  await runtimeOf(tokens);
   const snap = await db.collection(FOLLOWUPS).where('status', '==', 'active').limit(80).get();
   let touched = 0;
   let sentThisTick = 0;
@@ -490,7 +555,10 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
     }).catch(() => false);
     if (!claimed) continue;
     const slack = f.slack ?? undefined;
-    const say = async (text: string) => { if (slack?.channel) await postAsNatalie(token, { channel: slack.channel, text, threadTs: slack.ts }); };
+    const who = tokenFor(tokens, f.persona);
+    const P = PERSONAS[who.persona];
+    const lang = f.lang === 'es' ? 'es' : 'en';
+    const say = async (text: string) => { if (slack?.channel) await postAsNatalie(who.token, { channel: slack.channel, text, threadTs: slack.ts }); };
     try {
       const snapshot = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId, { hiringEntityId: f.hiringEntityId });
       const stamp = { at: admin.firestore.FieldValue.serverTimestamp(), workerTodo: snapshot.workerTodo, recruiterTodo: snapshot.recruiterTodo, sent: false };
@@ -511,9 +579,9 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
           : `:white_check_mark: ${f.workerName} is fully onboarded — nothing left on either side.\n${slackSummary(snapshot)}`;
         await d.ref.set({ status: 'done', nextCheckpoint: null, checkpoints: { [cp]: stamp }, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         await say(closing);
-        if (cp !== 'h24' || f.transcript.length) await sendSms(f, `Hi ${f.firstName}, Natalie with C1 Staffing — you're all set on your onboarding paperwork for ${f.jobTitle}. Thank you! ${SIGN}`, 'natalie_onboarding_done').catch(() => undefined);
+        if (cp !== 'h24' || f.transcript.length) await sendSms(f, composeDoneText(f, { persona: who.persona, lang }), `${P.smsPrefix}onboarding_done`).catch(() => undefined);
         await disarmWatch(f.userId);
-        await recordNatalieAction({ tenantId: f.tenantId, kind: 'onboarding_followup_done', summary: `${f.workerName} finished their onboarding steps`, userId: f.userId, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, slack });
+        await recordNatalieAction({ tenantId: f.tenantId, persona: who.persona, kind: 'onboarding_followup_done', summary: `${f.workerName} finished their onboarding steps`, userId: f.userId, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, slack });
         touched += 1; continue;
       }
       if (cp === 'd7') {
@@ -523,14 +591,14 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
         touched += 1; continue;
       }
       // Text the worker about what's open; on the 72h pass also re-send the Everee invite if payroll is still open.
-      const text = composeCheckpointText(f, snapshot, cp);
-      const sent = await sendSms(f, text, CHECKPOINT_MESSAGE_TYPE[cp] ?? 'natalie_onboarding_72h');
+      const text = composeCheckpointText(f, snapshot, cp, { persona: who.persona, lang });
+      const sent = await sendSms(f, text, `${P.smsPrefix}${CHECKPOINT_MESSAGE_SUFFIX[cp] ?? 'onboarding_72h'}`);
       if (sent.success) sentThisTick += 1;
       let resent = '';
       if (cp === 'h72' && snapshot.everee.inviteSent && !snapshot.everee.complete && f.hiringEntityId) {
         try {
           const { runPayrollOnboardingInviteResend } = await import('../messaging/payrollInviteResend');
-          const r = await runPayrollOnboardingInviteResend({ tenantId: f.tenantId, userId: f.userId, hiringEntityId: f.hiringEntityId, initiatedByUid: 'natalie', assignmentId: f.assignmentId });
+          const r = await runPayrollOnboardingInviteResend({ tenantId: f.tenantId, userId: f.userId, hiringEntityId: f.hiringEntityId, initiatedByUid: who.persona, assignmentId: f.assignmentId });
           resent = r.ok ? ' I also re-sent their Everee onboarding link.' : ` (Everee link resend skipped: ${s((r as { skipReason?: string }).skipReason) || 'not ok'})`;
         } catch (e) { resent = ` (Everee link resend failed: ${String(e).slice(0, 120)})`; }
       }
@@ -543,7 +611,7 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
       await say(sent.success
         ? `${label} check on ${f.workerName}:\n${slackSummary(snapshot)}\nTexted them about the open items.${resent} Replies will show up here.`
         : `:warning: ${label} check on ${f.workerName}: text failed (${sent.error || 'unknown'}).\n${slackSummary(snapshot)}`);
-      await recordNatalieAction({ tenantId: f.tenantId, kind: `onboarding_followup_${cp}`, summary: sent.success ? `Texted ${f.workerName} about open onboarding items: ${snapshot.workerTodo.join(', ')}` : `Could not text ${f.workerName} (${sent.error})`, userId: f.userId, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, slack, result: { workerTodo: snapshot.workerTodo, recruiterTodo: snapshot.recruiterTodo } });
+      await recordNatalieAction({ tenantId: f.tenantId, persona: who.persona, kind: `onboarding_followup_${cp}`, summary: sent.success ? `Texted ${f.workerName} about open onboarding items: ${snapshot.workerTodo.join(', ')}` : `Could not text ${f.workerName} (${sent.error})`, userId: f.userId, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, slack, result: { workerTodo: snapshot.workerTodo, recruiterTodo: snapshot.recruiterTodo } });
       touched += 1;
     } catch (err) {
       logger.warn('[natalie] onboarding checkpoint failed', { userId: f.userId, err: String(err) });
@@ -563,6 +631,14 @@ Reply rules: one SMS, plain text, under 300 characters, warm and direct, first n
 Return ONLY JSON: {"reply": string, "intent": "will_do" | "needs_link" | "says_done" | "question" | "declined" | "unclear" | "off_topic", "actions": string[], "note": string}
 actions may include: "resend_background_link" (they need the AccuSource form link), "resend_everee_invite" (they need the Everee / tax / direct deposit link), "escalate" (a recruiter must act — put why in note). note = one line for the recruiter, or "".`;
 
+/** Marco's version: same rules, his name, the worker's language, and he doesn't deny being automated when sincerely asked. */
+const MARCO_SMS_SYSTEM = `You are Marco Gomez, recruiting assistant at C1 Staffing, texting an event worker (a 1099 independent contractor for C1 Events) who is mid-onboarding. You are helping them finish their setup so they can work events. You only know what is in the CONTEXT block; never invent links, dates, pay, or policy.
+
+Reply rules: one SMS, plain text, under 300 characters, warm and direct, first name only, end with "— Marco, C1 Staffing". Write in the language the worker wrote in; if unclear, use their preferred language from CONTEXT (natural, friendly Spanish when it is Spanish). Answer their question or acknowledge what they said; if they need a link you can resend, say you're sending it now. If they say they already finished something, thank them and say you'll confirm on our side (do not argue). If they are declining or refusing (won't do the background check, drug screen, or paperwork), be kind, don't pressure, say you'll let Rosa's team know. If they ask about pay, schedule, or something outside onboarding, say someone on Rosa's team will follow up and do not guess. Don't bring up that you are an automated assistant, but if the worker sincerely asks whether they are texting a real person, don't deny it — say you're C1's automated recruiting assistant and someone on Rosa's team can call them.
+
+Return ONLY JSON: {"reply": string, "intent": "will_do" | "needs_link" | "says_done" | "question" | "declined" | "unclear" | "off_topic", "actions": string[], "note": string}
+actions may include: "resend_background_link" (they need the AccuSource form link), "resend_everee_invite" (they need the Everee / tax / direct deposit link), "escalate" (a recruiter must act — put why in note). note = one line for the recruiter, or "".`;
+
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (!cachedClient) {
@@ -575,30 +651,37 @@ function client(): Anthropic {
 
 interface ConvoDecision { reply: string; intent: string; actions: string[]; note: string }
 
-async function decideReply(f: FollowupDoc, snap: OnboardingSnapshot, inbound: string): Promise<ConvoDecision> {
+async function decideReply(f: FollowupDoc, snap: OnboardingSnapshot, inbound: string, persona: PersonaId = 'natalie'): Promise<ConvoDecision> {
+  const me = PERSONAS[persona].firstName;
+  const es = f.lang === 'es';
+  const sign = smsSignature(persona, es ? 'es' : 'en');
   const ctx = [
+    `Worker's preferred language: ${es ? 'Spanish' : 'English'}.`,
     `Worker: ${f.workerName} (first name ${f.firstName}). Job: ${f.jobTitle}${f.site ? ` at ${f.site}` : ''}. Employer entity: ${snap.entityLabel}. Recruiter: ${f.recruiterName || 'the recruiter'}.`,
     `Open items the worker owes: ${snap.workerTodo.length ? snap.workerTodo.join('; ') : 'none — everything on their side is done'}.`,
     snap.background ? `Background check: ${snap.background.packageName}, form ${snap.background.formDone ? 'DONE' : 'NOT started'}${snap.background.portalLink ? ` (link available to resend)` : ' (no link on file)'}.` : 'Background check: none ordered.',
     snap.drug.ordered ? `Drug screen: ${snap.drug.name || 'panel'} at ${snap.drug.lab || 'the lab'} — ${snap.drug.status}. Instructions come by email from AccuSource / the lab after the form; we cannot text that link, only a recruiter can resend it from AccuSource.` : 'Drug screen: none ordered.',
     `Everee (tax forms, direct deposit): ${snap.everee.complete ? 'complete' : snap.everee.inviteSent ? 'invite sent, not finished (link can be resent)' : 'not started (recruiter must send the invite)'}.`,
-    `Recent texts (oldest first):\n${(f.transcript ?? []).slice(-10).map((t) => `${t.dir === 'out' ? 'Natalie' : f.firstName}: ${t.text}`).join('\n')}`,
+    `Recent texts (oldest first):\n${(f.transcript ?? []).slice(-10).map((t) => `${t.dir === 'out' ? me : f.firstName}: ${t.text}`).join('\n')}`,
   ].join('\n');
   const res = await client().messages.create({
     model: NATALIE_MODEL,
     max_tokens: 600,
-    system: SMS_SYSTEM,
+    system: persona === 'marco' ? MARCO_SMS_SYSTEM : SMS_SYSTEM,
     messages: [{ role: 'user', content: `CONTEXT:\n${ctx}\n\nNEW TEXT FROM ${f.firstName.toUpperCase()}: "${inbound}"` }],
   });
   const raw = res.content.map((c) => (c.type === 'text' ? c.text : '')).join('').trim();
   const m = raw.match(/\{[\s\S]*\}/);
   let parsed: Partial<ConvoDecision> = {};
   try { parsed = JSON.parse(m ? m[0] : raw) as Partial<ConvoDecision>; } catch { parsed = {}; }
-  const reply = s(parsed.reply).slice(0, 320) || `Thanks ${f.firstName} — got it. I'll pass this to your recruiter and they'll follow up. ${SIGN}`;
-  return { reply: /natalie/i.test(reply) ? reply : `${reply} ${SIGN}`, intent: s(parsed.intent) || 'unclear', actions: Array.isArray(parsed.actions) ? parsed.actions.map(String) : [], note: s(parsed.note) };
+  const fallback = es ? `Gracias ${f.firstName} — entendido. Le paso esto a tu reclutador y te contactará. ${sign}` : `Thanks ${f.firstName} — got it. I'll pass this to your recruiter and they'll follow up. ${sign}`;
+  const reply = s(parsed.reply).slice(0, 320) || fallback;
+  return { reply: new RegExp(me, 'i').test(reply) ? reply : `${reply} ${sign}`, intent: s(parsed.intent) || 'unclear', actions: Array.isArray(parsed.actions) ? parsed.actions.map(String) : [], note: s(parsed.note) };
 }
 
-export async function drainSmsConversations(token: string): Promise<number> {
+export async function drainSmsConversations(tokensIn: string | PersonaTokens): Promise<number> {
+  const tokens = asTokens(tokensIn);
+  await runtimeOf(tokens);
   const pending = await db.collection(CONVOS).where('status', '==', 'pending').limit(15).get();
   let handled = 0;
   for (const d of pending.docs) {
@@ -609,22 +692,25 @@ export async function drainSmsConversations(token: string): Promise<number> {
     if (!f || !['active', 'parked'].includes(f.status)) { await d.ref.update({ status: 'ignored', updatedAt: admin.firestore.FieldValue.serverTimestamp() }); continue; }
     const inbound = s(c.text).slice(0, 500);
     const slack = f.slack ?? undefined;
-    const say = async (text: string) => { if (slack?.channel) await postAsNatalie(token, { channel: slack.channel, text, threadTs: slack.ts }); };
+    const who = tokenFor(tokens, f.persona);
+    const P = PERSONAS[who.persona];
+    const lang = f.lang === 'es' ? 'es' : 'en';
+    const say = async (text: string) => { if (slack?.channel) await postAsNatalie(who.token, { channel: slack.channel, text, threadTs: slack.ts }); };
     try {
       const snap = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId, { hiringEntityId: f.hiringEntityId });
-      const decision = await decideReply({ ...f, transcript: [...(f.transcript ?? []), { at: new Date().toISOString(), dir: 'in', text: inbound }] }, snap, inbound);
+      const decision = await decideReply({ ...f, transcript: [...(f.transcript ?? []), { at: new Date().toISOString(), dir: 'in', text: inbound }] }, snap, inbound, who.persona);
       const notes: string[] = [];
-      const sent = await sendSms(f, decision.reply, 'natalie_onboarding_reply');
+      const sent = await sendSms(f, decision.reply, `${P.smsPrefix}onboarding_reply`);
       const transcript = [...(f.transcript ?? []), { at: new Date().toISOString(), dir: 'in' as const, text: inbound }, { at: new Date().toISOString(), dir: 'out' as const, text: decision.reply }].slice(-30);
       for (const a of decision.actions) {
         if (a === 'resend_background_link' && snap.background?.portalLink && !snap.background.formDone) {
           const { portalLinkText } = await import('./natalieFill');
-          const r = await sendSms(f, portalLinkText(f.firstName, snap.background.portalLink, snap.background.packageName), 'natalie_bg_portal_link');
+          const r = await sendSms(f, portalLinkText(f.firstName, snap.background.portalLink, snap.background.packageName, false, { persona: who.persona, lang }), `${P.smsPrefix}bg_portal_link`);
           notes.push(r.success ? 'resent the AccuSource form link' : 'AccuSource link resend failed');
         } else if (a === 'resend_everee_invite' && f.hiringEntityId) {
           try {
             const { runPayrollOnboardingInviteResend } = await import('../messaging/payrollInviteResend');
-            const r = await runPayrollOnboardingInviteResend({ tenantId: f.tenantId, userId: f.userId, hiringEntityId: f.hiringEntityId, initiatedByUid: 'natalie', assignmentId: f.assignmentId });
+            const r = await runPayrollOnboardingInviteResend({ tenantId: f.tenantId, userId: f.userId, hiringEntityId: f.hiringEntityId, initiatedByUid: who.persona, assignmentId: f.assignmentId });
             notes.push(r.ok ? 'resent the Everee onboarding invite' : `Everee resend skipped (${s((r as { skipReason?: string }).skipReason) || 'not ok'})`);
           } catch (e) { notes.push(`Everee resend failed: ${String(e).slice(0, 100)}`); }
         } else if (a === 'escalate') {
@@ -636,7 +722,7 @@ export async function drainSmsConversations(token: string): Promise<number> {
       if (decision.intent === 'declined') {
         status = 'declined';
         if (cfg.autoRemoveOnDecline === true && f.jobOrderId) {
-          const r = await removeWorkerFromJob({ tenantId: f.tenantId, userId: f.userId, jobOrderId: f.jobOrderId, reason: `declined onboarding/screening by text: "${inbound.slice(0, 80)}"`, slack, askedByName: 'auto (declined by text)' });
+          const r = await removeWorkerFromJob({ tenantId: f.tenantId, userId: f.userId, jobOrderId: f.jobOrderId, reason: `declined onboarding/screening by text: "${inbound.slice(0, 80)}"`, slack, askedByName: 'auto (declined by text)', persona: who.persona });
           notes.push(`removed from ${f.jobTitle} (${r.cancelled} assignment${r.cancelled === 1 ? '' : 's'} cancelled); next candidates: ${r.nextCandidates.map((x) => x.name).join(', ') || 'none nearby'}`);
           status = 'removed';
         } else {
@@ -648,7 +734,7 @@ export async function drainSmsConversations(token: string): Promise<number> {
       await fRef.set({ transcript, lastIntent: decision.intent, lastInboundAt: admin.firestore.FieldValue.serverTimestamp(), status, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
       await d.ref.update({ status: 'handled', intent: decision.intent, reply: decision.reply, actions: decision.actions, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
       await say(`Me → ${f.firstName}: "${decision.reply}"${sent.success ? '' : ` (send failed: ${sent.error})`}\n_read as: ${decision.intent.replace(/_/g, ' ')}_${notes.length ? `\n${notes.map((n) => `• ${n}`).join('\n')}` : ''}`);
-      await recordNatalieAction({ tenantId: f.tenantId, kind: 'onboarding_sms_reply', summary: `Replied to ${f.workerName} (${decision.intent}): "${decision.reply.slice(0, 100)}"`, userId: f.userId, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, slack, input: { inbound }, result: { intent: decision.intent, actions: decision.actions } });
+      await recordNatalieAction({ tenantId: f.tenantId, persona: who.persona, kind: 'onboarding_sms_reply', summary: `Replied to ${f.workerName} (${decision.intent}): "${decision.reply.slice(0, 100)}"`, userId: f.userId, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, slack, input: { inbound }, result: { intent: decision.intent, actions: decision.actions } });
       handled += 1;
     } catch (err) {
       logger.warn('[natalie] sms conversation failed', { userId, err: String(err) });
@@ -662,18 +748,19 @@ export async function drainSmsConversations(token: string): Promise<number> {
 // Removal: cancel the worker's assignments on the order and hand back the next candidates.
 // ---------------------------------------------------------------------------------------------
 
-export async function removeWorkerFromJob(input: { tenantId: string; userId: string; jobOrderId: string; reason: string; slack?: SlackRef; askedByName?: string; askedBySlackUserId?: string }): Promise<{ cancelled: number; assignmentIds: string[]; nextCandidates: Array<{ userId: string; name: string; city: string; background: string; score: number; reasons: string[] }>; note: string }> {
+export async function removeWorkerFromJob(input: { tenantId: string; userId: string; jobOrderId: string; reason: string; slack?: SlackRef; askedByName?: string; askedBySlackUserId?: string; persona?: PersonaId }): Promise<{ cancelled: number; assignmentIds: string[]; nextCandidates: Array<{ userId: string; name: string; city: string; background: string; score: number; reasons: string[] }>; note: string }> {
   const { tenantId, userId, jobOrderId } = input;
+  const persona: PersonaId = input.persona ?? 'natalie';
   const q = await db.collection(`tenants/${tenantId}/assignments`).where('userId', '==', userId).where('jobOrderId', '==', jobOrderId).limit(50).get();
   const live = q.docs.filter((d) => !['cancelled', 'canceled', 'declined', 'ended', 'completed'].includes(s(d.get('status')).toLowerCase()));
   const batch = db.batch();
   for (const d of live) {
-    batch.set(d.ref, { status: 'cancelled', cancelledAt: admin.firestore.FieldValue.serverTimestamp(), canceledBy: 'natalie', cancelReason: input.reason.slice(0, 200), cancelSource: 'natalie_onboarding_followup', updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    batch.set(d.ref, { status: 'cancelled', cancelledAt: admin.firestore.FieldValue.serverTimestamp(), canceledBy: persona, cancelReason: input.reason.slice(0, 200), cancelSource: `${persona}_onboarding_followup`, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
   }
   if (live.length) await batch.commit();
   const u = (await db.doc(`users/${userId}`).get()).data() ?? {};
   const name = `${s(u.firstName)} ${s(u.lastName)}`.trim() || userId;
-  await db.collection('users').doc(userId).collection('notes').add({ content: `Removed from job order ${jobOrderId} by Natalie: ${input.reason}`, authorName: 'Natalie Brooks', authorId: 'natalie', createdAt: admin.firestore.FieldValue.serverTimestamp() }).catch(() => undefined);
+  await db.collection('users').doc(userId).collection('notes').add({ content: `Removed from job order ${jobOrderId} by ${PERSONAS[persona].firstName}: ${input.reason}`, authorName: PERSONAS[persona].displayName, authorId: PERSONAS[persona].hrxUid ?? persona, createdAt: admin.firestore.FieldValue.serverTimestamp() }).catch(() => undefined);
   await db.collection(FOLLOWUPS).doc(userId).set({ status: 'removed', nextCheckpoint: null, removedAt: admin.firestore.FieldValue.serverTimestamp(), removedReason: input.reason, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true }).catch(() => undefined);
   await disarmWatch(userId);
   let nextCandidates: Array<{ userId: string; name: string; city: string; background: string; score: number; reasons: string[] }> = [];
@@ -683,16 +770,16 @@ export async function removeWorkerFromJob(input: { tenantId: string; userId: str
     nextCandidates = [...c.applicants, ...c.nearby].filter((x) => x.userId !== userId).slice(0, 5).map((x) => ({ userId: x.userId, name: x.name, city: x.city, background: x.background, score: x.score, reasons: x.reasons.slice(0, 3) }));
   } catch (e) { logger.warn('[natalie] next candidates lookup failed', { err: String(e) }); }
   const note = live.length ? `Cancelled ${live.length} assignment${live.length === 1 ? '' : 's'} for ${name} on this order (they get the standard cancellation text).` : `${name} had no live assignment on this order — nothing to cancel.`;
-  await recordNatalieAction({ tenantId, kind: 'remove_from_job', askedByName: input.askedByName, askedBySlackUserId: input.askedBySlackUserId, slack: input.slack, summary: `${note} Reason: ${input.reason}`, userId, jobOrderId, input: { reason: input.reason }, result: { cancelled: live.length, nextCandidates: nextCandidates.map((x) => x.name) } });
+  await recordNatalieAction({ tenantId, persona, kind: 'remove_from_job', askedByName: input.askedByName, askedBySlackUserId: input.askedBySlackUserId, slack: input.slack, summary: `${note} Reason: ${input.reason}`, userId, jobOrderId, input: { reason: input.reason }, result: { cancelled: live.length, nextCandidates: nextCandidates.map((x) => x.name) } });
   return { cancelled: live.length, assignmentIds: live.map((d) => d.id), nextCandidates, note };
 }
 
 /** Natalie tool: what she's following up on right now. */
-export async function listOnboardingFollowups(tenantId: string, opts: { includeClosed?: boolean } = {}): Promise<unknown> {
+export async function listOnboardingFollowups(tenantId: string, opts: { includeClosed?: boolean; persona?: PersonaId } = {}): Promise<unknown> {
   const q = opts.includeClosed
     ? await db.collection(FOLLOWUPS).where('tenantId', '==', tenantId).orderBy('updatedAt', 'desc').limit(40).get()
     : await db.collection(FOLLOWUPS).where('tenantId', '==', tenantId).where('status', 'in', ['active', 'parked', 'declined', 'no_phone']).limit(60).get();
-  return q.docs.map((d) => {
+  return q.docs.filter((d) => !opts.persona || (s(d.get('persona')) || 'natalie') === opts.persona).map((d) => {
     const f = d.data() as FollowupDoc;
     const last = (f.checkpoints ?? {}) as Record<string, { workerTodo?: string[]; recruiterTodo?: string[] }>;
     const latest = last.d7 ?? last.h72 ?? last.h24 ?? null;

@@ -123,6 +123,15 @@ export async function loadPersonaRuntime(tenantId: string, marcoTokenBound: bool
   };
 }
 
+/** Slack user tokens per persona (+ the runtime that says whether Marco is live). */
+export interface PersonaTokens { natalie: string; marco?: string; runtime?: PersonaRuntime }
+
+/** Pure: the token to post with for work owned by `persona` — Marco's only while he is live, else Natalie's. */
+export function tokenFor(tokens: PersonaTokens, persona: unknown): { persona: PersonaId; token: string } {
+  if (persona === 'marco' && tokens.marco && tokens.runtime?.marcoEnabled) return { persona: 'marco', token: tokens.marco };
+  return { persona: 'natalie', token: tokens.natalie };
+}
+
 /** Pure: scope owner, downgraded to Natalie while Marco is off. */
 export function effectivePersona(scope: PersonaId, runtime: Pick<PersonaRuntime, 'marcoEnabled'>): PersonaId {
   return scope === 'marco' && runtime.marcoEnabled ? 'marco' : 'natalie';

@@ -8,11 +8,11 @@
 import * as admin from 'firebase-admin';
 import type Anthropic from '@anthropic-ai/sdk';
 import { enqueuePortalAction } from '../integrations/portalActions/enqueuePortalAction';
-import { NATALIE_DISPLAY_NAME, NATALIE_HRX_UID, recordNatalieAction, registerFollowup, type SlackRef } from './natalieAudit';
+import { recordNatalieAction, registerFollowup, type SlackRef } from './natalieAudit';
 import { readInbox, sendEmail } from './natalieMailbox';
 import { bookInFlexIfLinked, candidatesForJobOrder, offerShiftToWorker, placeWorkerOnShift, upcomingShifts, workerReachBlast } from './natalieFill';
 import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
-import type { PersonaId } from './personas';
+import { PERSONAS, smsSignature, workerLanguage, type PersonaId } from './personas';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -36,6 +36,8 @@ export interface NatalieToolContext {
   /** Who is answering (personas.ts) — authorship, SMS signature and sender number follow it. Default natalie. */
   persona?: PersonaId;
 }
+
+const personaOf = (ctx: NatalieToolContext) => PERSONAS[ctx.persona ?? 'natalie'];
 
 export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
@@ -342,6 +344,7 @@ async function workerStatus(tenantId: string, userId: string): Promise<unknown> 
       smsBlocked: x.smsBlockedSystem === true,
       smsBlockedReason: s(x.smsBlockedReason) || null,
       phoneInvalid: x.phoneInvalid === true,
+      preferredLanguage: workerLanguage(x),
       profileLink: `${PUBLIC_APP_ORIGIN}/users/${userId}`,
     },
     backgroundCheck,
@@ -507,16 +510,17 @@ async function sendWorkerSms(ctx: NatalieToolContext, input: { userId: string; t
   const phone = s(u.get('phoneE164')) || (s(u.get('phone')).replace(/\D/g, '').length === 10 ? `+1${s(u.get('phone')).replace(/\D/g, '')}` : '');
   if (!phone) return { error: 'Worker has no usable phone number on file' };
   const { sendWorkerMessageInternal } = await import('../twilio');
-  const body = /natalie/i.test(input.text) ? input.text : `${input.text.trim()} — Natalie, C1 Staffing`;
+  const P = personaOf(ctx);
+  const body = new RegExp(P.firstName, 'i').test(input.text) ? input.text : `${input.text.trim()} ${smsSignature(P.id, workerLanguage(u.data()))}`;
   const r = await sendWorkerMessageInternal(phone, body, {
     tenantId: ctx.tenantId,
     userId: input.userId,
     source: 'system',
-    messageTypeId: 'natalie_slack_request',
+    messageTypeId: `${P.smsPrefix}slack_request`,
     systemContext: true,
   } as never);
   await recordNatalieAction({
-    tenantId: ctx.tenantId, kind: 'worker_sms', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack,
+    tenantId: ctx.tenantId, persona: P.id, kind: 'worker_sms', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack,
     input: { text: body }, result: { success: r.success, status: r.status, errorCode: r.errorCode ?? null },
     summary: r.success ? `Texted the worker: "${input.text.trim().slice(0, 120)}"` : `Tried to text the worker but it failed (${r.errorCode ?? r.error ?? 'unknown'})`,
     userId: input.userId,
@@ -531,13 +535,13 @@ async function addWorkerNote(ctx: NatalieToolContext, input: { userId: string; n
   if (!content) return { error: 'Empty note' };
   const ref = await db.collection('users').doc(input.userId).collection('notes').add({
     content: `${content} — via ${ctx.askedByName || 'Slack'}`,
-    authorId: NATALIE_HRX_UID,
-    authorName: NATALIE_DISPLAY_NAME,
-    source: 'natalie_slack',
+    authorId: personaOf(ctx).hrxUid ?? personaOf(ctx).id,
+    authorName: personaOf(ctx).displayName,
+    source: `${personaOf(ctx).id}_slack`,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
-  await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'worker_note', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { note: content }, result: { noteId: ref.id }, summary: `Added a note: "${content.slice(0, 120)}"`, userId: input.userId });
+  await recordNatalieAction({ tenantId: ctx.tenantId, persona: ctx.persona, kind: 'worker_note', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { note: content }, result: { noteId: ref.id }, summary: `Added a note: "${content.slice(0, 120)}"`, userId: input.userId });
   return { saved: true, noteId: ref.id, profileLink: `${PUBLIC_APP_ORIGIN}/users/${input.userId}` };
 }
 
@@ -658,7 +662,7 @@ async function createTask(ctx: NatalieToolContext, input: { title: string; assig
   const ref = await db.collection(`tenants/${ctx.tenantId}/tasks`).add({
     tenantId: ctx.tenantId,
     title: input.title.trim().slice(0, 140),
-    description: `${s(input.details) || input.title.trim()}\n\nCreated by Natalie from Slack (asked by ${ctx.askedByName}).`,
+    description: `${s(input.details) || input.title.trim()}\n\nCreated by ${personaOf(ctx).firstName} from Slack (asked by ${ctx.askedByName}).`,
     type: /call|phone/i.test(input.title) ? 'phone_call' : /email/i.test(input.title) ? 'email' : 'follow_up',
     category: 'follow_up',
     priority: ['low', 'medium', 'high', 'urgent'].includes(s(input.priority)) ? input.priority : 'medium',
@@ -666,16 +670,16 @@ async function createTask(ctx: NatalieToolContext, input: { title: string; assig
     scheduledDate: input.dueDate,
     dueDate: input.dueDate,
     assignedTo: assigneeId,
-    createdBy: NATALIE_HRX_UID,
-    createdByName: NATALIE_DISPLAY_NAME,
+    createdBy: personaOf(ctx).hrxUid ?? personaOf(ctx).id,
+    createdByName: personaOf(ctx).displayName,
     associations: { contacts: [], deals: [], companies: [], ...(input.userId ? { workers: [input.userId] } : {}) },
     aiGenerated: true,
     aiReason: `Requested in Slack by ${ctx.askedByName}`,
-    source: 'natalie_slack',
+    source: `${personaOf(ctx).id}_slack`,
     createdAt: now,
     updatedAt: now,
   });
-  await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'task', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: input as Record<string, unknown>, result: { taskId: ref.id, assigneeId }, summary: `Created a task for ${assigneeLabel}: "${input.title.trim().slice(0, 100)}" due ${input.dueDate}`, userId: input.userId ?? null });
+  await recordNatalieAction({ tenantId: ctx.tenantId, persona: ctx.persona, kind: 'task', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: input as Record<string, unknown>, result: { taskId: ref.id, assigneeId }, summary: `Created a task for ${assigneeLabel}: "${input.title.trim().slice(0, 100)}" due ${input.dueDate}`, userId: input.userId ?? null });
   return { created: true, taskId: ref.id, assignedTo: assigneeLabel, dueDate: input.dueDate, link: `${PUBLIC_APP_ORIGIN}/tasks` };
 }
 
@@ -712,26 +716,26 @@ export async function runNatalieTool(name: string, input: Record<string, unknown
     }
     case 'order_background_check': {
       const { orderBackgroundCheck } = await import('./natalieFill');
-      return orderBackgroundCheck({ tenantId: ctx.tenantId, userId: s(input.userId), jobOrderId: s(input.jobOrderId) || null, packageId: s(input.packageId) || undefined, slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });
+      return orderBackgroundCheck({ tenantId: ctx.tenantId, persona: ctx.persona, userId: s(input.userId), jobOrderId: s(input.jobOrderId) || null, packageId: s(input.packageId) || undefined, slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });
     }
     case 'onboarding_followups': {
       const { listOnboardingFollowups } = await import('./natalieOnboarding');
-      return listOnboardingFollowups(ctx.tenantId, { includeClosed: input.includeClosed === true });
+      return listOnboardingFollowups(ctx.tenantId, { includeClosed: input.includeClosed === true, persona: ctx.persona ?? 'natalie' });
     }
     case 'remove_worker_from_job': {
       const { removeWorkerFromJob } = await import('./natalieOnboarding');
-      return removeWorkerFromJob({ tenantId: ctx.tenantId, userId: s(input.userId), jobOrderId: s(input.jobOrderId), reason: s(input.reason) || 'removed by recruiter request', slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });
+      return removeWorkerFromJob({ tenantId: ctx.tenantId, persona: ctx.persona, userId: s(input.userId), jobOrderId: s(input.jobOrderId), reason: s(input.reason) || 'removed by recruiter request', slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });
     }
     case 'schedule_blast': {
       const { scheduleAction } = await import('./natalieFill');
       const radius = [15, 30, 60].includes(Number(input.radiusMiles)) ? Number(input.radiusMiles) : 15;
-      return scheduleAction({ tenantId: ctx.tenantId, kind: 'worker_reach_blast', runAt: new Date(s(input.runAt)), params: { jobOrderId: s(input.jobOrderId), radiusMiles: radius }, slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });
+      return scheduleAction({ tenantId: ctx.tenantId, persona: ctx.persona, kind: 'worker_reach_blast', runAt: new Date(s(input.runAt)), params: { jobOrderId: s(input.jobOrderId), radiusMiles: radius }, slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });
     }
     case 'offer_shift':
-      return offerShiftToWorker({ tenantId: ctx.tenantId, userId: s(input.userId), jobOrderId: s(input.jobOrderId), shiftId: s(input.shiftId), extra: s(input.extra) || undefined, askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack });
+      return offerShiftToWorker({ tenantId: ctx.tenantId, persona: ctx.persona, userId: s(input.userId), jobOrderId: s(input.jobOrderId), shiftId: s(input.shiftId), extra: s(input.extra) || undefined, askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack });
     case 'place_worker': {
-      const r = await placeWorkerOnShift(ctx.tenantId, s(input.jobOrderId), s(input.shiftId), s(input.userId), { source: 'natalie_slack_place', note: `Placed by Natalie (asked by ${ctx.askedByName} in Slack)` });
-      await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'place_worker', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { jobOrderId: s(input.jobOrderId), shiftId: s(input.shiftId) }, result: r as Record<string, unknown>, summary: r.placed ? 'Placed the worker on the shift' : `Could not place the worker (${r.error ?? (r.already ? 'already on it' : 'unknown')})`, userId: s(input.userId), jobOrderId: s(input.jobOrderId), assignmentId: r.assignmentId || null });
+      const r = await placeWorkerOnShift(ctx.tenantId, s(input.jobOrderId), s(input.shiftId), s(input.userId), { source: `${personaOf(ctx).id}_slack_place`, note: `Placed by ${personaOf(ctx).firstName} (asked by ${ctx.askedByName} in Slack)`, actor: personaOf(ctx).hrxUid ?? personaOf(ctx).id });
+      await recordNatalieAction({ tenantId: ctx.tenantId, persona: ctx.persona, kind: 'place_worker', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { jobOrderId: s(input.jobOrderId), shiftId: s(input.shiftId) }, result: r as Record<string, unknown>, summary: r.placed ? 'Placed the worker on the shift' : `Could not place the worker (${r.error ?? (r.already ? 'already on it' : 'unknown')})`, userId: s(input.userId), jobOrderId: s(input.jobOrderId), assignmentId: r.assignmentId || null });
       const flex = r.placed ? await bookInFlexIfLinked(ctx.tenantId, s(input.jobOrderId), s(input.shiftId), s(input.userId), { slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId }) : { queued: false, reason: 'not placed' };
       return { ...r, hrxLink: r.assignmentId ? `${PUBLIC_APP_ORIGIN}/assignments/${r.assignmentId}` : null, flexBooking: flex };
     }

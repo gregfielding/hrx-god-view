@@ -108,7 +108,8 @@ export const handleInboundSms = onRequest(
             if (exp && typeof exp.toMillis === 'function' && exp.toMillis() < Date.now()) continue;
             const slack = w.get('slack') as { channel?: string; ts?: string } | undefined;
             if (!slack?.channel) continue;
-            const intent = /\b(yes|si|sí|yeah|yep|ok|sure|confirm(ed)?)\b/i.test(String(messageBody)) ? 'yes' : /\b(no|nope|can't|cannot|cant)\b/i.test(String(messageBody)) ? 'no' : null;
+            // Word edges spelled out: \b treats "í" as a non-word char, so a bare "Sí" (Marco's Spanish offers) never matched.
+            const intent = /(^|[^a-záéíóúñü])(yes|si|sí|yeah|yep|ok|sure|confirm(ed)?)(?=$|[^a-záéíóúñü])/i.test(String(messageBody)) ? 'yes' : /\b(no|nope|can't|cannot|cant)\b/i.test(String(messageBody)) ? 'no' : null;
             let placement = '';
             if (intent === 'yes' && w.get('offer')) {
               try {
@@ -121,6 +122,8 @@ export const handleInboundSms = onRequest(
             }
             await db.collection('natalie_relays').add({
               tenantId: w.get('tenantId') ?? null,
+              // The thread belongs to whoever texted them (natalie / marco) — posted with that persona's token.
+              persona: w.get('persona') ?? 'natalie',
               assignmentId: null,
               userId: w.get('userId') ?? null,
               workerName: w.get('workerName') ?? null,

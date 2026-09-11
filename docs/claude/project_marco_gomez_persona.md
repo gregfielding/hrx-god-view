@@ -45,3 +45,86 @@ Black Caviar has Danny on some JOs — its event sites are not Oakland Arena, so
 Natalie's user doc: `isAutomationPersona: true`, securityLevel 7, role Admin, jobTitle "Recruiting
 Assistant", `recruiter: true`, `integrations.slack` + `tenants/{T}/slackUsers/{slackId}` mapping.
 `app_config/natalie` is currently EMPTY at both root and tenant paths — she runs on code defaults.
+
+## Accounts (2026-09-11)
+- Slack user **`U0C14BDAX2P`** (Marco Gomez, title Recruiting Assistant, avatar = the square headshot).
+- Google Workspace **m.gomez@c1staffing.com** created by Greg.
+- `#events-recruiting` does NOT exist yet — until `tenants/{T}/app_config/marco.homeChannelId` is set,
+  Marco's posts default to #recruiting.
+- No HRX user doc yet (`PERSONAS.marco.hrxUid = null` → authorship falls back to the literal `marco`).
+
+## Email signature
+Natalie's live Gmail signature (read 2026-09-11 via her mailbox grant, `sendAs.get`) is an HTML table:
+round 74px headshot from `https://hrxone.com/brand/natalie-brooks-512.jpg`, gold `rgb(242,183,5)` 3px
+left border, name, "Recruiting Assistant · C1 Staffing", phone · mailto, c1staffing.com, tagline "On-demand
+W-2 workforce, anywhere in the U.S." Her OAuth scopes (gmail.modify/send/userinfo.email) can't write
+settings, so it was set in the Gmail UI. Marco's copy: `functions/.scratch/marco-signature.html` — same
+template, `https://hrxone.com/brand/marco-gomez-512.jpg` (committed; resolves only after a hosting
+deploy), 737-264-6753, tagline "Event staffing, anywhere in the U.S. · Hablamos español" (C1 Events is
+1099, so the W-2 line would be wrong). ☠️ The 737 (like Natalie's 312) has voice pointed at Twilio's
+demo greeting — anyone calling the number in the signature hears the Twilio demo.
+
+## Build state
+**Slice 1–2 committed (not deployed)** — see the commit "feat(personas): Marco Gomez foundation":
+- `functions/src/natalie/personas.ts` — registry + `scopePersona` + `effectivePersona` (Marco only when
+  `tenants/{T}/app_config/marco.enabled === true` AND `MARCO_SLACK_USER_TOKEN` holds an `xoxp-` token).
+- `twilio.ts` — `natalie_*` / `marco_*` messages pinned `From` their persona's number inside
+  MG2dd6557d05d9be9044c996fa568a8a39 (the 737 must be added to that pool: adapt
+  `.scratch/twilio-natalie-go-live.cjs`). Until then Marco's texts fall back to the 888 (21606/21712).
+- ☠️ **Flex booking hazard fixed**: `bookInFlexIfLinked` / `placeWorkerOnShift` treated ANY all-digit
+  shift PO as an Indeed Flex job id. 21 of 23 C1 Events shift POs are Venue Smart QBO PO numbers (1238,
+  2159…), so placing someone on a Venue Smart shift would have stamped `flexJobId` and queued a Flex
+  `book_worker`. Now `isFlexShift` needs shift `source: 'indeed_flex_apply'` or an `indeed_flex`
+  `external_shift_requests` row whose `event.jobId` is the PO.
+- Marco's Slack brain rides `natalieSlackInbox` (state `app_config/marco_slack_inbox`, transcripts
+  `marco_slack_threads`), `MARCO_SYSTEM_PROMPT`, tools minus Flex/Fieldglass/Craigslist/mailbox.
+- **Secret `MARCO_SLACK_USER_TOKEN` exists with placeholder `unset`** (created so deploys of
+  natalieSlackInbox from main don't fail on a missing secret). The token exchange adds the real version.
+- Pre-existing: `natalieSlackInbox.test.ts` / `natalieRoadmap.test.ts` haven't loaded since 2026-09-07
+  (onCall from jobOrderAutoMessagingRadius under a fake firebase-admin) — separate fix task.
+
+**Slice 3 — work routing (committed after slices 1–2, not deployed).** Ownership is stamped where the
+work starts and resolved at drain time with `tokenFor(tokens, doc.persona)` (Marco's token only while he
+is live, else Natalie's — so flipping `enabled` off hands everything back without data changes):
+- `natalie_escalations.persona` = `scopePersona(assignment)` at enqueue; Marco's DMs go to the JO's
+  assigned recruiters (Rosa), never to either persona's own Slack user; unmapped → Marco's home channel.
+  The "I've asked the client about a replacement" line stays Natalie-only (it's the Flex ask).
+  `assignments.natalieEscalation.persona` lets `natalie_relays` post into the right persona's thread.
+- `natalie_onboarding_followups/{uid}.persona` + `.lang` (from `users.preferredLanguage`) at enrollment;
+  scope comes from the assignment, else the job order (hiring-plan hires). Marco's threads use
+  `natalie_onboarding_threads/marco__{jo}__{day}`. Checkpoint / done / reply texts per persona + language
+  (`marco_onboarding_1h` …), Spanish copy in `composeCheckpointTextEs` / `composeDoneText`; Marco's SMS
+  reply prompt `MARCO_SMS_SYSTEM` (replies in the worker's language; doesn't volunteer that he's automated,
+  but doesn't deny it when sincerely asked — Natalie's prompt still says "never mention that you are an AI").
+- `natalie_sms_watches.persona` (offers, background follow-ups, onboarding); `natalie_relays.persona`;
+  `natalie_scheduled_actions.persona`; `natalie_followups.persona`; `natalie_actions.persona` and the
+  worker activity feed's `action` = the persona's first name.
+- Slack tools act as the persona that was asked: notes/tasks authored by Marco, `marco_slack_request`
+  texts signed "— Marco, C1 Staffing", `worker_status.preferredLanguage`, `onboarding_followups` filtered
+  to the asker's own follow-ups.
+- Background checks Marco orders: `backgroundChecks.automationPersona: 'marco'` (`automationSource` stays
+  `natalie` for existing consumers), `orderedByName: 'Marco Gomez'`.
+- Inbound: a bare "Sí" now counts as YES (`\b` never matched after the accented í).
+- Tests: `src/__tests__/natalie/marcoCopy.test.ts` pins Natalie's English copy unchanged and Marco's Spanish.
+- Routing is by the worker's watch/follow-up doc (one per worker), not by which number they texted — the
+  scope rule already guarantees one owner per worker.
+
+## One-time steps to go live (in order)
+1. **Slack app**: create "Marco Gomez (HRX)" from `functions/.scratch/slack-marco-app-manifest.json`
+   (api.slack.com, as Greg); copy its client secret into Secret Manager `SLACK_MARCO_CLIENT_SECRET`.
+2. **Authorize as Marco** in a real Incognito window signed into Slack as m.gomez@ (NOT Greg's Chrome —
+   Natalie's first two tokens were Greg's): `https://slack.com/oauth/v2/authorize?client_id=<marco app client id>&user_scope=chat:write,channels:read,groups:read,channels:history,groups:history,users:read,im:write,im:history,im:read,mpim:history,mpim:read&redirect_uri=https://hrxone.com/slack/oauth/callback`
+   → exchange the code with a copy of `.scratch/slack-natalie-token-exchange.cjs` writing
+   `MARCO_SLACK_USER_TOKEN` (new version; the check must show user `U0C14BDAX2P`).
+3. **Twilio**: add PN54f9b0115d73f7b3dd34eee89b3ad82f (+1 737 264 6753) to MG2dd6557d05d9be9044c996fa568a8a39's
+   sender pool (the go-live script already lists it); consider pointing the 737's voice URL at Rosa.
+4. **Slack channel**: create `#events-recruiting` (Rosa, Mark, Maria, Marco) and set
+   `tenants/BCiP2bQ9CgVOCTfV6MhD/app_config/marco.homeChannelId`.
+5. **Deploy** (log it): `functions:natalieSlackInbox,functions:handleInboundSms,functions:twilioInboundSmsWebhook,functions:dispatchScheduledWorkerReminders`
+   plus anything else bundling `twilio.ts` sends picks up the From pin on its next deploy. Hosting deploy
+   for `public/brand/marco-gomez-512.jpg` (signature image) with the hosting preflight.
+6. **Switch on**: `tenants/BCiP2bQ9CgVOCTfV6MhD/app_config/marco { enabled: true }`. Existing active
+   Natalie follow-ups for Events workers keep their stamp (natalie) and finish with her; new ones go to Marco.
+
+**Later** — Marco's morning brief (events-only), his mailbox grant (`marcoMailbox` purpose on
+gmailOAuthCallback, add `gmail.settings.basic` so the signature can be set by API), HRX user doc.

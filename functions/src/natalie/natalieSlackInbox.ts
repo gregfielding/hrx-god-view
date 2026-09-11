@@ -302,7 +302,7 @@ export const natalieSlackInbox = onSchedule(
       const m = await pollPersonaInbox('marco', marcoToken, runtime).catch((err) => { logger.error('[marco] inbox poll failed', { err: String(err) }); return { answered: 0, skipped: 0 }; });
       if (m.answered || m.skipped) logger.info('[marco] tick', m);
     }
-    const outbox = await drainNatalieOutbox(token);
+    const outbox = await drainNatalieOutbox({ natalie: token, marco: marcoToken || undefined, runtime });
     if (outbox.followups || outbox.escalations || outbox.relays || outbox.techIssues) logger.info('[natalie] outbox drained', outbox);
   },
 );

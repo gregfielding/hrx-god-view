@@ -13,6 +13,7 @@
  */
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
+import { PERSONAS, scopePersona, type PersonaId } from './personas';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -44,14 +45,18 @@ export interface NatalieActionInput {
   userId?: string | null;
   jobOrderId?: string | null;
   assignmentId?: string | null;
+  /** Who acted (personas.ts). Default natalie. */
+  persona?: PersonaId;
 }
 
-/** Record what Natalie did and mirror it on the worker's activity feed. Never throws. */
+/** Record what Natalie (or Marco) did and mirror it on the worker's activity feed. Never throws. */
 export async function recordNatalieAction(a: NatalieActionInput): Promise<string | null> {
   try {
     const now = admin.firestore.FieldValue.serverTimestamp();
+    const persona: PersonaId = a.persona ?? 'natalie';
     const ref = await db.collection('natalie_actions').add({
       tenantId: a.tenantId,
+      persona,
       kind: a.kind,
       askedBySlackUserId: a.askedBySlackUserId ?? null,
       askedByName: a.askedByName ?? null,
@@ -67,12 +72,12 @@ export async function recordNatalieAction(a: NatalieActionInput): Promise<string
     });
     if (a.userId) {
       await db.collection('users').doc(a.userId).collection('activityLogs').add({
-        action: 'Natalie',
+        action: PERSONAS[persona].firstName,
         actionType: 'natalie_action',
         description: a.askedByName ? `${a.summary} (asked by ${a.askedByName} in Slack)` : a.summary,
         severity: 'low',
         source: 'slack',
-        metadata: { natalieActionId: ref.id, kind: a.kind, slackPermalink: slackPermalink(a.slack), assignmentId: a.assignmentId ?? null, jobOrderId: a.jobOrderId ?? null },
+        metadata: { natalieActionId: ref.id, persona, kind: a.kind, slackPermalink: slackPermalink(a.slack), assignmentId: a.assignmentId ?? null, jobOrderId: a.jobOrderId ?? null },
         userId: a.userId,
         tenantId: a.tenantId,
         timestamp: now,
@@ -87,11 +92,12 @@ export async function recordNatalieAction(a: NatalieActionInput): Promise<string
 }
 
 /** Ask the inbox tick to report a portal action's outcome back into a Slack thread. */
-export async function registerFollowup(input: { tenantId: string; portalActionId: string; slack: SlackRef; askedByName?: string | null; description: string }): Promise<void> {
+export async function registerFollowup(input: { tenantId: string; portalActionId: string; slack: SlackRef; askedByName?: string | null; description: string; persona?: PersonaId }): Promise<void> {
   try {
     await db.collection('natalie_followups').doc(input.portalActionId).set(
       {
         tenantId: input.tenantId,
+        persona: input.persona ?? 'natalie',
         portalActionId: input.portalActionId,
         slack: input.slack,
         askedByName: input.askedByName ?? null,
@@ -134,6 +140,11 @@ export async function enqueueRecruiterEscalation(input: EscalationInput): Promis
     await ref.set({
       tenantId: input.tenantId,
       assignmentId: input.assignmentId,
+      // Scope owner (Marco = C1 Events minus Oakland Arena); the drain downgrades to Natalie while Marco is off.
+      persona: scopePersona(a),
+      hiringEntityId: s(a.hiringEntityId) || s(a.entityId) || null,
+      accountId: s(a.accountId) || null,
+      locationId: s(a.locationId) || null,
       kind: input.kind,
       detail: input.detail ?? null,
       userId: s(a.userId) || s(a.candidateId) || null,
@@ -157,7 +168,7 @@ export async function enqueueRecruiterEscalation(input: EscalationInput): Promis
 export async function enqueueWorkerReplyRelay(input: { tenantId: string; assignmentId: string; userId?: string | null; workerName?: string | null; text: string; intent?: string | null }): Promise<boolean> {
   try {
     const asg = await db.doc(`tenants/${input.tenantId}/assignments/${input.assignmentId}`).get();
-    const esc = asg.get('natalieEscalation') as { channel?: string; ts?: string } | undefined;
+    const esc = asg.get('natalieEscalation') as { channel?: string; ts?: string; persona?: PersonaId } | undefined;
     const flexAsk = asg.get('natalieFlexAsk') as { channel?: string; ts?: string } | undefined;
     if (!esc?.channel && !flexAsk?.channel) return false;
     await db.collection('natalie_relays').add({
@@ -167,7 +178,9 @@ export async function enqueueWorkerReplyRelay(input: { tenantId: string; assignm
       workerName: input.workerName ?? null,
       text: input.text.slice(0, 500),
       intent: input.intent ?? null,
-      targets: [esc, flexAsk].filter((t): t is { channel: string; ts?: string } => Boolean(t?.channel)),
+      // Post with the token of whoever opened the escalation thread (a Flex ask is always Natalie's).
+      persona: esc?.channel ? esc.persona ?? 'natalie' : 'natalie',
+      targets: [esc, flexAsk].filter((t): t is { channel: string; ts?: string } => Boolean(t?.channel)).map((t) => ({ channel: t.channel, ts: t.ts })),
       status: 'pending',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
