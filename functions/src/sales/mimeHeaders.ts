@@ -147,3 +147,42 @@ export function buildMimeMessage(args: {
     .replace(/\//g, '_')
     .replace(/=+$/, '');
 }
+
+/**
+ * Windows-1252 characters that stand in for bytes 0x80-0x9F when mojibake passed through that code page.
+ * Written as escapes on purpose: literal C1/control characters are invisible in review (see
+ * docs/claude/feedback_invisible_uf8ff_literal.md).
+ */
+const CP1252_TO_BYTE: Record<string, number> = { '\u20ac': 0x80, '\u201a': 0x82, '\u0192': 0x83, '\u201e': 0x84, '\u2026': 0x85, '\u2020': 0x86, '\u2021': 0x87, '\u02c6': 0x88, '\u2030': 0x89, '\u0160': 0x8a, '\u2039': 0x8b, '\u0152': 0x8c, '\u017d': 0x8e, '\u2018': 0x91, '\u2019': 0x92, '\u201c': 0x93, '\u201d': 0x94, '\u2022': 0x95, '\u2013': 0x96, '\u2014': 0x97, '\u02dc': 0x98, '\u2122': 0x99, '\u0161': 0x9a, '\u203a': 0x9b, '\u0153': 0x9c, '\u017e': 0x9e, '\u0178': 0x9f };
+/** A lead byte of UTF-8 read as Latin-1 (Ã Â â) followed by a continuation-byte stand-in. */
+const MOJIBAKE_HINT = /[\u00c3\u00c2\u00e2][\u0080-\u00bf\u20ac\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u017d\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u017e\u0178]/;
+
+/**
+ * Undo UTF-8-read-as-Latin-1 (or Windows-1252) mojibake, layer by layer (2026-09-11: Natalie's reply subjects
+ * compounded "Resume text \u2014 Brandon Wilson" into a wall of mojibake because every Re: re-garbled the last
+ * one). Each pass maps the string back to bytes and decodes them as UTF-8; it stops as soon as that isn't a
+ * clean decode (a replacement character, or a code point no single byte stands for), so legitimate accented
+ * text is returned unchanged.
+ */
+export function repairMojibake(input: string): string {
+  let cur = String(input ?? '');
+  for (let pass = 0; pass < 8 && MOJIBAKE_HINT.test(cur); pass += 1) {
+    const bytes: number[] = [];
+    for (const ch of Array.from(cur)) {
+      const cp = ch.codePointAt(0) ?? 0;
+      if (cp <= 0xff) bytes.push(cp);
+      else if (CP1252_TO_BYTE[ch] !== undefined) bytes.push(CP1252_TO_BYTE[ch]);
+      else return cur;
+    }
+    const next = Buffer.from(bytes).toString('utf8');
+    if (next.includes('\ufffd') || next === cur) return cur;
+    cur = next;
+  }
+  return cur;
+}
+
+/** Reply subject: repaired, stacked "Re:/Fwd:" prefixes collapsed, exactly one "Re: ". */
+export function normalizeReplySubject(subject: string): string {
+  const clean = repairMojibake(subject).replace(/^\s*((re|fwd?|rv)\s*:\s*)+/i, '').trim();
+  return `Re: ${clean || '(no subject)'}`;
+}

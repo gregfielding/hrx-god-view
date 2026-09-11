@@ -23,6 +23,7 @@ import { logger } from 'firebase-functions/v2';
 import type { gmail_v1 } from 'googleapis';
 import { answerAsNatalie, type NatalieTurn } from './natalieAgent';
 import { PERSONAS, type PersonaId, type PersonaRuntime } from './personas';
+import { normalizeReplySubject, repairMojibake } from '../sales/mimeHeaders';
 
 const db = () => admin.firestore();
 const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
@@ -225,13 +226,13 @@ export async function drainStaffEmail(runtime: PersonaRuntime): Promise<number> 
           .map((m) => emailTurn(m, P.email, persona, helpers))
           .filter((t) => t.text)
           .slice(-MAX_TURNS);
-        const subject = messageHeader(msg, 'Subject') || '(no subject)';
+        const subject = repairMojibake(messageHeader(msg, 'Subject')) || '(no subject)';
         const turn: NatalieTurn = { role: 'user', text: `Subject: ${subject}\n\n${messagePlainText(msg)}`, by: staff.slackUserId || staff.uid, byName: staff.firstName, ts: String(Number(msg.internalDate ?? 0) / 1000) };
         const ans = await answerAsNatalie({
           history, message: turn, surface: 'email', marcoLive: runtime.marcoEnabled,
           ctx: { tenantId: TENANT, askedBySlackUserId: staff.slackUserId || '', askedByName: staff.firstName, persona },
         });
-        const sent = await sendEmail(TENANT, { to: fromEmail, subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`, body: toEmailText(ans.text), threadId: msg.threadId ?? undefined, inReplyToMessageId: item.id }, persona);
+        const sent = await sendEmail(TENANT, { to: fromEmail, subject: normalizeReplySubject(subject), body: toEmailText(ans.text), threadId: msg.threadId ?? undefined, inReplyToMessageId: item.id }, persona);
         await gmail.users.messages.modify({ userId: 'me', id: item.id, requestBody: { removeLabelIds: ['UNREAD'] } }).catch(() => undefined);
         await ledger.update({ status: sent.sent ? 'answered' : 'send_failed', sendError: sent.error ?? null, tools: ans.toolCalls.map((t) => t.name), answeredAt: admin.firestore.FieldValue.serverTimestamp() });
         if (sent.sent) answered += 1;

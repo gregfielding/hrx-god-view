@@ -70,3 +70,15 @@ used.
 Already-sent mail cannot be corrected; the fix only affects future sends.
 
 Related: [[project_crm_reengagement]], [[project_sodexo_campus_prospecting]].
+
+## 2026-09-11: a fourth hand-rolled sender — the persona mailbox
+`functions/src/natalie/natalieMailbox.ts` `sendEmail` (Natalie, then Marco) wrote `Subject: ${input.subject}`
+raw. Deborah's reply thread "Re: Resume text — Brandon Wilson" came back as a wall of `ÃƒÂ‚Ã‚Â¢…`: every Re:
+took the already-garbled subject Gmail decoded and garbled it again, so the mojibake COMPOUNDS once replies
+are automated (personaConversations answers staff email in-thread). Fixed by routing through
+`buildMimeMessage` (`composePersonaEmailRaw`), plus two helpers in `mimeHeaders.ts`:
+`repairMojibake()` peels stacked Latin-1/Windows-1252 layers (stops at the first unclean decode, so real
+accents and dashes survive) and `normalizeReplySubject()` repairs + collapses "Re: Re:". Applied in
+`sendEmail`, `read_inbox` subjects and the staff email auto-replies, so existing garbled threads heal on the
+next reply. Tests: `functions/src/__tests__/natalie/mailboxEncoding.test.ts`.
+

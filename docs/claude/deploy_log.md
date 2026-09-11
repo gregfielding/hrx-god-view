@@ -12,6 +12,7 @@ released (say why).
 
 | When (PT) | Who | Target | What | Commit | Result | Notes |
 |---|---|---|---|---|---|---|
+| 2026-09-11 15:04 | Greg (Claude) | functions | `natalieSlackInbox`, `handleInboundSms`, `twilioInboundSmsWebhook` | 0a4e0c45 | ✅ | Workers/applicants texting Natalie's 312 or Marco's 737 get answered by that persona (personaWorkerSms.ts: user search first, own-data context, guardrails, daily Slack log). Clean origin/main worktree; coordinated with the "Claim Shift / C1 Events setup" session, which deploys natalieSlackInbox next |
 | 2026-09-11 14:35 | Greg (Claude) | hosting | Step 5 claim-readiness UI: Finish setup to claim CTAs, jobs board setup card, payroll Back to your shift + You're in banners, C1 Events applies land on payroll first | bb5c6c99 | ✅ | Clean worktree of origin/main (contains 010c6894); main.49cabf32.js; deep links 200 on hrxone.com + app.c1staffing.com; released right after respondToAssignment (web calls claim_prepare) |
 | 2026-09-11 14:34 | Greg (Claude) | functions | `respondToAssignment` | bb5c6c99 | ✅ | New decision `claim_prepare` (claims/claimReadiness.prepareClaimForWorker): payroll-readiness gate only, starts C1 Events onboarding, books nothing |
 | 2026-09-11 14:34 | Greg (Claude) | functions | `natalieSlackInbox` | a361e086 | ✅ | Retry after the Cloud Runtime Config outage — binds Marco's MARCO_SLACK_USER_TOKEN; his inbox initialized 21:30:09Z (30 conversations tracked, no backlog answered), no warnings. Marco now answers Slack DMs/@mentions; his automated work still OFF (app_config/marco.enabled unset) |

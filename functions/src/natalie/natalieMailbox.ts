@@ -18,6 +18,7 @@ import { defineString } from 'firebase-functions/params';
 import type { Response } from 'express';
 import { logger } from 'firebase-functions/v2';
 import { PERSONAS, type PersonaId } from './personas';
+import { buildMimeMessage, repairMojibake } from '../sales/mimeHeaders';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -176,7 +177,7 @@ export async function readInbox(tenantId: string, opts: { query?: string; max?: 
       threadId: d.threadId ?? '',
       messageId: d.id ?? m.id,
       from,
-      subject: header(d, 'Subject') || '(no subject)',
+      subject: repairMojibake(header(d, 'Subject')) || '(no subject)',
       date: header(d, 'Date'),
       unread: (d.labelIds ?? []).includes('UNREAD'),
       automated: AUTOMATED_SENDER.test(from),
@@ -186,8 +187,22 @@ export async function readInbox(tenantId: string, opts: { query?: string; max?: 
   return { connected: true, items };
 }
 
-function b64url(s: string): string {
-  return Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+/**
+ * Pure: the Gmail `raw` payload for a persona email. Goes through buildMimeMessage (RFC 2047 encoded Subject and
+ * From name, CRLF) — the hand-rolled `Subject: ${subject}` it replaces shipped raw UTF-8 in the header, so an em
+ * dash reached people as "Ã¢Â€Â”" and every reply re-garbled it (docs/claude/feedback_email_header_encoding.md).
+ */
+export function composePersonaEmailRaw(persona: PersonaId, input: { to: string; subject: string; body: string }, threading: { inReplyTo?: string; references?: string } = {}): string {
+  const P = PERSONAS[persona];
+  return buildMimeMessage({
+    fromName: P.displayName,
+    fromEmail: P.email,
+    to: input.to,
+    subject: repairMojibake(input.subject),
+    body: `${input.body.trim()}\n\n—\n${P.displayName}\n${P.title}, C1 Staffing\n${P.email}`,
+    inReplyTo: threading.inReplyTo,
+    references: threading.references,
+  });
 }
 
 /** Send (or reply, when threadId + inReplyTo are given) as the persona. */
@@ -195,21 +210,23 @@ export async function sendEmail(tenantId: string, input: { to: string; subject: 
   const P = PERSONAS[persona];
   const gmail = await personaGmail(persona, tenantId);
   if (!gmail) return { sent: false, error: `${P.firstName}'s mailbox is not connected yet` };
-  let refs = '';
+  const threading: { inReplyTo?: string; references?: string } = {};
   if (input.inReplyToMessageId) {
     try {
       const orig = await gmail.users.messages.get({ userId: 'me', id: input.inReplyToMessageId, format: 'metadata', metadataHeaders: ['Message-ID', 'References'] });
       const mid = header(orig.data, 'Message-ID');
       const prior = header(orig.data, 'References');
-      if (mid) refs = `In-Reply-To: ${mid}\r\nReferences: ${[prior, mid].filter(Boolean).join(' ')}\r\n`;
+      if (mid) {
+        threading.inReplyTo = mid;
+        threading.references = [prior, mid].filter(Boolean).join(' ');
+      }
     } catch {
       /* send without threading headers */
     }
   }
-  const signature = `\n\n—\n${P.displayName}\n${P.title}, C1 Staffing\n${P.email}`;
-  const raw = `From: ${P.displayName} <${P.email}>\r\nTo: ${input.to}\r\nSubject: ${input.subject}\r\n${refs}Content-Type: text/plain; charset=utf-8\r\n\r\n${input.body.trim()}${signature}`;
+  const raw = composePersonaEmailRaw(persona, input, threading);
   try {
-    const res = await gmail.users.messages.send({ userId: 'me', requestBody: { raw: b64url(raw), ...(input.threadId ? { threadId: input.threadId } : {}) } });
+    const res = await gmail.users.messages.send({ userId: 'me', requestBody: { raw, ...(input.threadId ? { threadId: input.threadId } : {}) } });
     return { sent: true, messageId: res.data.id ?? undefined };
   } catch (err) {
     return { sent: false, error: err instanceof Error ? err.message : String(err) };
