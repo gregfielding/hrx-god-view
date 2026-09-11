@@ -41,6 +41,37 @@ function loadOnboardingEngineBundle(): {
   return require(path.join(__dirname, '../onboardingEngineSync.js'));
 }
 
+/**
+ * Pure: Everee finished this worker's payroll onboarding at the entity — the row's own stamps, or
+ * its `everee_workers` link. Same rule as `claims/claimShiftPolicy.isPayrollReadyForClaim` (rule C)
+ * and `mirrorEvereeOnboardingCompleteToEmployments`; keep the three in step.
+ */
+export function isEvereeCompleteFromDocs(
+  employment: Record<string, unknown>,
+  link: Record<string, unknown> | null,
+): boolean {
+  const lower = (v: unknown): string => String(v ?? '').trim().toLowerCase();
+  if (link && (lower(link.status) === 'onboarding_complete' || Boolean(link.apiObservedOnboardingCompleteAt))) {
+    return true;
+  }
+  return lower(employment.evereeOnboardingStatus) === 'complete' || Boolean(employment.payrollOnboardingCompletedAt);
+}
+
+/** One extra doc get, and only when the row itself doesn't already carry the completion stamps. */
+async function isEvereePayrollComplete(
+  db: admin.firestore.Firestore,
+  tenantId: string,
+  userId: string,
+  employment: Record<string, unknown>,
+): Promise<boolean> {
+  if (isEvereeCompleteFromDocs(employment, null)) return true;
+  const snap = await db
+    .doc(`tenants/${tenantId}/everee_workers/c1_events_llc__${userId}`)
+    .get()
+    .catch(() => null);
+  return isEvereeCompleteFromDocs(employment, snap?.exists ? ((snap.data() ?? {}) as Record<string, unknown>) : null);
+}
+
 export async function reconcileEntityEmploymentOnboardingFromPipelineData(args: {
   tenantId: string;
   pipelineId: string;
@@ -96,12 +127,19 @@ export async function reconcileEntityEmploymentOnboardingFromPipelineData(args: 
   }
 
   const ts = admin.firestore.FieldValue.serverTimestamp();
+  // C1 Events (1099) is finished when EVEREE is finished — W-9 + direct deposit is the whole worker
+  // requirement there, and `mirrorEvereeOnboardingCompleteToEmployments` marks the row active on that
+  // signal. The engine doesn't read Everee, so without this guard any worker_onboarding write
+  // downgraded paid, payable workers back to amber "Onboarding" (Greg 2026-09-11: rows re-mirrored
+  // that afternoon bounced back within minutes — that is what the placement chip shows).
+  const evereeComplete = entityKey === 'events' && (await isEvereePayrollComplete(db, tenantId, userId, employment));
+  const onboardingComplete = engine.onboardingComplete || evereeComplete;
   const updates: Record<string, unknown> = {
-    taxIdentityStatus: engine.taxIdentityStatus,
+    taxIdentityStatus: evereeComplete ? 'complete' : engine.taxIdentityStatus,
     handbookStatus: engine.handbookStatus,
-    payrollStatus: engine.payrollStatus,
+    payrollStatus: evereeComplete ? 'complete' : engine.payrollStatus,
     recruiterFollowUpGatingStatus: engine.recruiterFollowUpGatingStatus,
-    onboardingComplete: engine.onboardingComplete,
+    onboardingComplete,
     updatedAt: ts,
   };
 
@@ -109,7 +147,7 @@ export async function reconcileEntityEmploymentOnboardingFromPipelineData(args: 
     updates,
     buildEngineSyncLifecycleFragment({
       employmentStatusNowLower: statusNow,
-      engineOnboardingComplete: engine.onboardingComplete,
+      engineOnboardingComplete: onboardingComplete,
       serverTimestamp: ts,
     })
   );
