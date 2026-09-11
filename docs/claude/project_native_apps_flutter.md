@@ -671,3 +671,29 @@ Design:
 - ASC shows a "Review New Social Media Questions on Age Ratings" banner;
   checked 2026-09-10: App Information → Age Ratings is 4+ with no required
   action, so it does not block resubmission.
+
+## 1.0.1 notes (next build — not built yet)
+
+Release mechanics: bump `version:` in pubspec (1.0.1 + new build number),
+build with `tool/build_release.sh`, submit to both stores.
+
+In c1_app `main` since build 14 (`git log ddd8b78..main -- lib test`):
+- `b2a2d60` i18n: singular "complete 1 step" / "completa 1 paso" on the job
+  requirements label.
+- `3a6793f` sign-up: date of birth typed as MMDDYYYY or with dashes/dots is
+  accepted (web `PhoneSignupGate` already did).
+- `bf17c87` sign-up: no red "Choose and validate a suggested address before
+  continuing." for ~1 s under Apt / Unit after Continue with a validated
+  address (build-14 recording, 2026-09-11). The hint keyed off
+  `!canContinue`, which is also false while `submitting`; it now reads
+  `SignupAddressState.addressBlocksSubmit` (no or edited address, not mid
+  geocode). Test: `test/features/auth/signup_entry_screen_test.dart`. Web
+  has no equivalent bug (its address hints fire only on an invalid address).
+
+Also planned for 1.0.1:
+- Associated domains: `worker.c1staffing.com` → `app.c1staffing.com` in 4
+  places (see project_app_domain_migration.md step 5).
+- Play "Obfuscation (2%)" warning: enable R8 minify/shrinkResources in the
+  `android/app/build.gradle` release config (fix by Feb 2027).
+- Optional: drop iPad (`TARGETED_DEVICE_FAMILY = 1`) if we don't want to
+  maintain the 13-inch screenshot set.
