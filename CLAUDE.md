@@ -71,8 +71,11 @@ keep its README index current — that directory is the team's shared brain.
   See docs/claude/feedback_hosting_empty_config_incident.md.
 - Trunk-based on `main` with small, frequent commits is the default; use a
   feature branch + PR for large or risky changes.
-- Announce functions deploys to each other (two simultaneous deploys of
-  the same function can race).
+- **Log every deploy** (functions, hosting, rules) as one row at the top of
+  `docs/claude/deploy_log.md`, then commit and push immediately. Before a
+  deploy, pull and read the top rows: if the other person deployed the same
+  target in the last hour, check with them first (simultaneous deploys of the
+  same function race).
 
 ## Memory policy (for Claude sessions)
 
