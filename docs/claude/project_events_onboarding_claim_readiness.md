@@ -320,6 +320,21 @@ Script: `functions/.scratch/events_autohire_dryrun.ts` (counts + posting titles 
   2026-09-11 (many show a 2026-06-18 last day — likely a bulk-created date,
   not a real shift); only Sea Hear Now (9/20) is ahead. Stale active postings
   stay on the jobs board.
+  **Cleaned 2026-09-11 (Greg: "expire the 23")**: 23 finished one-off Events
+  postings → `status: 'expired'` (+ `expiredAt/expiredBy/expiredReason`), the
+  same status a closed Fieldglass order gives its postings. FIFA Dallas (2),
+  Adidas FIFA NY (1) and Daisy Chain Fields (10) were still collecting
+  applications in the prior 14 days. Expired postings leave the board and the
+  SEO route returns 404 + noindex / drops them from the sitemap. Script +
+  gitignored backup: `functions/.scratch/expire_finished_events_postings.ts`
+  (`rollback` mode restores `active`). Kept 13: Chiefs Bowl Cleaners, Sea Hear
+  Now, Electric Forest (claim test), Austin City Limits (Oct festival, shifts
+  not built yet), Oakland Arena ×3 (52 applications / 14 days, no dated shifts
+  ahead) and six seasonal venues for Greg's call — Dell Diamond Cooks,
+  Slammers Stadium ×2, Crystal Falls Cooks, Moody Amphitheater ×2 (no
+  applications in 14 days, no future shifts). Nearly every Events JO also carries
+  an open "Ongoing · flexible hours" shift, so "no future dated shift" alone
+  doesn't mean finished.
 - Recommendation: build S2 **forward-only**, skip the backfill (50 cold
   invites for finished events would feed the stuck-onboarding pile).
 
