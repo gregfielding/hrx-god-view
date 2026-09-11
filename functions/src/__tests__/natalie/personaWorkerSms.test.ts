@@ -1,4 +1,5 @@
-import { classifySender, describeShift, emailsInText, matchNameAmongAccounts, parseWorkerDecision, payrollLinkText, payrollSetupUrl, phoneFormatVariants, recentReplyCount, workerSmsSystemPrompt } from '../../natalie/personaWorkerSms';
+import { classifySender, describeShift, emailsInText, matchNameAmongAccounts, parseWorkerDecision, phoneFormatVariants, recentReplyCount, workerSmsSystemPrompt } from '../../natalie/personaWorkerSms';
+import { payrollLinkText, payrollUrlForEntity } from '../../natalie/payrollInviteFallback';
 
 const T = 'BCiP2bQ9CgVOCTfV6MhD';
 
@@ -92,17 +93,23 @@ describe('identifying a texter', () => {
   });
 });
 
-describe('payroll link fallback (the Everee resend is a dead path for both entities)', () => {
-  it('links the entity-scoped payroll page, and a bare one when the entity is unknown', () => {
-    expect(payrollSetupUrl('https://hrxone.com', 'c1_events_llc')).toBe('https://hrxone.com/c1/workers/earnings/3138');
-    expect(payrollSetupUrl('https://hrxone.com', 'c1_select_llc')).toBe('https://hrxone.com/c1/workers/earnings/3133');
-    expect(payrollSetupUrl('https://hrxone.com', null)).toBe('https://hrxone.com/c1/workers/earnings');
+describe('payroll link fallback — the worker-texting path uses the shared helper', () => {
+  const fakeDb = (evereeTenantId: string | null) => ({
+    doc: (path: string) => ({ get: async () => ({ data: () => (path.endsWith('/entities/c1_events_llc') && evereeTenantId ? { evereeTenantId } : {}) }) }),
+  }) as never;
+
+  it('links the entity-scoped payroll page from the entity record, not a hardcoded map', async () => {
+    await expect(payrollUrlForEntity(fakeDb('3138'), 'BCiP2bQ9CgVOCTfV6MhD', 'c1_events_llc')).resolves.toContain('/c1/workers/earnings/3138');
   });
-  it('keeps the promise in the worker language, signed by the persona', () => {
-    expect(payrollLinkText('marco', 'Ana', 'https://hrxone.com/c1/workers/earnings/3138', 'es'))
-      .toBe('Hola Ana, aquí está tu configuración de pago (depósito directo y formularios): https://hrxone.com/c1/workers/earnings/3138 — inicia sesión con este mismo número. — Marco, C1 Staffing');
-    const en = payrollLinkText('natalie', '', 'https://hrxone.com/c1/workers/earnings/3133', 'en');
-    expect(en.startsWith("Hi, here's your payroll setup")).toBe(true);
+  it('an entity with no Everee tenant yields no link (the helper then asks for a recruiter)', async () => {
+    await expect(payrollUrlForEntity(fakeDb(null), 'BCiP2bQ9CgVOCTfV6MhD', 'c1_events_llc')).resolves.toBe('');
+    await expect(payrollUrlForEntity(fakeDb('3138'), 'BCiP2bQ9CgVOCTfV6MhD', '')).resolves.toBe('');
+  });
+  it('keeps the promise in the worker language, signed by the persona who is texting', () => {
+    expect(payrollLinkText('Ana', 'https://hrxone.com/c1/workers/earnings/3138', { persona: 'marco', lang: 'es' }))
+      .toBe('Hola Ana, aquí está tu enlace para completar la nómina (depósito directo y formulario de impuestos): https://hrxone.com/c1/workers/earnings/3138 — Marco, C1 Staffing');
+    const en = payrollLinkText('', 'https://hrxone.com/c1/workers/earnings/3133', { persona: 'natalie' });
+    expect(en.startsWith("Hi there, here's your payroll setup link")).toBe(true);
     expect(en.endsWith('— Natalie, C1 Staffing')).toBe(true);
   });
 });
