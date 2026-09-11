@@ -630,6 +630,21 @@ export const onJobOrderStatusTransitionSnapshot = onDocumentWritten(
       return;
     }
 
+    // Sodexo contact intro (Greg 2026-09-11): a contact newly attached to a
+    // Sodexo JO gets an intro email sent as Deborah. Piggybacks on this
+    // job_orders write trigger (Cloud Run service cap) — fully isolated,
+    // cheap no-op for every write that doesn't add a Sodexo contact.
+    try {
+      const { runSodexoContactIntro } = await import('../sales/sodexoContactIntro');
+      await runSodexoContactIntro({ tenantId, jobOrderId, before: beforeData, after: afterData });
+    } catch (err) {
+      logger.error('[sodexoContactIntro] hook failed', {
+        tenantId,
+        jobOrderId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     const beforeStatus = pickStatus(beforeData);
     const afterStatus = pickStatus(afterData);
 

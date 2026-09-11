@@ -78,6 +78,8 @@ Ledger (append new entries at the bottom):
   collection had 0 docs and there were 0 invocations in 30d. us-central1
   services went 997 → 993. The orphaned `match /invites` rule was removed
   and rules were deployed the same day.
+- **2026-09-11 (+1, claimed)**: `sodexoContactIntroCron`
+  ([[project_sodexo_contact_intro]]). Headroom was 993 at build time.
 
 ## Domain move checklist (deferred 2026-09-09 — revisit when c1staffing.com / app.c1staffing.com is added)
 - Firebase Hosting: add the domain; DNS; then 301 hrxone.com → new origin so Google transfers rankings.

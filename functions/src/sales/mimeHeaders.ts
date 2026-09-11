@@ -12,6 +12,8 @@
  * Non-ASCII header text must be sent as an RFC 2047 "encoded-word".
  */
 
+import { randomBytes } from 'crypto';
+
 /** `=?UTF-8?B?` + `?=` framing, and the 75-char encoded-word limit. */
 const ENCODED_WORD_LIMIT = 75;
 const PREFIX = '=?UTF-8?B?';
@@ -93,6 +95,14 @@ export function buildMimeMessage(args: {
   to: string;
   subject: string;
   body: string;
+  /** RFC 5322 threading — the parent's Message-ID, e.g. `<abc@mail.gmail.com>`. */
+  inReplyTo?: string;
+  references?: string;
+  /**
+   * HTML alternative. When set the message is multipart/alternative
+   * (`body` becomes the text/plain part); omitted = plain text as before.
+   */
+  html?: string;
 }): string {
   const to = sanitizeHeaderValue(args.to);
   const subject = encodeMimeHeaderValue(args.subject);
@@ -108,12 +118,28 @@ export function buildMimeMessage(args: {
   }
   headers.push(`To: ${to}`);
   headers.push(`Subject: ${subject}`);
+  const inReplyTo = sanitizeHeaderValue(args.inReplyTo ?? '');
+  const references = sanitizeHeaderValue(args.references ?? '');
+  if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`);
+  if (references) headers.push(`References: ${references}`);
   headers.push('MIME-Version: 1.0');
-  headers.push('Content-Type: text/plain; charset="UTF-8"');
-  headers.push('Content-Transfer-Encoding: 8bit');
 
   const body = String(args.body ?? '').replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
-  const msg = `${headers.join('\r\n')}\r\n\r\n${body}`;
+  let msg: string;
+  if (args.html) {
+    // Parts are base64: Gmail signature HTML is routinely one line far past
+    // RFC 5322's 998-octet limit, which 8bit can't carry.
+    const boundary = `hrx_alt_${randomBytes(12).toString('hex')}`;
+    const base64Lines = (s: string) => (Buffer.from(s, 'utf8').toString('base64').match(/.{1,76}/g) ?? []).join('\r\n');
+    const part = (type: string, content: string) =>
+      `--${boundary}\r\nContent-Type: ${type}; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n${base64Lines(content)}\r\n`;
+    headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+    msg = `${headers.join('\r\n')}\r\n\r\n${part('text/plain', body)}${part('text/html', args.html)}--${boundary}--\r\n`;
+  } else {
+    headers.push('Content-Type: text/plain; charset="UTF-8"');
+    headers.push('Content-Transfer-Encoding: 8bit');
+    msg = `${headers.join('\r\n')}\r\n\r\n${body}`;
+  }
 
   return Buffer.from(msg, 'utf8')
     .toString('base64')

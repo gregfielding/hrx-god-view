@@ -353,6 +353,14 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
       return;
     }
 
+    // Deborah's mailbox (d.waltermyer@) — Sodexo contact intros; tokens go to
+    // tenants/{tid}/integrations/deborahMailbox.
+    if (parsedState?.purpose === 'deborahMailbox') {
+      const { handleDeborahMailboxOAuth } = await import('./sales/deborahMailbox');
+      await handleDeborahMailboxOAuth(code, parsedState, res);
+      return;
+    }
+
     const { userId } = parsedState;
 
     // DIAGNOSTIC: log the exact values being sent to Google's /token endpoint so we can

@@ -12488,6 +12488,9 @@ export {
 export { sodexoReplyScanCron, sodexoReplyScanNow, resolveSodexoReply } from './sales/sodexoReplies';
 export { inboxTriageCron, inboxMorningBriefCron, inboxTriageNow, inboxMorningBriefNow } from './sales/inboxChiefOfStaff';
 export { getCrmReengagementStatus, crmReengagementSendBatch, crmReengagementDailyCron, setCrmReengagementAutopilot } from './sales/crmReengagement';
+// Sodexo contact intro as Deborah — queued morning sends + 48h no-reply follow-ups
+// (the intro itself fires from onJobOrderStatusTransitionSnapshot).
+export { sodexoContactIntroCron } from './sales/sodexoContactIntro';
 
 // Natalie Brooks — Slack assistant (DMs + @mentions answered as her; 2026-09-07).
 // See docs/claude/reference_slack_natalie_persona.md.
