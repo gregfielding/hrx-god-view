@@ -315,3 +315,13 @@ Greg's (see the report artifact).
 - Google OAuth: `https://app.c1staffing.com` added to Authorized JavaScript
   origins on all three web clients (HRX Web Integration v2, HRX Gmail
   Integration, HRX ONE WEB APP) — verified after reload.
+
+### Intuit developer app (2026-09-11) — not fully checked
+- developer.intuit.com → Workspaces never finished loading in either connected
+  Chrome (spinner on "My workspaces (…)"), so the app's Production settings
+  (host domain, launch/disconnect URLs, EULA/privacy URLs) weren't read.
+- What IS known: `QBO_REDIRECT_URI` in `functions/.env.hrx1-d3beb` points at
+  cloudfunctions.net (host checked, value not printed), so OAuth reconnects are
+  unaffected by the domain move. Any app URLs on hrxone.com keep working under
+  option 1. Low risk; re-check (Workspaces → app → Settings → Production) only
+  if hrxone.com is ever retired.
