@@ -87,6 +87,11 @@ async function slackUserForHrxUser(tenantId: string, uid: string): Promise<strin
   }
 }
 
+/** Pure: Slack users to DM for an escalation — never Natalie herself. */
+export function escalationDmTargets(slackIds: string[], natalieSlackUserId: string): string[] {
+  return [...new Set(slackIds.filter((id) => id && id !== natalieSlackUserId))];
+}
+
 function fmtWhen(v: unknown): string {
   const d = tsToDate(v);
   return d ? d.toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short', hour: 'numeric', minute: '2-digit' }) + ' CT' : 'today';
@@ -118,11 +123,16 @@ async function drainEscalations(token: string): Promise<number> {
           : `${who} isn't responding about ${s(e.jobTitle) || 'their shift'}${e.site ? ` at ${e.site}` : ''} (${fmtWhen(e.startTime)}).`;
     const text = `${lead}${e.detail ? ` ${e.detail}` : ''}\n• Phone: ${phone || 'none on file'}\n• <${PUBLIC_APP_ORIGIN}/assignments/${e.assignmentId}|Open in HRX>${e.userId ? ` · <${PUBLIC_APP_ORIGIN}/users/${e.userId}|Profile>` : ''}\nI've asked the client whether they want a replacement where that applies. Want me to text anyone else?`;
 
-    const dmIds: string[] = [];
+    const slackIds: string[] = [];
     for (const uid of recruiters) {
       const su = await slackUserForHrxUser(tenantId, uid);
-      if (su) dmIds.push(su);
+      if (su) slackIds.push(su);
     }
+    // Natalie is the assigned recruiter on some orders (OnTrac, 2026-09-11); a DM to her own Slack
+    // user reaches nobody, so she is dropped and a Natalie-only order falls back to #recruiting.
+    const { NATALIE_SLACK_USER_ID } = await import('./natalieSlackInbox');
+    const dmIds = escalationDmTargets(slackIds, NATALIE_SLACK_USER_ID);
+    const natalieOnly = slackIds.length > 0 && dmIds.length === 0;
     const sent: Array<{ channel: string; ts?: string }> = [];
     for (const su of dmIds) {
       const open = await slackGet<{ channel?: { id: string } }>(token, 'conversations.open', { users: su });
@@ -132,7 +142,8 @@ async function drainEscalations(token: string): Promise<number> {
     }
     if (sent.length === 0) {
       // No mapped recruiter: post to #recruiting so a human still sees it.
-      const r = await postAsNatalie(token, { channel: RECRUITING_CHANNEL, text: `(No recruiter is mapped to this order in Slack, so posting here.) ${text}` });
+      const why = natalieOnly ? "I'm the only recruiter assigned to this order" : 'No recruiter is mapped to this order in Slack';
+      const r = await postAsNatalie(token, { channel: RECRUITING_CHANNEL, text: `(${why}, so posting here.) ${text}` });
       if (r.ok) sent.push({ channel: RECRUITING_CHANNEL, ts: r.ts });
     }
     await d.ref.update({ status: sent.length ? 'posted' : 'failed', sent, recruiters, updatedAt: admin.firestore.FieldValue.serverTimestamp() });

@@ -207,7 +207,7 @@ export async function recomputeUserInterviewScoreSummary(
   } catch (e) {
     logger.warn('recomputeUserInterviewScoreSummary.riskProfile_failed', {
       uid,
-      message: e instanceof Error ? e.message : String(e),
+      error: e instanceof Error ? e.message : String(e),
     });
   }
 
@@ -223,7 +223,7 @@ export async function recomputeUserInterviewScoreSummary(
   } catch (e) {
     logger.warn('recomputeUserInterviewScoreSummary.recruiterScoreSnapshot_failed', {
       uid,
-      message: e instanceof Error ? e.message : String(e),
+      error: e instanceof Error ? e.message : String(e),
     });
   }
 }

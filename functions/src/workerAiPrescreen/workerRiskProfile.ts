@@ -672,7 +672,9 @@ export function riskProfileFirestorePayload(draft: WorkerRiskProfileDraft): Reco
       confidence: r.confidence,
       summary: r.summary,
       source: r.source,
-      lastUpdatedAt: ts,
+      // Firestore rejects serverTimestamp() inside arrays — a sentinel here failed the whole user
+      // update, so scoreSummary + recruiterScoreSnapshot never refreshed after interviews (2026-09-11).
+      lastUpdatedAt: admin.firestore.Timestamp.now(),
     };
     if (r.sourceRef != null && r.sourceRef !== '') row.sourceRef = r.sourceRef;
     if (r.status != null) row.status = r.status;

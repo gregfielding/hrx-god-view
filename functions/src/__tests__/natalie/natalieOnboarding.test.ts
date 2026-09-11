@@ -1,4 +1,24 @@
-import { composeCheckpointText, drugFromCheck, type OnboardingSnapshot } from '../../natalie/natalieOnboarding';
+import { composeCheckpointText, drugFromCheck, stepsWithoutAssignment, type OnboardingSnapshot } from '../../natalie/natalieOnboarding';
+
+describe('stepsWithoutAssignment (hiring-plan hires have no assignment readiness)', () => {
+  const status = (steps: ReturnType<typeof stepsWithoutAssignment>) => Object.fromEntries(steps.map((x) => [x.key, `${x.status}/${x.actor}`]));
+  it('a brand-new hire owes everything and payroll is a recruiter item until the invite goes out', () => {
+    expect(status(stepsWithoutAssignment({ user: {}, payrollAccount: null, evereeMirror: null, employment: null }))).toEqual({
+      work_authorization: 'missing/worker', i9: 'missing/worker', payroll_setup: 'missing/recruiter', tax_form: 'missing/worker',
+    });
+  });
+  it('invite sent → payroll in progress on the worker; Everee mirror stamps complete the rest', () => {
+    const invited = stepsWithoutAssignment({ user: {}, payrollAccount: { payrollStatus: 'invite_sent' }, evereeMirror: null, employment: null });
+    expect(status(invited).payroll_setup).toBe('in_progress/worker');
+    const done = stepsWithoutAssignment({
+      user: { workEligibilityAttestation: { authorizedToWorkUS: true } },
+      payrollAccount: { payrollStatus: 'invite_sent' },
+      evereeMirror: { directDepositReady: true, i9SignedAt: { seconds: 1 }, w4SignedAt: null },
+      employment: { taxIdentityStatus: 'complete' },
+    });
+    expect(done.every((x) => x.status === 'complete')).toBe(true);
+  });
+});
 
 const base = (over: Partial<OnboardingSnapshot> = {}): OnboardingSnapshot => ({
   assignmentId: 'a1', hiringEntityId: 'c1_select_llc', entityLabel: 'C1 Select', steps: [], workerTodo: [], recruiterTodo: [],

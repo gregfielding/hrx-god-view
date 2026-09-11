@@ -130,14 +130,64 @@ export function drugFromCheck(bg: Record<string, unknown> | null): DrugScreen {
   return { ordered: true, name: s(l.serviceName), lab: s(l.labName), status };
 }
 
-export async function buildOnboardingSnapshot(tenantId: string, userId: string, assignmentId: string | null): Promise<OnboardingSnapshot> {
+const ENTITY_KEYS: Record<string, string> = { c1_select_llc: 'select', c1_events_llc: 'events', c1_workforce_llc: 'workforce' };
+
+/**
+ * Pure: the worker's onboarding steps for a hire with NO assignment (job-order hiring plan / on-call
+ * pool). Same inputs as assignment readiness — src/utils/employmentMinimalChecklistModel.ts
+ * `assignmentReadinessEmploymentFromPipeline` (payroll account + Everee readiness mirror, OR'd so a
+ * signal can only turn a step green) plus the employment row. That module sits outside functions'
+ * tsc root, so the rules are restated here; keep them in step.
+ */
+export function stepsWithoutAssignment(args: {
+  user: Record<string, unknown>;
+  payrollAccount: Record<string, unknown> | null;
+  evereeMirror: Record<string, unknown> | null;
+  employment: Record<string, unknown> | null;
+}): OnboardingStep[] {
+  const pa = args.payrollAccount ?? {};
+  const m = args.evereeMirror;
+  const ee = args.employment ?? {};
+  const payrollStatus = s(pa.payrollStatus);
+  const inviteSent = ['invite_sent', 'account_created', 'in_progress', 'complete'].includes(payrollStatus) || s(pa.inviteStatus) === 'sent' || Boolean(pa.inviteSentAt || pa.payrollInviteSentAt) || m != null;
+  const directDeposit = payrollStatus === 'complete' || ['complete', 'verified'].includes(s(pa.directDepositStatus).toLowerCase()) || m?.directDepositReady === true;
+  const taxForm = ['complete', 'submitted', 'verified'].includes(s(pa.taxFormStatus).toLowerCase()) || Boolean(m?.w4SignedAt || m?.w9SignedAt) || s(ee.taxIdentityStatus) === 'complete';
+  const i9Worker = Boolean(m?.i9SignedAt || ee.i9Section1CompletedAt);
+  const attestation = (args.user.workEligibilityAttestation ?? null) as { authorizedToWorkUS?: unknown } | null;
+  const payroll = directDeposit ? 'complete' : inviteSent ? 'in_progress' : 'missing';
+  return [
+    { key: 'work_authorization', label: STEP_LABELS.work_authorization, status: attestation?.authorizedToWorkUS === true ? 'complete' : 'missing', actor: 'worker' },
+    { key: 'i9', label: STEP_LABELS.i9, status: i9Worker ? 'complete' : 'missing', actor: 'worker' },
+    { key: 'payroll_setup', label: STEP_LABELS.payroll_setup, status: payroll, actor: payroll === 'missing' ? 'recruiter' : 'worker' },
+    { key: 'tax_form', label: STEP_LABELS.tax_form, status: taxForm ? 'complete' : 'missing', actor: 'worker' },
+  ];
+}
+
+export async function buildOnboardingSnapshot(tenantId: string, userId: string, assignmentId: string | null, opts: { hiringEntityId?: string | null } = {}): Promise<OnboardingSnapshot> {
   const asg = assignmentId ? (await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).get()).data() ?? null : null;
-  const hiringEntityId = s(asg?.hiringEntityId) || s(asg?.entityId);
-  const rs = (asg?.readinessSnapshotV1 ?? {}) as { requirements?: Array<{ key: string; label: string; status: string }> };
+  const hiringEntityId = s(asg?.hiringEntityId) || s(asg?.entityId) || s(opts.hiringEntityId);
   const steps: OnboardingStep[] = [];
-  for (const r of rs.requirements ?? []) {
-    if (r.key === 'background_check') continue;
-    steps.push({ key: r.key, label: STEP_LABELS[r.key] || r.label, status: r.status, actor: r.key === 'payroll_setup' && r.status === 'missing' ? 'recruiter' : 'worker' });
+  if (asg) {
+    const rs = (asg.readinessSnapshotV1 ?? {}) as { requirements?: Array<{ key: string; label: string; status: string }> };
+    for (const r of rs.requirements ?? []) {
+      if (r.key === 'background_check') continue;
+      steps.push({ key: r.key, label: STEP_LABELS[r.key] || r.label, status: r.status, actor: r.key === 'payroll_setup' && r.status === 'missing' ? 'recruiter' : 'worker' });
+    }
+  } else if (hiringEntityId) {
+    // Hiring-plan / on-call pool hire: no assignment, so no readinessSnapshotV1 to read.
+    const entityKey = ENTITY_KEYS[hiringEntityId];
+    const [userSnap, payrollSnap, evereeSnap, employmentSnap] = await Promise.all([
+      db.doc(`users/${userId}`).get(),
+      entityKey ? db.doc(`tenants/${tenantId}/worker_payroll_accounts/${userId}__${entityKey}`).get() : Promise.resolve(null),
+      db.doc(`tenants/${tenantId}/everee_workers/${hiringEntityId}__${userId}`).get(),
+      entityKey ? db.doc(`tenants/${tenantId}/entity_employments/${userId}__${entityKey}`).get() : Promise.resolve(null),
+    ]);
+    steps.push(...stepsWithoutAssignment({
+      user: (userSnap.data() ?? {}) as Record<string, unknown>,
+      payrollAccount: (payrollSnap?.data() ?? null) as Record<string, unknown> | null,
+      evereeMirror: (evereeSnap.get('readinessMirror') ?? null) as Record<string, unknown> | null,
+      employment: (employmentSnap?.data() ?? null) as Record<string, unknown> | null,
+    }));
   }
   const everee = { inviteSent: steps.some((x) => x.key === 'payroll_setup' && x.status !== 'missing'), complete: steps.some((x) => x.key === 'payroll_setup' && x.status === 'complete') };
   // C1 Select only: E-Verify is the employer's step after I-9 Section 2.
@@ -171,7 +221,7 @@ export async function buildOnboardingSnapshot(tenantId: string, userId: string, 
 interface FollowupDoc {
   tenantId: string; userId: string; workerName: string; firstName: string; phoneE164: string;
   assignmentId: string | null; jobOrderId: string | null; jobTitle: string; site: string; hiringEntityId: string;
-  recruiterUid: string | null; recruiterName: string; source: 'onboarding_instance' | 'background_check';
+  recruiterUid: string | null; recruiterName: string; source: 'onboarding_instance' | 'background_check' | 'hiring_plan';
   startedAt: admin.firestore.Timestamp; tz: string; status: 'active' | 'done' | 'declined' | 'parked' | 'removed' | 'no_phone';
   nextCheckpoint: 'h24' | 'h72' | 'd7' | null; checkpoints: Record<string, unknown>;
   slack: SlackRef | null; transcript: Array<{ at: string; dir: 'out' | 'in'; text: string }>;
@@ -204,35 +254,54 @@ async function threadFor(token: string, channel: string, key: { jobOrderId: stri
   const ref = db.collection('natalie_onboarding_threads').doc(id);
   const cur = (await ref.get()).data() as { channel?: string; ts?: string } | undefined;
   if (cur?.ts) return { channel: cur.channel || channel, ts: cur.ts };
-  const what = key.source === 'onboarding_instance' ? 'onboarding' : 'screening';
-  const opener = `${what === 'onboarding' ? 'Onboarding' : 'Screening'} follow-ups — *${key.jobTitle}*${key.site ? ` at ${key.site}` : ''}${key.recruiterName ? ` (started by ${key.recruiterName})` : ''}. I check each worker's steps at 24h and 72h (tax forms, Everee payroll/direct deposit, I-9, handbook, background form, drug screen${key.entity === 'c1_select_llc' ? ', E-Verify on our side' : ''}), text them from my number about anything open, and post their replies here.`;
+  const what = key.source === 'background_check' ? 'screening' : 'onboarding';
+  const startedBy = key.recruiterName ? ` (started by ${key.recruiterName})` : key.source === 'hiring_plan' ? ' (hired by the job order hiring plan)' : '';
+  const opener = `${what === 'onboarding' ? 'Onboarding' : 'Screening'} follow-ups — *${key.jobTitle}*${key.site ? ` at ${key.site}` : ''}${startedBy}. I check each worker's steps at 24h and 72h (tax forms, Everee payroll/direct deposit, I-9, handbook, background form, drug screen${key.entity === 'c1_select_llc' ? ', E-Verify on our side' : ''}), text them from my number about anything open, and post their replies here.`;
   const res = await postAsNatalie(token, { channel, text: opener });
   const slack: SlackRef = res.ok && res.ts ? { channel, ts: res.ts } : { channel };
   await ref.set({ ...slack, jobOrderId: key.jobOrderId, jobTitle: key.jobTitle, day, createdAt: admin.firestore.FieldValue.serverTimestamp() });
   return slack;
 }
 
-async function createFollowup(token: string, channel: string, base: { userId: string; assignmentId: string | null; jobOrderId: string | null; recruiterUid: string | null; startedAt: Date; source: FollowupDoc['source']; packageName?: string }): Promise<boolean> {
+type FollowupBase = { userId: string; assignmentId: string | null; jobOrderId: string | null; recruiterUid: string | null; startedAt: Date; source: FollowupDoc['source']; packageName?: string; hiringEntityId?: string | null };
+
+/** Job title / site / state / hiring entity for a follow-up: the assignment when there is one, else the job order (hiring-plan hires). */
+async function followupContext(tenantId: string, base: FollowupBase): Promise<{ asg: Record<string, unknown>; jobTitle: string; site: string; state: string; entity: string; jobOrderId: string | null }> {
+  const asg = base.assignmentId ? (await db.doc(`tenants/${tenantId}/assignments/${base.assignmentId}`).get()).data() ?? {} : {};
+  const jo = !base.assignmentId && base.jobOrderId ? (await db.doc(`tenants/${tenantId}/job_orders/${base.jobOrderId}`).get()).data() ?? {} : {};
+  const addr = (asg.worksiteAddress ?? jo.worksiteAddress ?? {}) as Record<string, unknown>;
+  return {
+    asg,
+    jobTitle: s(asg.jobTitle) || s(asg.title) || s(asg.jobOrderName) || s(jo.jobTitle) || s(jo.jobOrderName) || (base.packageName ? `${base.packageName} screening` : 'your assignment'),
+    site: s(asg.locationName) || s(asg.worksiteName) || s(asg.companyName) || [s(jo.companyName), s(jo.worksiteName) || s(jo.locationName)].filter(Boolean).join(' '),
+    state: s(addr.state),
+    entity: s(asg.hiringEntityId) || s(asg.entityId) || s(base.hiringEntityId) || s(jo.hiringEntityId),
+    jobOrderId: base.jobOrderId || s(asg.jobOrderId) || null,
+  };
+}
+
+async function createFollowup(token: string, channel: string, base: FollowupBase): Promise<boolean> {
   const tenantId = TENANT;
   const u = (await db.doc(`users/${base.userId}`).get()).data() ?? {};
   const workerName = `${s(u.firstName)} ${s(u.lastName)}`.trim() || base.userId;
-  const asg = base.assignmentId ? (await db.doc(`tenants/${tenantId}/assignments/${base.assignmentId}`).get()).data() ?? {} : {};
-  const addr = (asg.worksiteAddress ?? {}) as Record<string, unknown>;
-  const state = s(addr.state) || s(u.state) || s((u.address as Record<string, unknown> | undefined)?.state);
+  const { asg, jobTitle, site, state: siteState, entity, jobOrderId } = await followupContext(tenantId, base);
+  const state = siteState || s(u.state) || s((u.address as Record<string, unknown> | undefined)?.state);
   const phone = phoneOf(u);
   const rName = await recruiterName(s(base.recruiterUid));
-  const jobTitle = s(asg.jobTitle) || s(asg.title) || s(asg.jobOrderName) || (base.packageName ? `${base.packageName} screening` : 'your assignment');
-  const site = s(asg.locationName) || s(asg.worksiteName) || s(asg.companyName);
   const who = `<${PUBLIC_APP_ORIGIN}/users/${base.userId}|${workerName}>`;
-  const thread = await threadFor(token, channel, { jobOrderId: base.jobOrderId || s(asg.jobOrderId) || null, jobTitle, site, recruiterName: rName, entity: s(asg.hiringEntityId) || s(asg.entityId), source: base.source });
+  const thread = await threadFor(token, channel, { jobOrderId, jobTitle, site, recruiterName: rName, entity, source: base.source });
   const first = firstCheckpointFor(base.startedAt);
+  const firstLabel = first === 'h24' ? '24h' : first === 'h72' ? '72h' : '7d';
+  const startedLabel = base.startedAt.toLocaleString('en-US', { timeZone: 'America/Denver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const line = base.source === 'onboarding_instance'
-    ? `• ${who} — onboarding started ${base.startedAt.toLocaleString('en-US', { timeZone: 'America/Denver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} MT; first check at ${first === 'h24' ? '24h' : first === 'h72' ? '72h' : '7d'}.`
-    : `• ${who} — ${base.packageName || 'background check'} ordered; I'll make sure the form gets done and that they know the drug screen (if any) is a separate step.`;
+    ? `• ${who} — onboarding started ${startedLabel} MT; first check at ${firstLabel}.`
+    : base.source === 'hiring_plan'
+      ? `• ${who} — hired into the pool by the hiring plan ${startedLabel} MT${base.packageName ? ` (${base.packageName} ordered)` : ''}; first check at ${firstLabel}.`
+      : `• ${who} — ${base.packageName || 'background check'} ordered; I'll make sure the form gets done and that they know the drug screen (if any) is a separate step.`;
   await postAsNatalie(token, { channel: thread.channel, text: phone ? line : `${line}\n:warning: no usable phone on file — I can't text them: ${PUBLIC_APP_ORIGIN}/users/${base.userId}`, threadTs: thread.ts });
   const doc: FollowupDoc = {
     tenantId, userId: base.userId, workerName, firstName: s(u.firstName) || workerName.split(' ')[0], phoneE164: phone,
-    assignmentId: base.assignmentId, jobOrderId: base.jobOrderId || s(asg.jobOrderId) || null, jobTitle, site, hiringEntityId: s(asg.hiringEntityId) || s(asg.entityId),
+    assignmentId: base.assignmentId, jobOrderId, jobTitle, site, hiringEntityId: entity,
     recruiterUid: base.recruiterUid, recruiterName: rName, source: base.source,
     startedAt: admin.firestore.Timestamp.fromDate(base.startedAt), tz: stateTz(state), status: phone ? 'active' : 'no_phone',
     nextCheckpoint: first, checkpoints: {}, slack: thread,
@@ -244,7 +313,7 @@ async function createFollowup(token: string, channel: string, base: { userId: st
 }
 
 /** Enroll one specific worker (scripts / tests / "follow up with X" asks). Returns false if they already have an active follow-up. */
-export async function enrollWorkerFollowup(token: string, base: { userId: string; assignmentId: string | null; jobOrderId: string | null; recruiterUid: string | null; startedAt: Date; source: FollowupDoc['source']; packageName?: string }): Promise<boolean> {
+export async function enrollWorkerFollowup(token: string, base: FollowupBase): Promise<boolean> {
   const cfg = await natalieConfig();
   const channel = s(cfg.onboardingChannelId) || s(cfg.recruitingChannelId) || DEFAULT_CHANNEL;
   const existing = (await db.collection(FOLLOWUPS).doc(base.userId).get()).data() as FollowupDoc | undefined;
@@ -272,7 +341,33 @@ export async function enrollOnboardingFollowups(token: string): Promise<number> 
     if (ok) created += 1;
     if (created >= 10) break; // spread Slack posts across ticks
   }
-  // 2) Screenings ordered by a human (Natalie's own orders already carry bgFollowup on the SMS watch).
+  // 2) Job-order hiring-plan hires (Greg 2026-09-11): onboarded into the on-call pool with no assignment
+  // and no onboarding instance, so path 1 never sees them. Read each plan's attempt log. A follow-up the
+  // screening path (3) armed first for the same hire gets the job order context attached instead.
+  const plans = await db.collection(`tenants/${TENANT}/job_orders`).where('hiringPlan.enabled', '==', true).limit(50).get();
+  for (const jo of plans.docs) {
+    if (created >= 10) break;
+    const hires = await jo.ref.collection('hiring_plan_hires').where('completedAt', '>=', since).limit(50).get();
+    for (const h of hires.docs) {
+      if (created >= 10) break;
+      const x = h.data() as Record<string, unknown>;
+      if (s(x.status) !== 'ok') continue;
+      const startedAt = tsToDate(x.onboardedAt) ?? tsToDate(x.completedAt) ?? new Date();
+      const base: FollowupBase = { userId: h.id, assignmentId: null, jobOrderId: jo.id, recruiterUid: null, startedAt, source: 'hiring_plan', packageName: x.screeningRequested === true || x.backgroundCheckId ? s(jo.get('screeningPackageName')) || undefined : undefined, hiringEntityId: s(jo.get('hiringEntityId')) || null };
+      const ref = db.collection(FOLLOWUPS).doc(h.id);
+      const existing = (await ref.get()).data() as FollowupDoc | undefined;
+      if (existing?.status === 'active') {
+        if (existing.source === 'background_check' && !existing.assignmentId && !existing.jobOrderId) {
+          const ctx = await followupContext(TENANT, base);
+          await ref.set({ source: 'hiring_plan', jobOrderId: jo.id, jobTitle: ctx.jobTitle, site: ctx.site, hiringEntityId: ctx.entity, ...(ctx.state ? { tz: stateTz(ctx.state) } : {}), updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        }
+        continue;
+      }
+      if (existing && (tsToDate(existing.startedAt)?.getTime() ?? 0) >= startedAt.getTime() - 60_000) continue;
+      if (await createFollowup(token, channel, base)) created += 1;
+    }
+  }
+  // 3) Screenings ordered by a human (Natalie's own orders already carry bgFollowup on the SMS watch).
   // Single-field range (auto-indexed) + in-memory tenant filter — the tenantId+createdAt composite doesn't exist.
   const checks = await db.collection('backgroundChecks').where('createdAt', '>=', since).orderBy('createdAt', 'desc').limit(200).get().catch(() => null);
   for (const d of (checks?.docs ?? []).filter((x) => !x.get('tenantId') || s(x.get('tenantId')) === TENANT)) {
@@ -391,7 +486,7 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
     const slack = f.slack ?? undefined;
     const say = async (text: string) => { if (slack?.channel) await postAsNatalie(token, { channel: slack.channel, text, threadTs: slack.ts }); };
     try {
-      const snapshot = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId);
+      const snapshot = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId, { hiringEntityId: f.hiringEntityId });
       const stamp = { at: admin.firestore.FieldValue.serverTimestamp(), workerTodo: snapshot.workerTodo, recruiterTodo: snapshot.recruiterTodo, sent: false };
       if (snapshot.background?.failed) {
         await d.ref.set({ status: 'parked', nextCheckpoint: null, checkpoints: { [cp]: stamp }, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -505,7 +600,7 @@ export async function drainSmsConversations(token: string): Promise<number> {
     const slack = f.slack ?? undefined;
     const say = async (text: string) => { if (slack?.channel) await postAsNatalie(token, { channel: slack.channel, text, threadTs: slack.ts }); };
     try {
-      const snap = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId);
+      const snap = await buildOnboardingSnapshot(f.tenantId, f.userId, f.assignmentId, { hiringEntityId: f.hiringEntityId });
       const decision = await decideReply({ ...f, transcript: [...(f.transcript ?? []), { at: new Date().toISOString(), dir: 'in', text: inbound }] }, snap, inbound);
       const notes: string[] = [];
       const sent = await sendSms(f, decision.reply, 'natalie_onboarding_reply');

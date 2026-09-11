@@ -43,6 +43,14 @@ export function composeTitle(base: string, city: string, state: string, pay: num
   return head.slice(0, 70).trim();
 }
 
+/** Pure: a pasted Craigslist URL (with or without the scheme) as https, or null when it isn't one. */
+export function normalizeCraigslistUrl(raw: unknown): string | null {
+  const t = s(raw);
+  if (!t) return null;
+  const url = /^https?:\/\//i.test(t) ? t.replace(/^http:\/\//i, 'https://') : `https://${t.replace(/^\/+/, '')}`;
+  return /^https:\/\/[a-z0-9.-]*craigslist\.org\//i.test(url) ? url : null;
+}
+
 async function composeDraft(post: Record<string, unknown>, postId: string): Promise<CraigslistDraft> {
   const city = s(post.city) || s((post.worksiteAddress as Record<string, unknown> | undefined)?.city);
   const state = s(post.state) || s((post.worksiteAddress as Record<string, unknown> | undefined)?.state);
@@ -94,6 +102,19 @@ export async function drainCraigslistDrafts(token: string): Promise<number> {
       logger.warn('[natalie] craigslist draft failed', { postId: d.id, err: msg });
       await d.ref.set({ craigslist: { ...cl, status: 'error', lastError: msg.slice(0, 300) } }, { merge: true });
     }
+  }
+  // Ready + a live URL pasted into the post form → posted. The form saves craigslistUrl but never
+  // flips the status, so these ads had no expiry and no renewal nudge (three OnTrac posts, 2026-09-11).
+  const ready = await db.collection(`tenants/${TENANT}/job_postings`).where('craigslist.status', '==', 'ready').limit(50).get();
+  for (const d of ready.docs) {
+    const liveUrl = normalizeCraigslistUrl(d.get('craigslistUrl'));
+    if (!liveUrl) continue;
+    const cl = (d.get('craigslist') ?? {}) as CraigslistPosting;
+    const marked = (await craigslistMarkPosted(TENANT, d.id, liveUrl)) as { ok?: boolean; expiresAt?: string };
+    if (!marked.ok) continue;
+    const title = s(d.get('postTitle')) || s(d.get('jobTitle'));
+    await postAsNatalie(token, { channel, text: `Marked the Craigslist ad for *${title}* as live (${liveUrl}). It expires ${new Date(marked.expiresAt ?? '').toLocaleDateString('en-US')}; I'll nudge here two days before.`, threadTs: cl.slackTs ?? undefined });
+    touched += 1;
   }
   // Posted → expired, with a nudge two days before.
   const posted = await db.collection(`tenants/${TENANT}/job_postings`).where('craigslist.status', '==', 'posted').limit(100).get();

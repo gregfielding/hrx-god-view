@@ -890,7 +890,8 @@ export async function performPrescreenSubmission(args: PerformPrescreenSubmissio
     } catch (e) {
       logger.warn('submitWorkerAiPrescreenInterview.scoreSummary_failed', {
         uid: auth.uid,
-        message: e instanceof Error ? e.message : String(e),
+        // not `message` — the logger's own message field overwrites it and the error is lost
+        error: e instanceof Error ? e.message : String(e),
       });
     }
 
