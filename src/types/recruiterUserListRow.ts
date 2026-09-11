@@ -70,4 +70,6 @@ export interface RecruiterUser {
   recruiterOrderInterviewSmsLastSentAt?: unknown;
   /** Job titles from work experience (most recent first), for Users-style tables */
   workHistoryJobTitles?: string[];
+  /** Tier map (`{ global: 1|2|3, lastChange }`); absent = Tier 3 by definition. */
+  workerTiers?: Record<string, unknown>;
 }

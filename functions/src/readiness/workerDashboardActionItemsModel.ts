@@ -695,6 +695,37 @@ const PROFILE_NAG_IDS = new Set([
   'sms_opt_in',
 ]);
 
+// ── Photo exception (Greg 2026-09-06) ──
+// The one profile nag that DOES belong on Home: a headshot is what managers
+// use to recognise a worker on site, it feeds the tier score, and the
+// 2026-08-29 signup rewrite removed the only other place workers were asked
+// for one (uploads went to zero). Built here — outside `buildProfileItems` —
+// so the DOB / phone early-return gates (which are themselves hidden from
+// Home now) cannot suppress it. Clients keep it visible past the 3-cap via
+// `WORKER_DASHBOARD_ACTION_ITEMS_HOME_STICKY_IDS`.
+function buildStickyProfileItems(input: WorkerDashboardActionItemsModelInput): InternalItem[] {
+  const { userDoc, authAvatarUrl } = input;
+  const dismissed = readDismissedWorkerDashboardActionIds(userDoc);
+  if (userDocHasProfilePhoto(userDoc, authAvatarUrl) || dismissed.has('add_profile_photo')) return [];
+  return [
+    {
+      id: 'add_profile_photo',
+      category: 'recommended',
+      _profileTier: 'recommended',
+      titleKey: 'dashboard.actionItems.photoTitle',
+      descriptionKey: 'dashboard.actionItems.photoDescription',
+      primaryLabelKey: 'dashboard.actionItems.photoPrimary',
+      primaryKind: 'navigate',
+      href: WORKER_PERSONAL_DETAILS_HREF,
+      secondaryLabelKey: 'dashboard.actionItems.dismiss',
+      secondaryKind: 'dismiss_firestore',
+      priorityScore: scoreForId('add_profile_photo'),
+      sourceReason: 'Recommended: profile photo (sticky on Home)',
+      qaEvaluatedFields: {},
+    },
+  ];
+}
+
 const TIER_ORDER: Record<WorkerDashboardProfileTierOrder, number> = {
   important: 0,
   recommended: 1,
@@ -715,8 +746,12 @@ export function buildWorkerDashboardActionItemsSnapshot(
   const profileItems = buildProfileItems(input);
   const jobItems = buildJobItems(input);
   // Work-only feed choke point (see PROFILE_NAG_IDS above) — covers every
-  // builder branch, including the phone-gate early return.
-  const all: InternalItem[] = [...jobItems, ...profileItems].filter((i) => !PROFILE_NAG_IDS.has(i.id));
+  // builder branch, including the phone-gate early return. The photo item is
+  // the single exception and is re-added after the filter.
+  const all: InternalItem[] = [
+    ...[...jobItems, ...profileItems].filter((i) => !PROFILE_NAG_IDS.has(i.id)),
+    ...buildStickyProfileItems(input),
+  ];
 
   all.sort((a, b) => {
     const scoreDiff = b.priorityScore - a.priorityScore;

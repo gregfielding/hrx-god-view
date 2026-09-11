@@ -59,6 +59,7 @@ import {
   type BulkInviteRowResult,
   type BulkInviteRowStatus,
 } from '../../services/recruiter/userGroupBulkInviteCallable';
+import { PUBLIC_APP_ORIGIN } from '../../config/appOrigin';
 
 export interface BulkInviteFromCsvDialogProps {
   open: boolean;
@@ -162,7 +163,7 @@ const BulkInviteFromCsvDialog: React.FC<BulkInviteFromCsvDialogProps> = ({
     if (typeof window !== 'undefined') {
       return `${window.location.origin}/c1/apply/group/${groupId}`;
     }
-    return `https://hrxone.com/c1/apply/group/${groupId}`;
+    return `${PUBLIC_APP_ORIGIN}/c1/apply/group/${groupId}`;
   }, [applyUrl, groupId]);
 
   const sendableRows = useMemo(

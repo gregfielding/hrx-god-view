@@ -535,7 +535,7 @@ export function extractDailyDigestExpired(
   // Walks the body looking for "Job NNN" patterns under an "expired"
   // section. The digest format is loose, so we collect all (jobId,
   // venueName) pairs we can find.
-  const expiredJobs: Array<{ jobId?: string; venueName?: string }> = [];
+  const expiredJobs: IndeedFlexEventDailyDigestExpired['expiredJobs'] = [];
   const expiredSection = body.match(
     /(?:job\s*requests?\s*expired|expired\s*job\s*requests?)([\s\S]+?)(?:\n\s*\n|$)/i,
   );
@@ -543,6 +543,28 @@ export function extractDailyDigestExpired(
   const jobMatches = Array.from(target.matchAll(/\bjob\s*(\d{4,8})\b/gi));
   for (const m of jobMatches) {
     expiredJobs.push({ jobId: m[1] });
+  }
+  // 2026-09-08: the "Unfilled shifts expired" block is a raw Go map dump —
+  // `map[company_name:OnTrac Final Mile dates_impacted:9 Sep, 2026
+  // job_id:%!s(float64T5618) job_url:… original_earnings:$931.70 …
+  // venue_name:Denver, CO - BCO002]`. The job id is mangled (the leading
+  // digits collapse into "T"), so keep the suffix and the date/venue.
+  for (const m of body.matchAll(/map\[([^\]]*?)\]/g)) {
+    const blob = m[1];
+    const get = (k: string) => { const r = new RegExp(`${k}:(.*?)(?=\\s[a-z_]+:|$)`, 's').exec(blob); return r ? r[1].trim() : undefined; };
+    const dateImpacted = get('dates_impacted');
+    const company = get('company_name');
+    if (!dateImpacted && !company) continue;
+    const idRaw = /job_id:%!s\(float64[=T]?(\d+)\)/.exec(blob)?.[1];
+    const jobId = idRaw && idRaw.length >= 6 ? idRaw : undefined;
+    expiredJobs.push({
+      ...(jobId ? { jobId } : {}),
+      ...(idRaw && !jobId ? { jobIdSuffix: idRaw } : {}),
+      companyName: company,
+      dateImpacted,
+      earningsMissed: get('original_earnings'),
+      venueName: get('venue_name'),
+    });
   }
 
   const missingFields: string[] = [];

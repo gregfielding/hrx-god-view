@@ -661,6 +661,7 @@ function buildReadinessForAssignmentRow(
   const payroll = ek ? args.entityBundle.payrollByKey[ek] : null;
   const entityWt = ek ? args.entityBundle.entityWorkerTypeRawByKey[ek] : null;
 
+  const evereeMirror = ek ? args.entityBundle.evereeMirrorByKey[ek] : null;
   const employment =
     ek != null
       ? assignmentReadinessEmploymentFromPipeline({
@@ -669,11 +670,19 @@ function buildReadinessForAssignmentRow(
           workerOnboarding: pipe,
           entityWorkerTypeRaw: entityWt,
           workerPayrollAccount: payroll,
+          evereeMirror,
         })
       : {};
 
+  // Section-2 countersign IS employer verification of work-authorization
+  // documents — an I-9 completed in Everee/WorkBright satisfies the Work
+  // Authorization item even when the HRX attestation was never filled.
+  const userInput: AssignmentReadinessUserInput = evereeMirror?.employerI9SignedAt
+    ? { ...args.userInput, workAuthorization: true }
+    : args.userInput;
+
   return buildAssignmentReadiness({
-    user: args.userInput,
+    user: userInput,
     employment,
     assignment: assignIn,
     screening,

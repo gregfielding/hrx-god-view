@@ -356,6 +356,19 @@ export type WorkerOnboardingPipelineTriggerSource =
    */
   | "auto_user_group_application_signals"
   /**
+   * Tier 2 account auto-onboard (Greg 2026-09-04): a Tier 1/2 worker applied
+   * to an account with `tierAutomation.autoOnboardTier2` enabled — onboarding
+   * + the account's default screening start without recruiter intervention.
+   * Rides `onApplicationHiringSignalsChangedAutoOnboard`.
+   */
+  | "auto_tier2_account"
+  /**
+   * Job-order hiring plan (Greg 2026-09-10): the hourly
+   * `job_order_hiring_plan_sweep` hired a Tier 1/2 applicant into the JO's
+   * on-call pool (onboarding + the JO's screening package).
+   */
+  | "job_order_hiring_plan"
+  /**
    * User-group membership-add trigger (`onUserGroupMemberAddedAutoOnboard`):
    * fires when a uid is appended to `userGroups/{gid}.memberIds`. Includes
    * the catchall pattern under the `hire_everyone` quality preset (group

@@ -81,7 +81,12 @@ const AddRetroactiveWorkerDialog: React.FC<Props> = ({
   shifts,
   defaultShiftId,
 }) => {
-  const directory = useTenantWorkerDirectory(open ? tenantId : null);
+  // Retro-adding to a timesheet picks workers who already worked, so a
+  // directory cached in the last 10 min is fresh enough — reopening the
+  // dialog no longer re-runs the ~14k-doc server scan every time.
+  const directory = useTenantWorkerDirectory(open ? tenantId : null, {
+    revalidateIfOlderThanMs: 10 * 60 * 1000,
+  });
   const [searchInput, setSearchInput] = useState('');
   const [selectedUser, setSelectedUser] = useState<TenantWorkerDirectoryEntry | null>(null);
   const [shiftId, setShiftId] = useState<string>('');

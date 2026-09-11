@@ -25,6 +25,7 @@ import {
 } from '@mui/material';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import NotificationsIcon from '@mui/icons-material/Notifications';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -96,6 +97,41 @@ const WorkerAppBar: React.FC = () => {
             onClick={() => navigate(`/${tenantSlug}/workers/dashboard`)}
             sx={{ height: 26, width: 'auto', cursor: 'pointer' }}
           />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            {/* EN | ES quick toggle (Greg 2026-09-03) — same write path as
+                the first-login modal; the app shell mirrors this control. */}
+            {(['en', 'es'] as const).map((lang, i) => (
+              <React.Fragment key={lang}>
+                {i > 0 && (
+                  <Typography variant="body2" sx={{ color: 'divider', userSelect: 'none' }}>
+                    |
+                  </Typography>
+                )}
+                <Typography
+                  variant="body2"
+                  onClick={() => { if (preferredLanguage !== lang) void savePreferredLanguage(lang); }}
+                  sx={{
+                    cursor: preferredLanguage === lang ? 'default' : 'pointer',
+                    fontWeight: preferredLanguage === lang ? 700 : 500,
+                    color: preferredLanguage === lang ? 'text.primary' : 'text.disabled',
+                    px: 0.25,
+                    userSelect: 'none',
+                  }}
+                >
+                  {lang.toUpperCase()}
+                </Typography>
+              </React.Fragment>
+            ))}
+          {/* Help one tap from every screen — same header ? as the app
+              (Greg 2026-09-04). */}
+          <IconButton
+            color="inherit"
+            onClick={() => navigate(`/${tenantSlug}/workers/support`)}
+            aria-label={t('nav.helpSupport')}
+            sx={{ color: 'text.secondary' }}
+          >
+            <HelpOutlineIcon sx={{ fontSize: 24 }} />
+          </IconButton>
           <IconButton
             color="inherit"
             onClick={() => navigate(`/${tenantSlug}/workers/notifications`)}
@@ -107,6 +143,7 @@ const WorkerAppBar: React.FC = () => {
               {unreadCount > 0 ? <NotificationsIcon sx={{ fontSize: 24 }} /> : <NotificationsNoneIcon sx={{ fontSize: 24 }} />}
             </Badge>
           </IconButton>
+          </Box>
         </Toolbar>
       </AppBar>
 

@@ -710,13 +710,17 @@ export function ShiftAssignmentCard({
                 const isDeclined = worker.assignmentStatus === 'declined';
                 const isCancelled = worker.assignmentStatus === 'cancelled' || worker.assignmentStatus === 'canceled';
                 // Placed = placement only (no offer sent). Accepted = offer sent, awaiting response. Confirmed = worker accepted. Declined/Cancelled = worker or system cancelled.
-                const isConfirmed = worker.assignmentStatus && ['confirmed', 'active'].includes(worker.assignmentStatus);
+                // Claim Shift bookings are born confirmed — no offer was ever
+                // sent, so never show "Accepted" / a Confirm chip / "Offer sent".
+                const isClaimed = worker.assignmentAcquisition === 'claimed' && !isDeclined && !isCancelled;
+                const isConfirmed =
+                  (worker.assignmentStatus && ['confirmed', 'active'].includes(worker.assignmentStatus)) || isClaimed;
                 const offeringThis = isPlacementOnly && confirmingPlacementUserId === worker.id;
                 // Placement-only tiles use action-phrased label "Click to
                 // Hire" because the chip IS the click target that fires
                 // the hire / offer flow — the label tells the recruiter
                 // what happens, not what state the tile is in.
-                const statusLabel = offeringThis ? 'Offering…' : isPlacementOnly ? 'Click to Hire' : isDeclined ? 'Declined' : isCancelled ? 'Cancelled' : isConfirmed ? 'Confirmed' : 'Accepted';
+                const statusLabel = offeringThis ? 'Offering…' : isPlacementOnly ? 'Click to Hire' : isDeclined ? 'Declined' : isCancelled ? 'Cancelled' : isClaimed ? 'Claimed' : isConfirmed ? 'Confirmed' : 'Accepted';
                 const canDragBackToPool = isPlacementOnly && !offeringThis; // Only placement-only (no Assignment) can be dragged back
                 return (
                   <Paper
@@ -926,7 +930,9 @@ export function ShiftAssignmentCard({
                         !isPlacementOnly && !isDeclined && !isCancelled && (worker.assignmentConfirmedAt != null || worker.assignmentOfferSentAt != null) ? (
                           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
                             <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'right' }}>
-                              {isConfirmed
+                              {isClaimed
+                                ? `Claimed ${new Date(worker.assignmentConfirmedAt ?? worker.assignmentOfferSentAt ?? Date.now()).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                                : isConfirmed
                                 ? worker.assignmentConfirmedAt != null
                                   ? `Confirmed ${new Date(worker.assignmentConfirmedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`
                                   : worker.assignmentOfferSentAt != null

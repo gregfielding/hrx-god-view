@@ -394,6 +394,184 @@ async function resolveDenormFallbacks(
  * Callable
  * ------------------------------------------------------------------------- */
 
+/**
+ * Precondition failures from the core (mapped to HttpsError by the callable;
+ * server-side callers such as the Indeed Flex punch feed catch them and
+ * record the reason instead of failing the whole batch).
+ */
+export class DraftEntryError extends Error {
+  constructor(
+    readonly code: 'not-found' | 'failed-precondition',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'DraftEntryError';
+  }
+}
+
+/**
+ * Get-or-create the draft entry for (assignment, workDate). The single
+ * definition of a valid grid row — the callable below wraps it with auth;
+ * server-side feeds (Indeed Flex clock punches, 2026-09-07) call it with a
+ * system actor. Idempotent: an existing doc returns `created: false`.
+ */
+export async function createDraftTimesheetEntryCore(
+  input: CreateDraftTimesheetEntryInput,
+  actorUid: string,
+): Promise<CreateDraftTimesheetEntryResult> {
+  const entryId = `${input.assignmentId}_${input.workDate}`;
+  const entryRef = db.doc(
+    `tenants/${input.tenantId}/timesheet_entries/${entryId}`,
+  );
+  const assignmentRef = db.doc(
+    `tenants/${input.tenantId}/assignments/${input.assignmentId}`,
+  );
+
+  // Fast-path idempotency check OUTSIDE the transaction. If the
+  // entry already exists, we don't even need to read the assignment
+  // — the row is already populated. This is the hot path when the
+  // UI fires the callable redundantly (double-click, etc.).
+  const existingSnap = await entryRef.get();
+  if (existingSnap.exists) {
+    logger.debug('[TS.1.P1.D][createDraftTimesheetEntry] already exists', {
+      tenantId: input.tenantId,
+      assignmentId: input.assignmentId,
+      workDate: input.workDate,
+    });
+    return { ok: true, entryId, created: false };
+  }
+
+  // Slow path: doesn't exist yet. Read assignment, validate
+  // schedule, resolve denorm fallbacks, create entry inside a
+  // transaction so the existence check is atomic with the write
+  // (prevents a race where two parallel callable invocations both
+  // see "doesn't exist" and both write).
+  const assignmentSnap = await assignmentRef.get();
+  if (!assignmentSnap.exists) {
+    throw new DraftEntryError('not-found', `Assignment ${input.assignmentId} not found.`);
+  }
+  const assignmentData = assignmentSnap.data() as Record<string, unknown>;
+
+  const scheduleCheck = checkAssignmentScheduledForDate(
+    input.assignmentId,
+    assignmentData,
+    input.workDate,
+  );
+  if (scheduleCheck.ok === false) {
+    throw new DraftEntryError('failed-precondition', scheduleCheck.reason);
+  }
+
+  const denormResolved = await resolveDenormFallbacks(
+    input.tenantId,
+    input.assignmentId,
+    assignmentData,
+  );
+
+  const jobOrderId =
+    typeof assignmentData.jobOrderId === 'string' && assignmentData.jobOrderId.trim().length > 0
+      ? assignmentData.jobOrderId.trim()
+      : '';
+  const candidateId =
+    typeof assignmentData.candidateId === 'string' && assignmentData.candidateId.trim().length > 0
+      ? assignmentData.candidateId.trim()
+      : '';
+  if (!jobOrderId || !candidateId) {
+    throw new DraftEntryError(
+      'failed-precondition',
+      `Assignment ${input.assignmentId} is missing required fields (jobOrderId and candidateId).`,
+    );
+  }
+  const payRate =
+    typeof assignmentData.payRate === 'number' && Number.isFinite(assignmentData.payRate)
+      ? (assignmentData.payRate as number)
+      : 0;
+  const billRate =
+    typeof assignmentData.billRate === 'number' && Number.isFinite(assignmentData.billRate)
+      ? (assignmentData.billRate as number)
+      : 0;
+
+  // TS.1.P4 Slice 5.5 — snapshot shiftId from the assignment doc
+  // (placementsApi writes it on every create). accountId comes from
+  // the resolved denorm chain (JO.recruiterAccountId / JO.accountId).
+  // Both fields default to '' rather than undefined so reads can do
+  // direct equality without `?? ''` dance.
+  const shiftId =
+    typeof assignmentData.shiftId === 'string' && assignmentData.shiftId.trim().length > 0
+      ? assignmentData.shiftId.trim()
+      : '';
+
+  const entryData: Record<string, unknown> = {
+    id: entryId,
+    tenantId: input.tenantId,
+    assignmentId: input.assignmentId,
+    jobOrderId,
+    hiringEntityId: denormResolved.hiringEntityId ?? '',
+    shiftId,
+    accountId: denormResolved.accountId ?? '',
+    workerId: candidateId,
+    workDate: input.workDate,
+    workState: denormResolved.worksiteState ?? '',
+
+    scheduledStartTime: scheduleCheck.resolution.startTime,
+    scheduledEndTime: scheduleCheck.resolution.endTime,
+    scheduledBreakMinutes: scheduleCheck.resolution.breakMinutes,
+
+    breaks: [],
+
+    totalRegularHours: 0,
+    totalOTHours: 0,
+    totalFlsaOTHours: 0,
+    totalNonFlsaOTHours: 0,
+    totalDoubleTimeHours: 0,
+    mealBreakPenaltyHours: 0,
+    restBreakPenaltyHours: 0,
+
+    tips: 0,
+    bonusAmount: 0,
+
+    payRate,
+    billRate,
+
+    status: 'draft',
+
+    createdBy: actorUid,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: actorUid,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  const created = await db.runTransaction(async (tx) => {
+    // Re-check inside the transaction. If a parallel call beat us
+    // to it, return the existing doc rather than throwing.
+    const txSnap = await tx.get(entryRef);
+    if (txSnap.exists) {
+      return false;
+    }
+    tx.set(entryRef, entryData);
+    return true;
+  });
+
+  if (created) {
+    logger.info('[TS.1.P1.D][createDraftTimesheetEntry] created', {
+      tenantId: input.tenantId,
+      assignmentId: input.assignmentId,
+      workDate: input.workDate,
+      entryId,
+      actorUid,
+      hiringEntityId: denormResolved.hiringEntityId,
+      workState: denormResolved.worksiteState,
+    });
+  } else {
+    logger.debug('[TS.1.P1.D][createDraftTimesheetEntry] race-resolved as existing', {
+      tenantId: input.tenantId,
+      assignmentId: input.assignmentId,
+      workDate: input.workDate,
+    });
+  }
+
+  return { ok: true, entryId, created };
+}
+
 export const createDraftTimesheetEntryCallable = onCall(
   // Memory: rely on the 512MiB global default set in index.ts. The
   // earlier 256MiB override was tuned to the working set of THIS
@@ -417,156 +595,11 @@ export const createDraftTimesheetEntryCallable = onCall(
       input.tenantId,
     );
 
-    const entryId = `${input.assignmentId}_${input.workDate}`;
-    const entryRef = db.doc(
-      `tenants/${input.tenantId}/timesheet_entries/${entryId}`,
-    );
-    const assignmentRef = db.doc(
-      `tenants/${input.tenantId}/assignments/${input.assignmentId}`,
-    );
-
-    // Fast-path idempotency check OUTSIDE the transaction. If the
-    // entry already exists, we don't even need to read the assignment
-    // — the row is already populated. This is the hot path when the
-    // UI fires the callable redundantly (double-click, etc.).
-    const existingSnap = await entryRef.get();
-    if (existingSnap.exists) {
-      logger.debug('[TS.1.P1.D][createDraftTimesheetEntry] already exists', {
-        tenantId: input.tenantId,
-        assignmentId: input.assignmentId,
-        workDate: input.workDate,
-      });
-      return { ok: true, entryId, created: false };
+    try {
+      return await createDraftTimesheetEntryCore(input, actorUid);
+    } catch (err) {
+      if (err instanceof DraftEntryError) throw new HttpsError(err.code, err.message);
+      throw err;
     }
-
-    // Slow path: doesn't exist yet. Read assignment, validate
-    // schedule, resolve denorm fallbacks, create entry inside a
-    // transaction so the existence check is atomic with the write
-    // (prevents a race where two parallel callable invocations both
-    // see "doesn't exist" and both write).
-    const assignmentSnap = await assignmentRef.get();
-    if (!assignmentSnap.exists) {
-      throw new HttpsError('not-found', `Assignment ${input.assignmentId} not found.`);
-    }
-    const assignmentData = assignmentSnap.data() as Record<string, unknown>;
-
-    const scheduleCheck = checkAssignmentScheduledForDate(
-      input.assignmentId,
-      assignmentData,
-      input.workDate,
-    );
-    if (scheduleCheck.ok === false) {
-      throw new HttpsError('failed-precondition', scheduleCheck.reason);
-    }
-
-    const denormResolved = await resolveDenormFallbacks(
-      input.tenantId,
-      input.assignmentId,
-      assignmentData,
-    );
-
-    const jobOrderId =
-      typeof assignmentData.jobOrderId === 'string' && assignmentData.jobOrderId.trim().length > 0
-        ? assignmentData.jobOrderId.trim()
-        : '';
-    const candidateId =
-      typeof assignmentData.candidateId === 'string' && assignmentData.candidateId.trim().length > 0
-        ? assignmentData.candidateId.trim()
-        : '';
-    if (!jobOrderId || !candidateId) {
-      throw new HttpsError(
-        'failed-precondition',
-        `Assignment ${input.assignmentId} is missing required fields (jobOrderId and candidateId).`,
-      );
-    }
-    const payRate =
-      typeof assignmentData.payRate === 'number' && Number.isFinite(assignmentData.payRate)
-        ? (assignmentData.payRate as number)
-        : 0;
-    const billRate =
-      typeof assignmentData.billRate === 'number' && Number.isFinite(assignmentData.billRate)
-        ? (assignmentData.billRate as number)
-        : 0;
-
-    // TS.1.P4 Slice 5.5 — snapshot shiftId from the assignment doc
-    // (placementsApi writes it on every create). accountId comes from
-    // the resolved denorm chain (JO.recruiterAccountId / JO.accountId).
-    // Both fields default to '' rather than undefined so reads can do
-    // direct equality without `?? ''` dance.
-    const shiftId =
-      typeof assignmentData.shiftId === 'string' && assignmentData.shiftId.trim().length > 0
-        ? assignmentData.shiftId.trim()
-        : '';
-
-    const entryData: Record<string, unknown> = {
-      id: entryId,
-      tenantId: input.tenantId,
-      assignmentId: input.assignmentId,
-      jobOrderId,
-      hiringEntityId: denormResolved.hiringEntityId ?? '',
-      shiftId,
-      accountId: denormResolved.accountId ?? '',
-      workerId: candidateId,
-      workDate: input.workDate,
-      workState: denormResolved.worksiteState ?? '',
-
-      scheduledStartTime: scheduleCheck.resolution.startTime,
-      scheduledEndTime: scheduleCheck.resolution.endTime,
-      scheduledBreakMinutes: scheduleCheck.resolution.breakMinutes,
-
-      breaks: [],
-
-      totalRegularHours: 0,
-      totalOTHours: 0,
-      totalFlsaOTHours: 0,
-      totalNonFlsaOTHours: 0,
-      totalDoubleTimeHours: 0,
-      mealBreakPenaltyHours: 0,
-      restBreakPenaltyHours: 0,
-
-      tips: 0,
-      bonusAmount: 0,
-
-      payRate,
-      billRate,
-
-      status: 'draft',
-
-      createdBy: actorUid,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedBy: actorUid,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-
-    const created = await db.runTransaction(async (tx) => {
-      // Re-check inside the transaction. If a parallel call beat us
-      // to it, return the existing doc rather than throwing.
-      const txSnap = await tx.get(entryRef);
-      if (txSnap.exists) {
-        return false;
-      }
-      tx.set(entryRef, entryData);
-      return true;
-    });
-
-    if (created) {
-      logger.info('[TS.1.P1.D][createDraftTimesheetEntry] created', {
-        tenantId: input.tenantId,
-        assignmentId: input.assignmentId,
-        workDate: input.workDate,
-        entryId,
-        actorUid,
-        hiringEntityId: denormResolved.hiringEntityId,
-        workState: denormResolved.worksiteState,
-      });
-    } else {
-      logger.debug('[TS.1.P1.D][createDraftTimesheetEntry] race-resolved as existing', {
-        tenantId: input.tenantId,
-        assignmentId: input.assignmentId,
-        workDate: input.workDate,
-      });
-    }
-
-    return { ok: true, entryId, created };
   },
 );

@@ -39,6 +39,7 @@ import { httpsCallable } from 'firebase/functions';
 import { functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import PageHeader from '../../components/PageHeader';
+import { assembleMassPnWorkbook, XlsxLike } from '../../shared/massPnTemplate';
 
 const usd = (n: unknown): string =>
   Number(n ?? 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -78,14 +79,45 @@ interface MassPnRow {
   entityId: string;
   entityName: string;
   accountName: string;
+  /** Client HQ/mailing address — a candidate address whose state
+   *  contradicted the work state (see coverageGaps). */
+  accountStreet?: string;
+  accountCity?: string;
+  accountState?: string;
+  accountZip?: string;
   worksiteName: string;
   worksiteAddress: string;
+  worksiteStreet?: string;
+  worksiteCity?: string;
+  worksiteState?: string;
+  worksiteZip?: string;
   state: string;
   code: string;
   jobTitles: string[];
   periodGross: number;
   workers: number;
   annualEstimate: number;
+  /** The REAL class code to request (dominant code the same titles carry in
+   *  the entity's other rated states) — never 8040. Null = novel titles. */
+  suggestedCode?: string | null;
+  suggestedBasis?: string[];
+  comparableRateMin?: number | null;
+  comparableRateMax?: number | null;
+}
+
+/** One line of the add-coverage "order form": entity + state + the code to
+ *  ask the carrier for, with dollars and comparable rates attached. */
+interface CoverageAsk {
+  entityId: string;
+  entityName: string;
+  state: string;
+  suggestedCode: string | null;
+  jobTitles: string[];
+  periodGross: number;
+  annualEstimate: number;
+  workers: number;
+  comparableRateMin: number | null;
+  comparableRateMax: number | null;
 }
 
 interface CoverageData {
@@ -95,6 +127,7 @@ interface CoverageData {
   summary: Record<string, number>;
   unverifiedCodes: Array<{ code: string; title: string; statesInUse: string[] }>;
   massPn: MassPnRow[];
+  coverageAsks?: CoverageAsk[];
 }
 
 const GAP_SECTIONS: Array<{
@@ -149,6 +182,8 @@ const WcCoveragePage: React.FC = () => {
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitResult, setSubmitResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -171,79 +206,91 @@ const WcCoveragePage: React.FC = () => {
   }, [tenantId]);
 
   /**
-   * InSource "Mass Prospect Notification" export (Greg 2026-08-25): the
-   * carrier's exact 24-column intake sheet, one row per worksite needing
-   * coverage — pre-filled from the carrier-ask gap cohorts (no-policy
-   * states, outside-window work, 8040 coverage-needed). Headers are copied
-   * VERBATIM from their template, line breaks included. Exposure flags
-   * default "No" per past submissions; review before sending.
+   * InSource "Mass Prospect Notification" export — the carrier's REVISED
+   * intake workbook (Eddie 2026-09-08, "going forward please use the new
+   * one"), one row per worksite needing coverage, pre-filled from the
+   * carrier-ask gap cohorts. Sheet content lives in the shared spec
+   * (src/shared/massPnTemplate.ts) that the 14-day auto-submit
+   * (functions massPnAutoSubmit) assembles from too, so the two paths stay
+   * byte-identical by construction. Exposure flags default "No" per past
+   * submissions; review before sending.
    */
-  const exportMassPn = async (): Promise<void> => {
-    if (!data || data.massPn.length === 0) return;
+  /** Per-entity Mass PN workbooks — shared by the Export download and the
+   *  "Submit to Eddie" email so both produce byte-identical files. */
+  const buildMassPnWorkbooks = async (): Promise<
+    Array<{
+      entityName: string;
+      filename: string;
+      wb: ReturnType<(typeof import('xlsx'))['utils']['book_new']>;
+      xlsx: typeof import('xlsx');
+    }>
+  > => {
+    if (!data || data.massPn.length === 0) return [];
     const XLSX = await import('xlsx');
-    const HEADERS = [
-      'Your Staffing Company Name  ',
-      'Contact Name',
-      'Email',
-      'Phone',
-      '',
-      'Your Client/Prospect Name',
-      'Address',
-      'City',
-      'State',
-      'Zip',
-      'Project/Worksite Address \n(if different than Mailing Address)',
-      'Client Business Description',
-      'Job Description',
-      'Class Code State',
-      'Class Code',
-      'Annual Payroll Estimated',
-      'Group Transportation          (Yes or No)',
-      'Trenching or Excavation (Yes or No)',
-      'Height Exposure Above Ground Level (Yes or No)',
-      'Chemical Exposure (Yes or No)',
-      'Machinery Exposure (Yes or No)',
-      'Respirators or Dust Mask (Yes or No)',
-      'Airborne/Bloodborn Exposure (Yes or No)',
-      'Notes \n(COI or Endorsement Needs, Wording Specifics, etc...) ',
-    ];
-    const rows: (string | number)[][] = [HEADERS];
-    data.massPn.forEach((r, i) => {
-      rows.push([
-        // A-D fill once (their sample pattern).
-        i === 0 ? 'C1 Staffing LLC' : '',
-        i === 0 ? 'Greg Fielding' : '',
-        i === 0 ? 'g.fielding@c1staffing.com' : '',
-        i === 0 ? '925-448-0579' : '',
-        '',
-        r.accountName || '(fill in client)',
-        '', // client mailing address — fill in
-        '',
-        '',
-        '',
-        [r.worksiteName, r.worksiteAddress].filter(Boolean).join(' — '),
-        '', // client business description — fill in
-        r.jobTitles.length ? r.jobTitles.join(', ') : '',
-        r.state,
-        r.code,
-        r.annualEstimate,
-        'No',
-        'No',
-        'No',
-        'No',
-        'No',
-        'No',
-        'No',
-        `Est. annualized from ${usd(r.periodGross)} over ${data.startDate}→${data.endDate} (${r.workers} workers, ${r.entityName})`,
-      ]);
-    });
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = HEADERS.map((h, i) => ({
-      wch: Math.max(h.split('\n')[0].length, ...rows.slice(1).map((r2) => String(r2[i] ?? '').length), 6) + 2,
-    }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Mass PN');
-    XLSX.writeFile(wb, `Mass-Prospect-Notification_C1_${data.startDate}_to_${data.endDate}.xlsx`);
+    // One FILE per entity (Greg 2026-09-05): each entity is its own InSource
+    // client with its own policy — the carrier gets a separate request per
+    // entity, so a combined sheet would just need manual splitting.
+    const byEntity = new Map<string, typeof data.massPn>();
+    for (const r of data.massPn) {
+      if (!byEntity.has(r.entityId)) byEntity.set(r.entityId, []);
+      byEntity.get(r.entityId)!.push(r);
+    }
+    const out: Array<{ entityName: string; filename: string; wb: ReturnType<typeof XLSX.utils.book_new>; xlsx: typeof XLSX }> = [];
+    for (const entityRows of byEntity.values()) {
+      const entityName = entityRows[0].entityName;
+      const wb = assembleMassPnWorkbook(
+        XLSX as unknown as XlsxLike,
+        entityRows,
+        data.startDate,
+        data.endDate,
+      ) as ReturnType<typeof XLSX.utils.book_new>;
+      out.push({
+        entityName,
+        filename: `Mass-Prospect-Notification_${entityName.replace(/\s+/g, '-')}_${data.startDate}_to_${data.endDate}.xlsx`,
+        wb,
+        xlsx: XLSX,
+      });
+    }
+    return out;
+  };
+
+  const exportMassPn = async (): Promise<void> => {
+    for (const f of await buildMassPnWorkbooks()) {
+      f.xlsx.writeFile(f.wb, f.filename);
+    }
+  };
+
+  /** One email per entity to the InSource coverage contact, same file as the
+   *  export (Greg 2026-09-05). The send happens server-side via the connected
+   *  Gmail mailbox, books-gated. */
+  const submitToEddie = async (): Promise<void> => {
+    if (!data || submitting) return;
+    const files = await buildMassPnWorkbooks();
+    if (files.length === 0) return;
+    const ok = window.confirm(
+      `Email ${files.length} coverage request${files.length > 1 ? 's' : ''} to Eddie (eddiem@insourcees.com)?\n\n` +
+        files.map((f) => `• ${f.entityName} — ${f.filename}`).join('\n'),
+    );
+    if (!ok) return;
+    setSubmitting(true);
+    setSubmitResult(null);
+    try {
+      const fn = httpsCallable(functions, 'getWorkersCompMonthlyReport');
+      const sent: string[] = [];
+      for (const f of files) {
+        const xlsxBase64 = f.xlsx.write(f.wb, { type: 'base64', bookType: 'xlsx' }) as string;
+        await fn({
+          tenantId,
+          emailMassPn: { entityName: f.entityName, filename: f.filename, xlsxBase64 },
+        });
+        sent.push(f.entityName);
+      }
+      setSubmitResult(`Sent to Eddie: ${sent.join(', ')}`);
+    } catch (e) {
+      setSubmitResult(`Send failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const s = data?.summary ?? {};
@@ -284,7 +331,7 @@ const WcCoveragePage: React.FC = () => {
         <Tooltip
           title={
             data && data.massPn.length > 0
-              ? `${data.massPn.length} worksite rows needing carrier coverage — InSource's exact intake format`
+              ? `${data.massPn.length} worksite rows needing carrier coverage — one file per entity, InSource's exact intake format`
               : 'No carrier-ask rows in this window'
           }
         >
@@ -299,6 +346,24 @@ const WcCoveragePage: React.FC = () => {
             </Button>
           </span>
         </Tooltip>
+        <Tooltip title="Email one Mass PN file per entity to Eddie at InSource (eddiem@insourcees.com), from your connected mailbox — same files as the export.">
+          <span>
+            <Button
+              variant="contained"
+              color="warning"
+              size="small"
+              disabled={loading || submitting || !data || data.massPn.length === 0}
+              onClick={() => void submitToEddie()}
+            >
+              {submitting ? 'Sending…' : 'Submit to Eddie'}
+            </Button>
+          </span>
+        </Tooltip>
+        {submitResult && (
+          <Typography variant="caption" color={submitResult.startsWith('Send failed') ? 'error' : 'success.main'}>
+            {submitResult}
+          </Typography>
+        )}
         {data && (
           <Typography variant="caption" color="text.secondary">
             {data.startDate} → {data.endDate}
@@ -364,6 +429,69 @@ const WcCoveragePage: React.FC = () => {
               </CardContent>
             </Card>
           </Stack>
+
+          {/* The add-coverage order form (Greg 2026-09-05): what to ASK the
+              carrier for — real class codes suggested from the same titles
+              rated elsewhere on the entity's own policy, never 8040. */}
+          {(data.coverageAsks?.length ?? 0) > 0 && (
+            <Card variant="outlined" sx={{ mb: 3, borderColor: 'warning.main' }}>
+              <CardContent>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5 }}>
+                  What to ask the carrier for
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                  Carrier-ask payroll grouped by entity + state + the class code to request. Codes are
+                  suggested from the same job titles already rated on the entity&apos;s policy in other
+                  states; the rate range shows what that code costs where it&apos;s already covered. The
+                  Mass PN export uses these codes.
+                </Typography>
+                <TableContainer sx={{ overflowX: 'auto' }}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Entity</TableCell>
+                        <TableCell>State</TableCell>
+                        <TableCell>Ask for code</TableCell>
+                        <TableCell>Job titles</TableCell>
+                        <TableCell align="right">Period gross</TableCell>
+                        <TableCell align="right">Annual est.</TableCell>
+                        <TableCell align="right">Workers</TableCell>
+                        <TableCell align="right">Comparable rate</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {(data.coverageAsks ?? []).map((a) => (
+                        <TableRow key={`${a.entityId}_${a.state}_${a.suggestedCode ?? 'none'}`}>
+                          <TableCell>{a.entityName}</TableCell>
+                          <TableCell>{a.state}</TableCell>
+                          <TableCell>
+                            {a.suggestedCode ? (
+                              <Chip size="small" color="warning" variant="outlined" label={a.suggestedCode} sx={{ fontWeight: 700 }} />
+                            ) : (
+                              <Chip size="small" variant="outlined" label="needs classification" />
+                            )}
+                          </TableCell>
+                          <TableCell sx={{ maxWidth: 320 }}>
+                            <Typography variant="caption">{a.jobTitles.join(', ') || '—'}</Typography>
+                          </TableCell>
+                          <TableCell align="right">{usd(a.periodGross)}</TableCell>
+                          <TableCell align="right">{usd(a.annualEstimate)}</TableCell>
+                          <TableCell align="right">{a.workers}</TableCell>
+                          <TableCell align="right">
+                            {a.comparableRateMin != null
+                              ? a.comparableRateMax != null && a.comparableRateMax !== a.comparableRateMin
+                                ? `${a.comparableRateMin}–${a.comparableRateMax}`
+                                : String(a.comparableRateMin)
+                              : '—'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </CardContent>
+            </Card>
+          )}
 
           {data.entities.map((ent) => {
             const gapSections = GAP_SECTIONS.map((sec) => ({

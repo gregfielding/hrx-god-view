@@ -87,6 +87,9 @@ const SMSPrivacy: React.FC = () => {
         <Typography paragraph>
           {t('legal.smsPrivacy.s2P3')}
         </Typography>
+        <Typography paragraph>
+          {t('legal.smsPrivacy.s2P4')}
+        </Typography>
       </Box>
 
       <Box component="section" id="legal-basis" sx={{ mb: 4 }}>

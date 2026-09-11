@@ -22,7 +22,7 @@ import {
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { collection, query, limit, getDocs } from 'firebase/firestore';
+import { fetchTenantStaffCandidateDocs } from '../../utils/tenantStaffUsers';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -80,12 +80,12 @@ const SenderManagementPage: React.FC = () => {
     setError(null);
 
     try {
-      // Load all users and filter for security level 5-7
-      const allUsersQuery = query(collection(db, 'users'), limit(500));
-      const allUsersSnapshot = await getDocs(allUsersQuery);
+      // Indexed staff queries (~16 docs) instead of 500 arbitrary user docs
+      // (which could also miss staff); the filter below is unchanged.
+      const staffCandidateDocs = await fetchTenantStaffCandidateDocs(db, activeTenant.id);
 
       // Filter to team members (security level 5-7) with tenant access
-      const membersList = allUsersSnapshot.docs
+      const membersList = staffCandidateDocs
         .filter((doc) => {
           const data = doc.data();
           const tenantId = activeTenant.id;

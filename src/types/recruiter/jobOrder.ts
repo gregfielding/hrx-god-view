@@ -294,6 +294,21 @@ export interface JobOrder {
   aiHiring?: Record<string, unknown>;
 
   /**
+   * Hiring plan (Greg 2026-09-10): edited on the Hiring tab, run hourly by
+   * `job_order_hiring_plan_sweep`, which writes its results to
+   * `job_orders/{id}/hiring_plan/state` (not this doc).
+   */
+  hiringPlan?: {
+    enabled?: boolean;
+    workersNeeded?: number;
+    backupWorkers?: number;
+    poolMultiplier?: number;
+    tier2Intensity?: 'none' | 'selective' | 'moderate' | 'aggressive';
+    updatedAt?: unknown;
+    updatedBy?: string | null;
+  };
+
+  /**
    * When true, Cloud Functions treat automation as off for this job order (phase 6 / auto-advance / gig fallback),
    * regardless of tenant defaults. Set from the hiring control panel until launch.
    */

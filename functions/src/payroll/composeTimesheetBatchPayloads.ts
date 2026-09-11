@@ -250,11 +250,21 @@ export function composeW2WorkedShift(input: ComposeBatchInput): CreateWorkedShif
     cursor = seg.endEpochSeconds;
   }
 
-  const createBreaks: EvereeWorkedShiftBreak[] = input.breaks.map((b) => ({
-    segmentConfigCode: b.paid ? 'DEFAULT_PAID' : 'DEFAULT_UNPAID',
-    breakStartEpochSeconds: b.startEpochSeconds,
-    breakEndEpochSeconds: b.endEpochSeconds,
-  }));
+  // Only UNPAID breaks go on the wire. Everee has one configured break code
+  // (`DEFAULT_UNPAID`); a paid break used to be sent as `DEFAULT_PAID`, which
+  // Everee 404s ("No break configured for code") — Jourdan Daniel, Naperville
+  // ORS Nasco rows, 2026-09-09. Paid time is already inside the classified
+  // window, so the paid break is recorded in the shift note instead.
+  const createBreaks: EvereeWorkedShiftBreak[] = input.breaks
+    .filter((b) => !b.paid)
+    .map((b) => ({
+      segmentConfigCode: 'DEFAULT_UNPAID',
+      breakStartEpochSeconds: b.startEpochSeconds,
+      breakEndEpochSeconds: b.endEpochSeconds,
+    }));
+  const paidBreakMinutes = input.breaks
+    .filter((b) => b.paid)
+    .reduce((sum, b) => sum + Math.max(0, Math.round((b.endEpochSeconds - b.startEpochSeconds) / 60)), 0);
 
   const out: CreateWorkedShiftInput = {
     externalWorkerId: input.externalWorkerId,
@@ -269,7 +279,9 @@ export function composeW2WorkedShift(input: ComposeBatchInput): CreateWorkedShif
   if (input.workersCompClassCode) out.workersCompClassCode = input.workersCompClassCode;
   if (createBreaks.length > 0) out.createBreaks = createBreaks;
   if (fullyClassifiedHours.length > 0) out.fullyClassifiedHours = fullyClassifiedHours;
-  if (input.note) out.note = input.note;
+  const paidBreakNote = paidBreakMinutes > 0 ? `incl. ${paidBreakMinutes}m paid break` : '';
+  const note = [input.note, paidBreakNote].filter(Boolean).join(' — ');
+  if (note) out.note = note;
   return out;
 }
 

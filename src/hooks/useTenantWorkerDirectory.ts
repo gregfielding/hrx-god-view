@@ -38,9 +38,22 @@ export interface UseTenantWorkerDirectoryResult {
   error: string | null;
 }
 
+export interface UseTenantWorkerDirectoryOptions {
+  /**
+   * Skip the background revalidate when the IndexedDB cache was written less
+   * than this many ms ago. Default 0 = always revalidate (the /users/all text
+   * search depends on seeing just-created applicants within one mount).
+   * Opt in only for surfaces that pick long-existing workers — each skipped
+   * revalidate saves a ~14k-doc server scan.
+   */
+  revalidateIfOlderThanMs?: number;
+}
+
 export function useTenantWorkerDirectory(
   tenantId: string | null | undefined,
+  options: UseTenantWorkerDirectoryOptions = {},
 ): UseTenantWorkerDirectoryResult {
+  const revalidateIfOlderThanMs = options.revalidateIfOlderThanMs ?? 0;
   const [workers, setWorkers] = useState<TenantWorkerDirectoryEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -77,7 +90,17 @@ export function useTenantWorkerDirectory(
       }
 
       // Stage 2 — background revalidate. Fire even when cache hit; the
-      // server may have newer data.
+      // server may have newer data — unless the caller opted into trusting
+      // a recently written cache (see revalidateIfOlderThanMs).
+      if (
+        cached &&
+        cached.workers.length > 0 &&
+        revalidateIfOlderThanMs > 0 &&
+        Date.now() - cached.cachedAt < revalidateIfOlderThanMs
+      ) {
+        setRefreshing(false);
+        return;
+      }
       setRefreshing(true);
       try {
         const { data } = await callListTenantWorkerDirectory(functions, { tenantId });
@@ -106,7 +129,7 @@ export function useTenantWorkerDirectory(
     return () => {
       cancelled = true;
     };
-  }, [tenantId]);
+  }, [tenantId, revalidateIfOlderThanMs]);
 
   return { workers, loading, refreshing, fetchedAt, error };
 }

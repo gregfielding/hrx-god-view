@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for the HRX portal worker on a macOS box.
+
+  Install (as the login user that owns the Chrome profiles):
+    1. Edit the two paths below (repo location, node/tsx binary on PATH).
+    2. cp launchd/com.c1staffing.portal-worker.plist ~/Library/LaunchAgents/
+    3. launchctl load -w ~/Library/LaunchAgents/com.c1staffing.portal-worker.plist
+  Logs: ~/Library/Logs/hrx-portal-worker.{out,err}.log
+  Stop: launchctl unload ~/Library/LaunchAgents/com.c1staffing.portal-worker.plist
+
+  KeepAlive restarts the worker whenever it exits (including its own
+  PORTAL_MAX_UPTIME_MS clean exit). It runs as a LaunchAgent, not a daemon,
+  because the headed Chrome needs a logged-in GUI session — set the box to
+  auto-login and never sleep (System Settings > Energy / Lock Screen).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.c1staffing.portal-worker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <!-- exec the worker process DIRECTLY (not `npm start`): launchd signals only the
+         main PID, and killing an `npm` wrapper orphans the node child, which then keeps
+         running the old code alongside the restarted worker (2026-09-07). -->
+    <string>cd /Users/c1/Projects/hrx-god-view/portal-worker &amp;&amp; exec ./node_modules/.bin/tsx src/index.ts</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/c1/Projects/hrx-god-view/portal-worker</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/c1/Library/Logs/hrx-portal-worker.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/c1/Library/Logs/hrx-portal-worker.err.log</string>
+</dict>
+</plist>

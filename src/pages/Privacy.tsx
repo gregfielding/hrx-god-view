@@ -40,7 +40,7 @@ const Privacy: React.FC = () => {
           {t('legal.privacy.title')}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          {t('legal.privacy.effectiveDate')} <time dateTime="2025-10-21">October 21, 2025</time> · {t('legal.privacy.lastUpdated')} <time dateTime="2025-10-21">October 21, 2025</time>
+          {t('legal.privacy.effectiveDate')} <time dateTime="2025-10-21">October 21, 2025</time> · {t('legal.privacy.lastUpdated')} <time dateTime="2026-09-10">September 10, 2026</time>
           <br />
           {t('legal.privacy.appliesTo')}
         </Typography>
@@ -90,6 +90,7 @@ const Privacy: React.FC = () => {
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s3L4')}</ListItem>
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s3L5')}</ListItem>
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s3L6')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s3L7')}</ListItem>
         </List>
         <Typography paragraph>{t('legal.privacy.s3P2')}</Typography>
       </Box>
@@ -101,8 +102,10 @@ const Privacy: React.FC = () => {
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s4L1')}</ListItem>
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s4L2')}</ListItem>
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s4L3')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.privacy.s4L4')}</ListItem>
         </List>
         <Typography paragraph>{t('legal.privacy.s4P2')}</Typography>
+        <Typography paragraph sx={{ fontWeight: 600 }}>{t('legal.privacy.s4P3')}</Typography>
       </Box>
 
       <Box component="section" id="cookies" sx={{ mb: 4 }}>

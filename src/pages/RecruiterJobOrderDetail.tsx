@@ -20,6 +20,7 @@ import {
   Button,
   Skeleton,
   TextField,
+  InputAdornment,
   Table,
   TableBody,
   TableCell,
@@ -79,9 +80,12 @@ import {
   Lock as LockedIcon,
   AccountBalance as AccountBalanceIcon,
   Groups as GroupsIcon,
+  Search as SearchIcon,
+  Clear as ClearIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate, useSearchParams, Link as RouterLink } from 'react-router-dom';
 import StretchedRowLink from '../components/StretchedRowLink';
+import { ReviewRequestChips, useOpenReviewRequestsByUserId } from '../components/recruiter/ApplicantReviewRequests';
 import UniversalBackButton from '../components/common/UniversalBackButton';
 import { format, formatDistanceToNow } from 'date-fns';
 import {
@@ -417,6 +421,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [selectedShiftId, setSelectedShiftId] = useState<string>('');
   const [selectedDay, setSelectedDay] = useState<string>('');
   const [lifecycleStageFilter, setLifecycleStageFilter] = useState<'all' | RecruiterLifecycleFilterBucket>('all');
+  // Name search (Danny 2026-09-09) — case-insensitive, matches name or email.
+  const [applicantNameSearch, setApplicantNameSearch] = useState('');
   const appsStorageKey = `applications_shift_${tenantId}_${jobOrderId}`;
 
   useEffect(() => {
@@ -448,6 +454,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
   const [assignmentStatusByUserId, setAssignmentStatusByUserId] = useState<Map<string, string>>(new Map());
   const [refreshingScores, setRefreshingScores] = useState(false);
+  const reviewRequestsByUserId = useOpenReviewRequestsByUserId(tenantId, jobOrderId);
 
   // Favorites hook for starring applicants
   const { isFavorite, toggleFavorite } = useFavorites('users');
@@ -832,6 +839,23 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     categoryFilterCategoryMin,
   ]);
 
+  // Case-insensitive on BOTH sides (Greg 2026-09-09: an uppercase stored
+  // name must match a lowercase query) — name and email both searchable.
+  const filteredByName = useMemo(() => {
+    const q = applicantNameSearch.trim().toLowerCase();
+    if (!q) return filteredByCategoryScores;
+    return filteredByCategoryScores.filter((a) =>
+      `${a.displayName ?? ''} ${a.firstName ?? ''} ${a.lastName ?? ''} ${a.email ?? ''}`
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [filteredByCategoryScores, applicantNameSearch]);
+
+  const nameSearchEmpty =
+    applicantNameSearch.trim() !== '' &&
+    filteredByCategoryScores.length > 0 &&
+    filteredByName.length === 0;
+
   const categoryScoreFilterEmpty =
     (categoryFilterMinAvg != null ||
       (categoryFilterCategoryId && categoryFilterCategoryMin != null)) &&
@@ -1004,7 +1028,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const sortedApplicants = React.useMemo(() => {
     if (applicantsSortBy === 'interview') {
-      const data = [...filteredByCategoryScores];
+      const data = [...filteredByName];
       data.sort((a, b) => {
         const aM = toMillis(a.scoreSummary?.interviewLastAt);
         const bM = toMillis(b.scoreSummary?.interviewLastAt);
@@ -1014,7 +1038,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       return data;
     }
     if (applicantsSortBy === 'jobScore') {
-      const data = [...filteredByCategoryScores];
+      const data = [...filteredByName];
       data.sort((a, b) => {
         const aScore = a.jobScoreSummary?.jobScore ?? -1;
         const bScore = b.jobScoreSummary?.jobScore ?? -1;
@@ -1024,7 +1048,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       return data;
     }
     if (applicantsSortBy === 'category_avg') {
-      const data = [...filteredByCategoryScores];
+      const data = [...filteredByName];
       data.sort((a, b) => {
         const sa = getEffectiveCategoryScoresForApplicantRow(
           a.uid,
@@ -1044,7 +1068,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     }
     if (applicantsSortBy && PRESCREEN_CATEGORY_IDS.includes(applicantsSortBy as PrescreenCategoryId)) {
       const cat = applicantsSortBy as PrescreenCategoryId;
-      const data = [...filteredByCategoryScores];
+      const data = [...filteredByName];
       data.sort((a, b) => {
         const sa = getEffectiveCategoryScoresForApplicantRow(
           a.uid,
@@ -1065,7 +1089,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     if (applicantsSortBy === 'status' || applicantsSortBy === 'level') {
       // Status sorts by the same label the cell displays (placement status
       // wins over application status); Level sorts Candidates vs Applicants.
-      const statusLabelOf = (a: (typeof filteredByCategoryScores)[number]): string => {
+      const statusLabelOf = (a: (typeof filteredByName)[number]): string => {
         const placementStatus = assignmentStatusByUserId.get(a.uid);
         const isConfirmed = placementStatus && ['confirmed', 'active'].includes(placementStatus);
         const isAssigned = placementStatus && ['proposed', 'accepted'].includes(placementStatus);
@@ -1081,7 +1105,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           : appStatus
         );
       };
-      const data = [...filteredByCategoryScores];
+      const data = [...filteredByName];
       data.sort((a, b) => {
         const cmp =
           applicantsSortBy === 'status'
@@ -1091,16 +1115,16 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       });
       return data;
     }
-    return filteredByCategoryScores;
+    return filteredByName;
   }, [
-    filteredByCategoryScores,
+    filteredByName,
     applicantsSortBy,
     applicantsSortDirection,
     categoryScoresCurrentByUserId,
     assignmentStatusByUserId,
   ]);
 
-  const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredByCategoryScores;
+  const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredByName;
 
   // Notify parent of count changes (use displayed count)
   useEffect(() => {
@@ -1697,6 +1721,31 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
               alignItems: 'center',
             }}
           >
+            <TextField
+              size="small"
+              placeholder="Search by name"
+              value={applicantNameSearch}
+              onChange={(e) => setApplicantNameSearch(e.target.value)}
+              sx={{ minWidth: 220 }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+                endAdornment: applicantNameSearch ? (
+                  <InputAdornment position="end">
+                    <IconButton
+                      size="small"
+                      aria-label="Clear name search"
+                      onClick={() => setApplicantNameSearch('')}
+                    >
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : undefined,
+              }}
+            />
             <FormControl size="small" sx={{ minWidth: 280 }}>
               <InputLabel>Lifecycle stage</InputLabel>
               <Select
@@ -2040,6 +2089,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     <Alert severity="info" sx={{ justifyContent: 'center' }}>
                       {applicants.length === 0
                         ? 'No applications received yet for this job order.'
+                        : nameSearchEmpty
+                          ? `No applicants match "${applicantNameSearch.trim()}". Check the spelling or clear the search.`
                         : lifecycleFilterEmpty
                           ? 'No applicants match this lifecycle filter. Choose "All stages" or tap another lifecycle chip.'
                         : categoryScoreFilterEmpty
@@ -2170,6 +2221,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                         </Tooltip>
                       );
                     })()}
+                    <ReviewRequestChips tenantId={tenantId} requests={reviewRequestsByUserId.get(applicant.uid)} />
                     <Menu
                       anchorEl={statusMenuAnchor[rowId]}
                       open={Boolean(statusMenuAnchor[rowId])}
@@ -3112,6 +3164,7 @@ const JobOrderJobsBoardTab: React.FC<{
         expDate: formatDateForInput(existingPostForForm.expDate),
         payRate: existingPostForForm.payRate?.toString() || '',
         showWorkersNeeded: existingPostForForm.showWorkersNeeded !== undefined ? existingPostForForm.showWorkersNeeded : false,
+        claimShiftEnabled: (existingPostForForm as any).claimShiftEnabled === true,
         uniformRequirements: Array.isArray(existingPostForForm.uniformRequirements) ? existingPostForForm.uniformRequirements : (existingPostForForm.uniformRequirements ? [existingPostForForm.uniformRequirements] : []),
         // CC.B (2026-05-05): client-provided / position-level JD belongs in
         // the prompt, NOT the public-facing `jobDescription`. The public
@@ -3136,6 +3189,14 @@ const JobOrderJobsBoardTab: React.FC<{
         companyName: jobOrder?.companyName || (existingPostForForm as any).companyName || '',
         worksiteId: jobOrder?.worksiteId || (existingPostForForm as any).worksiteId || '',
         worksiteName: jobOrder?.worksiteName || (existingPostForForm as any).worksiteName || '',
+        // E-Verify is ENTITY truth, not post state (Greg 2026-09-04):
+        // C1 Select always requires it, and post docs saved before the
+        // entity read existed carry a stale `false` forever. Same
+        // authoritative-override treatment as company/worksite above —
+        // the stored doc self-heals on the next save.
+        eVerifyRequired: jobOrderEntity
+          ? jobOrderEntity.everifyRequired
+          : ((existingPostForForm as any).eVerifyRequired ?? false),
       };
     }
 
@@ -3394,6 +3455,8 @@ const JobOrderJobsBoardTab: React.FC<{
       showStart: (jobOrder as any).showStartDate ?? (jobOrder as any).showStart ?? false,
       showEnd: (jobOrder as any).showEnd ?? false,
       showWorkersNeeded: (jobOrder as any).showWorkersNeeded !== undefined ? (jobOrder as any).showWorkersNeeded : false,
+      // Claim Shift is a per-posting opt-in; a fresh post starts off.
+      claimShiftEnabled: false,
       expDate: formatDateForInput((jobOrder as any).expDate) || '',
       // Show toggles: use compliance (Overview) and top-level so Jobs Board post defaults match what was set on the job order
       showBackgroundChecks: (Array.isArray(compliance.backgroundCheckPackages) ? compliance.backgroundCheckPackages.length : 0) > 0 || ((jobOrder as any).backgroundCheckPackages || []).length > 0,

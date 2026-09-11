@@ -1,0 +1,425 @@
+# portal worker (autonomous recruiter, portal execution layer)
+
+> "Queue + always-on Playwright worker that executes portal actions (Flex bookings, Fieldglass submissions) with bot accounts — scaffold SHIPPED 2026-09-06 (loop verified end-to-end), adapters stubbed; replaces the human-in-Chrome courier model"
+
+## Why this exists (Greg, 2026-09-06)
+
+Greg wants recruiter work done with **no ongoing involvement**: no approvals
+in chat, no laptop that has to be awake, no manual syncs. Driving his Chrome
+via claude-in-chrome can't get there — every send/booking is a per-action
+approval, it runs only while his laptop + a chat session are open, and
+background automation tabs starve the SPAs (see
+[[feedback_chrome_automation_tab_throttling]]). API access for Flex and
+Fieldglass is **not** obtainable (Greg, same day) — "work within the
+confines we have today". So: a queue in HRX + a worker process on an
+always-on box that logs into both portals as dedicated bot users and does
+the clicks itself. Phone calls stay human (all career jobs + first-time
+gig workers) — the agent will produce the call list.
+
+Verified 2026-09-06 (unauthenticated probes): **Fieldglass** sign-in at
+`https://www.us.fieldglass.cloud.sap/` is a plain `username`/`password`
+form (no CAPTCHA, no bot-protection scripts, no iframe; the old
+fieldglass.net hosts redirect with a notice). **Indeed Flex** agency
+sign-in at `agency.indeedflex.com/o/signin` is email-first (single
+`input[name=email]` + Continue), no bot-protection scripts on step 1; the
+second step (password vs emailed code) is still unobserved.
+
+## What shipped (commit on 2026-09-06)
+
+- **Contract** `shared/portalActions.ts` (mirrored `src/shared/`): providers
+  `indeed_flex | fieldglass`; actions `smoke_test | book_worker |
+  unbook_worker | submit_candidate | withdraw_candidate`; statuses
+  `pending → claimed → running → succeeded | failed | needs_human |
+  cancelled`; error codes + `nextStatusAfterError` policy (transient codes
+  retry 5/10/20 min then escalate; LOGIN_FAILED / NOT_IMPLEMENTED →
+  needs_human; INVALID_PAYLOAD / PORTAL_REJECTED → failed);
+  `buildPortalActionId` = doc id = idempotency key
+  (`provider__action__naturalKey`).
+- **Producer** `functions/src/integrations/portalActions/enqueuePortalAction.ts`
+  — library only (NO new Cloud Function: Cloud Run cap). Transactional
+  upsert: open rows returned as-is, succeeded rows re-run only with
+  `force`, terminal rows reset. `cancelPortalAction` too. Not yet wired
+  into any hire flow (pointless until adapters do real work).
+- **Consumer** `portal-worker/` (own npm package, Node 20, tsx + Playwright,
+  firebase-admin 13): index-free claim (`where status == pending` + in-memory
+  notBefore/provider/priority filter, transactional claim with lease +
+  renewal), lease sweeper, heartbeat →
+  `tenants/{t}/portal_workers/{workerId}` + rolling
+  `tenants/{t}/integration_health/portal_worker` (workers map + queue
+  counts via count() aggregations), per-provider keep-alive every 5 min,
+  persistent Chromium profile per provider (headed by default), failure
+  screenshots (local, + Storage signed URL when `PORTAL_STORAGE_BUCKET`),
+  Slack via bot token `chat.postMessage` (optional; deduped login alerts),
+  secrets from env or Secret Manager `portal-worker-<provider>-username|password`
+  (values redacted from logs), graceful SIGTERM (in-flight action released
+  to pending without counting an attempt), 12h max-uptime self-exit for
+  launchd restarts. `launchd/com.c1staffing.portal-worker.plist` template.
+  CLIs: `npm run enqueue -- --provider=… --action=…`, `npm run status`.
+  Tests: `node --test` over the shared policy helpers (11 passing).
+- **Adapters**: login detection + login + keep-alive + smoke_test for both;
+  real actions throw NOT_IMPLEMENTED → needs_human + Slack, so producers can
+  be wired before the adapters land without silent loss.
+
+**End-to-end verified 2026-09-06** on Greg's laptop (headless, no creds):
+two smoke_tests → claimed within the 2s poll → browser launched → login
+wall detected → Secret Manager returned nothing → `needs_human` with
+`LOGIN_FAILED` + a screenshot of each portal's sign-in page; heartbeat and
+health docs written. Rows left in prod:
+`tenants/BCiP2bQ9CgVOCTfV6MhD/portal_actions/{fieldglass,indeed_flex}__smoke_test__1788738…`
+(harmless; delete or ignore).
+
+## The persona: Natalie Brooks (Greg, 2026-09-06)
+
+The automation's identity across every external system is **Natalie Brooks,
+n.brooks@c1staffing.com** (Google Workspace user — a real mailbox, not an
+alias, because Flex's email-first login and Fieldglass notifications need an
+inbox). Use it for: the Indeed Flex agency user (Account level Standard,
+all branches/clients/locations/roles), the Fieldglass supplier user, the
+Slack app/bot user, and any outbound email/SMS the agent sends later.
+Rules: (1) Claude never holds the password — Greg puts creds in the
+worker's `.env` / Secret Manager; (2) the mailbox gets connected to HRX via
+the existing Gmail OAuth integration so functions can read login codes and
+portal notifications, and Greg is a delegate on it; (3) any signature or
+message from Natalie discloses that she is C1 Staffing's automated
+recruiting assistant and names a human contact (CA bot-disclosure law +
+Greg's "workers should know we're a real company" goal); (4) phone calls
+stay human — Natalie produces the call list, people make the calls.
+**HRX user PROVISIONED 2026-09-06**: Auth uid `sSPyxJiaYsXlHJb5XUOJ3d14PcU2`,
+claims roles[T]=Admin/7, users doc mirrors Deborah/Greg shape (securityLevel
+'7' + `recruiter:true` + `crm_sales:true` at top level AND in
+tenantIds[T]; `isAutomationPersona:true` marker; avatar URL set). Script:
+`functions/.scratch/invite-natalie-brooks.ts` (idempotent, --write). Flex
+agency user invited as Admin (login = email-first, then a PASSWORD page
+"Signing in as …" — confirmed 2026-09-06; no code step). Fieldglass
+supplier user invited 2026-09-06: username n.brooks@c1staffing.com, role
+Administrator [Primary], supervisor Greg; registration goes through
+`user_register_form.do?personId=…` + a one-time emailed registration code
+(Greg completes it — password entry). ☠️ Activation/reset links must be
+opened in a browser with NO existing Flex session (Incognito) — in Greg's
+Chrome the link just lands on his own Jobs page. **Phone BOUGHT 2026-09-06 (Greg approved, via Claude-in-Chrome in the
+Twilio console): +1 312 663 8247**, SID `PNadc75695090f91f3f5d65065209fad28`,
+friendly name "Natalie Brooks (automation)", $1.15/mo. SMS webhook →
+`https://us-central1-hrx1-d3beb.cloudfunctions.net/handleInboundSms` (POST),
+same as the main 312 500 4352 line; NOT on a Messaging Service and NOT
+A2P-10DLC registered yet — inbound works, outbound US SMS from this number
+needs it added to a registered service (C1 Messaging) first. Voice URL
+still the Twilio demo; no emergency address (voice unused). The 415 429
+3750 number was deliberately left alone (Greg: may become a general company
+line). Twilio account shows as "My first Twilio account"; the 888 805 8650
+toll-free is on the C1 Messaging service.
+☠️ handleInboundSms DROPS texts from senders that are not known users
+(portal verification short codes!) — fixed by `sms_inbound_raw/{MessageSid}`
+(commit ca71ca36: verbatim copy of every inbound before routing, fail-open,
+`expiresAt` +30d for a TTL policy that still has to be enabled in the
+console). Read it for Natalie's line with `where('to','==','+13126638247')`.
+Deploy of handleInboundSms was blocked for Claude by the permission
+classifier — Greg runs `firebase deploy --only functions:handleInboundSms`.
+Avatar (AI-generated, Greg 2026-09-06): `public/brand/natalie-brooks.png`
+(1254px source) + `public/brand/natalie-brooks-512.jpg` (web/email size) —
+served at https://hrxone.com/brand/natalie-brooks-512.jpg (live since the
+2026-09-06 evening hosting deploy); use it for the Google profile photo,
+Slack app icon, and the signature block. **Gmail signature SET 2026-09-06**
+(via Claude-in-Chrome on Greg's session, mailbox u/4): same layout as
+Greg's (round 74px photo, gold left rule, name / "Recruiting Assistant ·
+C1 Staffing" / 312-663-8247 · n.brooks@ / c1staffing.com / tagline) minus
+LinkedIn. The rule-(3) disclosure line ("Natalie is C1 Staffing's
+automated recruiting assistant…") was added and then REMOVED at Greg's
+direction the same evening — the signature carries no automation
+disclosure; keep the disclosure in message BODIES where rule (3) applies.
+Gmail enforces Trusted Types, so the block was built with DOM nodes, not
+innerHTML. Greg's own signature now points at
+https://hrxone.com/brand/greg-fielding-512.jpg (new official headshot,
+2026-09-06; `public/img/greg-fielding.jpg` replaced too so the old URL
+serves the same photo).
+
+## Milestone 2026-09-06 (late): BOTH portal logins succeed unattended
+
+`smoke_test` succeeded for indeed_flex (worker logged in as Natalie →
+/jobs) and fieldglass (→ /desktop.do "Home - Fieldglass") on greg-macbook
+with creds from `portal-worker/.env`. Facts learned: Flex 2nd step is a
+password page (submit via the Continue button; `filledLen` logged);
+Fieldglass home is `/desktop.do` — the bare origin renders the sign-in form
+even with a live session; its cookies are session-scoped (do NOT survive a
+browser restart → the worker re-logs-in after every launchd restart, ~4s);
+the SAP footer/cookie banner contains "Terms of Use"/"Accept" on every
+page, so interstitial detection must look at headings only. `npm run
+login -- --provider=X` = per-step-screenshot login debugger on a separate
+profile. Set-password/reset links MUST be opened in Incognito.
+
+## Sync passes (2026-09-06 late, commit f6a3e184): the buttons are now Natalie's job
+
+Greg: "Can this system replace the Sync Sodexo button… can Natalie update
+our job orders as changes happen in Fieldglass? … then same for Flex."
+- **`fieldglass_sync`** (adapter `sync()`): HRX pending queue
+  (`fieldglassEnrichmentQueue`) + paginated worklist scan
+  (`job_posting_list.do?cl=1`, follows Next) → opens each
+  `job_posting_detail.do` page in Playwright (SAP is JS-rendered; waits
+  for the SDXOJP id) → POSTs innerText to `fieldglassEnrichmentIngest`
+  with `FIELDGLASS_EXTENSION_KEY` (same server path as the extension: LLM
+  extraction → JO ensure/close/halt). **Targeted** syncs
+  (`payload.postingIds`) resolve SDXOJP → detail URL via the HRX request
+  row (`event.detailUrl` / `enrichment.sourceUrl`), else the worklist row
+  text, else the portal search box — ☠️ `job_posting_detail.do?id=` takes
+  an INTERNAL id, not the SDXOJP number (constructed URLs render nothing).
+- **`indeed_flex_sync`**: jobs list (API body tapped via
+  `page.on('response')` on `flex-core-us.indeed.com/api/v2/agency_portal/`,
+  DOM `/job-details/` links as fallback) → per job open
+  `…/job-details/{id}?…&workers=booked`, wait for the
+  `workers?booked_agency_shift_ids` response, bundle {job, agency_shifts,
+  roster} → `indeedFlexPortalIngest`; then `/o/timesheets` entries pages +
+  a replay of `timesheets/entries` for the last N days using the SPA's own
+  Authorization header via `context.request` → `indeedFlexTimesheetIngest`.
+  Skips Completed jobs unless `includeCompleted`.
+- **Change detection** (`src/syncState.ts`): sha256 of normalized page
+  text / JSON bundle in `tenants/{t}/portal_state/{provider}_sync`; unchanged
+  pages skip the paid extraction, re-ingested anyway after 24h; `force`
+  bypasses. This is what makes an hourly cadence affordable (Greg's manual
+  cadence was ~3 presses/day × ~50 postings).
+- **Scheduler** (`scheduleSyncsDue` in index.ts): every
+  `PORTAL_FG_SYNC_EVERY_MS` / `PORTAL_FLEX_SYNC_EVERY_MS` (default 60 min)
+  inside `PORTAL_SYNC_HOURS` (6-21 America/Chicago) the worker enqueues a
+  full pass keyed `full__<15-min bucket>` so restarts/second workers don't
+  double-run; priority 150 (targeted work wins). Sync actions get
+  `PORTAL_SYNC_ACTION_TIMEOUT_MS` (90 min) — the 4-min default timed out a
+  50-posting pass on the first run — and a timeout now tears the browser
+  context down so the abandoned promise can't keep driving the page.
+- **Change loop (functions, needs deploy of
+  `onFieldglassIngestEventCreatedParse`)**: an unclassified email that names
+  a known posting, or a re-distribution of a decided order, enqueues a
+  targeted `fieldglass_sync` (priority 20, force) via
+  `enqueuePortalAction`; the SMS alert now says Natalie is re-syncing it.
+- Worker env now also needs `FIELDGLASS_EXTENSION_KEY` /
+  `INDEED_FLEX_EXTENSION_KEY` (same values as functions env). ☠️ Appending
+  to a `.env` that lacks a trailing newline glued a key onto the password
+  line and broke the Fieldglass login for 10 minutes — check `cut -d= -f1`.
+- Live results 2026-09-07 ~01:30Z: **Flex full pass OK** — 14 jobs on the
+  list (DOM links; the SPA's jobs-list API body was NOT seen, so
+  `jobsFromCaptures` is a fallback that hasn't fired yet), 5 non-completed
+  visited, rosters ingested (3 "unmatched_no_shift" = HRX has no shift
+  linked for those 0-booked new jobs — an HRX matching state, not a
+  courier failure), second pass skipped 3 unchanged; timesheets: view
+  pages + replayed 7-day window (the SPA's Authorization header replays
+  fine via `context.request`) → 75 rows, 5 needing attention. **Fieldglass
+  worklist** = 94 links over 3 pages (Next-button pagination works; the
+  extension only ever read page 1 and Greg saw "4 page-boundary
+  stragglers"). ☠️ Restarting the worker mid-pass with the pre-7b546995
+  code let the abandoned loop keep running and later overwrite the row
+  with 94 "browser has been closed" failures — since 7b546995 SIGTERM
+  closes the browser and the action is released untouched; use
+  `npm run requeue -- --id=…` for stuck rows, `npm run status -- --id=…`
+  to read a result.
+- ☠️☠️ **Orphaned workers (root cause of the 2026-09-07 chaos)**: the
+  LaunchAgent ran `exec npm start` → npm → tsx → node. `launchctl kickstart
+  -k` / `launchctl kill` only signal the main PID (npm); killing it orphans
+  the node worker (ppid 1), which keeps polling the queue on OLD code, shares
+  the same Chromium profile dir with the restarted worker, and races it —
+  two claims on one row, "browser has been closed" storms, results
+  overwritten. Fixed in the plist (commit c2fc39fe: `exec
+  ./node_modules/.bin/tsx src/index.ts`, so launchd owns the real process);
+  Greg must re-copy the plist + `launchctl unload`/`load -w`. Until then,
+  restart with `kill <node pid>` (SIGTERM to the node child), never
+  kickstart. Check with `ps -A | grep portal-worker` — exactly ONE
+  `node --require …tsx` process should exist. The 94-posting pass then ran
+  clean: 17 ingested across two runs (5 candidate-in-mind, 6 closed), rest
+  deferred to the next pass via change detection.
+- **First clean full Fieldglass pass 2026-09-07 02:06Z**: 94/94 postings,
+  79 ingested, 15 skipped unchanged, 0 failed, 6 candidate-in-mind, 12
+  closed + 1 halted cascaded, 17.6 min. **Gmail→ingest forward MOVED to
+  Natalie's mailbox** the same night (see
+  [[project_fieldglass_intake_pipeline]]); Greg's filter is mark-as-read only.
+- Recommended follow-ups: "vanished from worklist ⇒ probably closed"
+  detection; retire the Sync Sodexo button to a manual override; Slack
+  digest of each pass's summary (closed/halted/candidate-in-mind/attention).
+
+## Clock-in watch + Timesheet Grid punch feed (2026-09-07, Greg)
+
+Greg: "when workers clock in, their in-times should be entered in their
+timesheet grid row, then clock-outs at the end of the day" + the plus-15
+"are you coming?" text (Daniel's confirmations dashboard, automated).
+- **Worker**: `scheduleSyncsDue` has a third plan entry `flex_timesheets`
+  — `indeed_flex_sync` with `{includeRosters:false, includeTimesheets:true,
+  timesheetDaysBack:1, reason:'clock_in_watch'}` every
+  `PORTAL_FLEX_TIMESHEETS_EVERY_MS` (10 min) inside
+  `PORTAL_TIMESHEET_WATCH_HOURS` (5-24 Central), keyed
+  `timesheets__<10-min bucket>`, priority 120. A timesheets-only pass
+  skips the jobs list entirely (the timesheets view's own entries call
+  supplies the Authorization header for the replay). First live pass:
+  27 rows in 20s, no extraction cost.
+- **Functions** (`functions/src/integrations/indeedFlex/timesheetGridFeed.ts`,
+  called from `reconcileFlexTimesheets` after the snapshot batch; result in
+  the ingest response as `gridFeed`): for every verdict that resolved to an
+  assignment and has a punch → get-or-create
+  `timesheet_entries/{assignmentId}_{workDate}` via the new exported
+  `createDraftTimesheetEntryCore` (extracted from the callable; throws
+  `DraftEntryError` for not-found / not-scheduled days, which the feed
+  counts as `notScheduled` instead of forcing a row) → writes
+  `actualStartTime` / `actualEndTime` (HH:mm = substring of the
+  offset-bearing ISO, i.e. venue wall time) and one unpaid `breaks[]` entry
+  (`source:'indeed_flex'`). `flexPunch{applied,…}` on the entry records
+  what we wrote; a field is overwritten ONLY if empty or equal to our last
+  applied value (recruiter hand-edits win, later Flex corrections replace
+  only ours); non-draft rows are skipped; `actualHoursOverride` never set.
+  A clock-in also stamps `assignment.cortConfirmation.state='checked_in'`
+  (`checkedInVia.channel='indeed_flex_timesheet'`) unless the state is
+  already checked_in/cancelled/no_show — the real attendance signal the
+  muted T+30 no-show probe was waiting for. Tests:
+  `__tests__/integrations/indeedFlex/timesheetGridFeed.test.ts`.
+  **Needs deploy of `indeedFlexTimesheetIngest`** (Greg).
+- **Natalie's own SMS line is blocked on A2P** — see
+  [[reference_twilio_messaging_state]]: no approved 10DLC campaign on the
+  account (both 2025 campaigns failed); HRX sends only via the verified
+  toll-free 888. Options there; decision pending.
+- Remaining plan: "Late, no clock-in" status on WorkerConfirmationsDashboard
+  + a `assignment_late_checkin_15m` cadence step (HERE/CANCEL replies reuse
+  cadenceReplyHandler) → CANCEL/no-show ⇒ page recruiter + Natalie asks in
+  #indeedflex_c1staffing (C0B8ACFEU21, Slack Connect with Indeed Flex)
+  whether they want a same-day replacement, with the worker's reliability
+  summary (repeat NCNS / early tenure ⇒ offer permanent replacement) →
+  unmute the T+30 probe for Flex-linked assignments only (careers
+  included — this is not gig-only). ☠️ A failed clock-in link looks exactly
+  like a no-show (Jahon Walker, 2026-08-31) — always ask, never declare.
+
+## Late check-in ask + Flex no-show unmute (2026-09-07, session 2)
+
+- **`assignment_late_checkin_15m`** (offset -0.25h) added to `gig_standard`,
+  `cort_gig` (via the spread) and `career_placement` (Greg: "not just for
+  gigs"). Dispatcher gate (workerShiftRemindersV2.ts): dismiss if cortState is
+  checked_in/no_show/cancelled; dismiss `late_checkin_no_clockin_signal`
+  unless `isFlexLinkedAssignment` (assignmentSource 'indeed_flex_portal' /
+  flexWorkerId / flexJobId, or the shift's `clockInUrl` contains
+  time.indeed.com or carries flexJobId/flexRequestId); fresh
+  `findFlexClockIn` query on `indeed_flex_timesheets` (hrxAssignmentId +
+  workDate in the assignment tz) → if a punch exists stamp checked_in and
+  dismiss `late_checkin_clocked_in`; else stamp
+  `cortConfirmation.lateCheckinTextedAt/Via` and send. Copy in
+  cadenceMessages.ts (EN/ES), signed "Natalie, C1 Staffing recruiting
+  assistant", asks HERE / NO — never says no-show. Registry entry added.
+  Sends via the normal path = the 888 (Greg: interim) until the 10DLC
+  campaign is approved.
+- **No-show probe unmuted for Flex-linked assignments only**
+  (`flexLinkedForProbe` short-circuits `isNoShowDetectionEnabled`); other
+  accounts stay muted (no clock-in signal).
+- **Dashboard** (`WorkerConfirmationsDashboard.tsx`): derived `late` status
+  (start ≥15 min ago and <6h, not checked_in/cancelled/no_show; start from
+  `startDateTime` else startDate+startTime viewer-local), red chip "Late —
+  no clock-in", sorted first, caption "Natalie texted 10:15" from
+  `cortConfirmation.lateCheckinTextedAt`. Recruiter view → no Flutter parity.
+- ⚠️ Existing assignments keep their already-planned reminder docs; the new
+  step appears only for assignments (re)planned after the deploy.
+- **Worker watchdog** (portal-worker index.ts tick): housekeeping steps bounded
+  to 60s, keep-alive to actionTimeoutMs; a keep-alive timeout tears the
+  browsers down. Cause: laptop sleep mid-page-call at 05:24Z left the loop
+  hung for 11h while the heartbeat timer kept the doc fresh (status looked
+  "idle"). ☠️ A fresh heartbeat does NOT prove the loop is running — check
+  `scheduled sync` lines in the log.
+- Remaining from the plan: Natalie's Slack posts in #indeedflex_c1staffing on
+  CANCEL/no-show (needs her Slack membership), reliability summary, 21610
+  alert channel choice.
+
+## Venue aliases + `accept_job_request` (2026-09-07, session 3)
+
+**Why**: Natalie's inbox showed Indeed Flex "You have been allocated a job"
+emails that nobody acted on — three OnTrac Denver requests (545616/17/18)
+hit "Booking deadline passed" on 2026-09-06/07 because the venue strings
+`Denver, CO - BCO002` and `SF - 201 3rd Street - SVC07/51/00` fuzzy-scored
+below 0.5, the rows sat in /shifts/log as NEEDS REVIEW, and accepting in
+the portal was still a human click. Greg: "Do the venue alias and accept
+action now."
+
+**Venue aliases written** (`tenants/{t}/venue_aliases`, same shape as the
+`linkVenueToAccount` callable, createdBy = Natalie's uid):
+- `denver, co - bco002` → OnTrac Denver (`autoLoc_c8063316925cd9db434ca0c2e80293d1`)
+- `201 3rd street` → CORT San Francisco Warehouse (`autoLoc_784610feec9911c3ede719934b77b6f7`)
+  (the SVC07/xx/00 suffix is CORT's service code; the alias key strips it)
+Re-matching the six open rows flipped all of them to `exact`, BUT both
+accounts have **no open Gig "inbox" JO** (`wouldCreateNewJobOrder: true`),
+so the nightly triage cannot mint the HRX shifts until someone creates an
+open `jobType: 'gig'` JO on each account (`recruiterAccountId` = account).
+Scratch: `functions/.scratch/write-flex-venue-aliases.ts` (`--dry` first).
+
+**Portal flow observed in Greg's session** (jobs list, status "New", button
+"Respond"): Respond → `/allocations/{allocationId}/platforms/2590?roleId=&venueId=`
+titled "You have been allocated 1 job by Indeed", one row per day with a
+"Workers Accepted/Requested" number input (defaults to requested) and an
+"Optional backups" count, buttons **Decline All** / **Confirm**. The
+allocation id is NOT the job id; the page text carries "Job ID: 545107".
+
+**`accept_job_request` action** (shared contract + worker adapter):
+payload `{flexJobId, acceptHeadcount?, dryRun?, externalShiftRequestId?, reason?}`,
+id keyed on the job id (`indeed_flex__accept_job_request__<jobId>[__dry]`).
+Adapter: dismiss the "Tell us what you think" survey modal (it steals
+clicks), scroll-load the list, find the row by exact job-id text; no
+Respond + "In Progress/Book Workers" ⇒ idempotent `alreadyAccepted`;
+Respond → verify allocation URL + job id in page → fill every
+`input[type=number]` when `acceptHeadcount` given → screenshot →
+(`dryRun` stops here) → Confirm → any secondary dialog's confirm → reload
+list and require the row to read In Progress/Book Workers (else
+PORTAL_REJECTED with screenshots) → enqueue a targeted
+`indeed_flex_sync` for the job. Worker must be restarted after adapter
+changes (`kill <tsx pid>`; launchd relaunches) — an old worker claims new
+action types and fails them INVALID_PAYLOAD; re-enqueue with `--force`.
+
+**Rehearsal verified 2026-09-07 15:05 PT**: dry-run accept for Flex request
+546477 (OnTrac Denver, 12 heads) walked jobs list → Respond → allocation
+page, read 12/12, screenshotted, and stopped before Confirm in 45s. An
+earlier attempt timed out 3× on `input[type=number]` `.nth(1)` — a hidden
+second number input on the allocation page; the adapter now skips
+non-visible/non-editable inputs and never blocks on fill (5s cap).
+
+**Producer** (`functions/src/integrations/indeedFlex/flexAutoAccept.ts`):
+`maybeEnqueueFlexAccept` runs from `onShiftRequestCreatedMatch` and the
+`linkVenueToAccount` re-match when a `new_request` lands `exact`. Policy
+doc `tenants/{t}/app_config/indeed_flex`:
+`autoAcceptNewRequests` (master, default OFF), `autoAcceptAccountIds`
+(allow-list), `autoAcceptExcludeAccountIds`, `autoAcceptDryRun`,
+`autoAcceptMaxHeadcount`; stale (ended) requests and rows without a
+numeric job id are skipped. Stamps `portalAccept{actionId,…}` on the
+request row. Pure policy is unit-tested
+(`src/__tests__/integrations/indeedFlex/flexAutoAccept.test.ts`).
+Deploy list: `functions:onShiftRequestCreatedMatch,functions:linkVenueToAccount`
+(no new function — Cloud Run cap untouched).
+
+**Slack as Natalie** (same session): app "Natalie Brooks (HRX)" created
+from the manifest in Greg's api.slack.com (App ID `A0C04FT6V6E`, Client ID
+`7582435419591.12004537233218`, user scopes chat:write, channels:read,
+groups:read, channels:history, groups:history, users:read, im:write,
+redirect `https://hrxone.com/slack/oauth/callback`). Slack's "Create and
+Install" step failed (install popup) — irrelevant, the install we want is
+Natalie's own user-token OAuth, see [[reference_slack_natalie_persona]].
+
+## Next slices (in order)
+
+1. **Bot accounts + secrets (Greg)**: dedicated Flex agency user + Fieldglass
+   supplier user; four Secret Manager secrets; SA
+   `portal-worker@hrx1-d3beb` with datastore.user (+ storage.objectAdmin for
+   screenshots, + secretAccessor on the four secrets). Any always-on box
+   works — the new M6 Mac mini ships 9/22, a refurb M4 mini / spare Mac /
+   Greg's laptop as first courier are all fine.
+2. **Flex adapter**: observe step-2 login; capture the SPA's booking request
+   (headers incl. auth) with `page.on('request')` and replay via
+   `page.request` — UI clicking as fallback. Existing API facts in
+   [[feature_indeed_flex_automation_roadmap]] (agency 3403, jobId in path,
+   `flex-core-us.indeed.com/api/v2/agency_portal/…`).
+3. **Fieldglass adapter**: one recorded walkthrough of job-seeker create +
+   submit-to-posting with Greg (Sodexo may add per-submission attestations;
+   max 3 submissions per supplier per posting).
+4. **Producers**: hire flow → `book_worker` for Flex-linked shifts
+   (assignment.refs), Sodexo match → `submit_candidate`; write result back
+   to the assignment; a `/shifts/log`-style queue view for `needs_human`.
+5. **Agent loop** (cron, Claude adapter): intake → rank (rules-based,
+   explainable — AEDT note in [[project_tiered_shift_access]]) → HRX offers
+   on existing SMS tracks → enqueue portal action on YES → call list for
+   humans. Encode the auto-book policy Greg + Mark write.
+
+## Footguns
+
+- The classifier blocks `(cmd &)`-style backgrounding in Claude sessions;
+  run the worker with the Bash tool's `run_in_background` instead.
+- Headed Chrome needs a GUI login session → LaunchAgent (not daemon),
+  auto-login, no sleep. `PORTAL_HEADLESS=1` only for servers, and expect
+  more bot-detection risk from datacenter IPs than from an office box.
+- Claude never types portal credentials; Greg provisions secrets. With no
+  creds the worker escalates instead of failing — a person can also sign in
+  by hand in the worker's Chrome window and the persistent profile keeps it.
+- Fieldglass "Site" ≠ "Work Location" — see
+  [[project_fieldglass_intake_pipeline]] before building submit payloads.

@@ -13,6 +13,7 @@ import { getTemplate, renderTemplate, MessageTemplate } from './templateEngine';
 import { Channel } from './messageTypesRegistry';
 import type { LanguageCode } from './templateEngine';
 import { verifyRequestAuth, verifyRequestAuthAndTenant } from './httpAuth';
+import { corsOriginFor, isAllowedBrowserOrigin } from '../config/appOrigin';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -208,13 +209,12 @@ export const testRenderApi = onRequest(
     // When cors: true is set, Firebase handles OPTIONS automatically
     // But we still need to set CORS headers for actual requests
     const requestOrigin = (request.headers.origin as string) || '';
-    const allowedOrigins = new Set(['http://localhost:3000', 'https://hrxone.com']);
-    const corsOrigin = allowedOrigins.has(requestOrigin) ? requestOrigin : 'https://hrxone.com';
+    const corsOrigin = corsOriginFor(requestOrigin);
 
     logger.info('CORS configuration', {
       requestOrigin,
       corsOrigin,
-      isAllowed: allowedOrigins.has(requestOrigin),
+      isAllowed: isAllowedBrowserOrigin(requestOrigin),
     });
 
     // Set CORS headers for all responses (cors: true handles OPTIONS, but we set headers for POST)

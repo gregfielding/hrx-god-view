@@ -53,12 +53,140 @@ export const handleInboundSms = onRequest(
       const {
         From: fromNumber,
         To: toNumber,
-        Body: messageBody,
         MessageSid: messageSid,
         AccountSid: accountSid,
       } = request.body;
+      // MMS with no text (a worker sends a screenshot) used to 400 as "Missing required fields" — Twilio
+      // logged 11200 and the reply was lost (Akio Love, 2026-09-08). Represent the attachment as text.
+      let messageBody: string = String(request.body?.Body ?? '').trim();
+      const numMediaIn = Number(request.body?.NumMedia ?? 0) || 0;
+      if (!messageBody && numMediaIn > 0) {
+        const urls = Array.from({ length: numMediaIn }, (_, i) => String(request.body?.[`MediaUrl${i}`] ?? '')).filter(Boolean);
+        messageBody = `[sent ${numMediaIn} attachment${numMediaIn === 1 ? '' : 's'}] ${urls.join(' ')}`.trim();
+      }
 
       logger.info(`Inbound SMS received: ${messageSid} from ${fromNumber} to ${toNumber}`);
+
+      // Raw audit copy BEFORE any routing (2026-09-06, portal-worker /
+      // Natalie Brooks line +1 312 663 8247): the pipeline below drops
+      // messages from senders that are not known users (e.g. a portal's
+      // verification-code short code), so keep every inbound verbatim in
+      // `sms_inbound_raw/{MessageSid}` for the worker + ops to read.
+      // Fail-open: never let this block STOP/HELP compliance handling.
+      try {
+        if (messageSid) {
+          await db
+            .collection('sms_inbound_raw')
+            .doc(String(messageSid))
+            .set(
+              {
+                messageSid: String(messageSid),
+                from: String(fromNumber ?? ''),
+                to: String(toNumber ?? ''),
+                body: String(messageBody ?? ''),
+                accountSid: accountSid ? String(accountSid) : null,
+                numMedia: Number(request.body?.NumMedia ?? 0) || 0,
+                receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+                // Firestore TTL field (enable a TTL policy on `expiresAt`): 30 days.
+                expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 30 * 24 * 60 * 60 * 1000),
+              },
+              { merge: true },
+            );
+        }
+      } catch (rawErr: any) {
+        logger.warn('[sms_inbound_raw] write failed (non-blocking)', { err: rawErr?.message || String(rawErr) });
+      }
+
+      // Natalie's SMS watches (2026-09-07): when she texted someone an offer
+      // from Slack/Claude, relay their reply into that Slack thread. Fail-open.
+      try {
+        if (fromNumber && messageBody) {
+          const fromE164 = String(fromNumber).startsWith('+') ? String(fromNumber) : `+${String(fromNumber).replace(/\D/g, '')}`;
+          const watches = await db.collection('natalie_sms_watches').where('phoneE164', '==', fromE164).where('status', '==', 'active').limit(3).get();
+          for (const w of watches.docs) {
+            const exp = w.get('expiresAt');
+            if (exp && typeof exp.toMillis === 'function' && exp.toMillis() < Date.now()) continue;
+            const slack = w.get('slack') as { channel?: string; ts?: string } | undefined;
+            if (!slack?.channel) continue;
+            const intent = /\b(yes|si|sí|yeah|yep|ok|sure|confirm(ed)?)\b/i.test(String(messageBody)) ? 'yes' : /\b(no|nope|can't|cannot|cant)\b/i.test(String(messageBody)) ? 'no' : null;
+            let placement = '';
+            if (intent === 'yes' && w.get('offer')) {
+              try {
+                const { acceptOfferFromReply } = await import('../natalie/natalieFill');
+                const placed = await acceptOfferFromReply(w.data() as Record<string, unknown>, String(messageBody));
+                placement = placed.placed ? ` → ${placed.message}` : ` (could not place: ${placed.message})`;
+              } catch (placeErr: any) {
+                placement = ` (auto-place failed: ${placeErr?.message || String(placeErr)})`;
+              }
+            }
+            await db.collection('natalie_relays').add({
+              tenantId: w.get('tenantId') ?? null,
+              assignmentId: null,
+              userId: w.get('userId') ?? null,
+              workerName: w.get('workerName') ?? null,
+              text: `${String(messageBody).slice(0, 500)}${placement}`,
+              intent,
+              targets: [{ channel: slack.channel, ts: slack.ts ?? null }],
+              status: 'pending',
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            await w.ref.set({ lastReplyAt: admin.firestore.FieldValue.serverTimestamp(), lastReply: String(messageBody).slice(0, 200) }, { merge: true });
+            // Onboarding follow-up conversations (2026-09-09): Natalie answers these by text herself
+            // (natalieOnboarding.drainSmsConversations) instead of only relaying to Slack.
+            const onb = w.get('onboardingFollowup') as { active?: boolean } | undefined;
+            if (onb?.active === true && !/^\s*(stop|help|start|unstop)\s*$/i.test(String(messageBody))) {
+              await db.collection('natalie_sms_convos').add({
+                tenantId: w.get('tenantId') ?? null,
+                userId: w.get('userId') ?? w.id,
+                workerName: w.get('workerName') ?? null,
+                phoneE164: fromE164,
+                text: String(messageBody).slice(0, 500),
+                messageSid: messageSid ? String(messageSid) : null,
+                status: 'pending',
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              });
+            }
+          }
+        }
+      } catch (watchErr: any) {
+        logger.warn('[natalie_sms_watch] relay failed (non-blocking)', { err: watchErr?.message || String(watchErr) });
+      }
+
+      // Tech-issue detection (Greg 2026-09-07: "when Natalie hears back of a
+      // technical problem… automatically investigate and fix"): a worker
+      // describing something broken becomes a `natalie_tech_issues` row that
+      // (1) Natalie posts to #dev with context, (2) the scheduled Claude Code
+      // routine investigates/fixes, (3) Natalie closes the loop by text.
+      try {
+        const body = String(messageBody ?? '');
+        const TECH_RE = /\b(won'?t|will not|doesn'?t|does not|can'?t|cannot|couldn'?t|unable to)\s+(save|load|open|submit|log ?in|sign ?in|work|send|upload|click|access)|\b(error|bug|glitch|broken|crash(ed|es)?|not working|isn'?t working|keeps? (saying|loading)|link (is )?(dead|expired|not working)|page (is )?blank|404|stuck)\b/i;
+        if (fromNumber && body && TECH_RE.test(body) && !/^\s*(stop|help|start|unstop|yes|no)\s*$/i.test(body)) {
+          const fromE164 = String(fromNumber).startsWith('+') ? String(fromNumber) : `+${String(fromNumber).replace(/\D/g, '')}`;
+          const uq = await db.collection('users').where('phoneE164', '==', fromE164).limit(1).get();
+          const uid = uq.empty ? null : uq.docs[0].id;
+          const ud = uq.empty ? {} : (uq.docs[0].data() as Record<string, unknown>);
+          const tenantId = (typeof ud.activeTenantId === 'string' && ud.activeTenantId) || (typeof ud.tenantId === 'string' && ud.tenantId) || 'BCiP2bQ9CgVOCTfV6MhD';
+          let lastOutbound: Record<string, unknown> | null = null;
+          if (uid) {
+            const lo = await db.collection(`tenants/${tenantId}/messageLogs`).where('userId', '==', uid).where('direction', '==', 'outbound').orderBy('createdAt', 'desc').limit(1).get().catch(() => null);
+            if (lo && !lo.empty) lastOutbound = { messageTypeId: lo.docs[0].get('messageTypeId') ?? null, text: String(lo.docs[0].get('contentSent') ?? '').slice(0, 300), at: lo.docs[0].get('createdAt') ?? null };
+          }
+          await db.collection('natalie_tech_issues').add({
+            tenantId,
+            userId: uid,
+            workerName: uid ? `${String(ud.firstName ?? '')} ${String(ud.lastName ?? '')}`.trim() : null,
+            phoneE164: fromE164,
+            text: body.slice(0, 500),
+            lastOutbound,
+            messageSid: messageSid ? String(messageSid) : null,
+            status: 'open',
+            source: 'sms',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      } catch (techErr: any) {
+        logger.warn('[natalie_tech_issue] detection failed (non-blocking)', { err: techErr?.message || String(techErr) });
+      }
 
       // Validate required fields
       if (!fromNumber || !messageBody) {
@@ -89,7 +217,7 @@ export const handleInboundSms = onRequest(
             tenantId: cadenceResult.tenantId,
             assignmentId: cadenceResult.assignmentId,
           });
-          response.status(200).send('OK');
+          response.status(200).type('text/xml').send('<Response></Response>');
           return;
         }
       } catch (cadenceErr: any) {
@@ -106,7 +234,7 @@ export const handleInboundSms = onRequest(
       if (keywordResult.handled) {
         logger.info(`Keyword ${keywordResult.keyword} handled for ${phoneE164}`);
         // Twilio expects 200 response
-        response.status(200).send('OK');
+        response.status(200).type('text/xml').send('<Response></Response>');
         return;
       }
 
@@ -114,11 +242,11 @@ export const handleInboundSms = onRequest(
       await handleRegularInboundMessage(phoneE164, toNumber, messageBody, messageSid);
 
       // Always respond 200 to Twilio
-      response.status(200).send('OK');
+      response.status(200).type('text/xml').send('<Response></Response>');
     } catch (error: any) {
       logger.error('Error handling inbound SMS webhook:', error);
       // Still respond 200 to Twilio to avoid retries
-      response.status(200).send('OK');
+      response.status(200).type('text/xml').send('<Response></Response>');
     }
   }
 );

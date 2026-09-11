@@ -20,6 +20,7 @@ import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from '../twilio';
 import { claimTypeDailySlot } from '../messaging/rateLimiter';
 import { userIsInActiveMigration } from '../messaging/migrationSuppress';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -149,8 +150,8 @@ export async function runHoursConfirmedNotifier(): Promise<SweepResult> {
       const grossStr = `$${totalGross.toFixed(2)}`;
       const body =
         lang === 'es'
-          ? `C1 Staffing: registramos ${shiftWord}${where} — ${totalHours.toFixed(2)} hrs, aprox. ${grossStr} bruto. Programado para llegar el ${paydayStr}. Detalles: https://hrxone.com/c1/workers/earnings`
-          : `C1 Staffing: ${shiftWord}${where} is in — ${totalHours.toFixed(2)} hrs, est. ${grossStr} gross. Scheduled to arrive ${paydayStr}. Details: https://hrxone.com/c1/workers/earnings`;
+          ? `C1 Staffing: registramos ${shiftWord}${where} — ${totalHours.toFixed(2)} hrs, aprox. ${grossStr} bruto. Programado para llegar el ${paydayStr}. Detalles: ${PUBLIC_APP_ORIGIN}/c1/workers/earnings`
+          : `C1 Staffing: ${shiftWord}${where} is in — ${totalHours.toFixed(2)} hrs, est. ${grossStr} gross. Scheduled to arrive ${paydayStr}. Details: ${PUBLIC_APP_ORIGIN}/c1/workers/earnings`;
 
       const result = await sendWorkerMessageInternal(phone, body, {
         systemContext: true,

@@ -16,6 +16,7 @@ import {
   SendEmailOptions,
   EmailSendResult,
 } from './EmailProvider';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 const db = admin.firestore();
 
@@ -240,7 +241,7 @@ export class SendGridEmailProvider implements EmailProvider {
     
     try {
       // Build unsubscribe URL (if tenant has a preference center)
-      const unsubscribeUrl = `https://hrxone.com/unsubscribe?tenant=${options.tenantId}&user=${options.userId || ''}&type=${options.messageTypeId}`;
+      const unsubscribeUrl = `${PUBLIC_APP_ORIGIN}/unsubscribe?tenant=${options.tenantId}&user=${options.userId || ''}&type=${options.messageTypeId}`;
       
       const msg: any = {
         from: {

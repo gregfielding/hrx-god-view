@@ -73,9 +73,9 @@ function ids(items: WorkerDashboardActionItemV1[]): WorkerDashboardActionItemId[
 
 describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSnapshot', () => {
   describe('shape invariants', () => {
-    it('always sets sourceVersion=1 and a non-empty inputsHash', () => {
+    it('always sets sourceVersion=2 (v2: sticky photo) and a non-empty inputsHash', () => {
       const out = buildWorkerDashboardActionItemsSnapshot(input({}));
-      expect(out.sourceVersion).to.equal(1);
+      expect(out.sourceVersion).to.equal(2);
       expect(out.inputsHash).to.be.a('string').with.length.greaterThan(0);
     });
 
@@ -147,9 +147,9 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
           },
         }),
       );
-      // Work-only feed (2026-08-23): the DOB gate is a Profile concern — the
-      // Home feed stays empty when only profile items would fire.
-      expect(ids(out.items)).to.deep.equal([]);
+      // Work-only feed (2026-08-23): the DOB gate is a Profile concern; v2
+      // (2026-09-06) still lets the sticky photo nudge through.
+      expect(ids(out.items)).to.deep.equal(['add_profile_photo']);
     });
 
     it('under-18 DOB swaps the i18n keys to the under-18 variants', () => {
@@ -222,8 +222,10 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
       );
       const list = ids(out.items);
       expect(list[0]).to.equal('assignment_confirmation_required');
-      // Work-only feed (2026-08-23): the photo nag lives on the Profile page now.
-      expect(list).to.not.include('add_profile_photo');
+      // v2 (2026-09-06): the photo nudge is the one profile item back on Home.
+      // It sorts below the work item; clients keep it visible past the cap.
+      expect(list).to.include('add_profile_photo');
+      expect(list.indexOf('add_profile_photo')).to.be.greaterThan(0);
       // Earliest start wins.
       expect(out.items[0].qaEvaluatedFields.assignmentId).to.equal('a-early');
     });
@@ -375,10 +377,12 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
       });
     }
 
-    it('emits exactly 2 items: assignment_confirmation_required (920) above verify_phone_number (640)', () => {
+    it('emits assignment_confirmation_required (920) then the sticky add_profile_photo (400); no phone nag', () => {
       const out = buildWorkerDashboardActionItemsSnapshot(productionShapeInput());
       // Work-only feed (2026-08-23): the phone nag no longer rides along.
-      expect(ids(out.items)).to.deep.equal(['assignment_confirmation_required']);
+      // v2 (2026-09-06): the photo nudge is built outside the phone-gate early
+      // return, so it survives even when the gate fires.
+      expect(ids(out.items)).to.deep.equal(['assignment_confirmation_required', 'add_profile_photo']);
       expect(out.items[0].priorityScore).to.equal(
         WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES.assignment_confirmation_required,
       );
@@ -393,11 +397,12 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
     it('does NOT leak any other profile items even though every profile field is missing', () => {
       const out = buildWorkerDashboardActionItemsSnapshot(productionShapeInput());
       const list = ids(out.items);
-      // Work-only feed (2026-08-23): NO profile items at all.
+      // Work-only feed (2026-08-23): NO profile items at all — except the v2
+      // sticky photo nudge (2026-09-06).
       expect(list).to.not.include('verify_phone_number');
       expect(list).to.not.include('add_tax_identity_last4');
       expect(list).to.not.include('confirm_home_address');
-      expect(list).to.not.include('add_profile_photo');
+      expect(list).to.include('add_profile_photo');
       expect(list).to.not.include('add_emergency_contact');
       expect(list).to.not.include('sms_opt_in');
       expect(list).to.not.include('re_enable_sms_notifications');
@@ -425,7 +430,37 @@ describe('workerDashboardActionItemsModel — buildWorkerDashboardActionItemsSna
       );
       const list = ids(out.items);
       // Work-only feed (2026-08-23): compliance stands alone.
-      expect(list).to.deep.equal(['background_check_issue_requires_action']);
+      expect(list).to.deep.equal(['background_check_issue_requires_action', 'add_profile_photo']);
+    });
+  });
+
+  describe('case 5b (v2, 2026-09-06): the photo nudge is sticky on Home', () => {
+    it('is emitted when the photo is missing, even behind the DOB gate', () => {
+      const out = buildWorkerDashboardActionItemsSnapshot(
+        input({
+          userDoc: { ...VALID_USER_BASE, dob: '', workerProfile: {} }, // DOB gate fires
+          authAvatarUrl: null,
+        }),
+      );
+      expect(ids(out.items)).to.deep.equal(['add_profile_photo']);
+      const photo = out.items[0];
+      expect(photo.primaryKind).to.equal('navigate');
+      expect(photo.secondaryKind).to.equal('dismiss_firestore');
+      expect(photo.priorityScore).to.equal(WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES.add_profile_photo);
+    });
+
+    it('is NOT emitted when any photo source is present (workerProfile.photoUrl / avatar / auth)', () => {
+      for (const userDoc of [
+        { ...VALID_USER_BASE, workerProfile: { photoUrl: 'https://x/p.jpg' } },
+        { ...VALID_USER_BASE, workerProfile: {}, avatar: 'https://x/a.jpg' },
+      ]) {
+        const out = buildWorkerDashboardActionItemsSnapshot(input({ userDoc, authAvatarUrl: null }));
+        expect(ids(out.items)).to.not.include('add_profile_photo');
+      }
+      const viaAuth = buildWorkerDashboardActionItemsSnapshot(
+        input({ userDoc: { ...VALID_USER_BASE, workerProfile: {} }, authAvatarUrl: 'https://x/auth.jpg' }),
+      );
+      expect(ids(viaAuth.items)).to.not.include('add_profile_photo');
     });
   });
 

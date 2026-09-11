@@ -35,7 +35,7 @@ const GUEST_NAV_PATHS = new Set([
 //   - "Dashboard" → "Home" with a HomeIcon (nav.home). The worker landing
 //     page reads as a home, not an analytics dashboard.
 //   - "Find Work" → "Jobs Board" (nav.findWork value changed in i18n).
-//   - "My Assignments" → "My Schedule" (nav.myAssignments value changed).
+//   - "My Assignments" → "My Schedule" → "Assignments"; Payroll → "Pay" (Greg 2026-09-10, app + web match).
 //   - Pre-screen entry REMOVED entirely. Interviews are now sent to
 //     workers as a direct link when needed — they don't belong in the
 //     standing nav, where they read as a perpetual to-do even after the

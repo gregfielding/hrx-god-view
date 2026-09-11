@@ -33,6 +33,9 @@ import {
   Checkroom as CheckroomIcon,
   Engineering as EngineeringIcon,
   CalendarMonth as CalendarMonthIcon,
+  PersonPinCircle as PersonPinCircleIcon,
+  Sms as SmsIcon,
+  Call as CallIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db, functions } from '../firebase';
@@ -41,6 +44,11 @@ import type { ClaimsRole } from '../contexts/AuthContext';
 import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage';
 import { useT } from '../i18n';
 import SmsWarningBanner from '../components/worker/SmsWarningBanner';
+import HeadshotGateCard from '../components/worker/HeadshotGateCard';
+import {
+  formatHeadshotGateError,
+  type FormattedHeadshotGateError,
+} from '../utils/avatarVerification/formatHeadshotGateError';
 import WorkerPageHeader from '../components/worker/WorkerPageHeader';
 import { getShiftDisplayText } from '../utils/shiftI18n';
 import { normalizeClockInUrl } from '../utils/urlUtils';
@@ -49,6 +57,13 @@ import { parseCalendarDateLocal } from '../utils/dateUtils';
 import { getDateScheduleEntriesWithHours } from '../utils/dateSchedule';
 import { format } from 'date-fns';
 import { downloadAssignmentIcs } from '../utils/assignmentCalendarIcs';
+
+/**
+ * Worker-card canon (JobPostingDetail `cardPadding`, 2026-08-24): a uniform
+ * 16px inset and a 16px gap between cards. This page had 8px sides and 24px
+ * gaps — Greg flagged the mismatch on the first Claim Shift test (2026-09-06).
+ */
+const cardContentSx = { p: 2, '&:last-child': { pb: 2 } } as const;
 
 interface AssignmentDetails {
   id: string;
@@ -101,6 +116,14 @@ interface AssignmentDetails {
   /** Bilingual staff instruction text (worker-facing): section -> { en, es }. Fallback to staffInstructions.*.text */
   staffInstructions_i18n?: Record<string, { en?: string; es?: string }>;
   checkInInstructions?: string;
+  /**
+   * Day-of on-site contact (assignment → shift → job order chain), the same
+   * resolution the app's assignment detail and the T-2h logistics text use.
+   * Web parity shipped 2026-09-06 (was app-only).
+   */
+  onsiteContactName?: string;
+  onsiteContactPhone?: string;
+  onsiteContactRole?: string;
   /** Job order "Uniform Requirements" (pack selection e.g. Business Casual); string or array joined for display */
   uniformRequirements?: string;
   /** Job order "Custom Uniform Requirements" (free text); used on Assignment Info card only */
@@ -247,6 +270,11 @@ const AssignmentDetails: React.FC = () => {
     'idle' | 'firing' | 'success' | 'error' | 'skipped'
   >('idle');
   const [acceptIntentError, setAcceptIntentError] = useState<string | null>(null);
+  // Accept-shift headshot gate (re-armed 2026-09-06): when the server blocks
+  // the one-click accept for a missing / rejected photo, render an inline
+  // uploader instead of the generic error; a successful upload re-fires the
+  // accept by resetting the intent state (the `?intent=accept` param is kept).
+  const [acceptGate, setAcceptGate] = useState<FormattedHeadshotGateError | null>(null);
   const preferredLanguage = useWorkerPreferredLanguage();
   const t = useT();
   const [assignment, setAssignment] = useState<AssignmentDetails | null>(null);
@@ -444,8 +472,10 @@ const AssignmentDetails: React.FC = () => {
       })
       .catch((err: any) => {
         console.error('[AssignmentDetails] one-click accept failed', err);
+        const gate = formatHeadshotGateError(err);
+        setAcceptGate(gate);
         setAcceptIntentState('error');
-        setAcceptIntentError(err?.message || 'Could not accept this assignment.');
+        setAcceptIntentError(gate ? gate.message : err?.message || 'Could not accept this assignment.');
       });
   }, [
     location.search,
@@ -928,6 +958,9 @@ const AssignmentDetails: React.FC = () => {
       const assignmentStaffI18n: StaffInstructionI18nMap = normalizeStaffInstructionI18nMap(sourceData.staffInstructions_i18n);
       let shiftCheckInInstructions = '';
       let shiftUniformRequirements = '';
+      let shiftOnsiteContactName = '';
+      let shiftOnsiteContactPhone = '';
+      let shiftOnsiteContactRole = '';
       let shiftCustomUniformRequirements = '';
       let shiftPpeRequirements = '';
       let shiftPhysicalRequirements = '';
@@ -981,6 +1014,9 @@ const AssignmentDetails: React.FC = () => {
             shiftStaff = normalizeStaffInstructionMap(shiftData.staffInstructions);
             shiftStaffI18n = normalizeStaffInstructionI18nMap(shiftData.staffInstructions_i18n);
             shiftCheckInInstructions = typeof shiftData.checkInInstructions === 'string' ? shiftData.checkInInstructions : '';
+            shiftOnsiteContactName = typeof shiftData.onsiteContactName === 'string' ? shiftData.onsiteContactName : '';
+            shiftOnsiteContactPhone = typeof shiftData.onsiteContactPhone === 'string' ? shiftData.onsiteContactPhone : '';
+            shiftOnsiteContactRole = typeof shiftData.onsiteContactRole === 'string' ? shiftData.onsiteContactRole : '';
             shiftUniformRequirements = typeof shiftData.uniformRequirements === 'string'
               ? shiftData.uniformRequirements
               : Array.isArray(shiftData.uniformRequirements)
@@ -1059,6 +1095,16 @@ const AssignmentDetails: React.FC = () => {
         jobOrderData.checkInInstructions ||
         ''
       ).trim();
+      // On-site contact: assignment → shift → job order (app + cadence parity).
+      const resolvedOnsiteContactName = String(
+        sourceData.onsiteContactName || shiftOnsiteContactName || jobOrderData.onsiteContactName || '',
+      ).trim();
+      const resolvedOnsiteContactPhone = String(
+        sourceData.onsiteContactPhone || shiftOnsiteContactPhone || jobOrderData.onsiteContactPhone || '',
+      ).trim();
+      const resolvedOnsiteContactRole = String(
+        sourceData.onsiteContactRole || shiftOnsiteContactRole || jobOrderData.onsiteContactRole || '',
+      ).trim();
       
       // Parse dates: prefer assignment (shift) start/end when present
       let startDate: Date | undefined;
@@ -1127,6 +1173,9 @@ const AssignmentDetails: React.FC = () => {
         staffInstructions: resolvedStaff,
         staffInstructions_i18n: resolvedStaffI18n,
         checkInInstructions: resolvedCheckInInstructions,
+        onsiteContactName: resolvedOnsiteContactName || undefined,
+        onsiteContactPhone: resolvedOnsiteContactPhone || undefined,
+        onsiteContactRole: resolvedOnsiteContactRole || undefined,
         uniformRequirements: sourceData.uniformRequirements ||
           shiftUniformRequirements ||
           (Array.isArray(jobOrderData.uniformRequirements) ? jobOrderData.uniformRequirements.filter(Boolean).join(', ') : (typeof jobOrderData.uniformRequirements === 'string' ? jobOrderData.uniformRequirements : undefined)),
@@ -1379,7 +1428,23 @@ const AssignmentDetails: React.FC = () => {
           start time, location, and what to bring.
         </Alert>
       )}
-      {acceptIntentState === 'error' && (
+      {acceptIntentState === 'error' && acceptGate && user?.uid && (
+        <HeadshotGateCard
+          uid={user.uid}
+          gate={acceptGate}
+          onUploaded={() => {
+            // Photo is on the user doc; re-run the one-click accept.
+            setAcceptGate(null);
+            setAcceptIntentError(null);
+            setAcceptIntentState('idle');
+          }}
+          onDismiss={() => {
+            setAcceptGate(null);
+            setAcceptIntentState('idle');
+          }}
+        />
+      )}
+      {acceptIntentState === 'error' && !acceptGate && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setAcceptIntentState('idle')}>
           We couldn&apos;t accept this assignment automatically: {acceptIntentError || 'unknown error'}.
           Scroll down and tap Accept manually, or contact your recruiter.
@@ -1410,7 +1475,7 @@ const AssignmentDetails: React.FC = () => {
       </Stack>
 
       {/* Main content: full-width stack; My Recruiter appended at bottom only when assigned */}
-      <Stack spacing={3}>
+      <Stack spacing={2}>
         {assignment.isOpenShift && (
           <Alert severity="info" icon={<ScheduleIcon />} sx={{ borderRadius: 0 }}>
             {t('assignments.openShiftExplainer')}
@@ -1418,7 +1483,7 @@ const AssignmentDetails: React.FC = () => {
         )}
         {/* Assignment Info (combined): two columns, company/worksite/address looked up when needed */}
         <Card elevation={0}>
-          <CardContent sx={{ pt: 1, px: 1 }}>
+          <CardContent sx={cardContentSx}>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
               {t('assignment.assignmentInfo')}
             </Typography>
@@ -1564,7 +1629,7 @@ const AssignmentDetails: React.FC = () => {
           if (!sDesc && !clockUrl) return null;
           return (
             <Card elevation={0}>
-              <CardContent sx={{ pt: 1, px: 1 }}>
+              <CardContent sx={cardContentSx}>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                   Shift details
                 </Typography>
@@ -1597,6 +1662,55 @@ const AssignmentDetails: React.FC = () => {
             </Card>
           );
         })()}
+
+        {/* Day-of on-site contact (assignment → shift → JO chain) — who to
+            find on arrival. App parity: assignment_detail_screen.dart renders
+            the same card with Text / Call rows. */}
+        {(assignment.onsiteContactName || assignment.onsiteContactPhone) && (
+          <Card elevation={0}>
+            <CardContent sx={cardContentSx}>
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                <PersonPinCircleIcon fontSize="small" color="action" />
+                <Typography variant="h6">{t('assignment.onsiteContact')}</Typography>
+              </Stack>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                {t('assignment.onsiteContactHint')}
+              </Typography>
+              {assignment.onsiteContactName && (
+                <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                  {assignment.onsiteContactName}
+                </Typography>
+              )}
+              {assignment.onsiteContactRole && (
+                <Typography variant="body2" color="text.secondary">
+                  {assignment.onsiteContactRole}
+                </Typography>
+              )}
+              {assignment.onsiteContactPhone && (
+                <Stack direction="row" spacing={1} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<SmsIcon />}
+                    href={`sms:${assignment.onsiteContactPhone}`}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    {t('assignment.textContact')} · {assignment.onsiteContactPhone}
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<CallIcon />}
+                    href={`tel:${assignment.onsiteContactPhone}`}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    {t('assignment.callContact')}
+                  </Button>
+                </Stack>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Staff Instructions: one card per section; show i18n text by preferred language, fallback to legacy .text */}
         {(() => {
@@ -1678,7 +1792,7 @@ const AssignmentDetails: React.FC = () => {
               const files = s.getFiles();
               return (
                 <Card key={s.key} elevation={0}>
-                  <CardContent sx={{ pt: 1, px: 1 }}>
+                  <CardContent sx={cardContentSx}>
                     <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                       {s.title}
                     </Typography>
@@ -1715,7 +1829,7 @@ const AssignmentDetails: React.FC = () => {
         {/* Notes */}
         {assignment.notes && (
           <Card elevation={0}>
-            <CardContent sx={{ pt: 1, px: 1 }}>
+            <CardContent sx={cardContentSx}>
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                 Additional Notes
               </Typography>
@@ -1733,7 +1847,7 @@ const AssignmentDetails: React.FC = () => {
         {/* Location map card — only when we have a worksite address */}
         {worksiteAddressStr && (
           <Card elevation={0}>
-            <CardContent sx={{ pt: 1, px: 1 }}>
+            <CardContent sx={cardContentSx}>
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                 {t('assignment.locationMap')}
               </Typography>
@@ -1777,7 +1891,7 @@ const AssignmentDetails: React.FC = () => {
               title="My Recruiter"
               titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
             />
-            <CardContent sx={{ pt: 0, px: 1 }}>
+            <CardContent sx={{ ...cardContentSx, pt: 0 }}>
               <Stack spacing={2}>
                 {recruiters.map((r) => (
                   <Stack key={r.id} spacing={0.75} component="div">

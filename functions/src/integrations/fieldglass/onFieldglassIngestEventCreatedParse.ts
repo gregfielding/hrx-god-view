@@ -34,6 +34,8 @@ import { logger } from 'firebase-functions/v2';
 
 import { ensureSiteCore } from './ensureSiteCore';
 import { closeFieldglassOrder, ensureJobOrderForFieldglassRequest } from './fieldglassJobOrder';
+import { extractPostingIdFromText } from './enrichment';
+import { enqueuePortalAction } from '../portalActions/enqueuePortalAction';
 import {
   parseFieldglassEmail,
   type FieldglassClosureParseSuccess,
@@ -53,6 +55,42 @@ const FieldValue = admin.firestore.FieldValue;
 
 /** Statuses a recruiter has already acted on — a re-parse must not clobber. */
 const DECIDED_STATUSES = new Set(['approved', 'applied', 'rejected', 'superseded']);
+
+/**
+ * Change loop (2026-09-06): any Fieldglass email about a posting HRX already
+ * tracks — a revision we can't classify, or a re-distribution of a decided
+ * order — asks the portal worker (Natalie) to re-read that posting's detail
+ * page NOW, so rate/positions/status changes land on the JO within minutes
+ * instead of at the next scheduled pass. Fail-open, never blocks the parse.
+ */
+async function requestTargetedPortalSync(
+  db: FirebaseFirestore.Firestore,
+  tenantId: string,
+  postingId: string,
+  reason: string,
+  sourceEventHash: string,
+): Promise<{ id: string; created: boolean } | null> {
+  try {
+    const res = await enqueuePortalAction(db, {
+      tenantId,
+      action: 'fieldglass_sync',
+      payload: { postingIds: [postingId], force: true, reason },
+      refs: { externalShiftRequestId: `fieldglass__${postingId}` },
+      createdBy: { kind: 'system', id: `onFieldglassIngestEventCreatedParse:${sourceEventHash}` },
+      priority: 20,
+      force: true,
+    });
+    logger.info('[fieldglass] targeted portal sync requested', { tenantId, postingId, reason, id: res.id, created: res.created });
+    return { id: res.id, created: res.created };
+  } catch (err) {
+    logger.warn('[fieldglass] targeted portal sync enqueue failed (non-fatal)', {
+      tenantId,
+      postingId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
 
 /** Send `body` to the recruiter phones on the integration config doc.
  *  Shared by new-order, closure, and unrecognized-email alerts. */
@@ -271,9 +309,25 @@ export const onFieldglassIngestEventCreatedParse = onDocumentCreated(
       // fires at most once per unique email.
       if (failure.reason === 'unclassified') {
         const subject = (data.raw?.subject ?? '(no subject)').slice(0, 120);
+        // Revision loop: if the email names a posting we already track, have
+        // the portal worker re-read it right away instead of asking a human
+        // to press Sync Sodexo.
+        const mentioned = extractPostingIdFromText(`${data.raw?.subject ?? ''}\n${data.raw?.text ?? ''}`);
+        let synced: { id: string; created: boolean } | null = null;
+        if (mentioned) {
+          const known = await db.doc(`tenants/${tenantId}/external_shift_requests/fieldglass__${mentioned}`).get();
+          if (known.exists) synced = await requestTargetedPortalSync(db, tenantId, mentioned, 'unclassified_email', eventHash);
+        }
+        await sourceRef.update({
+          parseFailureReason: failure.reason,
+          ...(mentioned ? { mentionedPostingId: mentioned } : {}),
+          ...(synced ? { portalSyncActionId: synced.id } : {}),
+        });
         await sendFieldglassAlertSms(
           tenantId,
-          `Fieldglass email not recognized (no action taken): "${subject}". Check the order in Fieldglass or run Sync Sodexo.`,
+          synced
+            ? `Fieldglass email not recognized: "${subject}". Natalie is re-syncing ${mentioned} from the portal now — check the JO in a few minutes.`
+            : `Fieldglass email not recognized (no action taken): "${subject}". Check the order in Fieldglass or run Sync Sodexo.`,
           { source: 'fieldglass_unclassified_email_alert', sourceId: eventHash },
         ).catch(() => undefined);
       }
@@ -320,6 +374,11 @@ export const onFieldglassIngestEventCreatedParse = onDocumentCreated(
         requestId,
         existingStatus,
       });
+      // A re-distributed posting often carries a change (dates, positions,
+      // rate) — re-read the detail page so the live JO reflects it.
+      if (existingStatus !== 'rejected' && existingStatus !== 'superseded') {
+        await requestTargetedPortalSync(db, tenantId, postingId, 'redistributed_email', eventHash);
+      }
       return;
     }
 

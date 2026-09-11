@@ -26,6 +26,8 @@
  * directly.
  */
 
+import { matchPosition } from '../../shared/jobOrder/matchPositionTitle';
+
 export interface PricedPosition {
   jobTitle?: string;
   payRate?: unknown;
@@ -51,6 +53,15 @@ export interface ShiftDressing {
   wcCode?: string;
   /** Which source supplied the pay — stamped for transparency. */
   paySource?: 'email' | 'jo_position' | 'account_position';
+  /**
+   * The JO position the Flex role resolved to (its canonical `jobTitle`).
+   * The shift's `defaultJobTitle` must carry THIS, not Indeed's role name —
+   * the per-position posting pairs shifts by position title, and a
+   * Flex-named shift ("Warehouse Operative" on a "Package Handler (Warehouse
+   * Operative)" JO) rendered the posting with no shifts and no Apply
+   * buttons (JO #501, 2026-09-09).
+   */
+  positionJobTitle?: string;
 }
 
 function num(v: unknown): number | undefined {
@@ -58,40 +69,10 @@ function num(v: unknown): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-function tokens(s: string): Set<string> {
-  return new Set(
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter((t) => t.length >= 3),
-  );
-}
-
-/** Best position for a role: exact title → contains → the single
- *  position sharing ≥1 token. Null when nothing matches confidently. */
-export function matchPosition(
-  roleName: string,
-  positions: PricedPosition[],
-): PricedPosition | null {
-  const role = roleName.trim().toLowerCase();
-  if (!role || positions.length === 0) return null;
-  const titled = positions.filter((p) => String(p.jobTitle ?? '').trim());
-  const exact = titled.find((p) => String(p.jobTitle).trim().toLowerCase() === role);
-  if (exact) return exact;
-  // Containment and token overlap must both be UNIQUE — "Associate"
-  // is contained in several titles and proves nothing.
-  const contains = titled.filter((p) => {
-    const t = String(p.jobTitle).trim().toLowerCase();
-    return t.includes(role) || role.includes(t);
-  });
-  if (contains.length === 1) return contains[0];
-  const roleToks = tokens(role);
-  const sharing = titled.filter((p) =>
-    [...tokens(String(p.jobTitle))].some((t) => roleToks.has(t)),
-  );
-  return sharing.length === 1 ? sharing[0] : null;
-}
+// Role→position resolution is shared with the client jobs-board filter
+// (2026-09-09): the posting only shows shifts that RESOLVE to its position,
+// so creator and reader must agree. Re-exported for existing callers/tests.
+export { matchPosition } from '../../shared/jobOrder/matchPositionTitle';
 
 export function resolveShiftDressing(input: ShiftDressingInput): ShiftDressing {
   const role = String(input.roleName ?? '').trim();
@@ -135,5 +116,7 @@ export function resolveShiftDressing(input: ShiftDressingInput): ShiftDressing {
   }
   if (billRate !== undefined) out.billRate = billRate;
   if (wcCode) out.wcCode = wcCode;
+  const joTitle = String(joPos?.jobTitle ?? '').trim();
+  if (joTitle) out.positionJobTitle = joTitle;
   return out;
 }

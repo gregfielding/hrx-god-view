@@ -13,6 +13,7 @@ import { WORKER_AI_PRESCREEN_PROMPTS } from './prescreenQuestionLabels';
 import type { AiInterviewContext } from './aiInterviewContextTypes';
 import { buildAiInterviewContext, buildProfileFirstAiInterviewContext } from './buildAiInterviewContext';
 import { buildDynamicPrescreenSteps } from './buildDynamicPrescreenQuestions';
+import { resolvePrescreenPositionContext } from './positionTypeQuestionPacks';
 import { applyPrescreenDynamicDedupe } from './prescreenDynamicDedupe';
 import type { DynamicAnswerValue } from './evaluateAiHiringDecision';
 import { maybeWritePhase6AutomationQueue } from './phase6AiAutomationQueue';
@@ -431,6 +432,11 @@ export const submitWorkerAiPrescreenInterview = onCall(
     let dynamicStepIds = new Set<string>();
     if (interviewContext) {
       dynamicSteps = buildDynamicPrescreenSteps(interviewContext);
+      // INT-2b position-type packs (dyn_pos_<type>_<slug>) are part of the
+      // plan the worker answered — accept + store them here too. Missing
+      // since 2026-08-30: every pack applicant's submit failed with
+      // "Unknown dynamicAnswers key: dyn_pos_industrial_lifting" (2026-09-07).
+      dynamicSteps.push(...resolvePrescreenPositionContext(interviewContext).packSteps);
       dynamicStepIds = new Set(dynamicSteps.map((s) => s.id));
       dynamicAnswers = parseDynamicAnswers(data.dynamicAnswers, dynamicStepIds);
       const deduped = applyPrescreenDynamicDedupe(dynamicSteps, answers, dynamicAnswers);

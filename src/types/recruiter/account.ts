@@ -238,6 +238,28 @@ export interface RecruiterAccount {
    */
   autoCreateUserGroups?: boolean;
   /**
+   * Tier automation opt-ins (Greg 2026-09-04). `autoOnboardTier2`: a Tier 1/2
+   * worker applying to this account (or a child of it — children inherit the
+   * national's flag) auto-starts onboarding + the default screening. Distinct
+   * from `tenants/{t}/settings/tierAutomation` (the tenant-wide promotion
+   * scorecard) — same name, different doc, different shape.
+   */
+  tierAutomation?: {
+    /** Legacy boolean — kept in lockstep with autoOnboardDownToTier > 0. */
+    autoOnboardTier2?: boolean;
+    /** Ramp throttle (Greg 2026-09-07): 0 = off, 1 = Tier 1 only, 2 = Tiers 1+2. */
+    autoOnboardDownToTier?: 0 | 1 | 2;
+    /** Daily auto-onboard budget for this account family (default 25). */
+    maxAutoOnboardsPerDay?: number;
+    lastSweepAt?: unknown;
+    lastSweepStats?: {
+      pooledApplications?: number;
+      promoted?: number;
+      onboardsAttempted?: number;
+      truncated?: boolean;
+    };
+  };
+  /**
    * National accounts only (F.4 — CC.A audit, locked 2026-04-30): default
    * job title used when this national's auto-create-gig-JO trigger spawns
    * a draft JO. The JO builder (`gigJobOrderFromChildAccount.ts`) reads

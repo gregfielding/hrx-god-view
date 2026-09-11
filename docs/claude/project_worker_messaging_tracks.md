@@ -92,6 +92,55 @@ notification settings; bodies localize EN/ES off `users/{uid}.preferredLanguage`
 - **Not in the cadence**: interview invites, apply-wizard nudges, profile
   reminders, phone-change — separate senders, out of scope here.
 
+## Decisions (Greg, 2026-09-03)
+
+1. **Claim Shift**: agreed — a claim IS the confirmation; skip the
+   24h/23h/22h ask ladder, keep reconfirm_4h + T-2h logistics + check-in.
+   **Messaging side BUILT 2026-09-06** (deployed
+   onAssignmentConfirmedScheduleReminders + dispatchScheduledWorkerReminders):
+   profile `gig_claimed` (`cadence/shiftReminderProfile.ts`) = the resolved
+   gig track (cort_gig keeps its T-15m clock-in) minus
+   `ASK_LADDER_REMINDER_TYPES` (24h / 23h / 22h / confirm_now), plus the new
+   `gig_claim_confirmation` step synthesized ~1 min after the claim ("You're
+   on the crew! {shift}, {when} at {site}. Address… Reply CANCEL if your
+   plans change." — `cadenceMessages.buildClaimConfirmationMessage`, EN/ES,
+   skipped when claimedAt/createdAt is >24h old so resyncs never re-greet).
+   The fence is `assignment.acquisition === 'claimed'` (`isClaimedAssignment`)
+   — the claim writer MUST stamp `acquisition: 'claimed'` + `claimedAt`; the
+   scheduler also seeds `cortConfirmation.state = 'confirmed'`
+   (`confirmedVia: 'claim'`) so the reply handler treats CANCEL correctly.
+   Careers / open shifts are fenced before the claim fence and never
+   re-route. Tests: `__tests__/cadence/shiftReminderProfile.test.ts` +
+   cadenceMessages. **Claim endpoint SHIPPED later the same day**
+   (`functions/src/claims/claimShift.ts` via `respondToAssignment`
+   `decision:'claim'`): it stamps `acquisition:'claimed'`, `claimedAt`, and
+   `cortConfirmation {state:'confirmed', profileId:'gig_claimed',
+   confirmedVia:'claim'}` at birth, and sets `suppressInitialNotification`
+   so the legacy ACCEPT/DECLINE offer SMS never goes out — the track above
+   is the only message. Live only on postings a recruiter opts in with
+   `claimShiftEnabled` (see project_tier_system_claim_shift_spec.md).
+2. **Open shifts**: SHIPPED — welcome once at assignment creation
+   (`openshift_welcome`, skipped for assignments older than 7 days so the
+   rollout can't greet long-standing crews) + Sunday-17:00-local weekly
+   digest (`openshift_weekly_digest`, self-re-arming doc, week-scoped
+   dedupe, stops at endDate/terminal status). Replaces the per-day 24h+2h
+   pairs — the open-shift fence now routes to profile `open_shift`.
+3. **Careers silent after day 1**: intentional. No week-1 messaging.
+4. **Channels**: direction is app-first over time; SMS stays primary until
+   adoption justifies per-step demotion. No code change yet.
+5. **Template variables**: SHIPPED — sequence copy overrides can use
+   `{onsiteContact}` (composed "Name (Role): phone"), `{onsiteContactName}`,
+   `{onsiteContactPhone}`, `{onsiteContactRole}`, `{parking}`, `{checkIn}`.
+   NOTE: logistics values are resolved at dispatch only for the T-2h
+   instructions step — on other steps these tokens render empty.
+
+Related (Danny, 2026-09-03): AI-prescreen chase SMS now SKIPS workers who
+already hold a confirmed/active assignment
+(`processWorkerAiPrescreenReminders`, outcome `worker_already_scheduled`)
+— a placed worker being chased to "complete your 2-minute interview" read
+as mandatory and confused crews. Tenant-wide kill switch if ever needed:
+`tenants/{tid}.workerAiPrescreenOutreachEnabled = false`.
+
 ## Gaps & decision questions for the deep dive
 
 1. **Claim Shift (tier system) has no track yet.** A claimed gig shift is

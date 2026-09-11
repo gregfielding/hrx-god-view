@@ -266,6 +266,17 @@ now requires a same-session Flutter update or a punch-list entry here.
 [[project-payroll-help-desk]] for the full decision. One help door,
 grounded assistant, one queue, no dead ends; standalone web Q&A retired.
 
+## 2026-09-10 — Illinois AI-in-hiring (web + app shipped together)
+See [[project_illinois_ai_hiring]]. App pieces: `AiHiringNoticeCard` (job
+detail under the hero, apply wizard review step, application detail); the
+prescreen `_Phase.notice` gate stamping `users/{uid}.aiHiringNotice`;
+`showRecruiterReviewRequestSheet` → `tenants/{t}/recruiter_review_requests`;
+`VoluntarySelfIdScreen` (`/c1/workers/profile/self-identification` →
+`eeo_self_identifications/{uid}`). `JobPostingModel.worksiteState` now falls
+back to the posting's top-level `state`. One deliberate asymmetry, not a gap:
+web My Applications rows get an "Ask a recruiter" action; app Schedule rows
+don't, because app application detail carries the full notice card.
+
 ## Watchouts
 - **Cold-start Riverpod race — MITIGATED, not fully fixed (c1_app
   013ada7, 2026-08-29)**: intermittent cold-boot red screen "Concurrent
@@ -375,9 +386,10 @@ call on the day-of hero and an On-site contact card on Assignment
 Details. Parking/entrance/check-in text already existed as
 `staffInstructions` (account → location → JO → shift → assignment) —
 nothing new needed there; venue-level defaults are edited on
-AccountLocationDetail. STILL WEB-SIDE GAP: the worker-facing web
-assignment view doesn't render the structured on-site contact (app
-does). Bag-policy convention: use `staffInstructions.other` for now.
+AccountLocationDetail. Web-side gap CLOSED 2026-09-06: AssignmentDetails
+renders the same "On-site contact" card (name / role / phone with Text +
+Call links; assignment → shift → JO chain, i18n `assignment.onsiteContact*`).
+Bag-policy convention: use `staffInstructions.other` for now.
 
 **T-2h logistics push SHIPPED 2026-09-03** (hrx-god-view daeb0af1,
 deployed dispatchScheduledWorkerReminders +
@@ -391,6 +403,95 @@ career track) — Greg 2026-09-03: gig/open-shift/career messaging
 treatment needs a deep dive before touching the other tracks. Caveat:
 messagingSequences copy OVERRIDES replace the built-in SMS body — an
 overridden sequence won't show logistics until its template adds them.
+
+**Profile photo parity (2026-09-06, hrx-god-view + c1_app same session):**
+Home action items contract v2 — `add_profile_photo` is back on Home and
+STICKY (rendered below the 3 capped work items instead of being squeezed
+out). App side: `kWorkerDashboardActionItemsHomeStickyIds` in
+`worker_dashboard_action_items_v1_provider.dart` mirrors web's
+`WORKER_DASHBOARD_ACTION_ITEMS_HOME_STICKY_IDS`. Both Flutter upload screens
+now catch `FirebaseException` first and show the code (the nested Storage
+path was permission-denied for five months behind a bare catch). Ships in
+1.0.1 (1.0.0 is in review). Web wizard job-apply flow got its headshot step
+back with Take Photo primary + Skip as a text link — the app's apply flow
+already had that hierarchy. See docs/claude/project_worker_profile_photo.md.
+
+**Headshot gate re-armed 2026-09-06 (server):** `respondToAssignment(accept)`
+throws `failed-precondition` + `details.code` `HEADSHOT_MISSING` /
+`HEADSHOT_REJECTED` again (no photo, or Vision/recruiter says not a headshot:
+no_face / multiple_faces / inappropriate / manual_override). Pending, error,
+unverified, and quality rejections pass. App side needs NO change: the
+`runAcceptAssignmentOfferFlow` → `HeadshotGateBlock.tryParse` →
+`showHeadshotGateBottomSheet` → `HeadshotCaptureScreen` path already exists
+and matches web's new inline `HeadshotGateCard`. Policy table in
+docs/claude/project_worker_profile_photo.md.
+
+**Claim Shift SHIPPED both sides 2026-09-06 (hrx-god-view + c1_app same
+session):** per-posting opt-in `job_postings.claimShiftEnabled` (recruiter
+toggle "Instant Claim"; default off — nothing changes on live postings until
+flipped). With it on, an available gig row shows a black **Claim Shift**
+(web `ShiftSelector` / app `_GigRowActionButton`), the 4-checkbox
+acknowledgement sheet (uniform / transportation / arrival / no-show, green
+confirm) calls `respondToAssignment` `decision:'claim'`, and the worker lands
+on Assignment Details with a CONFIRMED assignment (`acquisition:'claimed'` →
+`gig_claimed` messaging track). Typed refusals: web `formatClaimShiftError`,
+app `ClaimShiftBlock.tryParse` (+ the existing headshot gate sheet). Spec +
+server details: docs/claude/project_tier_system_claim_shift_spec.md.
+**Per-day rows + live spots SHIPPED later 2026-09-06 (both sides):**
+`gigShiftRowsProvider` now expands a multi-day gig into one row per
+`dateSchedule` day with hours (web ShiftSelector parity) — apply writes
+`applyDates` for that day (quick-apply `applyDays`), claim sends the day,
+withdraw is day-scoped, and row state (submitted / offered / confirmed)
+matches assignments and applications BY DAY. Spots: the server keeps
+`shift.liveFill` (shiftFillAutomation — every live assignment incl. pending
+offers, per-day counts + per-day targets); web `resolveShiftSpots` and the
+app's `_liveSpots` derive "X spots left" / a disabled **Full** row from it,
+falling back to the headcount when a shift doc has no liveFill yet.
+
+**Profile-tab avatar (web caught up 2026-09-06):** the app's
+`_ProfileNavIcon` already showed the worker's photo in the bottom nav; web
+`WorkerBottomTabs` now does too (`useAuth().avatarUrl`, ink ring when
+active, person icon fallback). Greg spotted it on the first Claim Shift
+test ("my avatar is on my profile page but not in the menu").
+
+**Certification scan status (web shipped 2026-09-08, app GAP):** web
+worker cert rows now carry a Verified / Under review / Needs a new photo
+chip (`EducationStep`, keys `profile.certStatus*`) fed by
+`users/{uid}/certification_records/{id}.review.status`, and every web
+upload creates that canonical row so the Claude scan runs
+(docs/claude/project_certification_scan.md). The app's
+`ProfileCertificationsDocumentsScreen` / `_certificationsWritePatch` still
+write only the legacy `certifications[]` (+ `workerProfile.credentials`)
+rows — app uploads are NOT scanned and show no status. App to-do: on
+upload, also create the canonical record (same shape as
+`createOrUpdateCertificationRecord.ts`: catalogEntryId via the manifest
+lookup, `review.status:'submitted'`, `recordStatus:'pending_review'`,
+`source:'worker_upload'`, `evidenceFileRefs[{storagePath,storageUrl,
+fileName}]`) and patch `certificationRecordId` onto the legacy row; then
+read `review.status` for the chip and honor the in-app
+`certification_verified` / `certification_reupload_request` notifications.
+
+- [ ] 2026-09-08 — SMS privacy notice gained `legal.smsPrivacy.s2P4` (explicit "we do not share/sell mobile number or SMS consent data with third parties for marketing" — required by Twilio 10DLC review, error 30908). If the Flutter app renders the notice from its own copy, add the same paragraph (en + es).
+Follow-up 2026-09-08 (later): the web Add Certification dialog also
+takes an optional **certificate number** (`profile.certificateNumber*`
+keys) stored on the canonical row as `certificateNumber` — add the same
+field to the app's certification form when it gains canonical writes.
+
+- [ ] 2026-09-09 — Phone sign-up (`PhoneSignupGate`) now shows a SEPARATE, unchecked, optional SMS-consent checkbox with the CTIA disclosure ("Message and data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment") and links to /privacy, /terms, /consent; `checkOtp` takes `smsConsent: boolean` and stamps `users.smsOptIn` + `userConsents/{uid}`. Before this, every phone signup was stamped `userAgreements.smsConsent.agreed = true` with no checkbox (bundled consent — a Twilio 10DLC rejection reason). The Flutter sign-up must add the same box and send `smsConsent`.
+
+## 2026-09-09 — web jobs-board per-position shift pairing loosened (no app change needed)
+
+Web `fetchActiveShiftsForJobOrder` now pairs shifts to a gig posting's
+`positionJobTitle` via `shared/jobOrder/matchPositionTitle.ts`
+(`shiftBelongsToPosition`) instead of an exact string compare — Flex-born
+shifts titled by Indeed ("Warehouse Operative") were invisible on the
+"Package Handler (Warehouse Operative)" posting (JO #501, no Apply
+buttons). The app's `gigShiftRowsProvider` loads every shift on the JO
+with no position filter at all, so it never had this bug — but note the
+REVERSE gap: it also applies no `status` (closed/cancelled) or
+`hideFromJobsBoard` filter (web hides both). If per-position postings
+ever need the app to hide other positions' shifts, port
+`shiftBelongsToPosition` to Dart.
 
 ## 2026-09-10 — pay stub viewing: web now opens a real Everee embed, app still expects dead `pdfUrl`
 

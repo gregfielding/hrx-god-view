@@ -28,13 +28,14 @@ import * as crypto from 'crypto';
 
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 
 export const SHORT_LINKS_COLLECTION = 'short_links';
-export const SHORT_LINK_BASE = 'https://hrxone.com/l/';
+export const SHORT_LINK_BASE = `${PUBLIC_APP_ORIGIN}/l/`;
 
 const SLUG_LENGTH = 10;
 const SLUG_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';

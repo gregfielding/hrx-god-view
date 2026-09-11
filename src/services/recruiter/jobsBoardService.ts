@@ -20,6 +20,8 @@ import {
   resolveJobOrderRequirementsForPosition,
   type GigPositionRequirementOverrides,
 } from '../../shared/jobOrder/resolveJobOrderRequirements';
+import { shiftBelongsToPosition } from '../../shared/jobOrder/matchPositionTitle';
+import type { CraigslistPosting } from '../../shared/craigslist';
 
 /** Lowercase trim for comparing job order workflow status (open, cancelled, on_hold, …). */
 export function normalizeJobOrderStatusValue(status: unknown): string {
@@ -215,6 +217,16 @@ export interface JobBoardShift {
   staffNeeded: number; // Total positions for this shift
   staffFilled: number; // Currently filled positions (calculated)
   spotsRemaining: number; // staffNeeded - staffFilled (calculated)
+  /**
+   * Per-day spots left on a multi-day gig (`YYYY-MM-DD` → remaining), from
+   * the server-maintained `shift.liveFill` (shiftFillAutomation, 2026-09-06:
+   * every live assignment counts, pending offers included — the same set the
+   * Claim Shift capacity transaction uses). Absent when the shift doc has no
+   * liveFill yet; callers fall back to the day's headcount.
+   */
+  spotsRemainingByDay?: Record<string, number>;
+  /** True when `spotsRemaining` came from the live server count, not the headcount stub. */
+  spotsLive?: boolean;
   showStaffNeeded?: boolean; // Whether to display staff count on jobs board
   poNumber?: string; // Optional PO number for this shift
   shiftDescription?: string; // Optional shift-specific details
@@ -226,6 +238,46 @@ export interface JobBoardShift {
   shiftTitle_i18n?: ShiftFieldI18n;
   shiftDescription_i18n?: ShiftFieldI18n;
   defaultJobTitle_i18n?: ShiftFieldI18n;
+}
+
+/**
+ * Worker-facing spots from `shift.liveFill` (server-maintained; see
+ * functions/src/shiftFillAutomation.ts). Falls back to the headcount when the
+ * doc has no liveFill yet (no assignment has been written since the field
+ * shipped) so nothing renders as 0-spots by accident.
+ */
+export function resolveShiftSpots(data: any): {
+  staffNeeded: number;
+  staffFilled: number;
+  spotsRemaining: number;
+  spotsRemainingByDay?: Record<string, number>;
+  spotsLive: boolean;
+} {
+  const headcount = Number(data?.totalStaffRequested) > 0 ? Number(data.totalStaffRequested) : 1;
+  const lf = data?.liveFill;
+  if (!lf || typeof lf !== 'object' || !Number.isFinite(Number(lf.total))) {
+    return { staffNeeded: headcount, staffFilled: 0, spotsRemaining: headcount, spotsLive: false };
+  }
+  const target = Number.isFinite(Number(lf.target)) && Number(lf.target) > 0 ? Number(lf.target) : headcount;
+  const total = Math.max(0, Number(lf.total) || 0);
+  // The server derives `remaining` (shift's own date for single/recurring
+  // shifts; best day for dateSchedule gigs) — read it, don't recompute.
+  const remaining = Number.isFinite(Number(lf.remaining)) ? Math.max(0, Number(lf.remaining)) : Math.max(0, target - total);
+  const remainingByDayRaw =
+    lf.remainingByDay && typeof lf.remainingByDay === 'object' ? (lf.remainingByDay as Record<string, unknown>) : {};
+  const spotsRemainingByDay: Record<string, number> = {};
+  for (const [day, left] of Object.entries(remainingByDayRaw)) {
+    const n = Number(left);
+    if (!Number.isFinite(n)) continue;
+    spotsRemainingByDay[day] = Math.max(0, n);
+  }
+  return {
+    staffNeeded: target,
+    staffFilled: total,
+    spotsRemaining: remaining,
+    ...(Object.keys(spotsRemainingByDay).length > 0 ? { spotsRemainingByDay } : {}),
+    spotsLive: true,
+  };
 }
 
 const normalizeAutoAddGroups = (value?: string | string[] | null): string[] => {
@@ -266,6 +318,8 @@ export interface JobsBoardPost {
   /** External job board listings (optional). */
   craigslistUrl?: string;
   indeedUrl?: string;
+  /** Semi-automated Craigslist posting (opt-in per post). See shared/craigslist.ts. */
+  craigslist?: CraigslistPosting | null;
 
   // Company & Location
   companyId?: string;
@@ -294,6 +348,13 @@ export interface JobsBoardPost {
   showPayRate: boolean;
   workersNeeded?: number; // Optional for Gig jobs
   showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
+  /**
+   * Claim Shift opt-in (2026-09-06): when true, gig shift rows on this
+   * posting show a black "Claim Shift" CTA that books the worker instantly
+   * (server: respondToAssignment decision 'claim'). Default off — recruiters
+   * flip it per posting. Ignored for career postings.
+   */
+  claimShiftEnabled?: boolean;
   eVerifyRequired: boolean;
   /**
    * AccuSource screening package for this posting. Used when hiring / auto-hire so onboarding can resolve
@@ -414,6 +475,8 @@ export interface CreatePostData {
   showPayRate: boolean;
   workersNeeded?: number; // Optional for Gig jobs
   showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
+  /** Claim Shift opt-in — see `JobPosting.claimShiftEnabled`. */
+  claimShiftEnabled?: boolean;
   eVerifyRequired: boolean;
   screeningPackageId?: string | null;
   screeningPackageName?: string | null;
@@ -577,9 +640,7 @@ export class JobsBoardService {
           dateSchedule: isMulti ? (data.dateSchedule || undefined) : undefined,
           startTime: data.defaultStartTime, // HH:mm format
           endTime: data.defaultEndTime, // HH:mm format
-          staffNeeded: data.totalStaffRequested || 1,
-          staffFilled: 0, // TODO: Calculate from assignments in future phase
-          spotsRemaining: data.totalStaffRequested || 1, // TODO: Calculate in future phase
+          ...resolveShiftSpots(data),
           showStaffNeeded: data.showStaffNeeded || false,
           poNumber: data.poNumber,
           shiftDescription: data.shiftDescription,
@@ -608,7 +669,7 @@ export class JobsBoardService {
    * @param tenantId Tenant ID
    * @param jobOrderId Job Order ID
    * @param filterDays Number of days in future to include (default: 90 for event gigs)
-   * @param positionJobTitle When set (Gig per-position posts), only shifts with matching defaultJobTitle
+   * @param positionJobTitle When set (Gig per-position posts), only shifts belonging to that position (loose title match)
    */
   async fetchActiveShiftsForJobOrder(
     tenantId: string, 
@@ -686,9 +747,7 @@ export class JobsBoardService {
           dateSchedule: isMulti ? (data.dateSchedule || undefined) : undefined,
           startTime: data.defaultStartTime, // HH:mm format
           endTime: data.defaultEndTime, // HH:mm format
-          staffNeeded: data.totalStaffRequested || 1,
-          staffFilled: 0, // TODO: Calculate from assignments
-          spotsRemaining: data.totalStaffRequested || 1, // TODO: Calculate
+          ...resolveShiftSpots(data),
           showStaffNeeded: data.showStaffNeeded || false,
           poNumber: data.poNumber,
           shiftDescription: data.shiftDescription,
@@ -703,7 +762,17 @@ export class JobsBoardService {
 
       const shifts = shiftsRaw
         // For Gig per-position posts: only include shifts for this position
-        .filter((shift) => !positionJobTitle || shift.defaultJobTitle === positionJobTitle)
+        // Loose per-position pairing (see shared/jobOrder/matchPositionTitle):
+        // an exact compare hid every Flex-born shift whose title differed from
+        // the JO position ("Warehouse Operative" vs "Package Handler (Warehouse
+        // Operative)") — no shifts, no Apply buttons (JO #501, 2026-09-09).
+        .filter((shift) =>
+          shiftBelongsToPosition({
+            shiftJobTitle: shift.defaultJobTitle,
+            positionJobTitle,
+            gigPositions,
+          }),
+        )
         // Multi-day aware overlap filter: include if the shift range overlaps [todayISO, cutoffISO]
         .filter((shift) => {
           // Open shift = ongoing/rolling crew: live while it has no end date or
@@ -869,6 +938,7 @@ export class JobsBoardService {
         showPayRate: customData?.showPayRate !== undefined ? customData.showPayRate : jobOrder.showPayRate,
         workersNeeded: customData?.workersNeeded ?? (isGigJob ? 1 : (jobOrder.workersNeeded ?? 1)),
         showWorkersNeeded: customData?.showWorkersNeeded !== undefined ? customData.showWorkersNeeded : false, // Default to false so workers needed is hidden on job board unless explicitly enabled
+        claimShiftEnabled: customData?.claimShiftEnabled === true, // Claim Shift opt-in, default off
         eVerifyRequired: customData?.eVerifyRequired !== undefined ? customData.eVerifyRequired : jobOrder.eVerifyRequired,
         screeningPackageId:
           customData?.screeningPackageId !== undefined
@@ -1100,6 +1170,7 @@ export class JobsBoardService {
         showPayRate: postData.showPayRate,
         ...(postData.workersNeeded !== undefined && { workersNeeded: postData.workersNeeded }),
         ...(postData.showWorkersNeeded !== undefined && { showWorkersNeeded: postData.showWorkersNeeded }),
+        ...(postData.claimShiftEnabled !== undefined && { claimShiftEnabled: postData.claimShiftEnabled === true }),
         eVerifyRequired: postData.eVerifyRequired,
         ...(postData.screeningPackageId !== undefined
           ? {

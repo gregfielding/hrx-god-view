@@ -8,9 +8,16 @@ import InfoIcon from '@mui/icons-material/Info';
 import PersonIcon from '@mui/icons-material/Person';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import type { NotificationType, WorkerNotification } from '../../types/unifiedWorkerNotifications';
-import { t } from '../../i18n';
+import { getLanguage, t } from '../../i18n';
 
 type WorkerNotificationWithId = WorkerNotification & { id: string };
+
+/** Current-language variant with EN → send-time fallback (2026-09-03). */
+function localized(i18n: { en?: string; es?: string } | undefined, fallback: string): string {
+  const lang = getLanguage();
+  const v = i18n?.[lang as 'en' | 'es']?.trim() || i18n?.en?.trim();
+  return v || fallback;
+}
 
 const typeIcons: Record<NotificationType, React.ReactNode> = {
   assignment: <AssignmentIcon fontSize="small" />,
@@ -63,7 +70,7 @@ const WorkerNotificationListItem: React.FC<WorkerNotificationListItemProps> = ({
             <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0 }} />
           )}
           <Typography variant="subtitle2" sx={{ fontWeight: notification.readAt ? 400 : 600 }}>
-            {notification.title}
+            {localized(notification.title_i18n, notification.title)}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             {formatTime(notification.createdAt)}
@@ -74,7 +81,7 @@ const WorkerNotificationListItem: React.FC<WorkerNotificationListItemProps> = ({
           color="text.secondary"
           sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}
         >
-          {notification.body}
+          {localized(notification.body_i18n, notification.body)}
         </Typography>
       </Box>
       {!notification.readAt && (

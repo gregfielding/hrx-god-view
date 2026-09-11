@@ -109,6 +109,8 @@ interface PublicJobPosting {
   showPayRate: boolean;
   workersNeeded?: number;
   showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
+  /** Claim Shift opt-in — worker rows show "Claim Shift" instead of Apply. */
+  claimShiftEnabled?: boolean;
   eVerifyRequired?: boolean;
   screeningPackageName?: string;
   showScreeningPackageOnPost?: boolean;
@@ -543,7 +545,9 @@ const PublicJobsBoard: React.FC = () => {
         state: worksiteAddress.state ?? '',
         zipCode: worksiteAddress.zipCode ?? '',
         country: worksiteAddress.country ?? 'US',
-        coordinates: worksiteAddress.coordinates
+        // JOs carry coords as `worksiteCoordinates` (recruiter page self-backfill)
+        // long before worksiteAddress.coordinates exists (2026-09-09).
+        coordinates: worksiteAddress.coordinates ?? jobOrder.worksiteCoordinates
       };
     }
     
@@ -813,6 +817,7 @@ const PublicJobsBoard: React.FC = () => {
             showPayRate: post.showPayRate,
             workersNeeded: post.workersNeeded,
             showWorkersNeeded: post.showWorkersNeeded === true, // Default to false so workers needed is hidden unless explicitly enabled
+            claimShiftEnabled: post.claimShiftEnabled === true,
             eVerifyRequired: post.eVerifyRequired,
             screeningPackageName: post.screeningPackageName ?? undefined,
             showScreeningPackageOnPost: post.showScreeningPackageOnPost,
@@ -1051,6 +1056,7 @@ const PublicJobsBoard: React.FC = () => {
               showPayRate: post.showPayRate,
               workersNeeded: post.workersNeeded,
             showWorkersNeeded: post.showWorkersNeeded === true, // Default to false so workers needed is hidden unless explicitly enabled
+            claimShiftEnabled: post.claimShiftEnabled === true,
               eVerifyRequired: post.eVerifyRequired,
               screeningPackageName: post.screeningPackageName ?? undefined,
               showScreeningPackageOnPost: post.showScreeningPackageOnPost,
@@ -1120,6 +1126,28 @@ const PublicJobsBoard: React.FC = () => {
 
   useEffect(() => {
     let filtered = jobs;
+
+    // Dated gigs whose window fully passed are dead listings — hide them
+    // (Greg 2026-09-04, c1_app board parity). endDate is already enriched
+    // with the last DATED shift (open shifts excluded), so standing-crew /
+    // open-shift gigs with no end date keep showing.
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    filtered = filtered.filter((job) => {
+      if (job.jobType !== 'gig') return true;
+      const raw = job.endDate as unknown;
+      const end =
+        raw instanceof Date ? raw : raw ? new Date(raw as string) : undefined;
+      if (!end || isNaN(end.getTime())) return true;
+      // Date-only values parse as UTC midnight — compare by UTC calendar day
+      // so a gig ending today isn't hidden in earlier timezones.
+      const endDay = new Date(
+        end.getUTCFullYear(),
+        end.getUTCMonth(),
+        end.getUTCDate()
+      );
+      return endDay.getTime() >= todayStart.getTime();
+    });
 
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
@@ -1909,14 +1937,15 @@ const PublicJobsBoard: React.FC = () => {
                     const tags: string[] = [];
                     // Gig postings span MANY shifts — applying to one shift
                     // must NOT make the whole-posting card read "Applied".
-                    // Always tag it "Gig" and never show application status.
+                    // Job type always shows; the "New" tag sat on nearly
+                    // every card and said nothing (Greg 2026-09-04, c1_app
+                    // board parity).
                     const isGig = job.jobType === 'gig';
                     if (isGig) {
-                      if (isNew) tags.push(t('jobs.newLabel'));
                       tags.push(t('jobs.gig'));
                     } else {
                       if (hasApplied) tags.push(t('jobs.applicationStatusSubmitted'));
-                      else if (isNew) tags.push(t('jobs.newLabel'));
+                      tags.push(t('jobs.career'));
                     }
                     return tags.length > 0 ? (
                       <Stack direction="row" spacing={0.75} sx={{ mb: 1.5 }} flexWrap="wrap" useFlexGap>

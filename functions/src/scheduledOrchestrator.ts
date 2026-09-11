@@ -2,6 +2,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { CONFIG, isFeatureEnabled } from './utils/configReader';
+import { runTierRampSweep } from './tierAutomation/rampSweep';
 import { runPayrollPaymentIssueSweep } from './payroll/payrollPaymentIssueSweep';
 import { runHoursConfirmedNotifier } from './payroll/hoursConfirmedNotifier';
 import {
@@ -439,6 +440,22 @@ async function runAutoCloseCompletedAssignments(): Promise<SubtaskResult> {
 }
 
 // Subtask registry
+async function runTierRampSweepSubtask(): Promise<SubtaskResult> {
+  const start = Date.now();
+  try {
+    const totals = await runTierRampSweep(db);
+    return {
+      success: totals.errors === 0,
+      durationMs: Date.now() - start,
+      itemsProcessed: totals.onboardsAttempted + totals.promoted,
+      errors: totals.errors,
+      message: `accounts=${totals.accounts} pooled=${totals.pooledApplications} promoted=${totals.promoted} onboards=${totals.onboardsAttempted}`
+    };
+  } catch (error: any) {
+    return { success: false, durationMs: Date.now() - start, message: error.message };
+  }
+}
+
 const SUBTASKS: SubtaskConfig[] = [
   {
     name: 'hours_confirmed_notifier',
@@ -514,8 +531,76 @@ const SUBTASKS: SubtaskConfig[] = [
     handler: runAutoCloseCompletedAssignments,
     maxDurationMs: 60000,
     runParallel: true
+  },
+  {
+    // Account ramp mode (Greg 2026-09-07): backfills auto-onboarding for
+    // existing applicants of opted-in accounts + same-hour Tier 3→2
+    // promotion (tenant mode 'automatic' only). Tenants with no opted-in
+    // accounts cost two queries/hour.
+    name: 'tier_ramp_sweep',
+    enabled: isFeatureEnabled('tier_ramp_sweep', CONFIG.ENABLE_TIER_RAMP_SWEEP),
+    envFlag: 'ENABLE_TIER_RAMP_SWEEP',
+    handler: runTierRampSweepSubtask,
+    maxDurationMs: 180000,
+    runParallel: false
+  },
+  {
+    // Job-order hiring plans (Greg 2026-09-10): hires qualified applicants on
+    // open JOs with hiringPlan.enabled up to the plan's max. Self-limits to a
+    // 90s budget; tenants with no enabled plans cost one query/hour.
+    name: 'job_order_hiring_plan_sweep',
+    enabled: isFeatureEnabled('job_order_hiring_plan_sweep', CONFIG.ENABLE_JOB_ORDER_HIRING_PLAN_SWEEP),
+    envFlag: 'ENABLE_JOB_ORDER_HIRING_PLAN_SWEEP',
+    handler: runJobOrderHiringPlanSweepSubtask,
+    maxDurationMs: 90000,
+    runParallel: false
+  },
+  {
+    // Illinois AI-in-hiring (Greg 2026-09-10): alerts recruiters to worker
+    // "Ask a recruiter" requests hourly and refreshes the daily hiring-rate
+    // report. Tenants with no requests or Illinois postings cost ~3 queries/hour.
+    name: 'ai_hiring_monitor_sweep',
+    enabled: isFeatureEnabled('ai_hiring_monitor_sweep', CONFIG.ENABLE_AI_HIRING_MONITOR_SWEEP),
+    envFlag: 'ENABLE_AI_HIRING_MONITOR_SWEEP',
+    handler: runAiHiringMonitorSweepSubtask,
+    maxDurationMs: 60000,
+    runParallel: false
   }
 ];
+
+async function runAiHiringMonitorSweepSubtask(): Promise<SubtaskResult> {
+  const start = Date.now();
+  try {
+    const { runAiHiringMonitorSweep } = await import('./compliance/aiHiringMonitorSweep');
+    const totals = await runAiHiringMonitorSweep(db);
+    return {
+      success: totals.errors === 0,
+      durationMs: Date.now() - start,
+      itemsProcessed: totals.requestsNotified + totals.reportsWritten,
+      errors: totals.errors,
+      message: `requestsNotified=${totals.requestsNotified} reports=${totals.reportsWritten}`
+    };
+  } catch (error: any) {
+    return { success: false, durationMs: Date.now() - start, message: error.message };
+  }
+}
+
+async function runJobOrderHiringPlanSweepSubtask(): Promise<SubtaskResult> {
+  const start = Date.now();
+  try {
+    const { runJobOrderHiringPlanSweep } = await import('./tierAutomation/jobOrderHiringPlanSweep');
+    const totals = await runJobOrderHiringPlanSweep(db);
+    return {
+      success: totals.errors === 0,
+      durationMs: Date.now() - start,
+      itemsProcessed: totals.onboardsStarted + totals.screeningsOrdered + totals.promoted,
+      errors: totals.errors + totals.failures,
+      message: `plans=${totals.plans} applicants=${totals.applicants} promoted=${totals.promoted} onboards=${totals.onboardsStarted} screenings=${totals.screeningsOrdered} failures=${totals.failures}`
+    };
+  } catch (error: any) {
+    return { success: false, durationMs: Date.now() - start, message: error.message };
+  }
+}
 
 /**
  * Scheduled Orchestrator - Central scheduler that manages all periodic tasks

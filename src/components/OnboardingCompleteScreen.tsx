@@ -251,7 +251,7 @@ const OnboardingCompleteScreen: React.FC = () => {
         </Button>
 
         <Typography variant="body2" color="text.secondary" sx={{ mt: 3 }}>
-          Need help? Contact support at support@hrxone.com
+          Need help? Contact support at hello@c1staffing.com
         </Typography>
       </Paper>
     </Container>

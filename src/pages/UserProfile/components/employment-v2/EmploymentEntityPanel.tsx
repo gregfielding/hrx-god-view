@@ -6,6 +6,7 @@ import type { WorkAuthorizedStatus } from '../../../../utils/workAuthorizedDispl
 import type { EmploymentEntityKey, EmploymentEntityOverview } from './employmentV2Types';
 import type { EmploymentV2ActionResolutionContext } from '../../../../utils/employmentBlockerActionMap';
 import EmploymentMinimalOnboardingChecklist from './EmploymentMinimalOnboardingChecklist';
+import EmploymentEvereeStatusCard from './EmploymentEvereeStatusCard';
 import EmploymentEmptyStateCard from './EmploymentEmptyStateCard';
 import EmploymentWorkerEmploymentHub from './EmploymentWorkerEmploymentHub';
 import EvereeAdminSyncCard from '../../../../components/everee/EvereeAdminSyncCard';
@@ -83,7 +84,16 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
     };
   }, [profileUserId, tenantId, tenantSlug, overview, workerDisplayName, onCallPoolActive, viewerKind]);
 
-  const showChecklist = overview.employmentHeaderState !== 'not_started';
+  // 2026-09-04 (Greg, "one point of truth"): the promised re-gate below is
+  // ON for recruiters on Everee-enabled entities — the mirror-driven status
+  // card replaces the manual radio checklist there. Workers and
+  // non-Everee entities keep the legacy checklist.
+  const entityIsEveree =
+    overview.systems.payroll?.provider === 'everee' &&
+    overview.systems.payroll?.evereeEnabled === true;
+  const showChecklist =
+    overview.employmentHeaderState !== 'not_started' &&
+    !(viewerKind === 'recruiter' && entityIsEveree);
   const showWorkerPostOnboardingHub =
     viewerKind === 'worker' && showChecklist && overview.onboardingComplete === true;
   const showScreeningToBackgroundsPointer =
@@ -186,6 +196,23 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
             userId={profileUserId}
             workerType={overview.workerType === '1099' ? 'contractor' : 'employee'}
             onSynced={handleEvereeSynced}
+          />
+        ) : null}
+
+        {/* Mirror-driven onboarding status — the same items (and truth) as
+            the record-header chip (Greg 2026-09-04). */}
+        {isEvereeEntity && overview.entityEmployment?.entityId ? (
+          <EmploymentEvereeStatusCard
+            tenantId={tenantId}
+            userId={profileUserId}
+            entityKey={entityKey}
+            entityId={overview.entityEmployment.entityId}
+            evereeUrl={
+              evereeWorkerId
+                ? `https://app.everee.com/workers/details/${encodeURIComponent(evereeWorkerId)}?tab=DOCUMENTS`
+                : null
+            }
+            viewerKind={viewerKind}
           />
         ) : null}
 

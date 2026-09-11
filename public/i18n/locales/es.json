@@ -1,4 +1,46 @@
 {
+  "aiHiring": {
+    "noticeTitle": "Cómo usamos la IA en la contratación",
+    "noticeBody": "Este trabajo está en Illinois. C1 usa herramientas automatizadas, incluida la inteligencia artificial, para la preselección y el trabajo administrativo: califican tus respuestas de la entrevista de preselección y tu perfil, lo que puede subirte de nivel e incluirte en nuestro grupo de trabajadores disponibles. Un reclutador de C1 habla con cada solicitante antes de que empiece a trabajar.",
+    "noticeData": "Qué usan: tu solicitud, tu perfil, tus respuestas de preselección y el estado de tus verificaciones.",
+    "noticeRights": "En cualquier momento puedes pedir que un reclutador revise tu solicitud o solicitar una adaptación.",
+    "askRecruiter": "Hablar con un reclutador",
+    "selfIdCta": "Autoidentificación voluntaria",
+    "continueToInterview": "Continuar a la entrevista",
+    "signInToRequest": "Inicia sesión para hablar con un reclutador o responder la autoidentificación voluntaria.",
+    "kindReview": "Revisar mi solicitud",
+    "kindAccommodation": "Solicitar una adaptación",
+    "reviewHelp": "Un reclutador revisará tu solicitud personalmente y se comunicará contigo.",
+    "accommodationHelp": "Cuéntanos qué necesitas para la solicitud, la entrevista o el trabajo. Un reclutador se comunicará contigo.",
+    "detailsLabel": "Detalles (opcional)",
+    "sendRequest": "Enviar solicitud",
+    "requestSent": "Solicitud enviada. Un reclutador se comunicará contigo.",
+    "requestFailed": "No se pudo enviar la solicitud ({code}). Inténtalo de nuevo.",
+    "cancel": "Cancelar",
+    "done": "Listo",
+    "selfIdIntro": "C1 revisa que nuestras herramientas de contratación traten a todos por igual. Responder es opcional y no afecta tu solicitud. Los reclutadores nunca ven tus respuestas; solo se revisan los totales generales.",
+    "raceLabel": "Raza / origen étnico",
+    "sexLabel": "Sexo",
+    "race": {
+      "hispanic_latino": "Hispano o latino",
+      "white": "Blanco",
+      "black_african_american": "Negro o afroamericano",
+      "asian": "Asiático",
+      "american_indian_alaska_native": "Indígena americano o nativo de Alaska",
+      "native_hawaiian_pacific_islander": "Nativo de Hawái u otras islas del Pacífico",
+      "two_or_more": "Dos o más razas",
+      "decline": "Prefiero no responder"
+    },
+    "sex": {
+      "male": "Masculino",
+      "female": "Femenino",
+      "nonbinary": "No binario",
+      "decline": "Prefiero no responder"
+    },
+    "saveAnswers": "Guardar respuestas",
+    "saved": "Guardado. Gracias.",
+    "saveFailed": "No se pudieron guardar tus respuestas ({code}). Inténtalo de nuevo."
+  },
   "common": {
     "save": "Guardar",
     "cancel": "Cancelar",
@@ -20,7 +62,7 @@
     "dashboard": "Panel",
     "home": "Inicio",
     "inbox": "Bandeja de entrada",
-    "myAssignments": "Horario",
+    "myAssignments": "Asignaciones",
     "myApplications": "Mis solicitudes",
     "jobsBoard": "Bolsa de trabajo",
     "jobReadiness": "Preparación laboral",
@@ -49,7 +91,7 @@
     "findWork": "Buscar turnos",
     "viewApplications": "Ver solicitudes",
     "prescreen": "Preselección",
-    "payroll": "Nómina"
+    "payroll": "Pago"
   },
   "workerAccount": {
     "sectionProfile": "Perfil",
@@ -905,7 +947,14 @@
     "sectionDirectDepositTitle": "Depósito directo",
     "sectionDirectDepositDescription": "La cuenta bancaria donde se deposita tu pago.",
     "sectionSsnTaxTitle": "SSN y formularios de impuestos",
-    "sectionSsnTaxDescription": "Termina la configuración de nómina o actualiza tus datos fiscales en el portal seguro."
+    "sectionSsnTaxDescription": "Termina la configuración de nómina o actualiza tus datos fiscales en el portal seguro.",
+    "certStatusVerified": "Verificado",
+    "certStatusUnderReview": "En revisión",
+    "certStatusNeedsPhoto": "Necesita una foto nueva",
+    "certStatusNeedsPhotoHint": "Sube una foto clara del certificado completo, sin reflejos ni recortes.",
+    "certificateNumber": "Número de certificado (opcional)",
+    "certificateNumberPlaceholder": "Tal como aparece en la tarjeta",
+    "certificateNumberHint": "Nos ayuda a verificar una tarjeta difícil de leer."
   },
   "apply": {
     "availableShifts": "Turnos disponibles",
@@ -937,7 +986,7 @@
     "jobApplication": "Solicitud de empleo",
     "back": "Atrás",
     "next": "Siguiente",
-    "submitApplication": "Enviar solicitud",
+    "submitApplication": "Enviar",
     "skip": "Omitir",
     "addPhotoLater": "Añadir foto más tarde",
     "continueWithoutPhoto": "Continuar sin foto",
@@ -1141,7 +1190,7 @@
     "location": "Ubicación",
     "jobType": "Tipo de trabajo",
     "sortBy": "Ordenar por",
-    "searchPlaceholder": "Buscar trabajos por título o ubicación",
+    "searchPlaceholder": "Buscar trabajos, palabras clave o ubicaciones",
     "allLocations": "Todas las ubicaciones",
     "allTypes": "Todos los tipos",
     "newestFirst": "Más recientes primero",
@@ -1281,7 +1330,30 @@
     "multiDayJustThisDay": "Solo este día",
     "multiDayApplyToOne": "Postularme a 1 día",
     "multiDayApplyToMany": "Postularme a {count} días",
-    "nextAvailableShift": "Próximo turno disponible"
+    "nextAvailableShift": "Próximo turno disponible",
+    "claimShift": "Reservar turno",
+    "claimingShift": "Reservando…",
+    "claimSheetTitle": "Reserva este turno",
+    "claimSheetIntro": "Al reservar quedas confirmado en este turno de inmediato — sin esperar una oferta. Por favor confirma:",
+    "claimAckUniform": "Tengo el uniforme requerido y cumplo con los requisitos del trabajo para este turno.",
+    "claimAckTransport": "Tengo transporte al lugar de trabajo.",
+    "claimAckArrival": "Estaré en {location} a las {time}, listo para trabajar.",
+    "claimAckArrivalGeneric": "Estaré en el lugar de trabajo a la hora de inicio del turno, listo para trabajar.",
+    "claimAckNoShow": "Entiendo que si no me presento a un turno que reservé, mi capacidad de reservar turnos futuros puede quedar restringida.",
+    "claimCancelHint": "¿Cambian tus planes? Puedes cancelar desde la página de la asignación. Cancelar con menos de 24 horas cuenta contra tu confiabilidad.",
+    "claimAllAcksRequired": "Marca todas las casillas para reservar este turno.",
+    "claimSuccess": "¡Estás en el equipo! Te enviaremos los detalles del sitio por mensaje de texto antes de tu turno.",
+    "claimErrorFilled": "Este turno acaba de llenarse. Revisa la bolsa de trabajo para ver otros turnos.",
+    "claimErrorTierLocked": "Este turno aún no está disponible para ti — vuelve a revisar pronto.",
+    "claimErrorTierLockedAt": "Este turno se abre para ti el {when}.",
+    "claimErrorConflict": "Ya tienes una reserva en este horario.",
+    "claimErrorConflictAt": "Ya tienes una reserva de {time} en {site}. Cancela ese turno primero si tus planes cambiaron.",
+    "claimErrorCap": "Puedes tener hasta {cap} turnos reservados hasta que completes el primero.",
+    "claimErrorIneligible": "No puedes ser asignado a este turno. Comunícate con tu reclutador si crees que es un error.",
+    "claimErrorNotClaimable": "Este turno no está abierto para reservas instantáneas en este momento.",
+    "claimErrorStarted": "Este turno ya comenzó.",
+    "claimErrorGeneric": "No pudimos reservar este turno. Inténtalo de nuevo.",
+    "claimHeadshotHint": "Agrega una foto de perfil abajo y terminaremos tu reserva."
   },
   "assignment": {
     "title": "Asignación",
@@ -1302,6 +1374,10 @@
     "firstDayInstructions": "Instrucciones del primer día",
     "parkingInstructions": "Instrucciones de estacionamiento",
     "checkInInstructions": "Instrucciones de registro",
+    "onsiteContact": "Contacto en el sitio",
+    "onsiteContactHint": "A quién buscar al llegar.",
+    "callContact": "Llamar",
+    "textContact": "Mensaje",
     "uniformInstructions": "Instrucciones de uniforme",
     "credentialInstructions": "Instrucciones de credenciales",
     "otherInstructions": "Otras instrucciones",
@@ -1603,7 +1679,9 @@
     "markAllRead": "Marcar todo como leído",
     "markRead": "Marcar como leído",
     "emptyTitle": "Aún no hay notificaciones.",
-    "emptySubtitle": "Te avisaremos aquí sobre solicitudes, documentos y turnos."
+    "emptySubtitle": "Te avisaremos aquí sobre solicitudes, documentos y turnos.",
+    "filterShifts": "Turnos",
+    "filterJobs": "Empleos"
   },
   "inbox": {
     "title": "Bandeja de entrada",
@@ -1775,6 +1853,7 @@
       "s4L2": "Proveedores de servicios (p. ej., procesadores de nómina, socios de verificación de antecedentes, alojamiento en la nube y proveedores de seguridad informática) que realizan servicios en nuestro nombre.",
       "s4L3": "Autoridades regulatorias cuando lo exija la ley o una solicitud gubernamental.",
       "s4P2": "Todos los proveedores terceros están sujetos a obligaciones de confidencialidad y protección de datos acordes con la ley aplicable.",
+      "s4P3": "No compartimos, vendemos ni proporcionamos tu número de teléfono móvil ni tus datos de suscripción y consentimiento de mensajes de texto a terceros ni afiliados con fines de marketing o promoción. Los datos de suscripción y consentimiento para mensajes de texto no se compartirán con ningún tercero.",
       "s5Title": "5. Cookies y tecnologías de seguimiento",
       "s5P1": "Usamos cookies, píxeles y herramientas de análisis para entender cómo interactúan los usuarios con nuestros sitios y aplicaciones, mejorar el rendimiento y la usabilidad.",
       "s5P2": "Puede controlar o desactivar las cookies en la configuración de su navegador; algunas funciones del sitio pueden no funcionar correctamente sin ellas.",
@@ -1809,7 +1888,9 @@
       "linksTerms": "Términos de uso",
       "linksSMS": "Consentimiento SMS",
       "linksSMSPrivacy": "Aviso de privacidad SMS",
-      "s2L4": "Datos de la aplicación móvil: si usas la aplicación de C1 Staffing, recopilamos un token de notificaciones push para enviarte avisos sobre turnos y nómina, un identificador del dispositivo, y diagnósticos de fallos y rendimiento. Con tu permiso, la aplicación también accede a tu cámara y a tu galería de fotos para que puedas tomar o subir una foto de perfil, documentos y certificaciones, y a la ubicación de tu dispositivo para ordenar los trabajos cercanos y mostrar la distancia. Puedes revocar cualquiera de estos permisos en cualquier momento desde la configuración de tu dispositivo."
+      "s2L4": "Datos de la aplicación móvil: si usas la aplicación de C1 Staffing, recopilamos un token de notificaciones push para enviarte avisos sobre turnos y nómina, un identificador del dispositivo, y diagnósticos de fallos y rendimiento. Con tu permiso, la aplicación también accede a tu cámara y a tu galería de fotos para que puedas tomar o subir una foto de perfil, documentos y certificaciones, y a la ubicación de tu dispositivo para ordenar los trabajos cercanos y mostrar la distancia. Puedes revocar cualquiera de estos permisos en cualquier momento desde la configuración de tu dispositivo.",
+      "s3L7": "Usar asistencia con IA, solo si lo permites: un servicio de IA responde las preguntas que envías en la ayuda de la app, lee los currículums que subes para completar tu perfil y revisa respuestas de entrevistas y perfiles para dar recomendaciones a los reclutadores. Los resultados de la IA son orientativos; una persona toma cada decisión de contratación. Puedes permitirlo o rechazarlo al registrarte y cambiarlo en cualquier momento en la app en Perfil, Acerca de y legal.",
+      "s4L4": "Proveedores de servicios de IA: si permites la asistencia con IA, la información descrita arriba se envía a Anthropic (Claude) para realizar esas tareas por nosotros. Anthropic la procesa bajo sus términos comerciales, no la usa para entrenar sus modelos y no la vende. Si lo rechazas, no se envía: tus preguntas van a nuestro equipo, la IA no lee los currículums que subes y las respuestas de entrevistas se revisan solo con puntuación basada en reglas."
     },
     "terms": {
       "title": "Términos de uso",
@@ -1946,6 +2027,7 @@
       "s2L5": "Solucionar errores de entrega y mejorar nuestro sistema de mensajería",
       "s2P2": "No vendemos ni alquilamos tu número telefónico ni datos de mensajería.",
       "s2P3": "No enviaremos marketing no relacionado a menos que te suscribas explícitamente por separado.",
+      "s2P4": "No compartimos, vendemos ni proporcionamos tu número de teléfono móvil ni tus datos de suscripción y consentimiento de mensajes de texto a terceros ni afiliados con fines de marketing o promoción. Los datos de suscripción y consentimiento para mensajes de texto no se compartirán con ningún tercero.",
       "s3Title": "3. Base legal y consentimiento",
       "s3P1": "Cuando la ley lo exige, nos basamos en tu consentimiento expreso para enviar Comunicaciones móviles.",
       "s3Intro": "El consentimiento normalmente se obtiene cuando:",
@@ -2006,7 +2088,7 @@
       "too_blurry": "Tu foto se ve borrosa. Por favor, vuelve a tomarla con buena luz y mano firme.",
       "too_dark": "Tu foto está muy oscura. Por favor, vuelve a tomarla con mejor iluminación — la luz natural funciona mejor.",
       "inappropriate": "Tu foto fue marcada para revisión. Por favor, sube una foto profesional y clara.",
-      "manual_override": "Un reclutador te pidió que vuelvas a subir tu foto. Por favor, toma una nueva foto clara.",
+      "manual_override": "Tu foto necesita una nueva toma. Toma una foto de perfil nueva y clara, solo contigo en el encuadre.",
       "verification_error": "No pudimos revisar tu foto en este momento. Por favor, intenta subirla de nuevo en un momento."
     }
   },
@@ -2101,7 +2183,13 @@
     "accountReady": "Tu cuenta está lista — continúa abajo.",
     "genericError": "Algo salió mal — inténtalo de nuevo.",
     "emailOptional": "Opcional — te lo pediremos después si la nómina lo necesita.",
-    "mustBe18": "Debes tener al menos 18 años para trabajar con C1 Staffing."
+    "mustBe18": "Debes tener al menos 18 años para trabajar con C1 Staffing.",
+    "smsConsentLabel": "Sí, envíenme mensajes de texto sobre empleos, turnos, incorporación y mi solicitud (opcional)",
+    "smsConsentDisclosure": "Al marcar esta casilla, acepto recibir mensajes de texto relacionados con el empleo de C1 Staffing / HRX One en el número indicado, incluyendo actualizaciones de mi solicitud, citas para entrevistas, recordatorios de incorporación, ofertas y confirmaciones de turnos, avisos de nómina y mensajes de seguridad de la cuenta. Pueden aplicarse tarifas de mensajes y datos. La frecuencia de los mensajes varía. Responde STOP para cancelar o HELP para obtener ayuda. El consentimiento no es condición de empleo ni para crear una cuenta.",
+    "smsConsentLinks": "Consulta nuestra",
+    "otpNote": "Al tocar \"Envíame un código\" se envía un código de verificación a este número (pueden aplicarse tarifas de mensajes y datos).",
+    "aiConsentLabel": "Permitir asistencia con IA (opcional)",
+    "aiConsentDisclosure": "C1 Staffing usa IA de Anthropic (Claude) para responder las preguntas que envías en Obtener ayuda, leer los currículums que subes para completar tu perfil, y revisar tus respuestas de la entrevista rápida y tu perfil para ayudar a los reclutadores a conectarte con empleos. Si lo permites, esa información se envía a Anthropic solo para esos fines y no se usa para entrenar sus modelos. Un reclutador toma cada decisión de contratación. Puedes cambiar esto más adelante. Consulta nuestra"
   },
   "workerPayroll": {
     "bankFirst": {

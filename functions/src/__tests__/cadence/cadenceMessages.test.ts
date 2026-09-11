@@ -11,7 +11,14 @@
 import { expect } from 'chai';
 import * as admin from 'firebase-admin';
 
-import { buildCadenceMessage, type CadenceMessagePayload } from '../../cadence/cadenceMessages';
+import {
+  buildCadenceMessage,
+  buildOpenShiftMessage,
+  buildClaimConfirmationMessage,
+  renderWeeklyScheduleSummary,
+  type CadenceMessagePayload,
+} from '../../cadence/cadenceMessages';
+import { renderCadenceTemplate } from '../../cadence/sequenceCopyOverrides';
 
 function basePayload(overrides: Partial<CadenceMessagePayload> = {}): CadenceMessagePayload {
   return {
@@ -65,5 +72,98 @@ describe('buildCadenceMessage assignment_reminder_2h_instructions', () => {
     expect(msg.sms).to.contain('Busca a Maria Lopez.');
     expect(msg.sms).to.contain('Estacionamiento: Lote C.');
     expect(msg.sms).to.not.contain(': undefined');
+  });
+});
+
+describe('renderWeeklyScheduleSummary', () => {
+  it('groups contiguous same-time runs and lists differing days', () => {
+    expect(
+      renderWeeklyScheduleSummary({ 1: '09:00–17:00', 2: '09:00–17:00', 3: '09:00–17:00', 5: '10:00–14:00' } as never),
+    ).to.equal('Mon–Wed 09:00–17:00, Fri 10:00–14:00');
+    expect(renderWeeklyScheduleSummary({ 1: '09:00–17:00' } as never, 'es')).to.equal('lun 09:00–17:00');
+    expect(renderWeeklyScheduleSummary(undefined)).to.equal('');
+  });
+});
+
+describe('buildOpenShiftMessage', () => {
+  const payload = basePayload({
+    weeklySchedule: { 1: '09:00–17:00', 2: '09:00–17:00', 3: '09:00–17:00', 4: '09:00–17:00', 5: '09:00–17:00' },
+  });
+
+  it('welcome says hours are managed on-site — never states a schedule', () => {
+    const msg = buildOpenShiftMessage('openshift_welcome', payload, 'en', 'C1 Staffing', 'https://hrxone.com/a/1');
+    expect(msg.sms).to.contain("You're on the crew at Oracle Park!");
+    expect(msg.sms).to.contain('Your shift hours are managed on-site.');
+    expect(msg.sms).to.not.contain('Mon–Fri');
+    expect(msg.sms).to.contain('Details: https://hrxone.com/a/1');
+  });
+
+  it('check-in uses the on-call voice (EN + ES)', () => {
+    const msg = buildOpenShiftMessage('openshift_weekly_digest', payload, 'en', 'C1 Staffing', '');
+    expect(msg.sms).to.contain("You're still on our on-call crew at Oracle Park.");
+    expect(msg.sms).to.not.contain('Mon–Fri');
+    const esMsg = buildOpenShiftMessage('openshift_weekly_digest', basePayload(), 'es', 'C1 Staffing', '');
+    expect(esMsg.sms).to.contain('equipo de guardia');
+  });
+});
+
+describe('buildClaimConfirmationMessage (Claim Shift track)', () => {
+  it('is a statement of the commitment: what, when, where, how to back out — never a YES ask', () => {
+    const msg = buildClaimConfirmationMessage(
+      basePayload({ locationAddress: '24 Willie Mays Plaza, San Francisco, CA' }),
+      'en',
+      'C1 Staffing',
+      'https://hrxone.com/a/1',
+    );
+    expect(msg.sms).to.contain("You're on the crew!");
+    expect(msg.sms).to.contain('at Oracle Park');
+    expect(msg.sms).to.contain('Address: 24 Willie Mays Plaza');
+    expect(msg.sms).to.contain('Details: https://hrxone.com/a/1');
+    expect(msg.sms).to.contain('Reply NO if your plans change.');
+    expect(msg.sms).to.not.match(/reply YES/i);
+    expect(msg.title).to.equal('Shift claimed!');
+    expect(msg.sms.length).to.be.lessThan(320);
+  });
+
+  it('prefers the shift title over the job title and speaks Spanish', () => {
+    const msg = buildClaimConfirmationMessage(
+      basePayload({ shiftTitle: 'Concessions — Gate B' }),
+      'es',
+      'C1 Staffing',
+      '',
+    );
+    expect(msg.sms).to.contain('¡Estás en el equipo!');
+    expect(msg.sms).to.contain('Concessions — Gate B');
+    expect(msg.sms).to.contain('Responde NO');
+    expect(msg.sms).to.not.contain('Details:');
+  });
+});
+
+describe('renderCadenceTemplate logistics variables', () => {
+  it('exposes onsiteContact composition, parking, and checkIn tokens', () => {
+    const out = renderCadenceTemplate(
+      '{brand}: find {onsiteContact}. Parking: {parking} Check-in: {checkIn} {bogus}',
+      {
+        brand: 'C1 Staffing',
+        onsiteContactName: 'Maria Lopez',
+        onsiteContactRole: 'Catering Lead',
+        onsiteContactPhone: '+14155550123',
+        parking: 'Lot C.',
+        checkIn: 'Gate B.',
+      },
+    );
+    expect(out).to.equal('C1 Staffing: find Maria Lopez (Catering Lead): +14155550123. Parking: Lot C. Check-in: Gate B.');
+  });
+
+  it('T+15 late check-in asks (HERE / NO), never declares, and is signed by Natalie', () => {
+    const msg = buildCadenceMessage('assignment_late_checkin_15m', basePayload(), 'en', 'C1 Staffing');
+    expect(msg.sms).to.contain("don't see you clocked in yet");
+    expect(msg.sms).to.contain('Reply HERE');
+    expect(msg.sms).to.contain('or NO if you can');
+    expect(msg.sms).to.contain('Natalie');
+    expect(msg.sms).to.not.match(/no.?show/i);
+    const es = buildCadenceMessage('assignment_late_checkin_15m', basePayload(), 'es', 'C1 Staffing');
+    expect(es.sms).to.contain('Responde AQUÍ');
+    expect(es.sms).to.contain('o NO si no puedes ir');
   });
 });

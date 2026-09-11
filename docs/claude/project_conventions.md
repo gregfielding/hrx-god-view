@@ -55,3 +55,14 @@ backend specification. Timeout after 10000" — retry serialized with
 Known debt: 8 of 96 jest suites (47 tests) fail — pre-existing, they were
 unrunnable before jest.config.js landed 2026-08-28; cadence/prescreen
 suites are green.
+
+## Domain move checklist (deferred 2026-09-09 — revisit when c1staffing.com / app.c1staffing.com is added)
+- Firebase Hosting: add the domain; DNS; then 301 hrxone.com → new origin so Google transfers rankings.
+- Set `platform_config/seo.canonicalOrigin` = `https://<new host>` (jobPostingSeo derives canonicals,
+  og:url, JobPosting JSON-LD urls, sitemap.xml and robots.txt from it; without it, it uses the request host).
+- Regenerate static legal pages with the new origin (`scripts/generateStaticLegalPages.py` — replace the
+  hrxone.com literals in NAV/FOOT/sms terms) and re-take `public/sms-optin.png` (portal-worker/.scratch/optin-shot.ts).
+- Re-point the Twilio 10DLC campaign URLs (PrivacyPolicyUrl / TermsAndConditionsUrl / message_flow links)
+  if the campaign is still in review; an approved campaign does not need resubmission for a domain change.
+- Slack/Gmail/Natalie links: `hrxone.com` literals in functions/src/natalie/* (profile/assignment links).
+- Resubmit the sitemap in Search Console for the new property.

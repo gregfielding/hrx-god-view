@@ -1,0 +1,55 @@
+/* C1 Staffing — site-wide "C1 Black" pass (2026-09-06).
+   Pasted into Squarespace → Website → Custom CSS. Source of truth is this file.
+   Palette lives in Site Styles (white #FFFFFF, light #F5F5F5, accent #FFC700,
+   dark accent #1C1E22, black #111214); fonts in Site Styles (Inter Tight
+   headings 700, Inter paragraphs/buttons). This sheet only covers what Site
+   Styles cannot reach: the three Code Block pages and a few polish rules. */
+
+/* Code Block pages (/support, /app, /locations) follow the site palette + fonts */
+.c1s, .c1a, .c1l {
+  --navy: #111214;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+}
+.c1s h1, .c1s h2, .c1s h3,
+.c1a h1, .c1a h2, .c1a h3,
+.c1l h1, .c1l h2, .c1l h3,
+.c1a .stat b, .c1l .stat b,
+.c1a .eyebrow, .c1l .eyebrow, .c1s .lang, .c1s .card .k, .c1a .store b {
+  font-family: 'Inter Tight', 'Inter', -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+  letter-spacing: -0.01em;
+}
+.c1s .btn, .c1a .btn, .c1l .btn {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+  letter-spacing: 0.02em;
+}
+.c1s a:not(.btn), .c1a a:not(.btn), .c1l a:not(.btn) {
+  color: #111214;
+  text-decoration: underline;
+  text-decoration-color: #ffc700;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+.c1s .card a, .c1a .band a:not(.btn), .c1l .band a:not(.btn) { color: #fff; }
+
+/* Buttons: pill, yellow on black text everywhere (matches the app) */
+.sqs-block-button-element, .sqs-button-element--primary {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif !important;
+  letter-spacing: 0.02em;
+}
+
+/* Header: keep the logo/nav crisp on charcoal */
+#header .header-nav-item a { letter-spacing: 0.01em; }
+
+/* Home hero buttons: Fluid Engine scales the desktop grid down below ~1300px,
+   so the two pills (cols 2-5 and 6-10 on rows 7-8) collide. Tablets stack
+   them; small laptops get wider blocks on one row. Desktop and phone layouts
+   untouched. Longhand on purpose: Squarespace compiles Custom CSS as LESS,
+   and `grid-area: 7 / 2 / 9 / 8` gets evaluated as division. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .fe-block-ecabf8e029924c832947 { grid-row-start: 7 !important; grid-row-end: 9 !important; grid-column-start: 2 !important; grid-column-end: 12 !important; }
+  .fe-block-0404db6139baa74e90b7 { grid-row-start: 9 !important; grid-row-end: 11 !important; grid-column-start: 2 !important; grid-column-end: 12 !important; }
+}
+@media (min-width: 1024px) and (max-width: 1299px) {
+  .fe-block-ecabf8e029924c832947 { grid-row-start: 7 !important; grid-row-end: 9 !important; grid-column-start: 2 !important; grid-column-end: 8 !important; }
+  .fe-block-0404db6139baa74e90b7 { grid-row-start: 7 !important; grid-row-end: 9 !important; grid-column-start: 8 !important; grid-column-end: 14 !important; }
+}

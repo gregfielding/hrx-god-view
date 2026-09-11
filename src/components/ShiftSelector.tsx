@@ -50,6 +50,15 @@ interface ShiftSelectorProps {
    */
   onReapplyToShift?: (shiftId: string, date?: string) => void;
   /**
+   * Claim Shift (2026-09-06): when the posting has `claimShiftEnabled`, an
+   * available row renders a black "Claim Shift" CTA instead of the green
+   * Apply — the worker books the shift-day instantly (assignment born
+   * confirmed) after the acknowledgement sheet. Re-apply rows also claim.
+   * Confirmed / offered / requested states are unchanged.
+   */
+  claimEnabled?: boolean;
+  onClaimShift?: (shiftId: string, date?: string) => void;
+  /**
    * Map of `${shiftId}__${YYYY-MM-DD}` (day-scoped) or `${shiftId}`
    * (legacy) → assignmentId. Populated by `loadAppliedShifts` in
    * `JobPostingDetail` from the worker's active assignment docs.
@@ -84,6 +93,8 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   onDeclineShift,
   onCancelApplication,
   onReapplyToShift,
+  claimEnabled = false,
+  onClaimShift,
   assignmentIdsByShiftKey = {},
   disabled = false,
   jobPostId,
@@ -244,7 +255,15 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
     // Recruiter declined this worker from this shift (per-shift decline) →
     // terminal "Not Accepted" state. They remain an applicant for other shifts.
     const isDeclined = shiftStatus === 'declined';
-    const isFull = shift.spotsRemaining <= 0;
+    // Spots for THIS row: a multi-day day row has its own live count
+    // (`spotsRemainingByDay`, server-maintained); otherwise the shift's.
+    // Falls back to the day's headcount when no live count exists yet.
+    const rowSpotsRemaining: number =
+      item.type === 'day'
+        ? shift.spotsRemainingByDay?.[item.date] ??
+          Math.max(0, (item.workersNeeded ?? shift.staffNeeded ?? 1) + (item.overstaff ?? 0))
+        : shift.spotsRemaining;
+    const isFull = rowSpotsRemaining <= 0;
 
     // Resolve the assignmentId backing this row so the confirmed-state
     // "View Details" button can deep-link to /c1/workers/assignments/{id}.
@@ -318,14 +337,15 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                       // showing spot counts with the toggle off (2026-07-06,
                       // Domino's KY Production Associate report).
                       if (!showSpots) return null;
-                      const workers = item.workersNeeded ?? 1;
-                      const over = item.overstaff ?? 0;
-                      const total = workers + over;
-                      if (total < 1) return null;
+                      // Live per-day remaining when the server has it,
+                      // else the day's headcount (pre-liveFill docs).
+                      const total = rowSpotsRemaining;
+                      if (total < 0) return null;
                       return (
                         <Chip
                           size="small"
                           variant="outlined"
+                          color={total <= 2 ? 'warning' : 'default'}
                           label={`${total} spot${total !== 1 ? 's' : ''} left`}
                         />
                       );
@@ -566,6 +586,21 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
               ) : isPast ? (
                 <Button variant="outlined" disabled sx={{ minWidth: 140, color: 'text.secondary' }}>
                   Past
+                </Button>
+              ) : claimEnabled && onClaimShift ? (
+                // Claim Shift — green like Apply (Greg 2026-09-06 after the
+                // first production claim: the row CTA is the GO action, so
+                // it reads green; the sheet's confirm is green too).
+                // Covers both a fresh row and a re-apply row: the server
+                // overwrites a worker-cancelled day doc on re-claim.
+                <Button
+                  variant="contained"
+                  color="success"
+                  disabled={disabled || isFull}
+                  onClick={() => onClaimShift(shift.shiftId, item.type === 'day' ? item.date : undefined)}
+                  sx={{ minWidth: 160, fontWeight: 700 }}
+                >
+                  {isFull ? t('jobs.shiftFull') : t('jobs.claimShift')}
                 </Button>
               ) : isReapply ? (
                 // Worker pulled out of this shift earlier → goldenrod

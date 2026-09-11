@@ -275,6 +275,15 @@ export const COMPLIANCE_REPORTS: ReportDef[] = [
     minLevel: 6,
     icon: <AccountBalanceOutlinedIcon />,
   },
+  {
+    slug: 'ai-hiring-illinois',
+    title: 'Illinois AI Hiring Monitor',
+    description:
+      'Promotion and hire rates by self-identified group for applicants to Illinois postings, with four-fifths-rule flags and open recruiter-review requests. Refreshed daily.',
+    category: 'Compliance',
+    minLevel: 6,
+    icon: <GppMaybeOutlinedIcon />,
+  },
 ];
 REPORTS.push(...COMPLIANCE_REPORTS);
 

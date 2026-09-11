@@ -66,6 +66,13 @@ export type SetAssignmentOutcomeInput = {
   assignmentId: string;
   outcomeStatus: AssignmentOutcomeStatus | null;
   notes?: string;
+  /**
+   * Only meaningful with outcomeStatus 'no_show': also apply the tier
+   * penalty (drop one tier; 40 clean hours restore — Greg 2026-09-04).
+   * Undo reverts the assignment but NOT the tier — fix that via the tier
+   * badge, which also clears the earn-back counter.
+   */
+  noShowPenalty?: boolean;
 };
 
 export type SetAssignmentOutcomeResult = {

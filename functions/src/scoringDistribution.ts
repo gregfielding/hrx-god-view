@@ -17,6 +17,10 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 
+import { runTierPromotionSweepForTenant } from './tierAutomation/tierPromotionSweep';
+import { runMassPnAutoSubmitForTenant } from './workersComp/massPnAutoSubmit';
+import { runNightlyWcHygieneForTenant } from './workersComp/nightlyWcHygiene';
+
 const db = admin.firestore();
 
 /** Percentiles stored per metric (0–100). */
@@ -89,9 +93,13 @@ export async function computeDistributionForTenant(tenantId: string): Promise<{
   const qualityScores: number[] = [];
 
   try {
+    // Projection: only the four score fields. Loading 15k FULL user docs here exhausted the 1GiB heap
+    // every night from 2026-09-05 (the day three more passes started riding this job), so none of
+    // scoring / tier sweep / Mass PN / WC hygiene ever completed. With select() the payload is tiny.
     const usersSnap = await db
       .collection('users')
       .where(`tenantIds.${tenantId}.securityLevel`, 'in', SECURITY_LEVELS)
+      .select('scoreSummary.aiScore', 'scoreSummary.completenessScore', 'scoreSummary.responsivenessScore', 'scoreSummary.qualityScore')
       .limit(15000)
       .get();
 
@@ -164,18 +172,52 @@ export const scheduledScoringDistribution = onSchedule(
     schedule: '0 3 * * *', // 3 AM daily
     timeZone: 'America/New_York',
     maxInstances: 1,
-    memory: '512MiB',
+    // 2GiB (was 1GiB): OOM'd nightly 2026-09-05 → 09-10. The tier sweep also loads the tenant's
+    // users + backgroundChecks and WC hygiene loads 45 days of timesheet entries in the same process.
+    memory: '2GiB',
+    timeoutSeconds: 540,
   },
   async () => {
     const tenantsSnap = await db.collection('tenants').get();
     let ok = 0;
     let fail = 0;
+    let tierProposed = 0;
+    let tierAutoApplied = 0;
+    let tierEarnBack = 0;
     for (const t of tenantsSnap.docs) {
       const result = await computeDistributionForTenant(t.id);
       if (result.success) ok++;
       else fail++;
+      // Tier sweep (3 -> 2 promotions + penalty earn-back) rides this nightly
+      // loop (Cloud Run cap: no new function). No-op for tenants without a
+      // tierAutomation config; never throws.
+      const tier = await runTierPromotionSweepForTenant(db, t.id);
+      tierProposed += tier.proposed;
+      tierAutoApplied += tier.autoApplied;
+      tierEarnBack += tier.earnBackRestored;
+      if (!tier.success) fail++;
+      // 14-day Mass PN coverage-request email to InSource (Greg 2026-09-05)
+      // also rides this loop — no-op unless the tenant's
+      // settings/wcMassPnAutoSubmit doc is enabled AND the cadence elapsed.
+      const massPn = await runMassPnAutoSubmitForTenant(db, t.id);
+      if (!massPn.success) fail++;
+      if (massPn.sent.length > 0) {
+        logger.info('scheduledScoringDistribution: massPn sent', { tenantId: t.id, sent: massPn.sent });
+      }
+      // Nightly WC hygiene (Greg 2026-09-05): additions-only Everee sync +
+      // 8040 replace-now auto-reclassify. No-op for tenants without a rate
+      // matrix; never throws.
+      const wc = await runNightlyWcHygieneForTenant(db, t.id);
+      if (!wc.success) fail++;
     }
-    logger.info('scheduledScoringDistribution: done', { tenants: tenantsSnap.size, ok, fail });
+    logger.info('scheduledScoringDistribution: done', {
+      tenants: tenantsSnap.size,
+      ok,
+      fail,
+      tierProposed,
+      tierAutoApplied,
+      tierEarnBack,
+    });
   }
 );
 

@@ -247,6 +247,20 @@ export function assignmentReadinessEmploymentFromPipeline(args: {
   workerOnboarding: WorkerOnboardingLike | null;
   entityWorkerTypeRaw: string | null | undefined;
   workerPayrollAccount: (WorkerPayrollAccount & { id?: string }) | null | undefined;
+  /**
+   * Everee readiness mirror (everee_workers.readinessMirror) — the
+   * authoritative signed/verified stamps synced from Everee's
+   * onboarding-status timeline (2026-09-03). OR'd into the HRX-side
+   * signals: Everee/WorkBright completing a step can only ever turn an
+   * item green, never un-complete an HRX-tracked one.
+   */
+  evereeMirror?: {
+    directDepositReady?: boolean;
+    i9SignedAt?: unknown;
+    employerI9SignedAt?: unknown;
+    w4SignedAt?: unknown;
+    w9SignedAt?: unknown;
+  } | null;
 }): AssignmentReadinessEmploymentInput {
   const ee = args.entityEmployment;
   const empWt = ee && typeof ee === 'object' && 'workerType' in ee ? String((ee as { workerType?: string }).workerType || '').trim() : '';
@@ -268,11 +282,17 @@ export function assignmentReadinessEmploymentFromPipeline(args: {
   const directDeposit = buildDirectDepositItem(overviewLike);
   const payOne = aggregatePayrollFromAccounts(args.workerPayrollAccount ? [args.workerPayrollAccount] : []);
 
+  const mirror = args.evereeMirror ?? null;
+  const mirrorI9Complete = Boolean(mirror?.i9SignedAt && mirror?.employerI9SignedAt);
+  const mirrorTaxComplete = Boolean(mirror?.w4SignedAt || mirror?.w9SignedAt);
+  const mirrorDirectDeposit = mirror?.directDepositReady === true;
+
   return {
-    i9Complete: i9.completed,
-    taxFormComplete: w4OrW9.completed || payOne.taxFormComplete,
-    payrollInviteSent: payOne.payrollInviteSent,
-    directDepositComplete: directDeposit.completed || payOne.directDepositComplete,
+    i9Complete: i9.completed || mirrorI9Complete,
+    taxFormComplete: w4OrW9.completed || payOne.taxFormComplete || mirrorTaxComplete,
+    payrollInviteSent: payOne.payrollInviteSent || mirror != null,
+    directDepositComplete:
+      directDeposit.completed || payOne.directDepositComplete || mirrorDirectDeposit,
     handbookSigned: handbook.completed,
     policiesSigned: policies.completed,
   };

@@ -1,3 +1,7 @@
 # https://www.robotstxt.org/robotstxt.html
 User-agent: *
 Disallow:
+
+# Static on purpose: the Cloud Functions runtime answers /robots.txt with 404 before any
+# function code runs, so this cannot be served by jobPostingSeo. Update on a domain move.
+Sitemap: https://hrxone.com/sitemap.xml

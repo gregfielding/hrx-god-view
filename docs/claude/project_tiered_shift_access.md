@@ -1,5 +1,55 @@
 # Tiered shift access (Tier 1/2/3) — how gig platforms do it + HRX integration plan
 
+> ⚡ **PARTIAL ACTIVATION SHIPPED 2026-09-04** (Greg's call): tier is live as a
+> **label + audit trail only** — `users/{uid}.workerTiers = { global, updatedAt,
+> lastChange }` (ABSENT = Tier 3, deliberately no 14k-doc backfill), rendered by
+> `src/components/WorkerTierBadge.tsx` on the profile header, placement tiles,
+> and the applicants/users/group-members tables. Staff (level 5+) click-to-change;
+> writes batch the tier + an `activityLogs` audit entry (actionType
+> `security_change`) via `src/utils/workerTier.ts` — client-side writes, zero new
+> functions, zero rules changes. **NOTHING gates job visibility yet.** Plan: ~1
+> week of manual + threshold promotions (threshold engine next), then activate
+> Claim Shift release windows around the app-store launch (~2026-09-11). Workers
+> see nothing until then; worker-facing NAMED statuses (never "Tier 3") ship with
+> claim windows.
+>
+> **Phase 2 shipped same day — threshold engine LIVE in PROPOSE mode for C1.**
+> Config `tenants/{t}/settings/tierAutomation` (Settings → Tier Automation, in
+> Hiring & AI); shared scorer `shared/workerTierScoring.ts` (mirrored; functions
+> reaches it via the `functions/src/shared` symlink); sweep
+> `functions/src/tierAutomation/tierPromotionSweep.ts` rides
+> scheduledScoringDistribution (3 AM ET; 2GiB/540s since 2026-09-10 — it OOM'd at 1GiB EVERY night 09-05→09-10, so the tier sweep never ran in that window; see project_wc_classification.md). Screening points
+> score COMPLETION (Greg's seriousness signal, not clearance) from AccuSource
+> `backgroundChecks` mapped by candidateId — the user-doc order arrays are
+> near-empty legacy (1 hit in 14k). Profile completion falls back to a port of
+> calculateProfileScore (only ~10% have a stored score). First sweep:
+> **148/14,059 qualified at threshold 70**; queue at
+> `tenants/{t}/tier_promotion_proposals` (new rules block: staff read/update,
+> create/delete server-only). Dismissed = never re-proposed; approved = promoted
+> under the approver's name; Automatic mode promotes as "HRX Tier Engine".
+>
+> **Phase 3 shipped same day — penalty, earn-back, and the auto-onboard toggle.**
+> Penalty: `setAssignmentOutcome` accepts `noShowPenalty` (AssignmentOutcomeMenu:
+> "No-show — with penalty", on the account Workforce tab's ⋮); the outcome +
+> assignment `noShowPenalty` stamp land in the transaction, then
+> `tierPenaltyAdmin.applyNoShowPenaltyAdmin` demotes one tier and stamps
+> `workerTiers.penalty {demotedAt, restoreTo, hoursRequired:40}`. Undo reverts
+> the assignment only — the tier badge fixes mistakes (any manual change
+> deletes the penalty counter). Earn-back: the nightly sweep sums
+> `timesheet_entries` (workerId, workDate ≥ demotedAt; reg+OT+DT, never the
+> FLSA subdivisions) and restores `restoreTo` at 40h — forward-only, so
+> Danny's Tuesday keying lag just delays restores, never falsely demotes.
+> Auto-onboard: `accounts/{id}.tierAutomation.autoOnboardTier2` (Automations
+> card, national page; children inherit the national's flag) — a Tier 1/2
+> applicant triggers `runStartOnCallEmploymentFlow` (trigger source
+> `auto_tier2_account`, actor `system:tier2_account_auto_onboard`) + the
+> cascade screening package, riding
+> `onApplicationHiringSignalsChangedAutoOnboard`; the application is stamped
+> `tierAutoOnboard` pre-run (re-fire/no-retry gate) and a live prior
+> backgroundChecks order suppresses the package (Dempsey-class duplicates).
+> **Shipped OFF everywhere** — flip it on the OnTrac national to start the
+> pilot. Penalty path deployed but not yet exercised on a real no-show.
+
 > Greg + Claude design discussion 2026-08-29, written for Mark + his Claude. Status:
 > **design brief, nothing built.** Emerged from the signup-flow review
 > ([[project_signup_flow_review]]): the end-state for gig work is claim-based shifts with
@@ -192,6 +242,10 @@ consulted directly; these are decisions, not proposals.
 - **AI "Tier Score"** reviews Tier 3s for promotion to **Tier 2 only** (never
   straight to 1). Inputs: interview scoring, resume upload, profile
   completeness, qualifications, and app download/usage. **Be picky.**
+  - **Completed background checks and drug screenings score points too**
+    (Greg 2026-09-04): usually ordered post-promotion, but completing one
+    is a strong "serious about showing up" signal — read from the user
+    doc's `backgroundCheckOrders[]` / screening results, completed+clear.
   - App-usage input **takes effect 2026-10-01**, not before — at launch nobody
     has the app and it would suppress every promotion.
   - App usage is a **light thumb on the scale, not a major term.** It
@@ -351,7 +405,10 @@ overbook margins per venue, waitlist SMS ("a spot opened for Saturday").
    short-notice fills need a compressed schedule (0/2/4h)?
 2. Where does claiming live vs Indeed Flex-sourced work? (Flex books on their side —
    tiering applies only to HRX-posted gig shifts; keep the boundary explicit.)
-3. Worker-facing status names — "Crew / Pro / Member"? Avoid exposing "Tier 3".
+3. ~~Worker-facing status names~~ **DECIDED (Greg 2026-09-04): Tier 1 = "Top
+   Pro", Tier 2 = "Pro", Tier 3 = "Member"** (`WORKER_TIER_PUBLIC_NAMES` in
+   `src/utils/workerTier.ts`). Workers see these only from the Claim Shift
+   activation at app-store launch; internal surfaces keep Tier numbers.
 4. Does Tier-1 auto-book need per-worker opt-in (Greg's parked designation implies
    recruiter-designated, worker-consented)?
 6. **Channel split for tier waves** — push-only for Tier 1/2 with SMS reserved for the
@@ -367,3 +424,15 @@ overbook margins per venue, waitlist SMS ("a spot opened for Saturday").
 Related: [[project_signup_flow_review]], [[project_recruiter_roster_adoption]],
 [[project_offer_messaging_tiers]], [[project_open_shift_feature]],
 [[project_multiday_shifts]], [[project_ontrac_account]] (the recruiting-scale driver).
+
+## 2026-09-06 — photo in the score (Greg)
+
+`hasProfilePhoto` now reads `avatar` OR `workerProfile.photoUrl` OR `photoUrl`
+(was `avatar` only — workers whose only photo field was
+`workerProfile.photoUrl` scored 0 on the 5-pt photo factor). The 25-pt
+profile-completion fallback (`computeProfileCompletenessFallback`, mirrored
+from `src/utils/applicantScoring.ts#calculateProfileScore` and
+`functions/src/calculateApplicantFitScore.ts`) gives 5 pts for a photo and
+dropped the 5-pt "updated within 30 days" bonus, so the max stays 100 and the
+score no longer drifts daily. Net: a headshot is worth ~6.25 of 100 toward the
+70 threshold. Background in docs/claude/project_worker_profile_photo.md.

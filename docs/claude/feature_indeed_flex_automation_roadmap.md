@@ -123,3 +123,27 @@ with clock-in URL + real rates. NOT built yet.
   match quality is proven.
 - 29 ingest events remain parse_failed by design (surveys, corrections,
   "worker assignment ended", expiring-soon reminders).
+
+## ☠️ Flex-born shifts must carry the JO POSITION title (2026-09-09)
+
+Symptom: a live gig posting rendered with NO shift rows and NO Apply
+buttons (OnTrac Denver JO #501, posting Xu8hmPdNbCu8gLtP8ufM) while the
+JO's Shifts tab showed two open shifts. Cause: `applyNewRequest` stamped
+Indeed's role name ("Warehouse Operative") as `shift.defaultJobTitle`,
+and the public posting paired shifts to its `positionJobTitle` ("Package
+Handler (Warehouse Operative)") by EXACT string compare → zero shifts.
+Same on ORS Nasco #65 ("Warehouse Operative" vs "Warehouse Associate").
+
+Fixes: (1) `shared/jobOrder/matchPositionTitle.ts` —
+`shiftBelongsToPosition` (untitled shift → every position's post;
+single-position JO → every shift; multi-position → loose `matchPosition`
+resolution, same resolver Flex shift dressing has used since PI-4) is now
+the client filter in `fetchActiveShiftsForJobOrder`. (2) `applyNewRequest`
+stamps `defaultJobTitle` = resolved JO position title
+(`dressing.positionJobTitle`) and keeps Indeed's name on
+`indeedRoleName`; the ID-less dedupe compares both. (3) One-time repair
+`.scratch/repair-flex-shift-position-titles.ts` restamped the 7 affected
+shifts on #501/#65. Audit script `.scratch/jobboard-position-mismatch-audit.ts`
+lists active gig posts whose live shifts don't pair — rerun it if a
+posting "has no apply buttons" again. Flutter (`gigShiftRowsProvider`)
+never filtered by position, so the app was unaffected.

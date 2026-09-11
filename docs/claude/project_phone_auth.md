@@ -293,3 +293,40 @@ Greg watched a full production signup and cut the wizard to what staffing ops ac
   verification) still sends via Verify; the check-side fallback covers it.
 - Verified live: match/consume/replay/wrong-code/attempt-count against the
   deployed checkOtp; real template SMS sent to Greg's phone.
+
+## ☠️ Phone signup must stamp tenant membership (fixed 2026-09-10)
+
+Found via Deborah / Gene Robinson: `resolvePhoneSignup` (functions/src/twilio.ts)
+created the users doc with NO `tenantIds` / `activeTenantId`. Membership only
+arrived when an application was SUBMITTED (quickApplicationSubmit / Wizard),
+so anyone who quit the wizard was invisible to C1:
+- Users directory search (`tenantIds.{t}.securityLevel` query) → "No results"
+  even on an exact phone match.
+- JO Applications rows: `mapUserDataToRecruiterUser` returns null without a
+  tenant entry → thin row, no "Joined" / "miles away".
+- Start On-call employment: `assertWorkerTenantMembership` →
+  permission-denied "Worker is not a member of this tenant" — and the dialog's
+  error vanished because `onSuccess→refetch` flipped EmploymentV2Tab back to
+  its full-page spinner, unmounting the dialog (tab now spins on first load only).
+Fix: signup stamps `activeTenantId` + `tenantIds.C1 {Applicant, '2', addedAt}`
+(deployed checkOtp). Backfill script for existing orphans:
+`functions/.scratch/backfill_phone_signup_membership.ts` (DRY_RUN=1 to preview) —
+46 of 399 phone signups affected at time of fix. Safe re: triggers (welcome SMS
+and auto interview invite are create-only; Everee address push needs an
+incomplete→complete address; abandon-nudge sweep max 2 texts/worker, 72h apart,
+only no-address + no-submitted-app).
+
+## ☠️ Date of birth typed without slashes kept "Text me a code" disabled (fixed 2026-09-10)
+
+Found via Deborah / Keith Burks: `PhoneSignupGate` only parsed `MM/DD/YYYY` with
+slashes (or ISO), so `04051990` left the send-code button disabled while the hint
+still said "enter your name, phone and date of birth" — the worker had filled
+everything and nobody could tell why. No users doc and no sendOtp call existed
+for him, which is the signature of this client-side gate.
+Fix (hrx 28304e4b, c1_app 3a6793f): web + app accept slashes, dashes, dots and
+bare `MMDDYYYY`; web rejects impossible dates, sends checkOtp an ISO date (server
+`normalizeDobIso` in functions/src/twilio.ts only understands `M/D/YYYY` or ISO —
+a raw `04051990` would be silently dropped server-side), and shows
+`phoneSignup.dobFormat` ("Enter your date of birth as MM/DD/YYYY…") when the date
+is the blocker. Support triage: a stuck signup with no users doc and no sendOtp
+log is a client-side validation gate, not an SMS problem.

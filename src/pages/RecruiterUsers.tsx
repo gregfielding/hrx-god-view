@@ -35,6 +35,7 @@ import IconButton from '@mui/material/IconButton';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { collection, getDocs, getDoc, doc, query, where, limit, startAfter, orderBy, QueryDocumentSnapshot, DocumentData, documentId } from 'firebase/firestore';
 import FavoriteButton from '../components/FavoriteButton';
+import WorkerTierBadge from '../components/WorkerTierBadge';
 import { usePageCache } from '../hooks/usePageCache';
 import StandardTablePagination from '../components/StandardTablePagination';
 import PageHeader from '../components/PageHeader';
@@ -1807,6 +1808,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                           >
                             {user.firstName} {user.lastName}
                           </Typography>
+                          <WorkerTierBadge
+                            userId={user.id}
+                            user={user as unknown as Record<string, unknown>}
+                            userName={`${user.firstName} ${user.lastName}`.trim()}
+                            compact
+                          />
                           <Box
                             onClick={(e) => e.stopPropagation()}
                             onKeyDown={(e) => e.stopPropagation()}

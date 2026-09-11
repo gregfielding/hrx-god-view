@@ -38,6 +38,7 @@ import { claimTypeDailySlot } from '../messaging/rateLimiter';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { evereeRequest } from '../integrations/everee/evereeHttp';
 import { derivePaymentIssue, type RawPayment } from '../integrations/everee/payHistory/mapPayments';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -82,8 +83,8 @@ interface OpenIssue {
 }
 
 function smsBody(issue: OpenIssue['issue'], lang: 'en' | 'es', evereeTenantId: string): string {
-  const depositUrl = 'https://hrxone.com/c1/workers/payroll-settings';
-  const setupUrl = `https://hrxone.com/c1/workers/earnings/${evereeTenantId}`;
+  const depositUrl = `${PUBLIC_APP_ORIGIN}/c1/workers/payroll-settings`;
+  const setupUrl = `${PUBLIC_APP_ORIGIN}/c1/workers/earnings/${evereeTenantId}`;
   if (issue === 'missing_tin') {
     return lang === 'es'
       ? `C1 Staffing: un pago reciente no se pudo procesar porque tu configuración de nómina no está terminada. Termínala aquí para recibir tu pago: ${setupUrl}`
@@ -120,7 +121,7 @@ async function scanEntity(entity: { entityId: string; evereeTenantId: string }):
     const raw = (await evereeRequest<Record<string, unknown>>(
       config,
       'GET',
-      `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true`,
+      `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true&sort=id,asc`,
     )) as { items?: unknown[]; totalPages?: number };
     const items = Array.isArray(raw?.items) ? raw.items : [];
     let fresh = 0;

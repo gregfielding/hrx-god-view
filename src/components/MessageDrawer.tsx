@@ -44,6 +44,8 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage, db } from '../firebase';
 import { getGmailConnectionFromFirestore } from '../utils/getGmailConnectionFromFirestore';
 import { collection, query, where, getDocs, limit, doc, getDoc } from 'firebase/firestore';
+import { getTenantStaffCandidateDocsCached, isTenantStaffUser } from '../utils/tenantStaffUsers';
+import { getTenantWorkerDirectoryForSearch } from '../utils/tenantWorkerDirectoryLoader';
 import { createAutoSave, loadDraft, deleteDraft } from '../utils/emailDrafts';
 import { generateEmailSignature, type EmailSignatureSettings } from '../utils/emailSignature';
 import { useMemo } from 'react';
@@ -450,12 +452,28 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
 
       // Search users by email, name, or username (client-side filtering to avoid index requirements)
       try {
-        const usersRef = collection(db, 'users');
-        const usersQuery = query(usersRef, limit(500)); // Get more users for better search results
-        const usersSnapshot = await getDocs(usersQuery);
-        
-        usersSnapshot.docs.forEach(doc => {
-          const userData = doc.data();
+        // People = this tenant's internal staff (indexed queries, cached 5 min)
+        // + its worker directory (IndexedDB-cached). Replaces a 500-doc users
+        // read per keystroke that only ever saw ~3% of users.
+        const [staffDocs, directoryWorkers] = await Promise.all([
+          getTenantStaffCandidateDocsCached(db, effectiveTenantId),
+          getTenantWorkerDirectoryForSearch(effectiveTenantId).catch((dirErr) => {
+            console.warn('Worker directory unavailable for recipient search:', dirErr);
+            return [];
+          }),
+        ]);
+        const people: any[] = [
+          ...staffDocs
+            .filter((d) => isTenantStaffUser(d.data(), effectiveTenantId))
+            .map((d) => ({ ...d.data(), id: d.id })),
+          ...directoryWorkers,
+        ];
+        const MAX_PEOPLE_MATCHES = 50;
+        let peopleMatches = 0;
+
+        people.forEach((person) => {
+          if (peopleMatches >= MAX_PEOPLE_MATCHES) return;
+          const userData = person;
           const email = userData.email?.toLowerCase() || '';
           const firstName = (userData.firstName || '').toLowerCase();
           const lastName = (userData.lastName || '').toLowerCase();
@@ -473,10 +491,11 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           
           if (matchesEmail || matchesFirstName || matchesLastName || matchesFullName || matchesDisplayName || matchesUsername) {
             const name = userData.displayName || fullName || email.split('@')[0];
+            peopleMatches += 1;
             results.push({
-              id: doc.id,
+              id: person.id,
               name,
-              email: userData.email,
+              email: userData.email || '',
               phone: userData.phone,
               type: 'user',
             });
@@ -529,7 +548,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
 
       // Remove duplicates (same email)
       const uniqueResults = Array.from(
-        new Map(results.map(item => [item.email.toLowerCase(), item])).values()
+        new Map(results.map(item => [(item.email || item.id).toLowerCase(), item])).values()
       );
 
       setRecipientOptions(uniqueResults);

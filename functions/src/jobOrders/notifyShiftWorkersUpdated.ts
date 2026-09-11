@@ -6,6 +6,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { sendMessage } from '../messaging/routingOrchestrator';
 import { canManageAssignments } from '../placementsApi';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -13,7 +14,7 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-const PUBLIC_ORIGIN = process.env.PUBLIC_APP_ORIGIN || 'https://hrxone.com';
+const PUBLIC_ORIGIN = PUBLIC_APP_ORIGIN;
 
 function escapeHtml(s: string): string {
   return String(s || '')

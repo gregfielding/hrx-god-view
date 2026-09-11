@@ -27,6 +27,7 @@ const Login = lazy(() => import('./pages/Login'));
 // Phone (OTP) sign-in — alternate login layout under test (Greg 2026-08-21).
 const PhoneLoginPage = lazy(() => import('./pages/PhoneLoginPage'));
 const LoginGate = lazy(() => import('./pages/LoginGate'));
+const SlackOAuthCallback = lazy(() => import('./pages/SlackOAuthCallback'));
 const UserOnboarding = lazy(() => import('./pages/UserOnboarding'));
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { canAccessAccountInvoicingTab, canAccessGlobalInvoicing } from './utils/invoicingAccessControl';
@@ -69,6 +70,7 @@ const AssignmentDetails = lazy(() => import('./pages/AssignmentDetails'));
 const Communications = lazy(() => import('./pages/Communications'));
 const Terms = lazy(() => import('./pages/Terms'));
 const Privacy = lazy(() => import('./pages/Privacy'));
+const DeleteAccount = lazy(() => import('./pages/DeleteAccount'));
 const SMSPrivacy = lazy(() => import('./pages/SMSPrivacy'));
 const Apply = lazy(() => import('./pages/Apply'));
 const TenantCRM = lazy(() => import('./pages/TenantViews/TenantCRM'));
@@ -205,6 +207,7 @@ const DataHealthPage = lazy(() => import('./pages/reports/DataHealthPage'));
 const I9StatusReportPage = lazy(() => import('./pages/reports/I9StatusReportPage'));
 const AcaLookbackReportPage = lazy(() => import('./pages/reports/AcaLookbackReportPage'));
 const TaxSickLeaveReportPage = lazy(() => import('./pages/reports/TaxSickLeaveReportPage'));
+const AiHiringMonitorReportPage = lazy(() => import('./pages/reports/AiHiringMonitorReportPage'));
 const QboClassesPage = lazy(() => import('./pages/reports/QboClassesPage'));
 const ClassificationAuditPage = lazy(() => import('./pages/reports/ClassificationAuditPage'));
 const ExpenseReconPage = lazy(() => import('./pages/reports/ExpenseReconPage'));
@@ -591,6 +594,8 @@ function App() {
       <Route path="/login/email" element={<Login />} />
       <Route path="/login/phone" element={<PhoneLoginPage />} />
       <Route path="/crm/public" element={<PublicCRMView />} />
+      {/* Slack persona OAuth landing — shows the one-time code instead of bouncing to /login. */}
+      <Route path="/slack/oauth/callback" element={<SlackOAuthCallback />} />
       <Route path="/setup-password" element={<SetupPassword />} />
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
@@ -605,6 +610,7 @@ function App() {
       <Route path="/consent" element={<Communications />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
+      <Route path="/delete-account" element={<DeleteAccount />} />
       <Route path="/sms-privacy" element={<SMSPrivacy />} />
       {/* HRX Signatures /sign/s/:sessionId route + SignerPage removed 2026-06-05.
           The Phase 1C signature scaffold was never activated; production I-9
@@ -921,7 +927,7 @@ function App() {
             </ProtectedRoute>
           }
         />
-        {['i9-status', 'aca-lookback', 'tax-liability'].map((slug) => (
+        {['i9-status', 'aca-lookback', 'tax-liability', 'ai-hiring-illinois'].map((slug) => (
           <Route
             key={slug}
             path={`reports/${slug}`}
@@ -932,6 +938,8 @@ function App() {
                     <I9StatusReportPage />
                   ) : slug === 'aca-lookback' ? (
                     <AcaLookbackReportPage />
+                  ) : slug === 'ai-hiring-illinois' ? (
+                    <AiHiringMonitorReportPage />
                   ) : (
                     <TaxSickLeaveReportPage />
                   )}

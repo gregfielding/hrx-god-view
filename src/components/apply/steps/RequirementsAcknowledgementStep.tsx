@@ -14,6 +14,7 @@ import {
 } from '../../../utils/workerReadinessWriteModel';
 import { formatWorkerFacingScreeningPackage } from '../../../utils/backgroundChecks/formatWorkerFacingScreeningPackage';
 import { warnLegacyCertUsageDetected } from '../../../shared/certifications/certificationsLogging';
+import { tryDualWriteAfterLegacyCertification } from '../../../utils/certifications/tryDualWriteAfterLegacyCertification';
 
 type Props = {
   requirements: {
@@ -155,7 +156,6 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
   const showScreeningPackageOnForm =
     (jobPosting as any)?.showScreeningPackageOnPost === true && screeningPkgServices.length > 0;
   // Always show E-Verify if it's required
-  const showEVerify = jobPosting?.eVerifyRequired === true;
   // Show language/physical/uniform/PPE questions if they exist (not just if show flag is true)
   const showLanguages = (jobPosting?.showLanguages === true || requiredLanguages.length > 0);
   const showPhysicalRequirements = (jobPosting?.showPhysicalRequirements === true || requiredPhysical.length > 0);
@@ -296,6 +296,16 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       } as any;
       await updateDoc(userRef, buildCertificationUploadWritePatch(arrayUnion(certObj)));
 
+      // Canonical row → the AI scan trigger reads the upload (2026-09-08).
+      // The legacy row cannot carry the id back (arrayUnion), which is fine:
+      // the scan and the review queue key off the canonical record alone.
+      await tryDualWriteAfterLegacyCertification({
+        uid,
+        certificationName: pendingCert,
+        legacyEvidence: { fileUrl: url, fileName: file.name },
+        source: 'worker_upload',
+      });
+
       // Mark requirement satisfied
       setUploaded(pendingCert);
       setUploadsByName((prev) => ({ ...prev, [pendingCert]: [ ...(prev[pendingCert] || []), { ...certObj, uploadedAt: new Date() } ] }));
@@ -349,25 +359,8 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
   return (
     <Box sx={{ pb: 5 }}>
       <Stack spacing={3}>
-        {showEVerify && showQ('everify', hasVal(value?.eVerifyComfort)) && (
-          <Box>
-            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
-              <Typography variant="h6" sx={{ fontWeight: 700 }}>{t('apply.eVerify')}</Typography>
-              <Box component="img" src="/img/everify.png" alt={t('apply.eVerify')} sx={{ height: 28, width: 'auto' }} />
-            </Stack>
-            <Typography color="text.secondary" sx={{ mb: 1.5 }}>
-              {t('apply.eVerifyDescription')}
-            </Typography>
-            <YesNoMaybeButtons
-              value={value?.eVerifyComfort || ''}
-              onChange={(val) => {
-                touch('everify');
-                onChange({ ...value, eVerifyComfort: val });
-                debouncedWriteUser({ comfortableEVerify: val });
-              }}
-            />
-          </Box>
-        )}
+        {/* E-Verify comfort question retired 2026-09-09 (Greg) — the posting
+            shows the E-Verify participation badge instead. */}
         {/* Drug Screening */}
         {showDrugScreening && showQ('drug', drugAnswered) && (
           <Box>

@@ -49,6 +49,9 @@ export interface EvereeWorkerDocLike {
   bankAccount?: { verified?: unknown } | null;
   bankAccountVerified?: unknown;
   readinessMirror?: unknown;
+  /** E-Verify case status stamped by the worker.everify-case-updated
+   *  webhook (e.g. 'closed_authorized'), 2026-09-03. */
+  everifyCaseStatus?: unknown;
 }
 
 export interface PlannedReadinessUpdate {
@@ -78,12 +81,13 @@ export interface EvereeWorkerReadinessPlan {
   };
 }
 
-/** Fingerprint the legacy `status` + bank-verified inputs. */
+/** Fingerprint the legacy `status` + bank-verified + E-Verify inputs. */
 function legacyFingerprint(data: EvereeWorkerDocLike | null): string {
   if (!data) return '';
   const status = typeof data.status === 'string' ? data.status : '';
   const bankVerified = pickBankVerified(data);
-  return `${status}::${bankVerified === undefined ? '' : String(bankVerified)}`;
+  const everify = typeof data.everifyCaseStatus === 'string' ? data.everifyCaseStatus : '';
+  return `${status}::${bankVerified === undefined ? '' : String(bankVerified)}::${everify}`;
 }
 
 /**
@@ -250,6 +254,23 @@ export function planEvereeWorkerReadinessUpdates(args: {
       newStatus: legacy.directDeposit,
       source: 'legacy',
     });
+  }
+
+  // E-Verify case status (webhook-stamped, 2026-09-03): 'closed_authorized'
+  // → pass; a final nonconfirmation → fail; any other live case (TNC,
+  // referred, pending) → in_progress so recruiters see it's underway.
+  const everify =
+    typeof after.everifyCaseStatus === 'string'
+      ? after.everifyCaseStatus.trim().toLowerCase()
+      : '';
+  if (everify) {
+    const everifyStatus =
+      /authorized/.test(everify)
+        ? ('complete_pass' as const)
+        : /final|fnc/.test(everify)
+          ? ('complete_fail' as const)
+          : ('in_progress' as const);
+    updates.push({ requirementType: 'e_verify', newStatus: everifyStatus, source: 'legacy' });
   }
 
   return {

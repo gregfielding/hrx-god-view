@@ -123,6 +123,15 @@ export const CONFIG = {
   ENABLE_SCHEDULED_CHECKINS: readBooleanConfig('enable_scheduled_checkins', false),
   ENABLE_AUTO_CLOSE_GIG_SHIFTS: readBooleanConfig('enable_auto_close_gig_shifts', true),
   ENABLE_AUTO_CLOSE_COMPLETED_ASSIGNMENTS: readBooleanConfig('enable_auto_close_completed_assignments', true),
+  // Account ramp mode sweep (tier auto-onboard backfill) — cheap when no
+  // account has opted in, so default ON (Greg 2026-09-07).
+  ENABLE_TIER_RAMP_SWEEP: readBooleanConfig('enable_tier_ramp_sweep', true),
+  // Job-order hiring plan sweep — only acts on JOs a recruiter turned the
+  // plan on for, so default ON (Greg 2026-09-10).
+  ENABLE_JOB_ORDER_HIRING_PLAN_SWEEP: readBooleanConfig('enable_job_order_hiring_plan_sweep', true),
+  // Illinois AI hiring monitor: recruiter alerts for review requests + the
+  // daily hiring-rate report (Greg 2026-09-10).
+  ENABLE_AI_HIRING_MONITOR_SWEEP: readBooleanConfig('enable_ai_hiring_monitor_sweep', true),
   ENABLE_SCHEDULED_TESTS: readBooleanConfig('enable_scheduled_tests', false),
   ENABLE_AI_SCHEDULER: readBooleanConfig('enable_ai_scheduler', false),
   ENABLE_WEEKLY_ENRICHMENT: readBooleanConfig('enable_weekly_enrichment', false),

@@ -35,3 +35,18 @@
 2. **Grid = single source of truth (this session's big pivot).** Imported rows now persist as **canonical `timesheet_entries`** with `source:'csv_import'`, a synthetic id `import__{customer}__{userId|csvKey}__{workDate}` (csvKey = sanitized name+email for blocked/unmatched rows that have no assignment), straight-time totals, and an `import` sidecar (matchStatus ready/needs_rate/needs_wc/blocked/submitted/voided + csvWorkerName/email/site + resolved fields + forcedUserId + externalId). So nothing is lost on reload and **blocked workers persist + are re-sendable**. Pieces: `saveImportTimesheetRows` callable (manual "Save progress"); `onTimesheetEntryWriteRecomputePayBreakdown` **short-circuits source:'csv_import'** + excludes import siblings (Everee owns OT, not HRX); `timesheetGridResolver` 2nd query path surfaces import entries READ-ONLY in the Grid (resolve/fix/submit stays in the Import tab); submit/void mirror status onto the entry; bulk-approve + batch-submit EXCLUDE import rows. New index `timesheet_entries (source, hiringEntityId, workDate)`. Shared keys `functions/src/timesheets/importEntryKeys.ts` + byte-mirror `src/utils/timesheets/importEntryKeys.ts` (normalize must match for resume-merge). Also: **worker-lookup pencil** per row (`searchTimesheetWorkers` callable → pick → this-row-only forced re-match OR remembered name alias) + **matched email/phone** shown per row. Customers: indeed_flex(CSV→C1 Select/W-2), connect_team(xlsx→C1 Events/1099, account VenueSmart).
 
 **Design framing for P3 (agreed in discussion):** The Everee-bound set per row is lean — `everee worker id · work date · hours · pay rate · WC class code · work-location`. Key distinctions: (1) **everee worker id is WORKER-side** (email→user→evereeWorkerIds), NOT from the JO. (2) **pay rate / WC code / position / worksite are JO-side, best reached via the ASSIGNMENT** (it links worker↔JO↔shift↔position for that date AND carries the snapshotted pay rate; grain = shift/position, since a multi-position JO varies). (3) **WC *rate* and *position/title* are NOT sent to Everee** — Everee's worked-shift call takes only the WC class *code*; the rate is internal cost/margin, position is just a resolution input. (4) The "Needs rate" rows = matched+linked workers with NO HRX assignment (typical for Indeed-placed crews) → no JO thread → P3 must connect them another way. **P3 DECISION (agreed 2026-06-15):** connect no-assignment rows to a JO+position via **Site→worksite→JO auto-mapping FIRST** (mirror venue_aliases — remember the mapping per Site string), with a **manual JO/position picker as the fallback** when auto-map can't resolve. Then the grid pivots from CSV-source columns to the editable Everee-bound set (Worker·Date·Hours·Pay rate·WC code·Worksite·Gross).
+
+**Paid-break 404 (2026-09-09, Jourdan Daniel, Naperville ORS Nasco):** the
+Indeed Flex CSV column `Paid break` = true made both composers emit an
+Everee break segment with `segmentConfigCode: 'DEFAULT_PAID'`, and Everee
+answered `404 "No break configured for code: 'DEFAULT_PAID'"` — C1's Everee
+instances have exactly one break code, `DEFAULT_UNPAID`. Fix: paid breaks
+are never sent as segments (the paid minutes already sit inside the
+classified window, so pay is unchanged); they are appended to the shift
+note as "incl. 30m paid break". Applies to `submitImportTimesheetBatch`
+(CSV) and `composeTimesheetBatchPayloads` (grid / `submitTimesheetBatch`
++ `submitTimesheetEntryWorker`). The two failed rows were retried by the
+operator at 23:21Z and are in Everee (worked shifts 4250355 / 4250356,
+unpaid). If Everee ever adds a paid-break code, wire it through
+`EvereeWorkedShiftBreak` and revisit — but don't assume a code name.
+

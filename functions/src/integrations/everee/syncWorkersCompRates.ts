@@ -108,6 +108,208 @@ function normalizeEvereeList(raw: unknown): EvereeWcClass[] {
     .filter((w: EvereeWcClass) => w.id > 0 && w.code);
 }
 
+/**
+ * Build the HRX→Everee sync plan for one entity (shared by the callable and
+ * the nightly additions-only sync). Pure read: no writes, no auth.
+ */
+export async function buildWcSyncPlan(
+  tenantId: string,
+  entityId: string,
+  config: Parameters<typeof evereeRequest>[0],
+  onlyRateIds: string[] | null,
+): Promise<{
+  creates: PlanEntry[];
+  updates: PlanEntry[];
+  inSync: PlanEntry[];
+  conflicts: Array<{ state: string; code: string; rates: number[]; rateIds: string[] }>;
+  evereeOnly: Array<{ state: string; code: string; rate: number; name: string }>;
+}> {
+  const snap = await db.collection(`tenants/${tenantId}/workers_comp_rates`).get();
+  const all: HrxRateDoc[] = snap.docs.map((d) => {
+    const x = d.data() as Record<string, any>;
+    return {
+      id: d.id,
+      state: trim(x.state).toUpperCase(),
+      code: trim(x.code),
+      rate: Number(x.rate ?? 0),
+      jobTitles: Array.isArray(x.jobTitles) ? x.jobTitles.map(trim).filter(Boolean) : [],
+      modifierAccountId: trim(x.modifierAccountId) || null,
+    };
+  });
+  const scoped = onlyRateIds ? all.filter((r) => onlyRateIds.includes(r.id)) : all;
+  if (scoped.length === 0) {
+    throw new HttpsError('not-found', 'No matching workers comp rows found.');
+  }
+
+  // Collapse by (state, code). Everee keys on the pair, so all HRX rows
+  // sharing it must agree on rate. When a single-row sync collapses with
+  // rows OUTSIDE the selection, the full set still participates in the
+  // conflict check — a partial view must not mask a real disagreement.
+  const conflicts: Array<{ state: string; code: string; rates: number[]; rateIds: string[] }> = [];
+  const targets = new Map<string, PlanEntry>();
+  for (const row of scoped) {
+    if (!row.state || !row.code || !(row.rate > 0)) {
+      conflicts.push({ state: row.state, code: row.code, rates: [row.rate], rateIds: [row.id] });
+      continue;
+    }
+    const key = `${row.state}/${row.code}`;
+    const siblings = all.filter((r) => `${r.state}/${r.code}` === key);
+    const rates = [...new Set(siblings.map((r) => r.rate))];
+    if (rates.length > 1) {
+      if (!conflicts.some((c) => `${c.state}/${c.code}` === key)) {
+        conflicts.push({ state: row.state, code: row.code, rates, rateIds: siblings.map((r) => r.id) });
+      }
+      continue;
+    }
+    if (targets.has(key)) {
+      targets.get(key)!.rateIds.push(row.id);
+      continue;
+    }
+    // Prefer an unscoped sibling's first job title for the display name.
+    const nameSource =
+      siblings.find((r) => !r.modifierAccountId && r.jobTitles.length) ??
+      siblings.find((r) => r.jobTitles.length);
+    targets.set(key, {
+      state: row.state,
+      code: row.code,
+      rate: row.rate,
+      name: nameSource?.jobTitles[0] ?? `Class ${row.code}`,
+      rateIds: [row.id],
+    });
+  }
+
+  // ── Everee side (list-first, always; PAGINATED — the server caps
+  // pageSize, and an unpaginated read misclassifies later pages as
+  // missing → duplicate-key 500s on create; found 2026-09-05) ──────────
+  // Everee's paging param is `page` (NOT pageNumber) and the server hard-caps
+  // 20 rows/page regardless of pageSize (probed 2026-09-05: 108 items over 6
+  // pages for Select).
+  const evereeRows: EvereeWcClass[] = [];
+  for (let page = 0; page < 50; page++) {
+    const rawList = await evereeRequest<unknown>(config, 'GET', `/api/v2/workers-comp/list?page=${page}`);
+    const chunk = normalizeEvereeList(rawList);
+    evereeRows.push(...chunk);
+    const totalPages = Number((rawList as Record<string, unknown>)?.totalPages ?? 1);
+    if (chunk.length === 0 || page + 1 >= totalPages) break;
+  }
+  const evereeByKey = new Map(evereeRows.map((w) => [`${w.state}/${w.code}`, w]));
+
+  const creates: PlanEntry[] = [];
+  const updates: PlanEntry[] = [];
+  const inSync: PlanEntry[] = [];
+  for (const t of targets.values()) {
+    const existing = evereeByKey.get(`${t.state}/${t.code}`);
+    if (!existing) {
+      creates.push(t);
+    } else if (Math.abs(existing.rateER - t.rate) > 0.0001) {
+      updates.push({ ...t, evereeId: existing.id, evereeRate: existing.rateER });
+    } else {
+      inSync.push({ ...t, evereeId: existing.id, evereeRate: existing.rateER });
+    }
+  }
+  // Informational: Everee rows with no HRX counterpart (full-list runs only
+  // — a single-row sync would misreport everything else as Everee-only).
+  const evereeOnly = onlyRateIds
+    ? []
+    : evereeRows.filter((w) => ![...targets.keys()].includes(`${w.state}/${w.code}`));
+
+  return {
+    creates,
+    updates,
+    inSync,
+    conflicts,
+    evereeOnly: evereeOnly.map((w) => ({ state: w.state, code: w.code, rate: w.rateER, name: w.name })),
+  };
+}
+
+/**
+ * Everee requires `workersCompPolicyPeriodId` on WC class creates
+ * (discovered 2026-09-05 — POSTs 422 without it). Latest period wins; null
+ * when the Everee tenant has none (e.g. contractor entities — no WC there).
+ */
+export async function resolveWcPolicyPeriodId(
+  config: Parameters<typeof evereeRequest>[0],
+): Promise<number | null> {
+  try {
+    const pp = await evereeRequest<Record<string, unknown>>(config, 'GET', '/api/v2/workers-comp/policy-periods');
+    const items = Array.isArray((pp as any)?.items) ? ((pp as any).items as Array<Record<string, unknown>>) : [];
+    if (items.length === 0) return null;
+    items.sort((a, b) => String(b.startDate ?? '').localeCompare(String(a.startDate ?? '')));
+    const id = Number(items[0].id);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Apply plan entries to Everee (POST creates, PUT updates) + stamp HRX docs. */
+export async function applyWcSyncEntries(
+  tenantId: string,
+  entityId: string,
+  config: Parameters<typeof evereeRequest>[0],
+  creates: PlanEntry[],
+  updates: PlanEntry[],
+  inSync: PlanEntry[],
+  actorUid: string,
+  policyPeriodId: number | null,
+): Promise<{
+  applied: Array<{ state: string; code: string; action: 'created' | 'updated'; evereeId: number }>;
+  errors: Array<{ state: string; code: string; error: string }>;
+}> {
+  const applied: Array<{ state: string; code: string; action: 'created' | 'updated'; evereeId: number }> = [];
+  const errors: Array<{ state: string; code: string; error: string }> = [];
+  const stampDocs = async (entry: PlanEntry, evereeId: number) => {
+    const stamp = {
+      [`everee.${entityId}`]: {
+        evereeId,
+        rate: entry.rate,
+        name: entry.name,
+        syncedAt: admin.firestore.FieldValue.serverTimestamp(),
+        syncedBy: actorUid,
+      },
+    };
+    for (const id of entry.rateIds) {
+      await db.doc(`tenants/${tenantId}/workers_comp_rates/${id}`).update(stamp).catch(() => undefined);
+    }
+  };
+
+  for (const c of creates) {
+    try {
+      const res = await evereeRequest<Record<string, unknown>>(config, 'POST', '/api/v2/workers-comp', {
+        code: c.code,
+        name: c.name,
+        state: c.state,
+        rateER: c.rate,
+        ...(policyPeriodId ? { workersCompPolicyPeriodId: policyPeriodId } : {}),
+      });
+      const evereeId = Number((res as any)?.workersCompClassId ?? (res as any)?.id ?? 0);
+      applied.push({ state: c.state, code: c.code, action: 'created', evereeId });
+      await stampDocs(c, evereeId);
+    } catch (e) {
+      errors.push({ state: c.state, code: c.code, error: (e instanceof Error ? e.message : String(e)).slice(0, 200) });
+    }
+  }
+  for (const u of updates) {
+    try {
+      await evereeRequest<unknown>(config, 'PUT', `/api/v2/workers-comp/${u.evereeId}`, {
+        code: u.code,
+        name: u.name,
+        state: u.state,
+        rateER: u.rate,
+      });
+      applied.push({ state: u.state, code: u.code, action: 'updated', evereeId: u.evereeId! });
+      await stampDocs(u, u.evereeId!);
+    } catch (e) {
+      errors.push({ state: u.state, code: u.code, error: (e instanceof Error ? e.message : String(e)).slice(0, 200) });
+    }
+  }
+  // Already-in-sync rows still get stamped so the UI can show them synced.
+  for (const s of inSync) {
+    await stampDocs(s, s.evereeId!);
+  }
+  return { applied, errors };
+}
+
 export const syncWorkersCompToEveree = onCall(
   { region: 'us-central1', memory: '512MiB', timeoutSeconds: 300 },
   async (request) => {
@@ -128,148 +330,21 @@ export const syncWorkersCompToEveree = onCall(
       throw new HttpsError('failed-precondition', `Entity ${entityId} has no Everee configuration.`);
     }
 
-    // ── HRX side ─────────────────────────────────────────────────────────
-    const snap = await db.collection(`tenants/${tenantId}/workers_comp_rates`).get();
-    const all: HrxRateDoc[] = snap.docs.map((d) => {
-      const x = d.data() as Record<string, any>;
-      return {
-        id: d.id,
-        state: trim(x.state).toUpperCase(),
-        code: trim(x.code),
-        rate: Number(x.rate ?? 0),
-        jobTitles: Array.isArray(x.jobTitles) ? x.jobTitles.map(trim).filter(Boolean) : [],
-        modifierAccountId: trim(x.modifierAccountId) || null,
-      };
-    });
-    const scoped = onlyRateIds ? all.filter((r) => onlyRateIds.includes(r.id)) : all;
-    if (scoped.length === 0) {
-      throw new HttpsError('not-found', 'No matching workers comp rows found.');
-    }
-
-    // Collapse by (state, code). Everee keys on the pair, so all HRX rows
-    // sharing it must agree on rate. When a single-row sync collapses with
-    // rows OUTSIDE the selection, the full set still participates in the
-    // conflict check — a partial view must not mask a real disagreement.
-    const conflicts: Array<{ state: string; code: string; rates: number[]; rateIds: string[] }> = [];
-    const targets = new Map<string, PlanEntry>();
-    for (const row of scoped) {
-      if (!row.state || !row.code || !(row.rate > 0)) {
-        conflicts.push({ state: row.state, code: row.code, rates: [row.rate], rateIds: [row.id] });
-        continue;
-      }
-      const key = `${row.state}/${row.code}`;
-      const siblings = all.filter((r) => `${r.state}/${r.code}` === key);
-      const rates = [...new Set(siblings.map((r) => r.rate))];
-      if (rates.length > 1) {
-        if (!conflicts.some((c) => `${c.state}/${c.code}` === key)) {
-          conflicts.push({ state: row.state, code: row.code, rates, rateIds: siblings.map((r) => r.id) });
-        }
-        continue;
-      }
-      if (targets.has(key)) {
-        targets.get(key)!.rateIds.push(row.id);
-        continue;
-      }
-      // Prefer an unscoped sibling's first job title for the display name.
-      const nameSource =
-        siblings.find((r) => !r.modifierAccountId && r.jobTitles.length) ??
-        siblings.find((r) => r.jobTitles.length);
-      targets.set(key, {
-        state: row.state,
-        code: row.code,
-        rate: row.rate,
-        name: nameSource?.jobTitles[0] ?? `Class ${row.code}`,
-        rateIds: [row.id],
-      });
-    }
-
-    // ── Everee side (list-first, always) ─────────────────────────────────
-    const rawList = await evereeRequest<unknown>(config, 'GET', '/api/v2/workers-comp/list?pageSize=200');
-    const evereeRows = normalizeEvereeList(rawList);
-    const evereeByKey = new Map(evereeRows.map((w) => [`${w.state}/${w.code}`, w]));
-
-    const creates: PlanEntry[] = [];
-    const updates: PlanEntry[] = [];
-    const inSync: PlanEntry[] = [];
-    for (const t of targets.values()) {
-      const existing = evereeByKey.get(`${t.state}/${t.code}`);
-      if (!existing) {
-        creates.push(t);
-      } else if (Math.abs(existing.rateER - t.rate) > 0.0001) {
-        updates.push({ ...t, evereeId: existing.id, evereeRate: existing.rateER });
-      } else {
-        inSync.push({ ...t, evereeId: existing.id, evereeRate: existing.rateER });
-      }
-    }
-    // Informational: Everee rows with no HRX counterpart (full-list runs only
-    // — a single-row sync would misreport everything else as Everee-only).
-    const evereeOnly = onlyRateIds
-      ? []
-      : evereeRows.filter((w) => ![...targets.keys()].includes(`${w.state}/${w.code}`));
-
-    const plan = {
-      entityId,
-      dryRun,
-      creates,
-      updates,
-      inSync,
-      conflicts,
-      evereeOnly: evereeOnly.map((w) => ({ state: w.state, code: w.code, rate: w.rateER, name: w.name })),
-    };
+    const planCore = await buildWcSyncPlan(tenantId, entityId, config, onlyRateIds);
+    const plan = { entityId, dryRun, ...planCore };
     if (dryRun) return plan;
 
-    // ── Apply ─────────────────────────────────────────────────────────────
-    const applied: Array<{ state: string; code: string; action: 'created' | 'updated'; evereeId: number }> = [];
-    const errors: Array<{ state: string; code: string; error: string }> = [];
-    const stampDocs = async (entry: PlanEntry, evereeId: number) => {
-      const stamp = {
-        [`everee.${entityId}`]: {
-          evereeId,
-          rate: entry.rate,
-          name: entry.name,
-          syncedAt: admin.firestore.FieldValue.serverTimestamp(),
-          syncedBy: request.auth!.uid,
-        },
-      };
-      for (const id of entry.rateIds) {
-        await db.doc(`tenants/${tenantId}/workers_comp_rates/${id}`).update(stamp).catch(() => undefined);
-      }
-    };
-
-    for (const c of creates) {
-      try {
-        const res = await evereeRequest<Record<string, unknown>>(config, 'POST', '/api/v2/workers-comp', {
-          code: c.code,
-          name: c.name,
-          state: c.state,
-          rateER: c.rate,
-        });
-        const evereeId = Number((res as any)?.workersCompClassId ?? (res as any)?.id ?? 0);
-        applied.push({ state: c.state, code: c.code, action: 'created', evereeId });
-        await stampDocs(c, evereeId);
-      } catch (e) {
-        errors.push({ state: c.state, code: c.code, error: (e instanceof Error ? e.message : String(e)).slice(0, 200) });
-      }
-    }
-    for (const u of updates) {
-      try {
-        await evereeRequest<unknown>(config, 'PUT', `/api/v2/workers-comp/${u.evereeId}`, {
-          code: u.code,
-          name: u.name,
-          state: u.state,
-          rateER: u.rate,
-        });
-        applied.push({ state: u.state, code: u.code, action: 'updated', evereeId: u.evereeId! });
-        await stampDocs(u, u.evereeId!);
-      } catch (e) {
-        errors.push({ state: u.state, code: u.code, error: (e instanceof Error ? e.message : String(e)).slice(0, 200) });
-      }
-    }
-    // Already-in-sync rows still get stamped so the UI can show them synced.
-    for (const s of inSync) {
-      await stampDocs(s, s.evereeId!);
-    }
-
+    const policyPeriodId = await resolveWcPolicyPeriodId(config);
+    const { applied, errors } = await applyWcSyncEntries(
+      tenantId,
+      entityId,
+      config,
+      planCore.creates,
+      planCore.updates,
+      planCore.inSync,
+      request.auth.uid,
+      policyPeriodId,
+    );
     logger.info('[wc-sync] applied', { tenantId, entityId, applied: applied.length, errors: errors.length });
     return { ...plan, applied, errors };
   },

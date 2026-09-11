@@ -2,6 +2,10 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { defineSecret } from 'firebase-functions/params';
+import { drainOpsAlertsToSlack } from './messaging/smsDeliveryAlerts';
+import { drainFlexTeamAsks, enqueueFlexTeamAsk, NATALIE_SLACK_USER_TOKEN } from './messaging/slackAsNatalie';
+import { enqueueRecruiterEscalation } from './natalie/natalieAudit';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
 import { writeWorkerInboxNotification } from './messaging/unifiedWorkerNotifications';
@@ -22,6 +26,11 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from './messaging/twilioSecrets';
+
+/** Ops alerts (e.g. Twilio 21610 carrier blocks) are drained to Slack from this
+ *  5-minute dispatcher because it already runs constantly; the senders themselves
+ *  never need the Slack secret. */
+const OPS_SLACK_BOT_TOKEN = defineSecret('SLACK_BOT_TOKEN');
 import {
   resolveShiftReminderProfile,
   ALL_SHIFT_REMINDER_TYPES,
@@ -37,6 +46,8 @@ import {
 } from './cadence/enrichShiftPayload';
 import {
   buildCadenceMessage,
+  buildOpenShiftMessage,
+  buildClaimConfirmationMessage,
   isCadenceReminderType,
   type CadenceMessagePayload,
 } from './cadence/cadenceMessages';
@@ -88,8 +99,15 @@ const HOURS_BY_TYPE: Record<ReminderType, number> = {
   assignment_reminder_2h_instructions: 2,
   assignment_reminder_15m_clockin: 0.25,
   assignment_checkin_0h: 0,
+  // T+15m worker-facing late check-in (Flex-linked only; negative = after start).
+  assignment_late_checkin_15m: -0.25,
   // Negative = after start (30m past start).
   assignment_noshow_check: -0.5,
+  // Open-shift lifecycle — synthesized fire times, not offsets from start.
+  openshift_welcome: 0,
+  openshift_weekly_digest: 0,
+  // Claim Shift track — synthesized ~1 min after the claim, not an offset.
+  gig_claim_confirmation: 0,
   shift_reminder_24h: 24,
   shift_reminder_4h: 4,
 };
@@ -105,7 +123,11 @@ const DOC_ID_BY_TYPE: Record<ReminderType, string> = {
   assignment_reminder_2h_instructions: 'assignment_reminder_2h_instructions',
   assignment_reminder_15m_clockin: 'assignment_reminder_15m_clockin',
   assignment_checkin_0h: 'assignment_checkin_0h',
+  assignment_late_checkin_15m: 'assignment_late_checkin_15m',
   assignment_noshow_check: 'assignment_noshow_check',
+  openshift_welcome: 'openshift_welcome',
+  openshift_weekly_digest: 'openshift_weekly_digest',
+  gig_claim_confirmation: 'gig_claim_confirmation',
   shift_reminder_24h: 'shift_reminder_24h',
   shift_reminder_4h: 'shift_reminder_4h',
 };
@@ -144,6 +166,10 @@ type ReminderPayload = {
   onsiteContactRole?: string;
   parkingText?: string;
   checkInText?: string;
+  // Open-shift track: enabled days from assignment.weeklySchedule as
+  // { dowIndex: "HH:MM–HH:MM" } (0=Sun..6=Sat) — rendered per-language at
+  // dispatch by the welcome / weekly-digest bodies.
+  weeklySchedule?: Record<string, string>;
 };
 
 type ReminderDoc = {
@@ -467,6 +493,19 @@ function buildPayload(
     if (shiftExtras.shiftId) payload.shiftId = shiftExtras.shiftId;
     if (shiftExtras.jobOrderId) payload.jobOrderId = shiftExtras.jobOrderId;
   }
+  const ws = assignment.weeklySchedule;
+  if (ws && typeof ws === 'object') {
+    const compact: Record<string, string> = {};
+    for (const [dow, entry] of Object.entries(ws as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const e = entry as Record<string, unknown>;
+      if (e.enabled !== true) continue;
+      const startT = normalize(e.startTime);
+      const endT = normalize(e.endTime);
+      if (startT) compact[dow] = endT ? `${startT}–${endT}` : startT;
+    }
+    if (Object.keys(compact).length > 0) payload.weeklySchedule = compact;
+  }
   return payload;
 }
 
@@ -642,6 +681,60 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
     profileId: profile.id,
   });
 
+  // Open-shift track (Greg 2026-09-03: "once to start, then 1x per week"):
+  // welcome shortly after the assignment is created + a Sunday-17:00 weekly
+  // digest, synthesized here — neither is an offset from a start time, so
+  // the planner doesn't model them. The digest re-arms itself at dispatch
+  // until the assignment window ends.
+  if (profile.id === 'open_shift') {
+    plan.clear();
+    const createdAtRaw = assignment.createdAt as { toMillis?: () => number } | undefined;
+    const createdAtMs = typeof createdAtRaw?.toMillis === 'function' ? createdAtRaw.toMillis() : null;
+    // Never greet a crew member hired long ago just because this code is
+    // new or the assignment was edited — welcome is for fresh adds only.
+    const welcomeStale = createdAtMs == null || nowMs - createdAtMs > 7 * 24 * 60 * 60 * 1000;
+    plan.set('openshift_welcome', {
+      offsetHours: 0,
+      rawScheduledForMs: nowMs + 2 * 60 * 1000,
+      scheduledForMs: nowMs + 2 * 60 * 1000,
+      deferred: false,
+      ...(welcomeStale ? { forceCancelReason: 'skipped_preexisting_assignment' } : {}),
+    });
+    // First check-in lands the SECOND Sunday out (10-16 days) — a check-in
+    // three days after the welcome reads as nagging (on-call model, Greg
+    // 2026-09-03 v2: check-ins, not schedule digests).
+    const digestMs = nextWeeklyDigestMs(nowMs + 10 * 24 * 60 * 60 * 1000, resolvedTimezone);
+    const endMs = end ? end.toMillis() : null;
+    plan.set('openshift_weekly_digest', {
+      offsetHours: 0,
+      rawScheduledForMs: digestMs,
+      scheduledForMs: digestMs,
+      deferred: false,
+      ...(endMs != null && endMs < nowMs ? { forceCancelReason: 'assignment_ended' } : {}),
+    });
+  }
+
+  // Claim Shift track (Greg 2026-09-03 decision 1, built 2026-09-06): the
+  // immediate "you're on the crew" confirmation is synthesized to fire ~1 min
+  // after the claim; the rest of the claimed plan (reconfirm_4h, T-2h
+  // logistics, check-in, no-show probe) stays as the planner laid it out —
+  // the ask ladder was already stripped by the profile. Only a FRESH claim
+  // gets the message: a resync days later (recruiter edit) must not re-greet.
+  if (profile.id === 'gig_claimed') {
+    const claimedAtRaw = (assignment.claimedAt ?? assignment.createdAt) as
+      | { toMillis?: () => number }
+      | undefined;
+    const claimedAtMs = typeof claimedAtRaw?.toMillis === 'function' ? claimedAtRaw.toMillis() : null;
+    const claimStale = claimedAtMs == null || nowMs - claimedAtMs > 24 * 60 * 60 * 1000;
+    plan.set('gig_claim_confirmation', {
+      offsetHours: 0,
+      rawScheduledForMs: nowMs + 60 * 1000,
+      scheduledForMs: nowMs + 60 * 1000,
+      deferred: false,
+      ...(claimStale ? { forceCancelReason: 'skipped_stale_claim' } : {}),
+    });
+  }
+
   // Cancel any non-terminal reminder doc whose type is NOT in the active
   // profile. Guards against duplicate sends when a tenant switches profile
   // from `default` to `cort_gig` (or vice versa) between reminder sync runs.
@@ -784,7 +877,7 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
   // `cancelled` from the worker's own reply. This lets the inbound reply
   // handler (see cadence/cadenceReplyHandler.ts) flip state and the
   // dispatcher suppress escalations accordingly.
-  if (profile.id === 'cort_gig' || profile.id === 'gig_standard') {
+  if (profile.id === 'cort_gig' || profile.id === 'gig_standard' || profile.id === 'gig_claimed') {
     const cort = (assignment.cortConfirmation as Record<string, unknown> | undefined) || {};
     const currentState = normalizeStatus(cort.state);
     // checked_in / no_show added 2026-08-29: a resync (material edit) was
@@ -792,13 +885,17 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
     // clearing the no-show flag recruiters act on.
     const PRESERVED_STATES = ['confirmed', 'cancelled', 'checked_in', 'no_show'];
     if (!PRESERVED_STATES.includes(currentState)) {
+      // A claimed shift is born confirmed (the claim IS the confirmation) —
+      // the claim writer should stamp this too; this is the belt to its braces.
+      const claimed = profile.id === 'gig_claimed';
       writes.push(
         db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
           {
             cortConfirmation: {
-              state: 'pending',
+              state: claimed ? 'confirmed' : 'pending',
               profileId: profile.id,
               updatedAt: now,
+              ...(claimed ? { confirmedAt: now, confirmedVia: 'claim' } : {}),
             },
           },
           { merge: true },
@@ -837,8 +934,48 @@ function buildReminderMessage(
   const assignmentUrl = buildWorkerAssignmentUrl(assignmentId);
   // Both gig confirm tracks use the YES/CANCEL ask bodies; the variable name
   // predates gig_standard.
-  const isCortProfile = reminderProfile === 'cort_gig' || reminderProfile === 'gig_standard';
+  const isCortProfile =
+    reminderProfile === 'cort_gig' || reminderProfile === 'gig_standard' || reminderProfile === 'gig_claimed';
   const es = lang === 'es';
+
+  // Claim Shift confirmation — immediate artifact of the commitment.
+  if (reminderType === 'gig_claim_confirmation') {
+    return buildClaimConfirmationMessage(
+      {
+        jobTitle: payload.jobTitle,
+        companyName: payload.companyName,
+        locationName: payload.locationName,
+        locationAddress: payload.locationAddress,
+        startTime: payload.startTime,
+        endTime: payload.endTime,
+        timezone: payload.timezone,
+        shiftTitle: (payload as { shiftTitle?: string }).shiftTitle,
+      },
+      lang,
+      brand,
+      assignmentUrl,
+    );
+  }
+
+  // Open-shift lifecycle bodies live in cadenceMessages for testability.
+  if (reminderType === 'openshift_welcome' || reminderType === 'openshift_weekly_digest') {
+    return buildOpenShiftMessage(
+      reminderType,
+      {
+        jobTitle: payload.jobTitle,
+        companyName: payload.companyName,
+        locationName: payload.locationName,
+        locationAddress: payload.locationAddress,
+        startTime: payload.startTime,
+        endTime: payload.endTime,
+        timezone: payload.timezone,
+        weeklySchedule: payload.weeklySchedule,
+      },
+      lang,
+      brand,
+      assignmentUrl,
+    );
+  }
 
   // Cadence-specific types (T-2h_instructions, T-15m_clockin, T+0_checkin) get
   // their bodies from the cadenceMessages module, which knows how to use the
@@ -879,12 +1016,12 @@ function buildReminderMessage(
       ? {
           title: 'Confirma tu turno',
           body: `Estás en el equipo: ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar.`,
-          sms: `${brand}: Estás en el equipo — ${payload.jobTitle} el ${startLabel} en ${payload.locationName}.${addr} Responde SI para confirmar o CANCELAR si no puedes ir.`,
+          sms: `${brand}: Estás en el equipo — ${payload.jobTitle} el ${startLabel} en ${payload.locationName}.${addr} Responde SI para confirmar o NO si no puedes ir.`,
         }
       : {
           title: 'Confirm your shift',
           body: `You're on the crew: ${payload.jobTitle} at ${startLabel}. Reply YES to confirm.`,
-          sms: `${brand}: You're on the crew — ${payload.jobTitle} at ${startLabel} at ${payload.locationName}.${addr} Reply YES to confirm or CANCEL if you can't make it.`,
+          sms: `${brand}: You're on the crew — ${payload.jobTitle} at ${startLabel} at ${payload.locationName}.${addr} Reply YES to confirm or NO if you can't make it.`,
         };
   }
 
@@ -897,12 +1034,12 @@ function buildReminderMessage(
       ? {
           title: '¿Sigues disponible?',
           body: `${payload.jobTitle} el ${startLabel}. Responde SI para confirmar.`,
-          sms: `${brand}: ¿Sigues disponible? ${payload.jobTitle} el ${startLabel} en ${payload.locationName}. Responde SI — o CANCELAR ahora para que podamos cubrir tu lugar.`,
+          sms: `${brand}: ¿Sigues disponible? ${payload.jobTitle} el ${startLabel} en ${payload.locationName}. Responde SI — o NO ahora para que podamos cubrir tu lugar.`,
         }
       : {
           title: 'Still good for your shift?',
           body: `${payload.jobTitle} at ${startLabel}. Reply YES to confirm.`,
-          sms: `${brand}: Still good for your shift? ${payload.jobTitle} at ${startLabel} at ${payload.locationName}. Reply YES — or CANCEL now so we can cover your spot.`,
+          sms: `${brand}: Still good for your shift? ${payload.jobTitle} at ${startLabel} at ${payload.locationName}. Reply YES — or NO now so we can cover your spot.`,
         };
   }
 
@@ -930,12 +1067,12 @@ function buildReminderMessage(
       ? {
           title: 'Confirma tu turno',
           body: `Por favor confirma tu turno de ${payload.jobTitle} el ${startLabel}.`,
-          sms: `${brand}: Todavía necesitamos tu respuesta para tu turno de ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar o CANCELAR para declinar.`,
+          sms: `${brand}: Todavía necesitamos tu respuesta para tu turno de ${payload.jobTitle} el ${startLabel}. Responde SI para confirmar o NO para declinar.`,
         }
       : {
           title: 'Please confirm your shift',
           body: `Please confirm your ${payload.jobTitle} shift at ${startLabel}.`,
-          sms: `${brand}: We still need a response for your ${payload.jobTitle} shift at ${startLabel}. Reply YES to confirm or CANCEL to decline.`,
+          sms: `${brand}: We still need a response for your ${payload.jobTitle} shift at ${startLabel}. Reply YES to confirm or NO to decline.`,
         };
   }
   if (reminderType === 'assignment_reminder_22h_final') {
@@ -943,12 +1080,12 @@ function buildReminderMessage(
       ? {
           title: 'Último aviso — confirma tu turno',
           body: `Último aviso: confirma ${payload.jobTitle} el ${startLabel}.`,
-          sms: `${brand}: Último recordatorio para ${payload.jobTitle} el ${startLabel}. Responde SI para mantener tu turno o CANCELAR — si no respondes, puede que lo reasignemos.`,
+          sms: `${brand}: Último recordatorio para ${payload.jobTitle} el ${startLabel}. Responde SI para mantener tu turno o NO — si no respondes, puede que lo reasignemos.`,
         }
       : {
           title: 'Last call — confirm your shift',
           body: `Last call: please confirm ${payload.jobTitle} at ${startLabel}.`,
-          sms: `${brand}: Last reminder for ${payload.jobTitle} at ${startLabel}. Reply YES to keep the shift or CANCEL — otherwise we may need to reassign it.`,
+          sms: `${brand}: Last reminder for ${payload.jobTitle} at ${startLabel}. Reply YES to keep the shift or NO — otherwise we may need to reassign it.`,
         };
   }
 
@@ -958,12 +1095,12 @@ function buildReminderMessage(
         ? {
             title: 'Confirma tu turno de mañana',
             body: `${payload.jobTitle} mañana el ${startLabel}. Responde SI para confirmar.`,
-            sms: `${brand}: Estás programado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Responde SI para confirmar o CANCELAR para declinar.`,
+            sms: `${brand}: Estás programado para ${payload.jobTitle} mañana el ${startLabel} en ${payload.locationName}. Responde SI para confirmar o NO para declinar.`,
           }
         : {
             title: 'Confirm your shift tomorrow',
             body: `${payload.jobTitle} tomorrow at ${startLabel}. Reply YES to confirm.`,
-            sms: `${brand}: You're scheduled for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. Reply YES to confirm or CANCEL to decline.`,
+            sms: `${brand}: You're scheduled for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. Reply YES to confirm or NO to decline.`,
           };
     }
     return es
@@ -1025,7 +1162,11 @@ function toCanonicalReminderType(
   | 'assignment_reminder_22h_final'
   | 'assignment_reconfirm_4h'
   | 'assignment_confirm_now'
-  | 'career_first_day' {
+  | 'career_first_day'
+  | 'openshift_welcome'
+  | 'openshift_weekly_digest'
+  | 'gig_claim_confirmation' {
+  if (reminderType === 'gig_claim_confirmation') return 'gig_claim_confirmation';
   if (reminderType === 'assignment_reminder_24h' || reminderType === 'shift_reminder_24h') {
     return 'assignment_reminder_24h';
   }
@@ -1038,7 +1179,40 @@ function toCanonicalReminderType(
   if (reminderType === 'assignment_reminder_22h_final') return 'assignment_reminder_22h_final';
   if (reminderType === 'assignment_reconfirm_4h') return 'assignment_reconfirm_4h';
   if (reminderType === 'career_first_day') return 'career_first_day';
+  if (reminderType === 'openshift_welcome') return 'openshift_welcome';
+  if (reminderType === 'openshift_weekly_digest') return 'openshift_weekly_digest';
   return 'assignment_reminder_2h';
+}
+
+/**
+ * Next Sunday 17:00 wall-clock in `timezone`, as epoch ms (±15 min — the
+ * dispatch cron granularity dwarfs that). Scans quarter-hour steps so DST
+ * transitions can't produce an invalid constructed wall time.
+ */
+function nextWeeklyDigestMs(fromMs: number, timezone: string): number {
+  const STEP = 15 * 60 * 1000;
+  let fmt: Intl.DateTimeFormat;
+  try {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      weekday: 'short',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    });
+  } catch {
+    return fromMs + 7 * 24 * 60 * 60 * 1000;
+  }
+  let t = Math.ceil(fromMs / STEP) * STEP;
+  const scanEnd = fromMs + 9 * 24 * 60 * 60 * 1000;
+  for (; t <= scanEnd; t += STEP) {
+    const parts = fmt.formatToParts(t);
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+    if (get('weekday') === 'Sun' && Number(get('hour')) === 17 && Number(get('minute')) < 15) {
+      return t;
+    }
+  }
+  return fromMs + 7 * 24 * 60 * 60 * 1000;
 }
 
 async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapshot): Promise<void> {
@@ -1077,6 +1251,12 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   const reminder = claimedSnap.data() as ReminderDoc;
   const maxAttempts = Number(reminder.maxAttempts || MAX_ATTEMPTS);
   const canonicalReminderType = toCanonicalReminderType(reminder.reminderType);
+  // The weekly digest recurs on one doc — scope its per-channel dedupe keys
+  // to the fire date so week N+1 isn't suppressed as a duplicate of week N.
+  const dedupeScope =
+    canonicalReminderType === 'openshift_weekly_digest'
+      ? `${canonicalReminderType}_${reminder.scheduledFor.toDate().toISOString().slice(0, 10)}`
+      : canonicalReminderType;
   const reminderProfileId = normalize((reminder as unknown as Record<string, unknown>).reminderProfile);
   // Worker language drives the message body (bodies were English-only until
   // 2026-08-29). Fail-open to English on any read error.
@@ -1123,12 +1303,17 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     if (tpl) {
       message.sms = renderCadenceTemplate(tpl, {
         brand: smsBrand,
-        jobTitle: reminder.payload.jobTitle,
-        startLabel: formatStartInTimezone(reminder.payload.startTime, reminder.payload.timezone),
-        locationName: reminder.payload.locationName,
-        address: reminder.payload.locationAddress,
-        clockInUrl: reminder.payload.clockInUrl,
-        companyName: reminder.payload.companyName,
+        jobTitle: dispatchPayload.jobTitle,
+        startLabel: formatStartInTimezone(dispatchPayload.startTime, dispatchPayload.timezone),
+        locationName: dispatchPayload.locationName,
+        address: dispatchPayload.locationAddress,
+        clockInUrl: dispatchPayload.clockInUrl,
+        companyName: dispatchPayload.companyName,
+        onsiteContactName: dispatchPayload.onsiteContactName,
+        onsiteContactPhone: dispatchPayload.onsiteContactPhone,
+        onsiteContactRole: dispatchPayload.onsiteContactRole,
+        parking: dispatchPayload.parkingText,
+        checkIn: dispatchPayload.checkInText,
       });
     }
   }
@@ -1181,13 +1366,19 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   const isPostStartReminder =
     reminder.reminderType === 'assignment_checkin_0h' ||
     reminder.reminderType === 'assignment_noshow_check';
-  const allowPostStart = isPostStartReminder;
+  // Open-shift lifecycle messages are inherently post-start: standing-crew
+  // assignments started weeks or months ago and the digest recurs weekly.
+  const isOpenShiftLifecycle =
+    reminder.reminderType === 'openshift_welcome' ||
+    reminder.reminderType === 'openshift_weekly_digest';
+  const allowPostStart = isPostStartReminder || isOpenShiftLifecycle;
   const staleWindow =
     reminder.reminderType === 'assignment_noshow_check'
       ? NOSHOW_STALE_WINDOW_MS
       : CHECKIN_STALE_WINDOW_MS;
   const startInPast = !!assignmentStart && assignmentStart.toMillis() <= nowMs;
   const checkinStale = allowPostStart
+    && !isOpenShiftLifecycle
     && !!assignmentStart
     && (nowMs - assignmentStart.toMillis()) > staleWindow;
   const startPastBlocks = startInPast && (!allowPostStart || checkinStale);
@@ -1217,6 +1408,30 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       lock: admin.firestore.FieldValue.delete(),
     });
     return;
+  }
+
+  // Open-shift digest: stop the chain once the assignment window has ended
+  // (endDate is a YYYY-MM-DD string on most docs, a Timestamp on some).
+  if (reminder.reminderType === 'openshift_weekly_digest') {
+    const endRaw = assignmentData.endDate as unknown;
+    let endMs: number | null = null;
+    if (typeof endRaw === 'string' && endRaw.trim()) {
+      const d = new Date(`${endRaw.trim()}T23:59:59`);
+      if (!Number.isNaN(d.getTime())) endMs = d.getTime();
+    } else if (endRaw && typeof (endRaw as { toMillis?: () => number }).toMillis === 'function') {
+      endMs = (endRaw as { toMillis: () => number }).toMillis();
+    }
+    if (endMs != null && endMs < nowMs) {
+      await docSnap.ref.update({
+        status: 'cancelled',
+        cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        cancelReason: 'assignment_ended',
+        lastError: 'assignment_ended',
+        lock: admin.firestore.FieldValue.delete(),
+      });
+      return;
+    }
   }
 
   // Phase 2A: suppress cadence reminders based on worker's reply state.
@@ -1409,6 +1624,24 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
           },
         },
       });
+
+      // Flex-linked shift: Natalie asks the Indeed Flex team whether they
+      // want a replacement (Slack, via the dispatcher drain). Best-effort.
+      await enqueueFlexTeamAsk({
+        tenantId: reminder.tenantId,
+        assignmentId: reminder.assignmentId,
+        assignment: assignmentData as Record<string, unknown>,
+        kind: 'no_show',
+        detail: 'no check-in 30 minutes after start',
+      });
+      // Natalie DMs the assigned recruiter (roadmap Phase 1.3) — not just a dashboard flag.
+      await enqueueRecruiterEscalation({
+        tenantId: reminder.tenantId,
+        assignmentId: reminder.assignmentId,
+        assignment: assignmentData as Record<string, unknown>,
+        kind: 'no_show',
+        detail: (assignmentData as Record<string, unknown>).cortConfirmation && ((assignmentData as Record<string, unknown>).cortConfirmation as Record<string, unknown>).lateCheckinTextedAt ? 'I texted at T+15 and got no reply.' : undefined,
+      });
     } catch (err: any) {
       notifyError = err?.message || String(err);
       logger.error('[worker_shift_reminders] noshow_check_failed', {
@@ -1457,7 +1690,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     });
 
     // Durable in-app record is always required.
-    const inboxDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__inbox`;
+    const inboxDedupeKey = `${dedupeScope}__${reminder.assignmentId}__inbox`;
     let inboxClaimed = false;
     try {
       const inboxIsFirst = await markLifecycleEventIfFirst({
@@ -1482,11 +1715,28 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
         });
       } else {
         inboxClaimed = true;
+        // Both-language inbox variants (Greg 2026-09-03): the bodies are
+        // template-built, so the other language is a free re-render —
+        // switching EN↔ES later re-localizes notification history.
+        // (Sequence copy overrides only replace SMS, never title/body.)
+        const otherLang: 'en' | 'es' = workerLang === 'es' ? 'en' : 'es';
+        const otherMessage = buildReminderMessage(
+          reminder.reminderType,
+          dispatchPayload,
+          reminder.assignmentId,
+          reminderProfileId,
+          otherLang,
+          smsBrand,
+        );
+        const enMsg = workerLang === 'en' ? message : otherMessage;
+        const esMsg = workerLang === 'es' ? message : otherMessage;
         await writeWorkerInboxNotification({
           uid: reminder.workerId,
           tenantId: reminder.tenantId,
           title: message.title,
           body: message.body,
+          titleI18n: { en: enMsg.title, es: esMsg.title },
+          bodyI18n: { en: enMsg.body, es: esMsg.body },
           type: 'assignment',
           category: 'assignments',
           deepLink: reminder.deepLink,
@@ -1510,7 +1760,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     if (reminder.channels.push && pushAllowed) {
       const tokens = await getEnabledPushTokens(reminder.workerId);
       pushAvailable = tokens.length > 0;
-      const pushDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__push`;
+      const pushDedupeKey = `${dedupeScope}__${reminder.assignmentId}__push`;
       let pushClaimed = false;
       if (pushAvailable) {
         try {
@@ -1589,7 +1839,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       const phoneE164 = toE164(userData?.phoneE164 || userData?.phone);
       smsAvailable = Boolean(smsAllowed && phoneE164);
 
-      const smsDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__sms`;
+      const smsDedupeKey = `${dedupeScope}__${reminder.assignmentId}__sms`;
       let smsClaimed = false;
       if (smsAvailable) {
         try {
@@ -1683,6 +1933,37 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
         lastError: admin.firestore.FieldValue.delete(),
         lock: admin.firestore.FieldValue.delete(),
       });
+
+      // Check-in self-perpetuates: re-arm the same doc for the Sunday after
+      // next (bi-weekly cadence, on-call model) unless the assignment
+      // window ends before then (the pre-send guard also cancels an
+      // already-ended chain). One doc per type keeps the reminder
+      // subcollection's id convention intact.
+      if (canonicalReminderType === 'openshift_weekly_digest') {
+        const nextMs = nextWeeklyDigestMs(
+          Date.now() + 8 * 24 * 60 * 60 * 1000,
+          reminder.resolvedTimezone || 'America/Los_Angeles',
+        );
+        const endRaw = assignmentData.endDate as unknown;
+        let endMs: number | null = null;
+        if (typeof endRaw === 'string' && endRaw.trim()) {
+          const d = new Date(`${endRaw.trim()}T23:59:59`);
+          if (!Number.isNaN(d.getTime())) endMs = d.getTime();
+        } else if (endRaw && typeof (endRaw as { toMillis?: () => number }).toMillis === 'function') {
+          endMs = (endRaw as { toMillis: () => number }).toMillis();
+        }
+        if (endMs == null || endMs >= nextMs) {
+          await docSnap.ref.update({
+            status: 'pending',
+            scheduledFor: admin.firestore.Timestamp.fromMillis(nextMs),
+            attempts: 0,
+            sentAt: admin.firestore.FieldValue.delete(),
+            lastDigestSentAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            lock: admin.firestore.FieldValue.delete(),
+          });
+        }
+      }
 
       // Record that THIS shift is the one we just asked about, so an inbound
       // YES/CANCEL binds here rather than to whichever pending shift happens
@@ -1855,9 +2136,24 @@ export const dispatchScheduledWorkerReminders = onSchedule(
     // a timeout mid-batch strands every claimed reminder in `processing`,
     // which nothing revives. 540s comfortably covers the worst batch.
     timeoutSeconds: 540,
-    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN, OPS_SLACK_BOT_TOKEN, NATALIE_SLACK_USER_TOKEN],
   },
   async () => {
+    // Mirror pending ops alerts (carrier blocks etc.) to Slack — fail-open.
+    try {
+      const posted = await drainOpsAlertsToSlack(OPS_SLACK_BOT_TOKEN.value() || process.env.SLACK_BOT_TOKEN);
+      if (posted) logger.info('[worker_shift_reminders] ops alerts posted to Slack', { posted });
+    } catch (e) {
+      logger.warn('[worker_shift_reminders] ops alert drain failed', { err: String(e) });
+    }
+    // Natalie's replacement asks to the Indeed Flex team (cancel / no-show) — fail-open.
+    try {
+      const asked = await drainFlexTeamAsks(NATALIE_SLACK_USER_TOKEN.value() || process.env.NATALIE_SLACK_USER_TOKEN);
+      if (asked) logger.info('[worker_shift_reminders] flex team asks posted as Natalie', { asked });
+    } catch (e) {
+      logger.warn('[worker_shift_reminders] flex team ask drain failed', { err: String(e) });
+    }
+
     const now = admin.firestore.Timestamp.now();
     const due = await db
       .collectionGroup(REMINDER_SUBCOLLECTION)

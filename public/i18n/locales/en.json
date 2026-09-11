@@ -1,4 +1,46 @@
 {
+  "aiHiring": {
+    "noticeTitle": "How we use AI in hiring",
+    "noticeBody": "This job is in Illinois. C1 uses automated tools, including AI, for prescreening and back-office work: they score your prescreen interview answers and profile, which can move you up a tier and into our on-call worker pool. A C1 recruiter speaks with every applicant before they start work.",
+    "noticeData": "What they use: your application, profile, prescreen answers, and screening status.",
+    "noticeRights": "You can ask a recruiter to review your application or request an accommodation at any time.",
+    "askRecruiter": "Ask a recruiter",
+    "selfIdCta": "Voluntary self-identification",
+    "continueToInterview": "Continue to the interview",
+    "signInToRequest": "Sign in to ask a recruiter or answer voluntary self-identification.",
+    "kindReview": "Review my application",
+    "kindAccommodation": "Request an accommodation",
+    "reviewHelp": "A recruiter will review your application personally and contact you.",
+    "accommodationHelp": "Tell us what you need for the application, the interview, or the job. A recruiter will contact you.",
+    "detailsLabel": "Details (optional)",
+    "sendRequest": "Send request",
+    "requestSent": "Request sent. A recruiter will contact you.",
+    "requestFailed": "Your request couldn't be sent ({code}). Try again.",
+    "cancel": "Cancel",
+    "done": "Done",
+    "selfIdIntro": "C1 checks that our hiring tools treat everyone fairly. Answering is optional and won't affect your application. Recruiters never see your answers — only overall totals are reviewed.",
+    "raceLabel": "Race / ethnicity",
+    "sexLabel": "Sex",
+    "race": {
+      "hispanic_latino": "Hispanic or Latino",
+      "white": "White",
+      "black_african_american": "Black or African American",
+      "asian": "Asian",
+      "american_indian_alaska_native": "American Indian or Alaska Native",
+      "native_hawaiian_pacific_islander": "Native Hawaiian or Other Pacific Islander",
+      "two_or_more": "Two or more races",
+      "decline": "I prefer not to answer"
+    },
+    "sex": {
+      "male": "Male",
+      "female": "Female",
+      "nonbinary": "Nonbinary",
+      "decline": "I prefer not to answer"
+    },
+    "saveAnswers": "Save answers",
+    "saved": "Saved. Thank you.",
+    "saveFailed": "Your answers couldn't be saved ({code}). Try again."
+  },
   "common": {
     "save": "Save",
     "cancel": "Cancel",
@@ -20,7 +62,7 @@
     "dashboard": "Dashboard",
     "home": "Home",
     "inbox": "Inbox",
-    "myAssignments": "Schedule",
+    "myAssignments": "Assignments",
     "myApplications": "My Applications",
     "jobsBoard": "Jobs Board",
     "jobReadiness": "Job Readiness",
@@ -49,7 +91,7 @@
     "findWork": "Find Shifts",
     "viewApplications": "View Applications",
     "prescreen": "Pre-screen",
-    "payroll": "Payroll"
+    "payroll": "Pay"
   },
   "workerAccount": {
     "sectionProfile": "Profile",
@@ -905,7 +947,14 @@
     "sectionDirectDepositTitle": "Direct deposit",
     "sectionDirectDepositDescription": "The bank account where your pay is deposited.",
     "sectionSsnTaxTitle": "SSN & tax forms",
-    "sectionSsnTaxDescription": "Finish payroll setup or update tax info in the secure payroll portal."
+    "sectionSsnTaxDescription": "Finish payroll setup or update tax info in the secure payroll portal.",
+    "certStatusVerified": "Verified",
+    "certStatusUnderReview": "Under review",
+    "certStatusNeedsPhoto": "Needs a new photo",
+    "certStatusNeedsPhotoHint": "Upload a clear photo of the whole certificate, no glare or cropping.",
+    "certificateNumber": "Certificate number (optional)",
+    "certificateNumberPlaceholder": "As printed on the card",
+    "certificateNumberHint": "Helps us verify a card that is hard to read."
   },
   "apply": {
     "availableShifts": "Available Shifts",
@@ -937,7 +986,7 @@
     "jobApplication": "Job Application",
     "back": "Back",
     "next": "Next",
-    "submitApplication": "Submit Application",
+    "submitApplication": "Submit",
     "skip": "Skip",
     "addPhotoLater": "Add photo later",
     "continueWithoutPhoto": "Continue without photo",
@@ -1141,13 +1190,13 @@
     "location": "Location",
     "jobType": "Job Type",
     "sortBy": "Sort By",
-    "searchPlaceholder": "Search jobs by title, location",
+    "searchPlaceholder": "Search jobs, keywords, or locations",
     "allLocations": "All Locations",
     "allTypes": "All Types",
     "newestFirst": "Newest First",
     "closestToMe": "Closest to Me",
     "payRateHighToLow": "Pay Rate (High to Low)",
-    "gig": "Gig",
+    "gig": "Gig Work",
     "career": "Career",
     "noJobs": "No jobs available",
     "noJobsFound": "No jobs found matching your criteria. Try adjusting your filters or search terms.",
@@ -1281,7 +1330,30 @@
     "multiDayJustThisDay": "Just this day",
     "multiDayApplyToOne": "Apply to 1 day",
     "multiDayApplyToMany": "Apply to {count} days",
-    "nextAvailableShift": "Next Available Shift"
+    "nextAvailableShift": "Next Available Shift",
+    "claimShift": "Claim Shift",
+    "claimingShift": "Claiming…",
+    "claimSheetTitle": "Claim this shift",
+    "claimSheetIntro": "Claiming books you on this shift right away — no offer to wait for. Please confirm:",
+    "claimAckUniform": "I have the required uniform and meet the job requirements for this shift.",
+    "claimAckTransport": "I have transportation to the worksite.",
+    "claimAckArrival": "I will be at {location} by {time}, ready to work.",
+    "claimAckArrivalGeneric": "I will be at the worksite by the shift start time, ready to work.",
+    "claimAckNoShow": "I understand that if I don't show up for a shift I claimed, my ability to claim future shifts may be restricted.",
+    "claimCancelHint": "Plans change? You can cancel from the assignment page. Cancelling inside 24 hours counts against your reliability.",
+    "claimAllAcksRequired": "Please check every box to claim this shift.",
+    "claimSuccess": "You're on the crew! We'll text you the site details before your shift.",
+    "claimErrorFilled": "This shift just filled up. Check the board for other shifts.",
+    "claimErrorTierLocked": "This shift isn't open to you yet — check back soon.",
+    "claimErrorTierLockedAt": "This shift opens to you {when}.",
+    "claimErrorConflict": "You're already booked during these hours.",
+    "claimErrorConflictAt": "You're already booked {time} at {site}. Cancel that shift first if your plans changed.",
+    "claimErrorCap": "You can hold up to {cap} claimed shifts until you complete your first one.",
+    "claimErrorIneligible": "You can't be booked on this shift. Reach out to your recruiter if that seems wrong.",
+    "claimErrorNotClaimable": "This shift isn't open for instant claims right now.",
+    "claimErrorStarted": "This shift has already started.",
+    "claimErrorGeneric": "We couldn't claim this shift. Please try again.",
+    "claimHeadshotHint": "Add a headshot below and we'll finish your claim."
   },
   "assignment": {
     "title": "Assignment",
@@ -1302,6 +1374,10 @@
     "firstDayInstructions": "First Day Instructions",
     "parkingInstructions": "Parking Instructions",
     "checkInInstructions": "Check-In Instructions",
+    "onsiteContact": "On-site contact",
+    "onsiteContactHint": "Who to find when you arrive.",
+    "callContact": "Call",
+    "textContact": "Text",
     "uniformInstructions": "Uniform Instructions",
     "credentialInstructions": "Credential Instructions",
     "otherInstructions": "Other Instructions",
@@ -1603,7 +1679,9 @@
     "markAllRead": "Mark all read",
     "markRead": "Mark read",
     "emptyTitle": "No notifications yet.",
-    "emptySubtitle": "We'll notify you about applications, documents, and shifts here."
+    "emptySubtitle": "We'll notify you about applications, documents, and shifts here.",
+    "filterShifts": "Shifts",
+    "filterJobs": "Jobs"
   },
   "inbox": {
     "title": "Inbox",
@@ -1775,6 +1853,7 @@
       "s4L2": "Service providers (e.g., payroll processors, background check partners, cloud hosting, and IT security vendors) who perform services on our behalf.",
       "s4L3": "Regulatory authorities as required by law or government request.",
       "s4P2": "All third-party vendors are bound by confidentiality and data protection obligations consistent with applicable law.",
+      "s4P3": "We do not share, sell, or provide your mobile phone number or your text messaging opt-in and consent data to third parties or affiliates for marketing or promotional purposes. Text messaging originator opt-in data and consent will not be shared with any third parties.",
       "s5Title": "5. Cookies and Tracking Technologies",
       "s5P1": "We use cookies, pixels, and analytics tools to understand how users interact with our websites and apps, improve performance, and enhance usability.",
       "s5P2": "You can control or disable cookies through your browser settings, though some features of the site may not function properly without them.",
@@ -1809,7 +1888,9 @@
       "linksTerms": "Terms of Use",
       "linksSMS": "SMS Consent",
       "linksSMSPrivacy": "SMS Privacy Notice",
-      "s2L4": "Mobile app data: if you use the C1 Staffing mobile app, we collect a push notification token so we can send you shift and payroll alerts, a device identifier, and crash and performance diagnostics. With your permission, the app also accesses your camera and photo library so you can take or upload a profile photo, documents, and certifications, and your device location so we can sort nearby jobs and show distance. You can revoke any of these permissions at any time in your device settings."
+      "s2L4": "Mobile app data: if you use the C1 Staffing mobile app, we collect a push notification token so we can send you shift and payroll alerts, a device identifier, and crash and performance diagnostics. With your permission, the app also accesses your camera and photo library so you can take or upload a profile photo, documents, and certifications, and your device location so we can sort nearby jobs and show distance. You can revoke any of these permissions at any time in your device settings.",
+      "s3L7": "Use AI assistance, only if you allow it: an AI service answers questions you send through in-app help, reads resumes you upload to fill in your profile, and reviews interview answers and profiles to give recruiters recommendations. AI output is advisory; a person makes every hiring decision. You can allow or decline this at sign-up and change it anytime in the app under Profile, About & Legal.",
+      "s4L4": "AI service providers: if you allow AI assistance, the information described above is sent to Anthropic (Claude) to perform those tasks for us. Anthropic processes it under its commercial terms, does not use it to train its models, and does not sell it. If you decline, it is not sent: your questions go to our team, uploaded resumes are not read by AI, and interview answers are reviewed with rule-based scoring only."
     },
     "terms": {
       "title": "Terms of Use",
@@ -1946,6 +2027,7 @@
       "s2L5": "Troubleshoot delivery errors and improve our messaging system",
       "s2P2": "We do not sell or rent your phone number or messaging data.",
       "s2P3": "We will not send unrelated marketing content unless you separately and explicitly opt-in to receive it.",
+      "s2P4": "We do not share, sell, or provide your mobile phone number or your text messaging opt-in and consent data to third parties or affiliates for marketing or promotional purposes. Text messaging originator opt-in data and consent will not be shared with any third parties.",
       "s3Title": "3. Legal Basis & Consent",
       "s3P1": "Where required by law, we rely on your express consent to send Mobile Communications.",
       "s3Intro": "Consent is typically obtained when you:",
@@ -2006,7 +2088,7 @@
       "too_blurry": "Your photo looks blurry. Please retake with a steady hand in good light.",
       "too_dark": "Your photo is too dark. Please retake in better lighting — natural daylight works best.",
       "inappropriate": "Your photo was flagged for review. Please upload a clear, professional headshot.",
-      "manual_override": "A recruiter asked you to reupload your photo. Please take a new, clear headshot.",
+      "manual_override": "Your photo needs a retake. Please take a new, clear headshot with just you in the frame.",
       "verification_error": "We couldn't check your photo right now. Please try uploading again in a moment."
     }
   },
@@ -2101,7 +2183,13 @@
     "accountReady": "Your account is ready — continue below.",
     "genericError": "Something went wrong — please try again.",
     "emailOptional": "Optional — we'll ask again later if payroll needs it.",
-    "mustBe18": "You must be at least 18 years old to work with C1 Staffing."
+    "mustBe18": "You must be at least 18 years old to work with C1 Staffing.",
+    "smsConsentLabel": "Yes, text me about jobs, shifts, onboarding and my application (optional)",
+    "smsConsentDisclosure": "By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One at the number above, including application updates, interview scheduling, onboarding reminders, shift offers and confirmations, payroll alerts, and account security messages. Message and data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment or of creating an account.",
+    "smsConsentLinks": "See our",
+    "otpNote": "Tapping \"Text me a code\" sends one verification code to this number (message and data rates may apply).",
+    "aiConsentLabel": "Allow AI assistance (optional)",
+    "aiConsentDisclosure": "C1 Staffing uses AI from Anthropic (Claude) to answer questions you send through Get help, read resumes you upload to fill in your profile, and review your quick-interview answers and profile to help recruiters match you with jobs. If you allow it, that information is sent to Anthropic only for those purposes and is not used to train its models. A recruiter makes every hiring decision. You can change this later. See our"
   },
   "workerPayroll": {
     "bankFirst": {

@@ -60,3 +60,209 @@ Workers' comp classification build-out. Two collections: `tenants/{t}/workers_co
   /$7.2k unresolvable; 4 skipped (bill < pay suspicious). Accrual
   coverage 45% → **99%**; window truth: pay $1.019M, bill $1.315M,
   ~22.5% gross margin.
+
+## 2026-09-05 — Select matrix audited vs the LIVE portal schedule (Greg's screenshots)
+
+Greg produced screenshots of the InSource portal's C1 Select August filing
+form — the authoritative 59-line active schedule (AL 9014 … VA 8046, incl.
+CA(3) block + IL 8810 clerical). Audit result: **all 59 lines present in
+HRX, all rates match to the penny, zero missing.** But 15 rows were VISIBLE
+to Select off its policy: 11 were the C1 Events schedule still living as
+GENERIC docs (AZ/FL/IL/MD/MN/MO/TX/WI 9014, CA 9008/9016, MI 9015) — titles
+merged into the existing Events-scoped twins, generics DELETED (Select no
+longer sees them; Events unaffected, scoped rows win). 4 were on NEITHER
+schedule (NJ 9014, NV 9014, NV 9083, TX 8810) — titles merged into the
+generic STATE_8040 placeholders, orphans deleted, per Greg ("changed to
+8040 placeholders until we fix"). 41 Aug Select entries riding WI/MO 9014
+($6,928.56 WI + $1,787.45 MO) restamped 8040 @2.35 — they surface on the
+8040 Placeholders tab + the InSource letter's MO/WI coverage asks; the
+portal has no 8040 line so they are NOT filed. ⚠️ Lesson: generic matrix
+rows leak across entities — when a carrier line belongs to ONE entity,
+scope it (`STATE_CODE__e__ENTITY`); the audit script pattern lives in this
+session's history (compare Select-visible rows vs the portal table).
+
+**InSource portal filing view SHIPPED same day:** getWorkersCompMonthlyReport
+rows carry regGross/otGross/dtGross (reg absorbs premiums/tips/bonus +
+rounding; contractor entities flat in reg) + `includeWorkerDetail` returns
+per-(state,code,worker) rows. /reports/workers-comp table shows the three
+columns in the portal's entry order; Export Excel = 'Filing lines' sheet
+(portal column order) + 'Worker detail' sheet (the post-submit "actual
+data" upload). Entities filed from HRX: Select + Events; Resources files
+from Gusto.
+
+**Coverage-ask "order form" SHIPPED 2026-09-05 PM:** /reports/wc-coverage
+now answers "what do we ASK the carrier for": each carrier-ask cohort gets
+a suggested REAL class code — the dominant code the same job titles carry
+in the entity's OTHER rated states (matrixFor gained titleCodes/codeRates;
+8040 never suggested) — plus that code's rate range on the existing
+policy. New "What to ask the carrier for" table (entity + state + code +
+titles + gross + annual est. + comparable rate; novel titles show a
+"needs classification" chip), and the Mass PN export's Class Code column
+now carries the suggested code with basis + comparable range in Notes.
+First live run (90d): Events TN/NY/CA/CT -> 9014 @1.34-3.25; Select
+KY/MN/TX/MO/WI -> 8044 @1.38-3.45, MD -> 8018 (Forklift) @4.34. Headline:
+8040-needs-carrier $171k/90d, coverage exposure $135.8k (Events no-policy
+states).
+
+**Mass PN client resolution (2026-09-05 PM):** chain = assignment account →
+entry.accountId (only linkage on most import rows) → job order →
+parentAccountId walk to the TOP-LEVEL account (never a child venue), plus a
+conservative site-name match against top-level account names (≥5-char base
+token). Site→account facts from Greg: "Minneapolis St. Paul Office" =
+Purolator (ZQIA66WQkAhPwRDzekdj), "Houston Distribution Center" = ORS Nasco
+(TVzTtGoeuvd69MskPZF7) — 21 Indeed Flex import entries had no accountId and
+were stamped; future imports for these sites should carry the account or
+they'll blank again ("fill in client" is the honest fallback, never guess).
+
+## ⚡ STANDING WATCH + PLAYBOOK — InSource/Eddie replies (Greg 2026-09-05)
+
+Eddie Mas… = **eddiem@insourcees.com**, InSource account manager for bulk
+coverage requests (OOO until 2026-09-08). Greg manually sent the first
+auto-built Mass PN 2026-09-05 ("Coverate Request C1 Select" thread) asking
+"does this spreadsheet work?".
+
+**WATCH every InSource email (the inbox brief surfaces them). On reply:**
+1. **Format feedback on the Mass PN** → adjust BOTH builders to his spec:
+   client `src/pages/reports/WcCoveragePage.tsx` (buildMassPnWorkbooks) and
+   server `functions/src/workersComp/massPnAutoSubmit.ts`
+   (buildMassPnXlsxBase64) — they must stay in lockstep.
+2. **New coverage granted (codes/rates)** → close the loop the same session:
+   (a) upsert `tenants/{t}/workers_comp_rates` rows — net effective rates,
+   generic vs entity-scoped per WHICH policy granted them; move the affected
+   jobTitles off the STATE_8040 row onto the new row; (b) run the **Everee WC
+   sync** (Settings → Onboarding Library → WC Class Codes → Sync to Everee,
+   per entity, Preview then Apply — Everee validates (code,state) on every
+   worked shift, so unsynced new codes BLOCK payroll); (c) **reclassify the
+   8040 payroll** onto the new codes via the WC monthly report's clickable
+   code → reclassifyFromCode (moves entries+assignments, relearns titles);
+   (d) verify on the 8040 Placeholders tab + /reports/wc-coverage that the
+   cleared states dropped out. This is the regular 8040-clearing motion.
+3. **Policy/schedule changes** → update `workers_comp` policy records and
+   `workers_comp_policy_locations`.
+
+**Automated 14-day Mass PN send LIVE:** `runMassPnAutoSubmitForTenant`
+(functions/src/workersComp/massPnAutoSubmit.ts) rides
+scheduledScoringDistribution nightly; config
+`tenants/{t}/settings/wcMassPnAutoSubmit` {enabled, entityIds
+[c1_select_llc, c1_events_llc], cadenceDays 14, windowDays 21, lastSentAt}.
+Window 21d on 14d cadence ON PURPOSE (timesheet keying lag — strict 14/14
+would permanently miss late-keyed hours). Seeded lastSentAt 2026-09-05 →
+first auto-send ~09-19. Emails go from Greg's connected mailbox
+(gmailClientFor), one per entity with ask rows, subject "New bulk coverage
+request for <Entity>". Manual sends: "Submit to Eddie" button on
+/reports/wc-coverage (books-gated callable emailMassPn mode; file
+byte-identical to Export).
+
+**☠️ 2026-09-10 — the nightly host job OOM'd every night 09-05 → 09-10.** `scheduledScoringDistribution`
+(1GiB) crashed in its FIRST pass: `computeDistributionForTenant` loaded ~14k FULL user docs (~800MB heap)
+to read four score fields. Nothing after it ran — no scoring percentiles, no tier sweep proposals, no WC
+hygiene (Everee additions sync / 8040 reclassify). Mass PN lost nothing (first auto-send seeded ~09-19).
+Fix: `.select('scoreSummary.aiScore', …)` projection (measured 30MB for 14,192 docs) + memory 2GiB,
+because the tier sweep still loads full user docs + all backgroundChecks and hygiene loads 45 days of
+timesheet entries in the same process. **Rule: anything that rides this job must not load whole
+collections of full docs — project with select() or paginate.** Check a job that "rides" another is
+actually completing: grep logs for `scheduledScoringDistribution: done`.
+
+**Nightly WC hygiene SHIPPED 2026-09-05 PM (Greg "build it all"):**
+`runNightlyWcHygieneForTenant` (functions/src/workersComp/nightlyWcHygiene.ts)
+rides scheduledScoringDistribution: (1) ADDITIONS-ONLY Everee sync per W-2
+entity — new (state,code) matrix rows reach Everee overnight so payroll never
+blocks on an unsynced code; rate UPDATES/conflicts are logged, never
+auto-applied; contractor + sandbox entities skipped (Everee WC is W-2-only).
+(2) 8040 replace-now auto-reclassify: 45d of 8040-stamped entries + all
+8040-stamped assignments restamp to the matrix's real (state,title) code —
+first run cleared the whole replace-now bucket (1 entry + 1 assignment).
+☠️ TWO Everee API traps found doing this: (a) WC class POST now REQUIRES
+`workersCompPolicyPeriodId` (resolveWcPolicyPeriodId picks the latest;
+Select = period 84; Events has NONE — correct, contractors);
+(b) `/api/v2/workers-comp/list` paging param is `page` (NOT pageNumber) and
+the server hard-caps 20 rows/page ignoring pageSize — the old unpaginated
+read made the manual Sync button misclassify pages 2+ as creates
+(duplicate-key 500s on Apply). Both fixed in syncWorkersCompRates.ts
+(buildWcSyncPlan/applyWcSyncEntries now shared by callable + nightly).
+Verified read-only post-fix: Select 96 inSync / 0 creates / 0 updates /
+0 conflicts / 12 evereeOnly (audit-deleted rows, informational).
+**Inbox:** insourcees.com mail now force-labels NEEDS REPLY pre-AI
+(inboxChiefOfStaff triage) + morning brief carries a WC-filing reminder on
+days 1-4 of each month pointing at /reports/workers-comp (Claude drives the
+portal entry, Greg clicks Submit).
+
+## 2026-09-08 — Kickoff sends done; Eddie replied; ⚠️ Gmail grant DEAD
+
+Greg: "send today and then again on the 19th and every 2 weeks." SENT all
+three from his mailbox (via the Claude Gmail connector — see below): C1
+Select (3 rows), C1 Events (2 rows), and a NEW OnTrac all-locations
+request (107 deduped facilities, ~35 states, C1 Select, full JDs from the
+national account's jobDescriptionFromClient fields, $25k/location
+preliminary estimates; sheet delivered as a tokened Firebase Storage
+download link — 24-col files >29KB can't ride connector attachments).
+`wcMassPnAutoSubmit.lastSentAt` left anchored at 2026-09-05 so the
+nightly fires ~09-19 and every 14d after — DO NOT let a send today
+restamp it.
+
+**⚠️ The app's connected-mailbox OAuth grant is DEAD (invalid_grant, both
+server-side and local)**: nightly Mass PN auto-send, Submit to Eddie
+button, sodexo reply desk, re-engagement sender, inbox chief-of-staff —
+everything on gmailClientFor is broken until Greg reconnects the mailbox.
+The 9/19 auto-send WILL FAIL unless reconnected first.
+
+**Eddie replies (2026-09-08, 3 min after first send):**
+1. Entity attribution question → ANSWERED (per-entity emails now).
+2. Venuesmart WI row carried the MO corporate address → ANSWERED:
+   Wisconsin State Fair Park, 640 S 84th St, West Allis, WI 53214. The
+   coverage report resolves worksite from the ACCOUNT when the row
+   aggregates — builders should prefer the JO worksite address (fix with
+   the template migration).
+3. **REVISED Mass PN template attached** ("Revised- MASS PN - Prospect
+   Notification Template.xlsx", on thread 1a081b705f20774e) — "please use
+   the new one going forward." TODO per playbook: diff the new template
+   and update BOTH builders (WcCoveragePage buildMassPnWorkbooks +
+   massPnAutoSubmit buildMassPnXlsxBase64) in lockstep BEFORE the 9/19
+   auto-send. The Gmail MCP can't download attachments — pull it via
+   Greg's browser session or have Greg drop it in functions/.scratch/.
+
+New outbox mode shipped: getWorkersCompMonthlyReport
+`emailMassPnFromStorage` sends workbooks staged under wc_masspn_outbox/
+via the connected mailbox (books-gated) — useful once the grant is fixed.
+
+**RESOLVED same day (2026-09-08 ~9:40 AM PT):** Greg re-ran OAuth via the
+Sodexo panel's "Upgrade permissions" button (all scopes approved) →
+gmailClientFor verified live (read-only profile fetch OK). The 9/19
+auto-send, Submit to Eddie, reply desk, re-engagement, and inbox triage
+are all unblocked. Note the panel's "Sending as" chip does NOT validate
+the token — it only checks the stored record exists, so a dead grant
+looks connected until something sends.
+
+## 2026-09-08 PM — REVISED Mass PN template SHIPPED (both builders)
+
+The revised template (saved: functions/.scratch/"Revised- MASS PN -
+Prospect Notification Template.xlsx") reshapes the sheet: staffing-company
+block moves to columns A/B rows 1–13 (values A2/B2/A4/B4, submission +
+proposed-effective dates B6/B7), column C is a spacer, the data table is
+D–Y from ROW 2, the client MAILING address (E–H) is now separate from the
+WORKSITE address (I–L, each split street/city/state/zip), and a second
+"Important Instructions " sheet (trailing space theirs) carries their
+notes. Sheet content now lives in ONE shared module —
+**shared/massPnTemplate.ts** (mirrored src/shared/; functions/src/shared is
+a symlink to shared/) — and both builders (WcCoveragePage
+buildMassPnWorkbooks + massPnAutoSubmit buildMassPnXlsxBase64) assemble
+from it, so lockstep is structural; verified byte-identical client vs
+server on same inputs (xlsx 0.18.5 both sides — keep versions pinned
+together). Behavior changes: A2 = the ENTITY name (their instruction 4),
+unknown class code stays BLANK (their instruction 5 — was "(needs
+classification)"), worksite name rides the Notes column.
+
+**Worksite-address fix (Eddie's VenueSmart flag):** coverageGaps massPn
+rows now resolve addresses from candidates in trust order JO worksite →
+assignment denorm → import sidecar; the worksite is the first candidate
+not CONTRADICTING the work state, and a contradicting candidate (the MO
+HQ case) is emitted as the client MAILING address fields instead
+(accountStreet/City/State/Zip → columns E–H). Live dry run: the WI
+Venuesmart row now shows 640 South 84th Street, West Allis, WI 53214 —
+exactly the address Eddie supplied. Note: `accounts` docs carry NO address
+fields, so E–H only fill when a wrong-state candidate exists.
+
+Their instructions sheet says policies are NOT written in NH, NY, ND, OH,
+OR, WA, WY — rows for those states still go on the sheet (a real gap needs
+a human answer, and InSource will route to the agent); if Eddie objects,
+filter in shared/massPnTemplate.ts and note it here.

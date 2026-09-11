@@ -5,6 +5,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { google } from 'googleapis';
 import { defineString } from 'firebase-functions/params';
 import { getFunctions as getAdminFunctions } from 'firebase-admin/functions';
+import { isAllowedBrowserOrigin } from './config/appOrigin';
 // Cloud Tasks will be handled via HTTP endpoints
 
 const db = getFirestore();
@@ -523,7 +524,7 @@ async function updateUserProgress(
 // Function to get import progress
 export const getGmailImportProgress = onCall({
   timeoutSeconds: 30,
-  memory: '256MiB',
+  memory: '512MiB', // 256MiB OOMs on cold start (container health check failed on the 2026-09-05 deploy)
   maxInstances: 2,
   cors: true,
 }, async (request) => {
@@ -546,12 +547,11 @@ export const getGmailImportProgress = onCall({
 export const getGmailImportProgressHttp = onRequest({
   cors: true,
   timeoutSeconds: 30,
-  memory: '256MiB',
+  memory: '512MiB', // 256MiB OOMs on cold start (container health check failed on the 2026-09-05 deploy)
   maxInstances: 2,
 }, async (req, res) => {
   const requestOrigin = (req.headers.origin as string) || '';
-  const allowedOrigins = new Set(['http://localhost:3000', 'https://hrxone.com']);
-  const corsOrigin = allowedOrigins.has(requestOrigin) ? requestOrigin : 'http://localhost:3000';
+  const corsOrigin = isAllowedBrowserOrigin(requestOrigin) ? requestOrigin : 'http://localhost:3000';
 
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
@@ -600,8 +600,7 @@ export const queueGmailBulkImportHttp = onRequest({
   maxInstances: 2,
 }, async (req, res) => {
   const requestOrigin = (req.headers.origin as string) || '';
-  const allowedOrigins = new Set(['http://localhost:3000', 'https://hrxone.com']);
-  const corsOrigin = allowedOrigins.has(requestOrigin) ? requestOrigin : 'http://localhost:3000';
+  const corsOrigin = isAllowedBrowserOrigin(requestOrigin) ? requestOrigin : 'http://localhost:3000';
 
   // Handle preflight requests
   if (req.method === 'OPTIONS') {

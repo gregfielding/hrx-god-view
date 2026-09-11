@@ -24,6 +24,8 @@ export interface WorkerApplicationListCardProps {
   onCardClick: () => void;
   onViewJob: (e: React.MouseEvent) => void;
   onWithdraw: (e: React.MouseEvent) => void;
+  /** Extra row actions (e.g. Illinois "Ask a recruiter"), rendered before Withdraw. */
+  extraActions?: React.ReactNode;
 }
 
 const WorkerApplicationListCard: React.FC<WorkerApplicationListCardProps> = ({
@@ -42,12 +44,13 @@ const WorkerApplicationListCard: React.FC<WorkerApplicationListCardProps> = ({
   onCardClick,
   onViewJob,
   onWithdraw,
+  extraActions,
 }) => (
   <Card
     variant="outlined"
     onClick={onCardClick}
     sx={{
-      
+
       borderColor: 'divider',
       boxShadow: 'none',
       cursor: 'pointer',
@@ -100,6 +103,7 @@ const WorkerApplicationListCard: React.FC<WorkerApplicationListCardProps> = ({
       <Button size="small" variant="text" onClick={onViewJob}>
         {viewJobLabel} →
       </Button>
+      {extraActions}
       {showWithdraw ? (
         <Button size="small" variant="text" color="error" startIcon={<CancelOutlinedIcon fontSize="small" />} onClick={onWithdraw}>
           {withdrawLabel}

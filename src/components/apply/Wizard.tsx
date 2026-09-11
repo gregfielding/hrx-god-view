@@ -79,6 +79,8 @@ import { getRequirementPackV1 } from '../../data/jobRequirementPacksV1';
 import { computeJobScoreSummaryV1 } from '../../utils/jobScoreV1';
 import { getUserScore } from '../../utils/scoreSummary';
 import { useT } from '../../i18n';
+import AiHiringNoticeCard from '../worker/aiHiring/AiHiringNoticeCard';
+import { isIllinoisPosting } from '../../shared/illinoisAiHiring';
 import { buildCanonicalWorkerProfileWritePatch, expandDottedKeys } from '../../utils/workerReadinessWriteModel';
 import { buildCanonicalHomeAddressFromWizardPersonal } from '../../utils/buildCanonicalHomeAddress';
 import { isApplyHomeAddressValid } from '../../utils/applyHomeAddressValid';
@@ -565,6 +567,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     const all = accountOnly ? [0, 1] : [0, 1, 4, 6, 7, 8, 9, 13, 12];
     let indices = [...all];
 
+    // Headshot (5) is back for JOB applications (Greg 2026-09-06): removing it
+    // from every flow on 08-29 took wizard photo uploads from ~40/day to zero,
+    // and a photo feeds the tier score + on-site recognition. Generic signup
+    // stays short. Still skippable — but Take Photo is the primary CTA and
+    // Skip is a text link (see the nav bar below).
+    if (Boolean(jobId) && !accountOnly) {
+      const at = indices.indexOf(6);
+      indices.splice(at === -1 ? indices.length : at, 0, 5);
+    }
+
     // Position interests: job applicants already told us the position by
     // applying; workers who answered before are never re-asked (nested +
     // dotted + top-level reads — setDoc dotted-key corruption legacy).
@@ -581,6 +593,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     if (hiringEntityName && /C1 Events LLC/i.test(hiringEntityName)) {
       indices = indices.filter((i) => i !== 4);
     }
+    // E-Verify comfort step retired 2026-09-09 (Greg: not something we should
+    // ask before an offer). Postings that require E-Verify show the
+    // participation badge instead (JobPostingDetail / PublicJobsBoard).
+    indices = indices.filter((i) => i !== 3);
 
     const isAuthenticated = Boolean(auth.currentUser?.uid || uid);
     const profile = userProfile || {};
@@ -738,7 +754,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
     const needsDrug = Boolean(posting?.showDrugScreening || posting?.drugScreeningRequired);
     const needsBackground = Boolean(posting?.showBackgroundChecks || posting?.backgroundCheckRequired);
-    const needsEVerifyOnPosting = Boolean(posting?.eVerifyRequired);
     const additionalScreenings = Array.isArray(posting?.additionalScreenings) ? posting.additionalScreenings : [];
     const showAdditional = Boolean(posting?.showAdditionalScreenings) && additionalScreenings.length > 0;
     const requiredLanguages = toStringList(posting?.languages || (requirements as any).languages);
@@ -757,7 +772,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         (!hasValue(requirementsForm.backgroundScreeningComfort) ||
           (requirementsForm.backgroundScreeningComfort === 'Maybe' &&
             !hasValue(requirementsForm.backgroundExplanation)))) ||
-      (needsEVerifyOnPosting && !hasValue(requirementsForm.eVerifyComfort)) ||
       missingAdditional ||
       ((posting?.showLanguages || requiredLanguages.length > 0) && !hasValue(requirementsForm.languagesComfort)) ||
       ((posting?.showPhysicalRequirements || requiredPhysical.length > 0) &&
@@ -1625,9 +1639,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     const backgroundNeedsExplanation =
       req.backgroundScreeningComfort === 'Maybe' && !(req.backgroundExplanation || '').trim();
 
-    // 4) E-Verify
-    const needsEVerify = !!posting?.eVerifyRequired;
-    const eVerifyAnswered = typeof req.eVerifyComfort === 'string' && req.eVerifyComfort.length > 0;
 
     // 5) Additional screenings (only if enabled)
     const showAdditional = posting?.showAdditionalScreenings === true;
@@ -1644,7 +1655,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       certs: missingCerts,
       drug: needsDrug && (!drugAnswered || drugNeedsExplanation),
       background: needsBackground && (!backgroundAnswered || backgroundNeedsExplanation),
-      everify: needsEVerify && !eVerifyAnswered,
+      // Question retired 2026-09-09 — never blocks.
+      everify: false,
       additional: missingAdditional,
     } as const;
   };
@@ -1860,18 +1872,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         );
         setSaving(false);
         return;
-      }
-      if (actualStep === 3) {
-        const ev = String(
-          formDataRef.current?.requirements?.eVerifyComfort ||
-            formData?.requirements?.eVerifyComfort ||
-            '',
-        ).trim();
-        if (!ev) {
-          alert(t('apply.eVerifyComfortRequired'));
-          setSaving(false);
-          return;
-        }
       }
       // Create account after Personal Info step if not authenticated
       if (actualStep === 0 && !auth.currentUser) {
@@ -3980,6 +3980,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             {renderStep()}
           </Box>
 
+          {isLastVisibleStep && !accountOnly && jobId && isIllinoisPosting(posting) ? (
+            <Box sx={{ mt: 2, px: { xs: 2, md: 3 } }}>
+              <AiHiringNoticeCard
+                tenantId={tenantId}
+                jobId={jobId}
+                jobOrderId={posting?.jobOrderId ?? null}
+                postingTitle={posting?.postTitle || posting?.jobTitle || null}
+              />
+            </Box>
+          ) : null}
+
           {/* Back/Next bar directly under form */}
           <Box
             sx={{
@@ -4004,7 +4015,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 {t('apply.back')}
               </Button>
               <Button
-                variant="contained"
+                // Headshot step without a photo: the loud button is Take Photo
+                // inside the step, so the nav's skip is a quiet text link.
+                variant={actualStep === 5 && !hasProfilePicture && !isLastVisibleStep ? 'text' : 'contained'}
                 onClick={
                   isLastVisibleStep && accountOnly
                     ? async () => {
@@ -4040,7 +4053,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                   ? accountOnly
                     ? t('apply.continueToJob')
                     : t('apply.submitApplication')
-                  : actualStep === 2 || actualStep === 5 || (actualStep === 8 && hasMissingRequiredCerts)
+                  : actualStep === 2 ||
+                      (actualStep === 5 && !hasProfilePicture) ||
+                      (actualStep === 8 && hasMissingRequiredCerts)
                   ? t('apply.skipForNow')
                   : t('apply.next')}
               </Button>

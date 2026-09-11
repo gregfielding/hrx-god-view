@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { queueProfileUpdate, flushProfileUpdates } from '../../../utils/userProfileBatching';
 import { 
   Box, 
   Typography, 
   Button, 
   Chip, 
+  Tooltip,
   Stack, 
   Dialog,
   DialogTitle,
@@ -28,6 +29,8 @@ import { useT } from '../../../i18n';
 import credentialsSeed from '../../../data/credentialsSeed.json';
 import { tryDualWriteAfterLegacyCertification } from '../../../utils/certifications/tryDualWriteAfterLegacyCertification';
 import { tryDeleteCanonicalCertificationRecord } from '../../../utils/certifications/tryDeleteCanonicalCertificationRecord';
+import { getCanonicalCertificationRecordsWithIds } from '../../../utils/certifications/getCanonicalCertificationRecords';
+import type { CertificationRecordV1 } from '../../../shared/certifications/certificationRecord';
 import { warnCertifications } from '../../../shared/certifications/certificationsLogging';
 
 type Props = {
@@ -91,6 +94,48 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const t = useT();
+  // Canonical certification rows keyed by id → verification status chip on each
+  // legacy row that carries `certificationRecordId` (AI cert scan, 2026-09-08).
+  const [canonicalById, setCanonicalById] = useState<Record<string, CertificationRecordV1>>({});
+  const reloadCanonical = useCallback(async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    try {
+      const rows = await getCanonicalCertificationRecordsWithIds(uid);
+      const next: Record<string, CertificationRecordV1> = {};
+      rows.forEach((r) => {
+        next[r.certificationRecordId] = r.record;
+      });
+      setCanonicalById(next);
+    } catch {
+      /* status chips are best-effort */
+    }
+  }, []);
+  useEffect(() => {
+    void reloadCanonical();
+    // Re-read a little later: the scan usually lands within ~20s of an upload.
+    const timer = window.setTimeout(() => void reloadCanonical(), 25_000);
+    return () => window.clearTimeout(timer);
+  }, [reloadCanonical, value?.certifications?.length ?? 0]);
+  const renderCertStatusChip = (entry: any) => {
+    const rec = entry?.certificationRecordId ? canonicalById[String(entry.certificationRecordId)] : undefined;
+    if (!rec) return null;
+    const status = rec.review?.status;
+    if (status === 'approved') {
+      return <Chip size="small" color="success" variant="outlined" icon={<Verified />} label={t('profile.certStatusVerified')} sx={{ mt: 0.5 }} />;
+    }
+    if (status === 'rejected') {
+      return (
+        <Tooltip title={t('profile.certStatusNeedsPhotoHint')}>
+          <Chip size="small" color="warning" variant="outlined" label={t('profile.certStatusNeedsPhoto')} sx={{ mt: 0.5 }} />
+        </Tooltip>
+      );
+    }
+    if (status === 'submitted') {
+      return <Chip size="small" variant="outlined" label={t('profile.certStatusUnderReview')} sx={{ mt: 0.5 }} />;
+    }
+    return null;
+  };
   const [educationDialogOpen, setEducationDialogOpen] = useState(false);
   const [certificationDialogOpen, setCertificationDialogOpen] = useState(false);
   const [quickAddEducationValue, setQuickAddEducationValue] = useState<string | null>(null);
@@ -110,6 +155,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
   const [newCertification, setNewCertification] = useState({
     name: '',
     issuer: '',
+    certificateNumber: '',
     expirationDate: '',
     showExpiration: false,
     file: null as File | null,
@@ -276,6 +322,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
     setNewCertification({
       name: certName,
       issuer: '',
+      certificateNumber: '',
       expirationDate: '',
       showExpiration: false,
       file: null,
@@ -319,6 +366,9 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
       if (newCertification.issuer) {
         entry.issuer = newCertification.issuer.trim();
       }
+      if (newCertification.certificateNumber.trim()) {
+        entry.certificateNumber = newCertification.certificateNumber.trim();
+      }
       
       if (newCertification.showExpiration && newCertification.expirationDate) {
         entry.expirationDate = newCertification.expirationDate;
@@ -343,6 +393,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
           certificationName: entry.name,
           issuerName: entry.issuer ?? null,
           expirationDate: entry.expirationDate ?? null,
+          certificateNumber: entry.certificateNumber ?? null,
           legacyEvidence: { fileUrl: entry.fileUrl, fileName: entry.fileName },
           source,
         });
@@ -368,6 +419,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
       setNewCertification({
         name: '',
         issuer: '',
+        certificateNumber: '',
         expirationDate: '',
         showExpiration: false,
         file: null,
@@ -399,6 +451,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
     setNewCertification({
       name: '',
       issuer: '',
+      certificateNumber: '',
       expirationDate: '',
       showExpiration: false,
       file: null,
@@ -736,6 +789,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
                         Expires: {entry.expirationDate}
                       </Typography>
                     )}
+                    {renderCertStatusChip(entry)}
                     {entry.fileUrl && entry.fileName && (
                       <Typography variant="body2" color="text.secondary">
                         {entry.fileName}
@@ -1090,6 +1144,15 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
               value={newCertification.issuer}
               onChange={(e) => setNewCertification({ ...newCertification, issuer: e.target.value })}
               placeholder="e.g. State Board, ServSafe, Red Cross"
+            />
+            <TextField
+              label={t('profile.certificateNumber')}
+              fullWidth
+              value={newCertification.certificateNumber}
+              onChange={(e) => setNewCertification({ ...newCertification, certificateNumber: e.target.value })}
+              placeholder={t('profile.certificateNumberPlaceholder')}
+              inputProps={{ maxLength: 80 }}
+              helperText={t('profile.certificateNumberHint')}
             />
             
             <Accordion 

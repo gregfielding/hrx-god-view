@@ -118,3 +118,13 @@ exports + 7-year retention job, P6 compliance queue page. Pre-existing
 gap flagged: top-level backgroundChecks rules allow isAssignedToTenant
 reads (workers) — tighten in P-later.
 [[feature-separation-termination]] [[project-conventions]]
+
+**2026-09-08 — "Mark screening complete (outside HRX)" returned a bare
+`internal` (Daniel):** `markAccusourceBackgroundCheckCompleteOutside` was
+the one AccuSource callable pinned at `memory: '256MiB'`; the instance OOMed
+during cold start ("Memory limit of 256 MiB exceeded", readiness probe
+failed) before the handler ran, so the client only saw `internal`. Raised to
+512MiB (same for `acknowledgeBackgroundCheckPackageDriftCallable`, the other
+256 holdout) and redeployed. Whenever a callable fails with `internal` and
+no handler log line, check `firebase functions:list` memory first.
+

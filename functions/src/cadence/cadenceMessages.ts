@@ -7,6 +7,7 @@
  *   - assignment_reminder_2h_instructions   → worksite address + shift details
  *   - assignment_reminder_15m_clockin       → clock-in URL + quick location nudge
  *   - assignment_checkin_0h                 → "are you on site?" check-in ping
+ *   - assignment_late_checkin_15m           → T+15m no clock-in seen: "are you on your way?" (Natalie)
  *
  * The existing assignment_reminder_24h and assignment_reminder_2h message
  * bodies still live in workerShiftRemindersV2.ts#buildReminderMessage — this
@@ -51,17 +52,155 @@ export interface CadenceMessagePayload {
   onsiteContactRole?: string;
   parkingText?: string;
   checkInText?: string;
+
+  // Open-shift track: enabled days as { dowIndex: "HH:MM–HH:MM" }
+  // (0=Sun..6=Sat), rendered per-language by the welcome / digest bodies.
+  weeklySchedule?: Record<string, string>;
 }
 
 export type CadenceReminderType =
   | 'assignment_reminder_2h_instructions'
   | 'assignment_reminder_15m_clockin'
-  | 'assignment_checkin_0h';
+  | 'assignment_checkin_0h'
+  | 'assignment_late_checkin_15m';
+
+export type OpenShiftReminderType = 'openshift_welcome' | 'openshift_weekly_digest';
+
+const DOW_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DOW_ES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+
+/**
+ * "Mon–Fri 09:00–17:00" (grouping contiguous runs that share a time) from
+ * the compact { dowIndex: "HH:MM–HH:MM" } map the scheduler stores.
+ */
+export function renderWeeklyScheduleSummary(
+  weeklySchedule: Record<string, string> | undefined,
+  lang: 'en' | 'es' = 'en',
+): string {
+  if (!weeklySchedule) return '';
+  const names = lang === 'es' ? DOW_ES : DOW_EN;
+  const entries = Object.entries(weeklySchedule)
+    .map(([d, t]) => ({ d: Number(d), t: String(t ?? '').trim() }))
+    .filter((e) => Number.isInteger(e.d) && e.d >= 0 && e.d <= 6 && e.t)
+    .sort((a, b) => a.d - b.d);
+  if (entries.length === 0) return '';
+  const parts: string[] = [];
+  let i = 0;
+  while (i < entries.length) {
+    let j = i;
+    while (j + 1 < entries.length && entries[j + 1].d === entries[j].d + 1 && entries[j + 1].t === entries[i].t) {
+      j += 1;
+    }
+    const label = i === j ? names[entries[i].d] : `${names[entries[i].d]}–${names[entries[j].d]}`;
+    parts.push(`${label} ${entries[i].t}`);
+    i = j + 1;
+  }
+  return parts.join(', ');
+}
+
+/**
+ * Open-shift track bodies. On-call model (Greg 2026-09-03 v2): open shifts
+ * mean the CLIENT manages the schedule on-site — HRX never states hours.
+ * Welcome at creation says exactly that; the recurring message is a light
+ * bi-weekly CHECK-IN (career-adjacent voice), not a schedule digest. The
+ * reminder doc keeps its `openshift_weekly_digest` type/id for continuity;
+ * only copy + interval changed.
+ */
+export function buildOpenShiftMessage(
+  reminderType: OpenShiftReminderType,
+  payload: CadenceMessagePayload,
+  lang: 'en' | 'es' = 'en',
+  brand: string = 'C1 Staffing',
+  assignmentUrl: string = '',
+): BuiltMessage {
+  const es = lang === 'es';
+  const location = payload.locationName || (es ? 'tu lugar de trabajo' : 'your worksite');
+  const address = truncate(payload.locationAddress || '', 120);
+  const details = assignmentUrl
+    ? (es ? ` Detalles: ${assignmentUrl}` : ` Details: ${assignmentUrl}`)
+    : '';
+
+  if (reminderType === 'openshift_welcome') {
+    const parts = [
+      es
+        ? `${brand}: ¡Estás en el equipo de ${location}!`
+        : `${brand}: You're on the crew at ${location}!`,
+      es
+        ? 'Tus horas de turno se coordinan en el sitio.'
+        : 'Your shift hours are managed on-site.',
+    ];
+    if (address) parts.push(es ? `Dirección: ${address}.` : `Address: ${address}.`);
+    if (details) parts.push(details.trim());
+    parts.push(es ? 'Responde HELP si necesitas algo.' : 'Reply HELP if you need anything.');
+    return {
+      title: es ? '¡Estás en el equipo!' : "You're on the crew!",
+      body: es
+        ? `${location} — tus horas se coordinan en el sitio.${address ? ` ${address}.` : ''}`
+        : `${location} — your hours are managed on-site.${address ? ` ${address}.` : ''}`,
+      sms: parts.join(' ').trim(),
+    };
+  }
+
+  // Bi-weekly check-in (doc type still 'openshift_weekly_digest'). Doubles
+  // as roster hygiene: a reply from someone who quietly stopped working
+  // surfaces through the normal reply desk.
+  const checkInLine = es
+    ? `Sigues en nuestro equipo de guardia en ${location}. ¿Todo bien?`
+    : `You're still on our on-call crew at ${location}. Everything going OK?`;
+  const parts = [`${brand}: ${checkInLine}`];
+  if (details) parts.push(details.trim());
+  parts.push(
+    es
+      ? 'Responde HELP si algo cambió.'
+      : 'Reply HELP if anything has changed.',
+  );
+  return {
+    title: es ? `¿Todo bien en ${location}?` : `Checking in — ${location}`,
+    body: checkInLine,
+    sms: parts.join(' ').trim(),
+  };
+}
 
 export interface BuiltMessage {
   title: string;
   body: string;
   sms: string;
+}
+
+/**
+ * Claim Shift track — the one immediate message a claimed gig gets. The claim
+ * IS the confirmation (no YES ask), so this is an artifact of the commitment:
+ * what, when, where, and how to back out. Keep it a statement, not a question.
+ */
+export function buildClaimConfirmationMessage(
+  payload: CadenceMessagePayload,
+  lang: 'en' | 'es' = 'en',
+  brand: string = 'C1 Staffing',
+  assignmentUrl: string = '',
+): BuiltMessage {
+  const es = lang === 'es';
+  const job = truncate(payload.shiftTitle || payload.jobTitle || '', 60) || (es ? 'tu turno' : 'your shift');
+  const location = payload.locationName || (es ? 'el lugar de trabajo' : 'the worksite');
+  const when = formatStartInTimezone(payload.startTime, payload.timezone);
+  const address = truncate(payload.locationAddress || '', 120);
+  const headline = es
+    ? `¡Estás en el equipo! ${job}, ${when} en ${location}.`
+    : `You're on the crew! ${job}, ${when} at ${location}.`;
+  const parts = [`${brand}: ${headline}`];
+  if (address) parts.push(es ? `Dirección: ${address}.` : `Address: ${address}.`);
+  if (assignmentUrl) parts.push(es ? `Detalles: ${assignmentUrl}` : `Details: ${assignmentUrl}`);
+  parts.push(
+    es
+      ? 'Te enviaremos los detalles del sitio antes del turno. Responde NO si cambian tus planes.'
+      : "We'll text site details before your shift. Reply NO if your plans change.",
+  );
+  return {
+    title: es ? '¡Turno reservado!' : 'Shift claimed!',
+    body: es
+      ? `${job} — ${when} en ${location}.${address ? ` ${address}.` : ''}`
+      : `${job} — ${when} at ${location}.${address ? ` ${address}.` : ''}`,
+    sms: parts.join(' ').trim(),
+  };
 }
 
 const MAX_DETAIL_CHARS = 180;
@@ -218,6 +357,22 @@ export function buildCadenceMessage(
       };
     }
 
+    case 'assignment_late_checkin_15m': {
+      // Signed by Natalie (the automation persona). "Ask, never declare": a
+      // failed clock-in link looks exactly like a no-show (Jahon Walker,
+      // 2026-08-31), so this is a question with a HERE / NO answer.
+      const sms = es
+        ? `${brand}: Tu turno de ${job} en ${location} empezó a las ${startLabel} y aún no vemos tu entrada. ¿Vas en camino? Responde AQUÍ cuando llegues, o NO si no puedes ir. — Natalie, asistente de reclutamiento de C1 Staffing`
+        : `${brand}: Your ${job} shift at ${location} started at ${startLabel} and we don't see you clocked in yet. Are you on your way? Reply HERE once you're on site, or NO if you can't make it. — Natalie, C1 Staffing recruiting assistant`;
+      return {
+        title: es ? '¿Vas en camino?' : 'Are you on your way?',
+        body: es
+          ? `${job} empezó a las ${startLabel} y no vemos tu entrada. Responde AQUÍ o NO.`
+          : `${job} started at ${startLabel} and we don't see a clock-in. Reply HERE or NO.`,
+        sms,
+      };
+    }
+
     default: {
       // Exhaustiveness — TS will complain if a new reminder type is added
       // without a case above.
@@ -236,6 +391,7 @@ export function isCadenceReminderType(value: string): value is CadenceReminderTy
   return (
     value === 'assignment_reminder_2h_instructions' ||
     value === 'assignment_reminder_15m_clockin' ||
-    value === 'assignment_checkin_0h'
+    value === 'assignment_checkin_0h' ||
+    value === 'assignment_late_checkin_15m'
   );
 }

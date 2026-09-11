@@ -58,7 +58,7 @@ interface AcknowledgeResult {
 }
 
 export const acknowledgeBackgroundCheckPackageDriftCallable = onCall(
-  { cors: true, memory: '256MiB', timeoutSeconds: 30 },
+  { cors: true, memory: '512MiB', timeoutSeconds: 30 },
   async (request): Promise<AcknowledgeResult> => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required.');

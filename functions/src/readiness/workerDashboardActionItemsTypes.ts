@@ -67,7 +67,7 @@ export interface WorkerDashboardActionItemV1 {
  * the model stays pure for tests).
  */
 export interface WorkerDashboardActionItemsSnapshotV1 {
-  sourceVersion: 1;
+  sourceVersion: number;
   items: WorkerDashboardActionItemV1[];
   inputsHash: string;
   updatedAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
@@ -75,7 +75,7 @@ export interface WorkerDashboardActionItemsSnapshotV1 {
 
 /** Sub-set of `WorkerDashboardActionItemsSnapshotV1` produced by the pure model. */
 export interface WorkerDashboardActionItemsSnapshotPayload {
-  sourceVersion: 1;
+  sourceVersion: number;
   items: WorkerDashboardActionItemV1[];
   inputsHash: string;
 }
@@ -104,7 +104,16 @@ export const WORKER_DASHBOARD_ACTION_ITEM_PRIORITY_SCORES: Readonly<
   sms_opt_in: 100,
 });
 
-export const WORKER_DASHBOARD_ACTION_ITEMS_SOURCE_VERSION = 1 as const;
+export const WORKER_DASHBOARD_ACTION_ITEMS_SOURCE_VERSION = 2 as const;
+
+/**
+ * Items that stay visible on Home even when the 3-cap would drop them.
+ * Clients render the top-N by priority, then append any sticky item that
+ * did not make the cut. v2: the profile-photo nudge (Greg 2026-09-06).
+ */
+export const WORKER_DASHBOARD_ACTION_ITEMS_HOME_STICKY_IDS: ReadonlyArray<string> = Object.freeze([
+  'add_profile_photo',
+]);
 
 /** Tiers used during ordering BEFORE global score sort (profile slice only). */
 export type WorkerDashboardProfileTierOrder =

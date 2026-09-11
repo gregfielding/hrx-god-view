@@ -25,7 +25,10 @@ import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quic
 import { evereeRequest } from '../integrations/everee/evereeHttp';
 import { getEvereeConfigForEntity } from '../integrations/everee/evereeConfig';
 import { buildWcCoverageReport } from '../workersComp/coverageGaps';
+import { gmailClientFor } from '../sales/sodexoReplies';
+import { INSOURCE_COVERAGE_CONTACT, sendMassPnEmail } from '../workersComp/massPnAutoSubmit';
 import { buildDataHealthReport } from './dataHealthReport';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -153,6 +156,7 @@ export const savePayrollVenueMapping = onCall(
       const item = (itemRes.QueryResponse?.Item ?? itemRes.Item ?? [])[0];
       if (!item) throw new HttpsError('failed-precondition', 'QBO item "Staffing" not found.');
 
+      const flexDivisions = await fetchQboDivisions(tenantId);
       const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class MAXRESULTS 1000')) as Record<string, any>;
       const classes: Array<Record<string, any>> = clsRes.QueryResponse?.Class ?? clsRes.Class ?? [];
       const flexParent = classes.find((c) => c.FullyQualifiedName === 'Indeed Flex');
@@ -226,6 +230,8 @@ export const savePayrollVenueMapping = onCall(
           CustomerRef: { value: String(customer.Id) },
           DocNumber: doc,
           TxnDate: date || undefined,
+          // Flex channel = Recurring Division (Greg 2026-09-08 rule).
+          DepartmentRef: { value: flexDivisions.recurring.Id, name: flexDivisions.recurring.Name },
           Line: [{
             DetailType: 'SalesItemLineDetail',
             Amount: amount,
@@ -338,6 +344,54 @@ export const savePayrollVenueMapping = onCall(
       return await trueUpAllocationJes(tenantId, request.data?.dryRun !== false);
     }
 
+    // Expense Division from the class (Greg 2026-09-08): classed purchase/bill
+    // lines follow their client's family; runs before the overhead ratio. Level 7.
+    if (action === 'pushExpenseDivisions') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushExpenseDivisions } = await import('./expenseDivisions');
+      return await pushExpenseDivisions(tenantId, request.data?.dryRun !== false);
+    }
+
+    // Overhead allocation by revenue ratio (Greg 2026-09-08): Corp overhead
+    // → Event-based / Recurring per segment, same account both sides. Level 7.
+    if (action === 'pushOverheadAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushOverheadAllocations } = await import('./overheadAllocations');
+      return await pushOverheadAllocations(tenantId, request.data?.dryRun !== false);
+    }
+
+    // Travel routing (Greg 2026-09-10): client class → Travel for Events
+    // (COGS), else Travel for Sales (by revenue). Level 7.
+    if (action === 'pushTravelRouting') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushTravelRouting } = await import('./travelRouting');
+      return await pushTravelRouting(tenantId, request.data?.dryRun !== false);
+    }
+
+    // Direct worker payments (bank, not Everee — May 2026 cutover) → client
+    // classes via override / HRX timesheets; unattributed stays Corp and is
+    // returned as `punchList` for ops (Greg 2026-09-09). Level 7.
+    if (action === 'pushDirectPaymentAllocations') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushDirectPaymentAllocations } = await import('./directPaymentAllocations');
+      return await pushDirectPaymentAllocations(tenantId, request.data?.dryRun !== false);
+    }
+
+    // Invoice Division true-up (Greg 2026-09-08): header Location on every
+    // 2026 invoice/credit memo = client family (Sodexo/Flex → Recurring,
+    // else Event-based). Run before the revenue reclass so its legs mirror
+    // the corrected invoices. Level 7.
+    if (action === 'pushInvoiceDivisions') {
+      if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required.');
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId, 7);
+      const { pushInvoiceDivisions } = await import('./invoiceDivisions');
+      return await pushInvoiceDivisions(tenantId, request.data?.dryRun !== false);
+    }
+
     // Revenue-account rule (Greg 2026-09-01): monthly 4200→4100 reclass
     // for events-family revenue misposted via item mappings. Level 7.
     if (action === 'pushRevenueAccountReclass') {
@@ -433,6 +487,9 @@ export const savePayrollVenueMapping = onCall(
       );
       if (!acct5010) throw new HttpsError('failed-precondition', 'Account 5010 (Direct Labor) not found.');
       const ACCT = String(acct5010.Id);
+      const divisions = await fetchQboDivisions(tenantId);
+      const divForFqn = (fqn: string): { Id: string; Name: string } =>
+        divisionKindForClassFqn(fqn) === 'recurring' ? divisions.recurring : divisions.event;
       const clsRes = (await qboQuery(tenantId, 'SELECT Id, Name, FullyQualifiedName FROM Class MAXRESULTS 1000')) as Record<string, any>;
       const classIdByFqn = new Map<string, string>(
         ((clsRes.QueryResponse?.Class ?? clsRes.Class ?? []) as Array<Record<string, any>>).map((c) => [
@@ -538,22 +595,34 @@ export const savePayrollVenueMapping = onCall(
             DetailType: 'JournalEntryLineDetail',
             Amount: Math.round(s.amount * 100) / 100,
             Description: `Everee wire ${w.fundingDate} ${w.entityName} — ${s.class}`,
-            JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: ACCT }, ClassRef: { value: cid, name: s.qboClass } },
+            JournalEntryLineDetail: {
+              PostingType: 'Debit',
+              AccountRef: { value: ACCT },
+              ClassRef: { value: cid, name: s.qboClass },
+              DepartmentRef: { value: divForFqn(String(s.qboClass)).Id, name: divForFqn(String(s.qboClass)).Name },
+            },
           });
         }
+        // Division convention (Greg 2026-09-08): the bank-feed wire sits in
+        // `Corp / Unalloc.`; this JE's credit carries the SAME Division so
+        // the wire nets to zero there and only the classed debits land in
+        // Event-based / Recurring. The unattributed remainder stays in Corp
+        // (honest: labor we could not attribute). Untagged credits used to
+        // pile up in the Not Specified column (−$513K in June 2026).
+        const corpRef = divisions.corp ? { DepartmentRef: { value: divisions.corp.Id, name: divisions.corp.Name } } : {};
         if (unresolved > 0.005) {
           lines.push({
             DetailType: 'JournalEntryLineDetail',
             Amount: Math.round(unresolved * 100) / 100,
             Description: `Everee wire ${w.fundingDate} — unattributed remainder`,
-            JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: ACCT } },
+            JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: { value: ACCT }, ...corpRef },
           });
         }
         lines.push({
           DetailType: 'JournalEntryLineDetail',
           Amount: Math.round(w.amount * 100) / 100,
           Description: `Everee wire ${w.fundingDate} ${w.entityName} — reallocation`,
-          JournalEntryLineDetail: { PostingType: 'Credit', AccountRef: { value: ACCT } },
+          JournalEntryLineDetail: { PostingType: 'Credit', AccountRef: { value: ACCT }, ...corpRef },
         });
         if (dryRun) {
           results.push({
@@ -1098,7 +1167,7 @@ export async function buildEvereeRegister(
       const res = (await evereeRequest(
         config,
         'GET',
-        `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true`,
+        `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true&sort=id,asc`,
       )) as Record<string, any>;
       const items = (res.items ?? []) as Array<Record<string, any>>;
       let fresh = 0;
@@ -1650,45 +1719,120 @@ export async function maybeRunWeeklyClassificationHealth(
           `Flagged payroll: ${payrollFlags.length} lines / $${Math.round(flaggedAmt).toLocaleString()} · invoice flags: ${invoiceFlags.length}\n` +
           (unhealthyJos.length ? `\n⚠️ Job orders clocking past billing (crew rolled or weeks unbilled):\n${joLines}\n` : '') +
           (badRatios.length ? `\n⚠️ Class health (rev÷labor outside the staffing band):\n${ratioLines}\n` : '') +
-          `\nReview + fix inline: https://hrxone.com/reports/classification-audit`,
+          `\nReview + fix inline: ${PUBLIC_APP_ORIGIN}/reports/classification-audit`,
       );
     }
-    // Posted-JE true-up rides the weekly run: verification-page fixes
-    // reach QBO within the week without any push (Greg 2026-09-01).
-    try {
-      const { trueUpAllocationJes } = await import('./allocationTrueUp');
-      const tu = (await trueUpAllocationJes(tenantId, false)) as Record<string, any>;
-      if (Number(tu.patched) > 0 && postText) {
-        await postText(`🩹 Allocation true-up: re-split ${tu.patched} posted payroll JE(s) to current attribution.`);
+    // QBO JE writers are gated (Greg 2026-09-08): nothing below posts or
+    // rewrites a journal entry unless the tenant flag is on.
+    const writersOn = await qboJeWritersEnabled(tenantId);
+    if (!writersOn) {
+      console.info('[classificationHealth] QBO JE writers PAUSED (tenants/{t}/settings/qbo_automation.jeWritersEnabled !== true) — skipped true-up, revenue reclass, screening, WC');
+    } else {
+      // Posted-JE true-up rides the weekly run: verification-page fixes
+      // reach QBO within the week without any push (Greg 2026-09-01).
+      try {
+        const { trueUpAllocationJes } = await import('./allocationTrueUp');
+        const tu = (await trueUpAllocationJes(tenantId, false)) as Record<string, any>;
+        if (Number(tu.patched) > 0 && postText) {
+          await postText(`🩹 Allocation true-up: re-split ${tu.patched} posted payroll JE(s) to current attribution.`);
+        }
+      } catch (e) {
+        console.error('[classificationHealth] true-up failed', { error: String(e) });
       }
-    } catch (e) {
-      console.error('[classificationHealth] true-up failed', { error: String(e) });
-    }
-    // Revenue-account rule rides the weekly run too — one idempotent
-    // monthly 4200→4100 reclass JE per matured month (Greg 2026-09-01).
-    try {
-      const { pushRevenueAccountReclass } = await import('./revenueAccountReclass');
-      const rr = (await pushRevenueAccountReclass(tenantId, false)) as Record<string, any>;
-      const made = ((rr.months ?? []) as Array<Record<string, any>>).filter((x) => x.status === 'created');
-      if (made.length && postText) {
-        await postText(`🔀 Revenue reclass: posted ${made.length} monthly 4200→4100 entr${made.length === 1 ? 'y' : 'ies'} (events-family revenue).`);
+      // Direct (non-Everee) worker payments — self-truing per segment; new
+      // worker overrides / timesheets pull money out of Corp on the next run.
+      try {
+        const { pushDirectPaymentAllocations } = await import('./directPaymentAllocations');
+        const dp = (await pushDirectPaymentAllocations(tenantId, false)) as Record<string, any>;
+        const changed = ((dp.months ?? []) as Array<Record<string, any>>).filter((m) => m.status === 'created' || m.status === 'true_upd').length;
+        if (changed > 0 && postText) {
+          await postText(`🏦 Direct-payment allocation: ${changed} segment JE(s) written; ${((dp.punchList ?? []) as unknown[]).length} worker(s) still unattributed in Corp.`);
+        }
+      } catch (e) {
+        console.error('[classificationHealth] direct-payment allocation failed', { error: String(e) });
       }
-    } catch (e) {
-      console.error('[classificationHealth] revenue reclass failed', { error: String(e) });
-    }
-    // Screening allocation rides the weekly run — idempotent per charge,
-    // mature charges only, ~$8/screen amounts (Greg 2026-09-01).
-    try {
-      const { pushScreeningAllocations } = await import('./screeningAllocations');
-      const scr = (await pushScreeningAllocations(tenantId, false)) as Record<string, any>;
-      const { pushWcAllocations } = await import('./wcAllocations');
-      const wc = (await pushWcAllocations(tenantId, false).catch((e) => ({ ok: false, error: String(e) }))) as Record<string, any>;
-      const created = ((scr.charges ?? []) as Array<Record<string, any>>).filter((c) => c.status === 'created');
-      if (created.length && postText) {
-        await postText(`🧾 Screening allocation: posted ${created.length} AccuSource reclass entr${created.length === 1 ? 'y' : 'ies'} (5010 → 5300 per class).`);
+      // Travel routing (Greg 2026-09-10): client-classed travel → 5500 Travel
+      // for Events (COGS, Division by class); unclassed / National / Austin →
+      // 8800 Travel for Sales (overhead, by revenue). Line account moves hit
+      // the QBO query lag, so a run that moves any defers expense Divisions
+      // and overhead to the next run.
+      let travelMoved = 0;
+      try {
+        const { pushTravelRouting } = await import('./travelRouting');
+        const tr = (await pushTravelRouting(tenantId, false)) as Record<string, any>;
+        travelMoved = Number(tr.transactions) || 0;
+        if (travelMoved > 0 && postText) await postText(`✈️ Travel routing: moved ${tr.lineMoves} travel line(s) between Travel for Events and Travel for Sales by class.`);
+      } catch (e) {
+        console.error('[classificationHealth] travel routing failed', { error: String(e) });
       }
-    } catch (e) {
-      console.error('[classificationHealth] screening allocation failed', { error: String(e) });
+      // Invoice Divisions first (Greg 2026-09-08): header Location = client
+      // family, so the reclass legs below mirror corrected invoices.
+      let invoicesRetagged = 0;
+      try {
+        const { pushInvoiceDivisions } = await import('./invoiceDivisions');
+        const idv = (await pushInvoiceDivisions(tenantId, false)) as Record<string, any>;
+        invoicesRetagged = Number(idv.changed) || 0;
+        if (invoicesRetagged > 0 && postText) {
+          await postText(`🏷️ Invoice Divisions: re-tagged ${invoicesRetagged} invoice(s) to the client's Division (Sodexo/Flex → Recurring, else Event-based). Revenue reclass re-trues on the next run.`);
+        }
+      } catch (e) {
+        console.error('[classificationHealth] invoice divisions failed', { error: String(e) });
+      }
+      // Revenue-account rule rides the weekly run too — one idempotent
+      // monthly 4200→4100 reclass JE per matured month (Greg 2026-09-01).
+      // ☠️ QBO's query index lags entity updates by up to a minute: on
+      // 2026-09-08 a reclass run seconds after 242 invoice re-tags read
+      // stale headers and wrote half its June legs to the old Division.
+      // When invoices changed THIS run, let the reclass re-true next run.
+      if (invoicesRetagged > 0) {
+        console.info('[classificationHealth] invoices re-tagged this run — revenue reclass deferred to the next run (QBO query lag)');
+      } else try {
+        const { pushRevenueAccountReclass } = await import('./revenueAccountReclass');
+        const rr = (await pushRevenueAccountReclass(tenantId, false)) as Record<string, any>;
+        const made = ((rr.months ?? []) as Array<Record<string, any>>).filter((x) => x.status === 'created');
+        if (made.length && postText) {
+          await postText(`🔀 Revenue reclass: posted ${made.length} monthly 4200→4100 entr${made.length === 1 ? 'y' : 'ies'} (events-family revenue).`);
+        }
+      } catch (e) {
+        console.error('[classificationHealth] revenue reclass failed', { error: String(e) });
+      }
+      // Screening allocation rides the weekly run — idempotent per charge,
+      // mature charges only, ~$8/screen amounts (Greg 2026-09-01).
+      try {
+        const { pushScreeningAllocations } = await import('./screeningAllocations');
+        const scr = (await pushScreeningAllocations(tenantId, false)) as Record<string, any>;
+        const { pushWcAllocations } = await import('./wcAllocations');
+        const wc = (await pushWcAllocations(tenantId, false).catch((e) => ({ ok: false, error: String(e) }))) as Record<string, any>;
+        // Overhead by revenue ratio runs LAST — it reads the Divisions the
+        // steps above just settled (invoices, WC). Skipped when invoices were
+        // re-tagged this run (same QBO query-lag reason as the reclass).
+        // Classed expenses take their client's Division first (Greg 2026-09-08);
+        // a run that re-tags any waits for the next run before the ratio pass
+        // (same QBO query-lag reason as invoices).
+        let expensesRetagged = 0;
+        if (travelMoved > 0) console.info('[classificationHealth] travel lines moved this run — expense divisions + overhead deferred to the next run (QBO query lag)');
+        else try {
+          const { pushExpenseDivisions } = await import('./expenseDivisions');
+          const ed = (await pushExpenseDivisions(tenantId, false)) as Record<string, any>;
+          expensesRetagged = Number(ed.changed) || 0;
+          if (expensesRetagged > 0 && postText) await postText(`🏷️ Expense Divisions: ${expensesRetagged} classed purchase(s) re-tagged to the client's Division.`);
+        } catch (e) {
+          console.error('[classificationHealth] expense divisions failed', { error: String(e) });
+        }
+        if (invoicesRetagged === 0 && expensesRetagged === 0 && travelMoved === 0) {
+          const { pushOverheadAllocations } = await import('./overheadAllocations');
+          const ovh = (await pushOverheadAllocations(tenantId, false).catch((e) => ({ ok: false, error: String(e) }))) as Record<string, any>;
+          const ovhMade = ((ovh.months ?? []) as Array<Record<string, any>>).filter((x) => /d$/.test(String(x.status)) && x.status !== 'already_allocated');
+          if (ovhMade.length && postText) await postText(`📐 Overhead allocation: ${ovhMade.length} segment entr${ovhMade.length === 1 ? 'y' : 'ies'} posted/re-trued by revenue ratio.`);
+          void wc;
+        }
+        const created = ((scr.charges ?? []) as Array<Record<string, any>>).filter((c) => c.status === 'created');
+        if (created.length && postText) {
+          await postText(`🧾 Screening allocation: posted ${created.length} AccuSource reclass entr${created.length === 1 ? 'y' : 'ies'} (5010 → 5300 per class).`);
+        }
+      } catch (e) {
+        console.error('[classificationHealth] screening allocation failed', { error: String(e) });
+      }
     }
     await claimRef.set(
       { finishedAt: admin.firestore.FieldValue.serverTimestamp(), flagged: payrollFlags.length, unhealthyJos: unhealthyJos.length },
@@ -1702,6 +1846,59 @@ export async function maybeRunWeeklyClassificationHealth(
       { merge: true },
     );
   }
+}
+
+/**
+ * Division (QBO Department) family rule — OFFICIAL per Greg 2026-09-08:
+ * RECURRING = Sodexo and the Indeed Flex family ONLY. Every other client
+ * class is EVENT-kind (Proof of the Pudding, G6, Contigo, Black Caviar
+ * included — they are events business). Western Group Packaging and C1
+ * MedStaff never carried revenue and are not classes. This supersedes the
+ * 2026-09-06 run that adopted Tabitha's wider matrix (that run moved
+ * $494,658 back into 4200 and stamped those clients' payroll Recurring;
+ * both reverse on the next rerun). The same split drives the revenue
+ * accounts (4100/4200) and the Division stamped on payroll-side JE lines.
+ */
+export const RECURRING_DIVISION_RE = /^(sodexo|indeed flex)/i;
+
+/**
+ * Kill switch for every automated QBO journal writer (Greg 2026-09-08,
+ * after the 9/6 Division rewrite skewed Tabitha's P&L by Division):
+ * the weekly health run only posts/rewrites JEs when
+ * tenants/{t}/settings/qbo_automation has jeWritersEnabled === true.
+ * Absent doc = PAUSED. The admin callable actions (pushRevenueAccountReclass,
+ * trueUpAllocations, pushWcAllocations, pushScreeningAllocations) stay
+ * available for explicit, dry-run-first reruns.
+ */
+export async function qboJeWritersEnabled(tenantId: string): Promise<boolean> {
+  try {
+    const snap = await db.doc(`tenants/${tenantId}/settings/qbo_automation`).get();
+    return snap.exists && snap.get('jeWritersEnabled') === true;
+  } catch (e) {
+    console.error('[qboJeWritersEnabled] read failed — treating as paused', { error: String(e) });
+    return false;
+  }
+}
+
+export const divisionKindForClassFqn = (fqn: string): 'recurring' | 'event' =>
+  RECURRING_DIVISION_RE.test(fqn.trim()) ? 'recurring' : 'event';
+
+/** Fetch the three QBO Departments ("Divisions" in this file). */
+export async function fetchQboDivisions(tenantId: string): Promise<{
+  event: { Id: string; Name: string };
+  recurring: { Id: string; Name: string };
+  corp?: { Id: string; Name: string };
+}> {
+  const res = (await qboQuery(tenantId, 'SELECT * FROM Department MAXRESULTS 200')) as Record<string, any>;
+  const deps: Array<Record<string, any>> = res.QueryResponse?.Department ?? res.Department ?? [];
+  const find = (re: RegExp): { Id: string; Name: string } | undefined => {
+    const d = deps.find((x) => x.Active !== false && re.test(String(x.Name)));
+    return d ? { Id: String(d.Id), Name: String(d.Name) } : undefined;
+  };
+  const event = find(/event/i);
+  const recurring = find(/recurring/i);
+  if (!event || !recurring) throw new Error('Event-based/Recurring divisions not found in QBO');
+  return { event, recurring, corp: find(/corp/i) };
 }
 
 export const ACCOUNT_CLASS_RULES: Array<{ re: RegExp; leaf: string }> = [
@@ -1735,6 +1932,58 @@ export const ACCOUNT_CLASS_RULES: Array<{ re: RegExp; leaf: string }> = [
  * Class list (FQN + exists flag) — the stepping stone to auto-writing
  * the splits into QBO.
  * ------------------------------------------------------------------------- */
+
+// Wire labels come from Everee earning notes and legacy account names;
+// after the 2026-08-31 class restructure the generic matcher missed
+// ~$536K of splits. These aliases encode that day's rulings (RS3 family
+// = Proof of the Pudding; NASCAR/F1 own classes; FIFA fan-fest naming;
+// role-only Flex labels roll to the channel) — checked FIRST in
+// resolveClassFqn, then punctuation-insensitive exact, then containment.
+// Also applied to raw earning notes when resolveVenueText misses
+// ("LIV Golf VA - 35 Hours", "Dallas Fifa W/E 5.31", "7 Hours G6").
+export const WIRE_LABEL_ALIASES: Array<{ re: RegExp; leaf: string }> = [
+  { re: /governors?\s*ball/i, leaf: "Governor's Ball" },
+  { re: /fifa.*kansas\s*city|fifa\s*kc/i, leaf: 'FIFA KC' },
+  { re: /fifa.*dallas|dallas.*fifa/i, leaf: 'FIFA Dallas' },
+  { re: /fifa.*(ny|new\s*york)|adi\s*ny/i, leaf: 'FIFA NY' },
+  { re: /dell\s*diamond|kizer|slammers|legends\s*stadium|h-?e-?b\s*center/i, leaf: 'Proof of Pudding' },
+  // One golf event, many spellings ("Womens PGA Open", "LGPA", "US
+  // Women's Open") — LGPA PP was merged into 26 USGA Women's Open
+  // (Greg 2026-09-01: one event, split only by label naming).
+  { re: /pga|lpga|lgpa/i, leaf: "26 USGA Women's Open" },
+  { re: /us\s*wom[ea]n'?s?\s*open|usga/i, leaf: "26 USGA Women's Open" },
+  // bare "Womens Open" (no US/USGA prefix, no apostrophe) — 2026-06-11 note
+  { re: /\bwom[ea]n'?s?\s*open\b/i, leaf: "26 USGA Women's Open" },
+  { re: /suenos|sueños/i, leaf: 'Suenos Music Festival' },
+  { re: /^legends\s*national\s*account$/i, leaf: 'Legends' },
+  { re: /nascar.*san\s*diego|san\s*diego.*nascar/i, leaf: 'Nascar SanDiego' },
+  { re: /nascar/i, leaf: 'Nascar' },
+  // Plain COTA (after NASCAR above) = the year-round smaller-events class.
+  { re: /\bcota\b/i, leaf: 'COTA' },
+  { re: /liv\s*golf\s*(va|virginia)/i, leaf: 'LIV Golf VA' },
+  { re: /liv\s*golf\s*indy/i, leaf: '2026 LIV Golf Indy' },
+  { re: /cort\b|hazeltine|wbi|woodridge/i, leaf: 'Cort' },
+  { re: /\bunc\b/i, leaf: 'Sodexo' },
+  { re: /minnesota\s*yacht|mn\s*yacht/i, leaf: 'MN Yacht Club' },
+  { re: /minnesota\s*country|mn\s*country/i, leaf: 'MN Country Club' },
+  { re: /g6\s*catering|\bg6\b/i, leaf: 'G6' },
+  { re: /crystal\s*falls|roy\s*kizer/i, leaf: 'Proof of Pudding' },
+  { re: /carrier\b/i, leaf: 'Carrier Enterprise' },
+  { re: /obama/i, leaf: 'Obama Presidential Viewing' },
+  // BTS = Black Caviar's Stanford gig (Greg 2026-09-01, reversing the
+  // earlier Oakland ruling once the "BTS Stanford" JO surfaced).
+  { re: /\bbts\b/i, leaf: 'Black Caviar' },
+  // "18.12 Hours - Kid Cudi" (May) — the class is named "Kid Concert".
+  { re: /kid\s*cudi/i, leaf: 'Kid Concert' },
+  // Final Four weekend at Lucas Oil = VS PO 2105 (Greg 2026-09-01).
+  { re: /final\s*four|march\s*madness/i, leaf: '2026 March Madness' },
+  // Sodexo campus dining roles carry the university name, never "Sodexo".
+  { re: /prairie\s*view|nc\s*a&t|carthage|stanford|\buniversity\b/i, leaf: 'Sodexo' },
+  { re: /sips\s*and\s*sounds/i, leaf: 'Black Caviar' },
+  // Role-only Flex labels — no client attribution available; roll to the
+  // channel parent rather than guessing a client.
+  { re: /^(warehouse (associate|worker|operator|ops).*|loader\s*\/\s*crew.*|production associate.*|forklift driver.*|\d{1,2}:\d{2}.*shift)$/i, leaf: 'Indeed Flex' },
+];
 
 export async function buildWireJournal(
   tenantId: string,
@@ -1952,55 +2201,6 @@ export async function buildWireJournal(
     return best ? best.cls : null;
   };
 
-  // Wire labels come from Everee earning notes and legacy account names;
-  // after the 2026-08-31 class restructure the generic matcher missed
-  // ~$536K of splits. These aliases encode that day's rulings (RS3 family
-  // = Proof of the Pudding; NASCAR/F1 own classes; FIFA fan-fest naming;
-  // role-only Flex labels roll to the channel) — checked FIRST in
-  // resolveClassFqn, then punctuation-insensitive exact, then containment.
-  // Also applied to raw earning notes when resolveVenueText misses
-  // ("LIV Golf VA - 35 Hours", "Dallas Fifa W/E 5.31", "7 Hours G6").
-  const WIRE_LABEL_ALIASES: Array<{ re: RegExp; leaf: string }> = [
-    { re: /governors?\s*ball/i, leaf: "Governor's Ball" },
-    { re: /fifa.*kansas\s*city|fifa\s*kc/i, leaf: 'FIFA KC' },
-    { re: /fifa.*dallas|dallas.*fifa/i, leaf: 'FIFA Dallas' },
-    { re: /fifa.*(ny|new\s*york)|adi\s*ny/i, leaf: 'FIFA NY' },
-    { re: /dell\s*diamond|kizer|slammers|legends\s*stadium|h-?e-?b\s*center/i, leaf: 'Proof of Pudding' },
-    // One golf event, many spellings ("Womens PGA Open", "LGPA", "US
-    // Women's Open") — LGPA PP was merged into 26 USGA Women's Open
-    // (Greg 2026-09-01: one event, split only by label naming).
-    { re: /pga|lpga|lgpa/i, leaf: "26 USGA Women's Open" },
-    { re: /us\s*wom[ea]n'?s?\s*open|usga/i, leaf: "26 USGA Women's Open" },
-    { re: /suenos|sueños/i, leaf: 'Suenos Music Festival' },
-    { re: /^legends\s*national\s*account$/i, leaf: 'Legends' },
-    { re: /nascar.*san\s*diego|san\s*diego.*nascar/i, leaf: 'Nascar SanDiego' },
-    { re: /nascar/i, leaf: 'Nascar' },
-    // Plain COTA (after NASCAR above) = the year-round smaller-events class.
-    { re: /\bcota\b/i, leaf: 'COTA' },
-    { re: /liv\s*golf\s*(va|virginia)/i, leaf: 'LIV Golf VA' },
-    { re: /liv\s*golf\s*indy/i, leaf: '2026 LIV Golf Indy' },
-    { re: /cort\b|hazeltine|wbi|woodridge/i, leaf: 'Cort' },
-    { re: /\bunc\b/i, leaf: 'Sodexo' },
-    { re: /minnesota\s*yacht|mn\s*yacht/i, leaf: 'MN Yacht Club' },
-    { re: /minnesota\s*country|mn\s*country/i, leaf: 'MN Country Club' },
-    { re: /g6\s*catering|\bg6\b/i, leaf: 'G6' },
-    { re: /crystal\s*falls|roy\s*kizer/i, leaf: 'Proof of Pudding' },
-    { re: /carrier\b/i, leaf: 'Carrier Enterprise' },
-    { re: /obama/i, leaf: 'Obama Presidential Viewing' },
-    // BTS = Black Caviar's Stanford gig (Greg 2026-09-01, reversing the
-    // earlier Oakland ruling once the "BTS Stanford" JO surfaced).
-    { re: /\bbts\b/i, leaf: 'Black Caviar' },
-    // "18.12 Hours - Kid Cudi" (May) — the class is named "Kid Concert".
-    { re: /kid\s*cudi/i, leaf: 'Kid Concert' },
-    // Final Four weekend at Lucas Oil = VS PO 2105 (Greg 2026-09-01).
-    { re: /final\s*four|march\s*madness/i, leaf: '2026 March Madness' },
-    // Sodexo campus dining roles carry the university name, never "Sodexo".
-    { re: /prairie\s*view|nc\s*a&t|carthage|stanford|\buniversity\b/i, leaf: 'Sodexo' },
-    { re: /sips\s*and\s*sounds/i, leaf: 'Black Caviar' },
-    // Role-only Flex labels — no client attribution available; roll to the
-    // channel parent rather than guessing a client.
-    { re: /^(warehouse (associate|worker|operator|ops).*|loader\s*\/\s*crew.*|production associate.*|forklift driver.*|\d{1,2}:\d{2}.*shift)$/i, leaf: 'Indeed Flex' },
-  ];
 
   // ── Greg's persisted overrides (payroll_class_overrides) ──
   const paymentOverrides = new Map<string, string>();
@@ -2046,6 +2246,7 @@ export async function buildWireJournal(
     unresolvedGross: number;
   }
   const groups = new Map<string, WireGroup>();
+  const unfundedOptimistic = new Map<string, { entityName: string; month: string; lines: number; amount: number }>();
   const unattributedDetail: Array<{ paymentId: string; worker: string; fundingDate: string; entityName: string; amount: number; notes: string }> = [];
   const auditMethod = new Map<string, number>();
   const auditMethodClass = new Map<string, Map<string, number>>();
@@ -2064,7 +2265,7 @@ export async function buildWireJournal(
       const res = (await evereeRequest(
         config,
         'GET',
-        `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true`,
+        `/api/v2/payments?page=${page}&size=500&include-workers-on-regular-pay-cycle=true&sort=id,asc`,
       )) as Record<string, any>;
       const items = (res.items ?? []) as Array<Record<string, any>>;
       let fresh = 0;
@@ -2074,9 +2275,26 @@ export async function buildWireJournal(
         seenIds.add(id);
         fresh += 1;
         if (trim(p.status) !== 'PAID') continue;
+        // Only SUBMITTED fundings are cash that left the bank. Everee also
+        // keeps `CREATED_NEW_FUNDING` (a superseded attempt — always has a
+        // SUBMITTED sibling for the same money) and `APPROVED_FOR_FUNDING`
+        // (optimistically paid, company pull never submitted). Counting
+        // those double-booked $32K of July labor and $19K of May
+        // (2026-09-08 investigation). Never-submitted ones are reported.
         const fundings = ((p.fundingList ?? []) as Array<Record<string, any>>).filter((f) => {
           const fd = trim(f.fundingDate);
-          return fd >= startDate && fd <= endDate;
+          if (!(fd >= startDate && fd <= endDate)) return false;
+          const st = trim(f.status);
+          // May 2026 exception (Greg 2026-09-09): the May 15 batch stayed
+          // APPROVED_FOR_FUNDING in Everee but WAS funded by the 5/14 wire
+          // (19,161.07 = 18,963.67 + the 197.40 funding) — count it.
+          if (st === 'APPROVED_FOR_FUNDING' && fd < '2026-06-01') return true;
+          if (st === 'APPROVED_FOR_FUNDING') {
+            const k = `${entityName}|${fd.slice(0, 7)}`;
+            const u = unfundedOptimistic.get(k) ?? { entityName, month: fd.slice(0, 7), lines: 0, amount: 0 };
+            u.lines += 1; u.amount = round2(u.amount + money(f.amount)); unfundedOptimistic.set(k, u);
+          }
+          return st === 'SUBMITTED';
         });
         if (fundings.length === 0) continue;
         const uid = trim(p.employee?.externalWorkerId);
@@ -2203,7 +2421,10 @@ export async function buildWireJournal(
         }
 
         for (const f of fundings) {
-          const key = `${entityId}__${trim(f.companyFundingId) || 'none'}`;
+          // No-id fundings (SUBMITTED but no companyFundingId — funded from a
+          // manual wire) are grouped PER MONTH; one entity-wide 'none' bucket
+          // used to merge May, June and July money into a single June JE.
+          const key = `${entityId}__${trim(f.companyFundingId) || `none-${trim(f.fundingDate).slice(0, 7)}`}`;
           let g = groups.get(key);
           if (!g) {
             g = {
@@ -2342,6 +2563,8 @@ export async function buildWireJournal(
     .map(([cls, amount]) => {
       const q = resolveClassFqn(cls);
       return {
+    unfundedOptimistic: [...unfundedOptimistic.values()].sort((a, b) => a.month.localeCompare(b.month)),
+
         class: cls,
         qboClass: cls === 'Unattributed' ? null : q.fqn,
         qboClassExists: cls === 'Unattributed' ? false : q.exists,
@@ -4271,11 +4494,72 @@ async function loadWcMatrixForEntity(tenantId: string, hiringEntityId: string): 
  * Gross math mirrors getPayrollCostReport; contractor entities pay all hours
  * flat (no auto-OT). Premium = gross × rate / 100 per bucket.
  */
+
 export const getWorkersCompMonthlyReport = onCall(
   { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
   async (request) => {
     const tenantId = trim(request.data?.tenantId);
     const hiringEntityId = trim(request.data?.hiringEntityId);
+
+    // "Submit to Eddie" mode: mail one client-built Mass PN workbook to the
+    // carrier contact via the connected Gmail mailbox. The file arrives
+    // base64 from the same builder as the Export button, so what Eddie gets
+    // is byte-identical to what Greg would download. Books-gated below like
+    // every other mode.
+    const emailMassPn = request.data?.emailMassPn as
+      | { entityName?: unknown; filename?: unknown; xlsxBase64?: unknown }
+      | undefined;
+    // Outbox variant (2026-09-08): send Mass PN workbooks staged in Cloud
+    // Storage (`wc_masspn_outbox/…`) — lets an admin/ops session build
+    // arbitrary coverage-request files server-side (e.g. the OnTrac
+    // all-locations prospect sheet) and have THIS deployed function mail
+    // them via the connected mailbox, without pushing megabytes of base64
+    // through a browser call. Books-gated like every other mode.
+    const emailFromStorage = request.data?.emailMassPnFromStorage as
+      | { items?: Array<{ entityName?: unknown; filename?: unknown; storagePath?: unknown }> }
+      | undefined;
+    if (emailFromStorage && Array.isArray(emailFromStorage.items)) {
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+      const client = await gmailClientFor(tenantId);
+      if (!client) {
+        throw new HttpsError('failed-precondition', 'No connected Gmail mailbox for this tenant.');
+      }
+      const bucket = admin.storage().bucket();
+      const sent: string[] = [];
+      for (const item of emailFromStorage.items.slice(0, 10)) {
+        const entityName = trim(item.entityName);
+        const filename = trim(item.filename).replace(/[^\w.\-]+/g, '-') || 'Mass-PN.xlsx';
+        const storagePath = trim(item.storagePath);
+        if (!entityName || !storagePath.startsWith('wc_masspn_outbox/')) {
+          throw new HttpsError('invalid-argument', 'entityName and a wc_masspn_outbox/ storagePath are required.');
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const [buf] = await bucket.file(storagePath).download();
+        if (buf.length > 1_500_000) throw new HttpsError('invalid-argument', 'Attachment too large.');
+        // eslint-disable-next-line no-await-in-loop
+        await sendMassPnEmail(client.gmail, client.fromEmail, entityName, filename, buf.toString('base64'));
+        sent.push(entityName);
+      }
+      return { ok: true, sentTo: INSOURCE_COVERAGE_CONTACT.email, sent };
+    }
+    if (emailMassPn && typeof emailMassPn === 'object') {
+      await ensureBooksAccess(request.auth?.uid, request.auth?.token as never, tenantId);
+      const entityName = trim(emailMassPn.entityName);
+      const filename = trim(emailMassPn.filename).replace(/[^\w.\-]+/g, '-') || 'Mass-PN.xlsx';
+      const xlsxBase64 = typeof emailMassPn.xlsxBase64 === 'string' ? emailMassPn.xlsxBase64 : '';
+      if (!entityName || !xlsxBase64) {
+        throw new HttpsError('invalid-argument', 'entityName and xlsxBase64 are required.');
+      }
+      if (xlsxBase64.length > 2_000_000) {
+        throw new HttpsError('invalid-argument', 'Attachment too large.');
+      }
+      const client = await gmailClientFor(tenantId);
+      if (!client) {
+        throw new HttpsError('failed-precondition', 'No connected Gmail mailbox for this tenant.');
+      }
+      await sendMassPnEmail(client.gmail, client.fromEmail, entityName, filename, xlsxBase64);
+      return { ok: true, sentTo: INSOURCE_COVERAGE_CONTACT.email, entityName, filename };
+    }
     const month = trim(request.data?.month); // YYYY-MM
     // Audit-package range mode (Greg 2026-08-19): startDate/endDate span a
     // POLICY PERIOD (multi-month) instead of one month. Same math, plus
@@ -4349,6 +4633,15 @@ export const getWorkersCompMonthlyReport = onCall(
        *  (never part of gross); reported so the auditor sees them. */
       reimbursements: number;
       month: string;
+      /** InSource portal entry columns (Greg 2026-09-05): the filing form
+       *  wants Reg / OT / Double-Time gross typed separately per line and
+       *  does its own discounting. regGross absorbs premiums/tips/bonus and
+       *  any rounding so the three always sum to `total`. Contractor
+       *  entities are flat → everything in regGross. */
+      regGross: number;
+      otGross: number;
+      dtGross: number;
+      workerId: string;
     }
     const pickedEntries: PickedEntry[] = [];
     const assignmentIds = new Set<string>();
@@ -4385,6 +4678,8 @@ export const getWorkersCompMonthlyReport = onCall(
         trim((e.worksiteAddress as Record<string, unknown> | undefined)?.state).toUpperCase() ||
         trim(sidecarAddr?.state).toUpperCase() ||
         '';
+      const otGross = isContractor ? 0 : round2(ot * rate * 1.5);
+      const dtGross = isContractor || isImport ? 0 : round2(dt * rate * 2);
       pickedEntries.push({
         e,
         total,
@@ -4394,6 +4689,10 @@ export const getWorkersCompMonthlyReport = onCall(
         tips: entryTips,
         reimbursements: entryReimb,
         month: trim(e.workDate).slice(0, 7),
+        regGross: round2(total - otGross - dtGross),
+        otGross,
+        dtGross,
+        workerId: trim(e.workerId),
       });
       // ALL assignments (2026-08-09) — the coverage report needs venue names
       // even when the entry already carries a code; the code-resolution chain
@@ -4440,8 +4739,26 @@ export const getWorkersCompMonthlyReport = onCall(
       otExcess: number;
       tips: number;
       reimbursements: number;
+      regGross: number;
+      otGross: number;
+      dtGross: number;
     }
     const buckets = new Map<string, Bucket>();
+    // Per-worker detail for the InSource upload workbook ("the actual data"
+    // behind each filing line). Opt-in — only the monthly card requests it.
+    const includeWorkerDetail = request.data?.includeWorkerDetail === true;
+    interface WorkerLine {
+      state: string;
+      code: string;
+      workerId: string;
+      hours: number;
+      regGross: number;
+      otGross: number;
+      dtGross: number;
+      total: number;
+      entries: number;
+    }
+    const workerLines = new Map<string, WorkerLine>();
     /** Audit package: by-month rollup across the period. */
     const monthTotals = new Map<string, { gross: number; otExcess: number; tips: number; reimbursements: number; hours: number }>();
     interface UnresolvedGroup {
@@ -4601,7 +4918,7 @@ export const getWorkersCompMonthlyReport = onCall(
 
       const key = `${state}_${code}`;
       if (!buckets.has(key)) {
-        buckets.set(key, { state, code, gross: 0, hours: 0, entries: 0, workers: new Set(), otExcess: 0, tips: 0, reimbursements: 0 });
+        buckets.set(key, { state, code, gross: 0, hours: 0, entries: 0, workers: new Set(), otExcess: 0, tips: 0, reimbursements: 0, regGross: 0, otGross: 0, dtGross: 0 });
       }
       const b = buckets.get(key)!;
       b.gross = round2(b.gross + p.total);
@@ -4610,7 +4927,24 @@ export const getWorkersCompMonthlyReport = onCall(
       b.otExcess = round2(b.otExcess + p.otExcess);
       b.tips = round2(b.tips + p.tips);
       b.reimbursements = round2(b.reimbursements + p.reimbursements);
+      b.regGross = round2(b.regGross + p.regGross);
+      b.otGross = round2(b.otGross + p.otGross);
+      b.dtGross = round2(b.dtGross + p.dtGross);
       if (workerId) b.workers.add(workerId);
+
+      if (includeWorkerDetail) {
+        const wKey = `${state}|${code}|${workerId}`;
+        if (!workerLines.has(wKey)) {
+          workerLines.set(wKey, { state, code, workerId, hours: 0, regGross: 0, otGross: 0, dtGross: 0, total: 0, entries: 0 });
+        }
+        const w = workerLines.get(wKey)!;
+        w.hours = round2(w.hours + p.hours);
+        w.regGross = round2(w.regGross + p.regGross);
+        w.otGross = round2(w.otGross + p.otGross);
+        w.dtGross = round2(w.dtGross + p.dtGross);
+        w.total = round2(w.total + p.total);
+        w.entries += 1;
+      }
     }
 
     // Off-cycle payments (no WC classification) — separate visible section.
@@ -4662,6 +4996,9 @@ export const getWorkersCompMonthlyReport = onCall(
           reimbursements: b.reimbursements,
           auditable,
           premiumAuditable,
+          regGross: b.regGross,
+          otGross: b.otGross,
+          dtGross: b.dtGross,
         };
       })
       .sort((a, b) => a.state.localeCompare(b.state) || a.code.localeCompare(b.code));
@@ -4757,6 +5094,42 @@ export const getWorkersCompMonthlyReport = onCall(
       stateCodeOptions[st].sort((a, b) => a.code.localeCompare(b.code));
     }
 
+    // Resolve worker names for the upload workbook's detail sheet.
+    let workerDetail: Array<Record<string, unknown>> | undefined;
+    if (includeWorkerDetail) {
+      const detailIds = Array.from(new Set(Array.from(workerLines.values()).map((w) => w.workerId).filter(Boolean)));
+      const nameById = new Map<string, string>();
+      for (let i = 0; i < detailIds.length; i += 100) {
+        const chunk = detailIds.slice(i, i + 100);
+        const snaps = await db.getAll(...chunk.map((id) => db.doc(`users/${id}`)));
+        snaps.forEach((s) => {
+          if (!s.exists) return;
+          const u = s.data() as Record<string, unknown>;
+          const name =
+            `${trim(u.firstName)} ${trim(u.lastName)}`.trim() || trim(u.displayName) || s.id;
+          nameById.set(s.id, name);
+        });
+      }
+      workerDetail = Array.from(workerLines.values())
+        .map((w) => ({
+          state: w.state,
+          code: w.code,
+          workerName: w.workerId ? (nameById.get(w.workerId) ?? w.workerId) : '(unmatched import row)',
+          hours: w.hours,
+          regGross: w.regGross,
+          otGross: w.otGross,
+          dtGross: w.dtGross,
+          total: w.total,
+          entries: w.entries,
+        }))
+        .sort(
+          (a, b) =>
+            String(a.state).localeCompare(String(b.state)) ||
+            String(a.code).localeCompare(String(b.code)) ||
+            String(a.workerName).localeCompare(String(b.workerName)),
+        );
+    }
+
     const byMonth = Array.from(monthTotals.entries())
       .map(([m, t]) => ({ month: m, ...t, auditable: round2(t.gross - t.otExcess - t.tips) }))
       .sort((a, b) => a.month.localeCompare(b.month));
@@ -4791,6 +5164,7 @@ export const getWorkersCompMonthlyReport = onCall(
       offCycle,
       offCycleTotal,
       grandTotal: round2(totalGross + offCycleTotal),
+      ...(workerDetail ? { workerDetail } : {}),
     };
   },
 );

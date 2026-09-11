@@ -31,6 +31,27 @@ const trim = (v: unknown): string => String(v ?? '').trim();
 const num = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+/** Structured site address from a JO / assignment / import-sidecar
+ *  worksiteAddress blob (writers disagree on field names). */
+interface SiteAddr {
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+}
+const addrFrom = (o: unknown): SiteAddr | null => {
+  const r = (o ?? null) as Record<string, unknown> | null;
+  if (!r) return null;
+  const street = trim(r.street) || trim(r.line1) || trim(r.address);
+  const city = trim(r.city);
+  const state = trim(r.state).toUpperCase();
+  const zip = trim(r.zip) || trim(r.zipCode) || trim(r.postalCode);
+  if (!street && !city) return null;
+  return { street, city, state, zip };
+};
+const joinAddr = (a: SiteAddr | null): string =>
+  a ? [a.street, a.city, a.state, a.zip].filter(Boolean).join(', ') : '';
+
 interface PolicyWindow {
   state: string;
   carrierName: string;
@@ -43,6 +64,13 @@ interface MatrixMaps {
   rateByStateCode: Map<string, number>;
   byStateTitle: Map<string, { code: string; rate: number }>;
   byStateDefault: Map<string, { code: string; rate: number }>;
+  /** title(lower) → code → number of states where that title carries that
+   *  code on this entity's matrix (8040 excluded) — powers the "what code to
+   *  ask the carrier for" suggestion (Greg 2026-09-05). */
+  titleCodes: Map<string, Map<string, number>>;
+  /** code → rates across this entity's rated states (8040 excluded) — the
+   *  comparable-rate range shown next to each ask. */
+  codeRates: Map<string, number[]>;
 }
 
 interface MoneyAgg {
@@ -133,6 +161,8 @@ export async function buildWcCoverageReport(input: {
       rateByStateCode: new Map(),
       byStateTitle: new Map(),
       byStateDefault: new Map(),
+      titleCodes: new Map(),
+      codeRates: new Map(),
     };
     const apply = (x: Record<string, unknown>): void => {
       const st = trim(x.state).toUpperCase();
@@ -140,11 +170,23 @@ export async function buildWcCoverageReport(input: {
       const rate = num(x.rate);
       if (!st || !code) return;
       m.rateByStateCode.set(`${st}_${code}`, rate);
+      if (code !== '8040') {
+        if (!m.codeRates.has(code)) m.codeRates.set(code, []);
+        if (rate > 0) m.codeRates.get(code)!.push(rate);
+      }
       const titles = Array.isArray(x.jobTitles) ? (x.jobTitles as unknown[]) : [];
       for (const t of titles) {
         const title = trim(t);
         if (title === '*') m.byStateDefault.set(st, { code, rate });
-        else if (title) m.byStateTitle.set(`${st}_${title.toLowerCase()}`, { code, rate });
+        else if (title) {
+          m.byStateTitle.set(`${st}_${title.toLowerCase()}`, { code, rate });
+          if (code !== '8040') {
+            const key = title.toLowerCase();
+            if (!m.titleCodes.has(key)) m.titleCodes.set(key, new Map());
+            const tc = m.titleCodes.get(key)!;
+            tc.set(code, (tc.get(code) ?? 0) + 1);
+          }
+        }
       }
     };
     genericRates.forEach(apply);
@@ -178,13 +220,17 @@ export async function buildWcCoverageReport(input: {
     workDate: string;
     jobTitle: string; // filled after assignment fetch when needed
     assignmentId: string;
+    jobOrderId: string;
+    /** Denormalized on timesheet entries — often the ONLY account linkage on
+     *  import rows (no assignment, no job order). */
+    entryAccountId: string;
     entryCode: string;
     workerId: string;
     total: number;
     hours: number;
     /** Import sidecar worksite (CSV rows carry venue only here). */
     sidecarName: string;
-    sidecarAddress: string;
+    sidecarAddr: SiteAddr | null;
     /** Filled during the aggregation loop for the Mass PN builder. */
     resolvedCode?: string;
     carrierAsk?: boolean; // no-policy / outside-window / 8040-coverage-needed
@@ -235,23 +281,21 @@ export async function buildWcCoverageReport(input: {
       if (!entryCode || entryCode === '8040' || policyGap) uncodedAsnIds.add(assignmentId);
     }
     const sidecarName = trim(((e.import ?? {}) as Record<string, unknown>).worksiteName);
-    const sidecarAddress = sidecar
-      ? [trim(sidecar.street) || trim(sidecar.line1), trim(sidecar.city), trim(sidecar.state), trim(sidecar.zip)]
-          .filter(Boolean)
-          .join(', ')
-      : '';
+    const sidecarAddr = addrFrom(sidecar);
     picked.push({
       entityId,
       state,
       workDate: trim(e.workDate),
       jobTitle: '',
       assignmentId,
+      jobOrderId: trim(e.jobOrderId),
+      entryAccountId: trim(e.accountId),
       entryCode,
       workerId: trim(e.workerId),
       total,
       hours: round2(reg + ot + dt),
       sidecarName,
-      sidecarAddress,
+      sidecarAddr,
     });
   });
 
@@ -363,8 +407,15 @@ export async function buildWcCoverageReport(input: {
   interface MassPnAgg {
     entityId: string;
     accountId: string;
+    /** Worksite-search candidates for rows with no direct linkage — resolved
+     *  to a client only when all existing candidates share one top-level. */
+    clueCandidates: Set<string>;
     worksiteName: string;
-    worksiteAddress: string;
+    worksiteAddr: SiteAddr | null;
+    /** A candidate address whose state CONTRADICTS the work state — almost
+     *  always the client's mailing/HQ address, which the revised Mass PN
+     *  template wants in its own columns (VenueSmart's MO HQ, 2026-09-08). */
+    mailingAddr: SiteAddr | null;
     state: string;
     code: string;
     jobTitles: Set<string>;
@@ -373,27 +424,113 @@ export async function buildWcCoverageReport(input: {
   }
   const massAgg = new Map<string, MassPnAgg>();
   const accountIds = new Set<string>();
+  // Client resolution fallback (Greg 2026-09-05): import rows rarely carry an
+  // assignment account — hop through the entry's job order instead.
+  const askJoIds = new Set<string>();
   for (const p of picked) {
     if (!p.carrierAsk) continue;
     const a = p.assignmentId ? assignments.get(p.assignmentId) : undefined;
+    if (!trim(a?.recruiterAccountId) && !p.entryAccountId && p.jobOrderId) askJoIds.add(p.jobOrderId);
+  }
+  const joAccounts = new Map<string, string>();
+  const joIdList = Array.from(askJoIds);
+  for (let i = 0; i < joIdList.length; i += 100) {
+    const chunk = joIdList.slice(i, i + 100);
+    const snaps = await db.getAll(...chunk.map((id) => db.doc(`tenants/${tenantId}/job_orders/${id}`)));
+    snaps.forEach((s) => {
+      if (!s.exists) return;
+      const x = s.data() as Record<string, unknown>;
+      const acct = trim(x.accountId) || trim(x.recruiterAccountId);
+      if (acct) joAccounts.set(s.id, acct);
+    });
+  }
+
+  // Worksite search fallback (Greg 2026-09-05: "search accounts for
+  // 'Distribution Center Kentucky' — only Domino's shows; compare street
+  // addresses as well"): every job order carries worksiteName + street +
+  // account, so an unlinked entry's site clues can be searched against that
+  // index. Street+state match is strong; name+state match only counts when
+  // it lands on exactly ONE account — never guess on a carrier form.
+  const normSite = (s: string): string =>
+    s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const joSiteIndex: Array<{ nameKey: string; streetKey: string; state: string; accountId: string }> = [];
+  /** JO worksite by id — the point of truth for row addresses (Eddie
+   *  2026-09-08: aggregate rows were showing account mailing addresses). */
+  const joById = new Map<string, { name: string; addr: SiteAddr | null }>();
+  {
+    const joAll = await db
+      .collection(`tenants/${tenantId}/job_orders`)
+      .select('worksiteName', 'worksiteAddress', 'accountId', 'recruiterAccountId')
+      .get();
+    joAll.forEach((s) => {
+      const x = s.data() as Record<string, unknown>;
+      const addr = addrFrom(x.worksiteAddress);
+      joById.set(s.id, { name: trim(x.worksiteName), addr });
+      const acct = trim(x.accountId) || trim(x.recruiterAccountId);
+      if (!acct) return;
+      const nameKey = normSite(trim(x.worksiteName));
+      const streetKey = normSite(addr?.street ?? '');
+      if (!nameKey && !streetKey) return;
+      joSiteIndex.push({ nameKey, streetKey, state: addr?.state ?? '', accountId: acct });
+    });
+  }
+  // Returns CANDIDATE account ids (street matches win over name matches).
+  // Uniqueness is judged later at the TOP-LEVEL account — two sibling child
+  // venues of the same national are one client, not an ambiguity, and JO
+  // account ids can point at deleted/legacy docs that must not count.
+  const matchAccountBySiteClues = (siteName: string, streetLine: string, state: string): string[] => {
+    const nk = normSite(siteName);
+    const sk = normSite(streetLine);
+    const streetHits = new Set<string>();
+    const nameHits = new Set<string>();
+    for (const s of joSiteIndex) {
+      if (state && s.state && s.state !== state) continue;
+      if (sk && s.streetKey && sk === s.streetKey) streetHits.add(s.accountId);
+      if (
+        nk.length >= 8 &&
+        s.nameKey.length >= 8 &&
+        (nk === s.nameKey || nk.includes(s.nameKey) || s.nameKey.includes(nk))
+      ) {
+        nameHits.add(s.accountId);
+      }
+    }
+    return streetHits.size > 0 ? Array.from(streetHits) : Array.from(nameHits);
+  };
+  for (const p of picked) {
+    if (!p.carrierAsk) continue;
+    const a = p.assignmentId ? assignments.get(p.assignmentId) : undefined;
+    const jo = p.jobOrderId ? joById.get(p.jobOrderId) : undefined;
     const worksiteName =
-      trim(a?.worksiteName) || p.sidecarName || trim(a?.location) || '(worksite unknown)';
-    const wa = (a?.worksiteAddress ?? null) as Record<string, unknown> | null;
-    const worksiteAddress =
-      (wa
-        ? [trim(wa.street) || trim(wa.line1), trim(wa.city), trim(wa.state), trim(wa.zip)]
-            .filter(Boolean)
-            .join(', ')
-        : '') || p.sidecarAddress;
-    const accountId = trim(a?.recruiterAccountId);
+      trim(a?.worksiteName) || jo?.name || p.sidecarName || trim(a?.location) || '(worksite unknown)';
+    // Address candidates in trust order: JO worksite → assignment denorm →
+    // import sidecar. The worksite is the first one that doesn't CONTRADICT
+    // the work state; a contradicting candidate is the client's mailing
+    // address, not the worksite (Eddie 2026-09-08: VenueSmart's MO HQ was
+    // riding a WI worksite row).
+    const candidates = [jo?.addr ?? null, addrFrom(a?.worksiteAddress), p.sidecarAddr].filter(
+      (c): c is SiteAddr => c != null,
+    );
+    const worksiteAddr =
+      candidates.find((c) => !p.state || !c.state || c.state === p.state) ?? null;
+    const mailingAddr = p.state
+      ? (candidates.find((c) => c.state !== '' && c.state !== p.state) ?? null)
+      : null;
+    const accountId =
+      trim(a?.recruiterAccountId) || p.entryAccountId || joAccounts.get(p.jobOrderId) || '';
+    const clueCandidates = accountId
+      ? []
+      : matchAccountBySiteClues(worksiteName, candidates[0]?.street ?? '', p.state);
     if (accountId) accountIds.add(accountId);
+    clueCandidates.forEach((id) => accountIds.add(id));
     const key = `${p.entityId}|${accountId}|${worksiteName}|${p.state}|${p.resolvedCode ?? ''}`;
     if (!massAgg.has(key)) {
       massAgg.set(key, {
         entityId: p.entityId,
         accountId,
+        clueCandidates: new Set(clueCandidates),
         worksiteName,
-        worksiteAddress,
+        worksiteAddr,
+        mailingAddr,
         state: p.state,
         code: p.resolvedCode ?? '',
         jobTitles: new Set(),
@@ -402,35 +539,210 @@ export async function buildWcCoverageReport(input: {
       });
     }
     const m = massAgg.get(key)!;
+    clueCandidates.forEach((id) => m.clueCandidates.add(id));
     if (p.jobTitle && p.jobTitle !== '(no title)') m.jobTitles.add(p.jobTitle);
     m.gross = round2(m.gross + p.total);
     if (p.workerId) m.workers.add(p.workerId);
-    if (!m.worksiteAddress && worksiteAddress) m.worksiteAddress = worksiteAddress;
+    if (!m.worksiteAddr && worksiteAddr) m.worksiteAddr = worksiteAddr;
+    if (!m.mailingAddr && mailingAddr) m.mailingAddr = mailingAddr;
   }
+  // Resolve names at the TOP-LEVEL account (Greg 2026-09-05): the carrier's
+  // "Client/Prospect Name" is the standalone or national account, never a
+  // child venue — walk parentAccountId up (one hop in practice, capped at 3).
+  const accountDocs = new Map<string, { name: string; parentAccountId: string }>();
+  const fetchAccounts = async (ids: string[]): Promise<void> => {
+    const missing = ids.filter((id) => id && !accountDocs.has(id));
+    for (let i = 0; i < missing.length; i += 100) {
+      const chunk = missing.slice(i, i + 100);
+      const snaps = await db.getAll(...chunk.map((id) => db.doc(`tenants/${tenantId}/accounts/${id}`)));
+      snaps.forEach((s) => {
+        if (!s.exists) return;
+        const x = s.data() as Record<string, unknown>;
+        accountDocs.set(s.id, { name: trim(x.name), parentAccountId: trim(x.parentAccountId) });
+      });
+    }
+  };
+  await fetchAccounts(Array.from(accountIds));
+  await fetchAccounts(Array.from(accountDocs.values()).map((a) => a.parentAccountId).filter(Boolean));
+  const topLevelId = (id: string): string => {
+    let cur = id;
+    for (let hop = 0; hop < 3; hop++) {
+      const doc = accountDocs.get(cur);
+      if (!doc?.parentAccountId || !accountDocs.get(doc.parentAccountId)) break;
+      cur = doc.parentAccountId;
+    }
+    return cur;
+  };
   const accountNames = new Map<string, string>();
-  const acctList = Array.from(accountIds);
-  for (let i = 0; i < acctList.length; i += 100) {
-    const chunk = acctList.slice(i, i + 100);
-    const snaps = await db.getAll(...chunk.map((id) => db.doc(`tenants/${tenantId}/accounts/${id}`)));
-    snaps.forEach((s) => {
-      if (s.exists) accountNames.set(s.id, trim(s.data()?.name));
-    });
+  for (const id of accountIds) {
+    const top = topLevelId(id);
+    accountNames.set(id, accountDocs.get(top)?.name ?? accountDocs.get(id)?.name ?? '');
   }
+  /** Client from worksite-search candidates: drop ids with no real account
+   *  doc, collapse the rest to top level — unique winner or nothing. */
+  const clientFromClues = (candidates: Set<string>): string => {
+    const tops = new Set<string>();
+    for (const id of candidates) {
+      if (!accountDocs.has(id)) continue;
+      tops.add(topLevelId(id));
+    }
+    if (tops.size !== 1) return '';
+    return accountDocs.get(Array.from(tops)[0])?.name ?? '';
+  };
+
+  // Last resort for rows with NO account linkage anywhere (traveler import
+  // rows): conservative name-match of the worksite string against TOP-LEVEL
+  // account names ("Venuesmart" sidecar → "Venuesmart LLC National"). Only
+  // fires when the account's base name (≥5 chars, suffixes stripped) appears
+  // in the site name — never fuzzy.
+  const topLevelNamesByToken: Array<{ token: string; name: string }> = [];
+  {
+    const allAccounts = await db
+      .collection(`tenants/${tenantId}/accounts`)
+      .select('name', 'parentAccountId')
+      .get();
+    allAccounts.forEach((s) => {
+      const x = s.data() as Record<string, unknown>;
+      if (trim(x.parentAccountId)) return; // children never match
+      const name = trim(x.name);
+      const token = name
+        .toLowerCase()
+        .replace(/\b(llc|inc|national|account|accounts|corp|co)\b/g, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+      if (token.length >= 5) topLevelNamesByToken.push({ token, name });
+    });
+    // Longest tokens first so "venuesmart events" beats "venuesmart".
+    topLevelNamesByToken.sort((a, b) => b.token.length - a.token.length);
+  }
+  const matchClientBySiteName = (siteName: string): string => {
+    const hay = siteName.toLowerCase();
+    for (const t of topLevelNamesByToken) {
+      if (hay.includes(t.token)) return t.name;
+    }
+    return '';
+  };
+  // "What to ask the carrier for" (Greg 2026-09-05): a gap riding 8040 (or
+  // nothing) gets a suggested REAL class code — the dominant code the same
+  // job titles carry in the entity's OTHER rated states — plus that code's
+  // rate range on the existing policy, so each ask row is actionable.
+  const suggestAsk = (
+    entityId: string,
+    currentCode: string,
+    titles: Set<string>,
+  ): { code: string; basis: string[]; rateMin: number | null; rateMax: number | null } | null => {
+    const matrix = matrixFor(entityId);
+    let code = currentCode && currentCode !== '8040' ? currentCode : '';
+    let basis: string[] = [];
+    if (!code) {
+      const tally = new Map<string, { hits: number; titles: string[] }>();
+      for (const raw of titles) {
+        const tc = matrix.titleCodes.get(raw.toLowerCase());
+        if (!tc) continue;
+        for (const [c, hits] of tc) {
+          if (!tally.has(c)) tally.set(c, { hits: 0, titles: [] });
+          const t = tally.get(c)!;
+          t.hits += hits;
+          t.titles.push(raw);
+        }
+      }
+      const best = Array.from(tally.entries()).sort((a, b) => b[1].hits - a[1].hits)[0];
+      if (!best) return null;
+      code = best[0];
+      basis = Array.from(new Set(best[1].titles)).slice(0, 4);
+    }
+    const rates = matrix.codeRates.get(code) ?? [];
+    return {
+      code,
+      basis,
+      rateMin: rates.length ? Math.min(...rates) : null,
+      rateMax: rates.length ? Math.max(...rates) : null,
+    };
+  };
+
   const massPn = Array.from(massAgg.values())
-    .map((m) => ({
-      entityId: m.entityId,
-      entityName: entityMeta.get(m.entityId)?.name ?? m.entityId,
-      accountName: accountNames.get(m.accountId) || '',
-      worksiteName: m.worksiteName,
-      worksiteAddress: m.worksiteAddress,
-      state: m.state,
-      code: m.code,
-      jobTitles: Array.from(m.jobTitles).slice(0, 4),
-      periodGross: m.gross,
-      workers: m.workers.size,
-      annualEstimate: Math.max(10000, Math.ceil(((m.gross / periodDays) * 365) / 10000) * 10000),
-    }))
+    .map((m) => {
+      const ask = suggestAsk(m.entityId, m.code, m.jobTitles);
+      return {
+        entityId: m.entityId,
+        entityName: entityMeta.get(m.entityId)?.name ?? m.entityId,
+        accountName:
+          accountNames.get(m.accountId) ||
+          clientFromClues(m.clueCandidates) ||
+          matchClientBySiteName(m.worksiteName) ||
+          '',
+        worksiteName: m.worksiteName,
+        worksiteAddress: joinAddr(m.worksiteAddr),
+        worksiteStreet: m.worksiteAddr?.street ?? '',
+        worksiteCity: m.worksiteAddr?.city ?? '',
+        worksiteState: m.worksiteAddr?.state ?? '',
+        worksiteZip: m.worksiteAddr?.zip ?? '',
+        accountStreet: m.mailingAddr?.street ?? '',
+        accountCity: m.mailingAddr?.city ?? '',
+        accountState: m.mailingAddr?.state ?? '',
+        accountZip: m.mailingAddr?.zip ?? '',
+        state: m.state,
+        code: m.code,
+        jobTitles: Array.from(m.jobTitles).slice(0, 4),
+        periodGross: m.gross,
+        workers: m.workers.size,
+        annualEstimate: Math.max(10000, Math.ceil(((m.gross / periodDays) * 365) / 10000) * 10000),
+        suggestedCode: ask?.code ?? null,
+        suggestedBasis: ask?.basis ?? [],
+        comparableRateMin: ask?.rateMin ?? null,
+        comparableRateMax: ask?.rateMax ?? null,
+      };
+    })
     .sort((a, b) => b.periodGross - a.periodGross);
+
+  // The add-coverage order form: carrier-ask dollars grouped by
+  // (entity, state, suggested code).
+  interface AskAgg {
+    entityId: string;
+    state: string;
+    code: string | null;
+    gross: number;
+    workers: Set<string>;
+    titles: Set<string>;
+    rateMin: number | null;
+    rateMax: number | null;
+  }
+  const askAgg = new Map<string, AskAgg>();
+  for (const m of Array.from(massAgg.values())) {
+    const ask = suggestAsk(m.entityId, m.code, m.jobTitles);
+    const codeKey = ask?.code ?? '(needs classification)';
+    const key = `${m.entityId}|${m.state}|${codeKey}`;
+    if (!askAgg.has(key)) {
+      askAgg.set(key, {
+        entityId: m.entityId,
+        state: m.state,
+        code: ask?.code ?? null,
+        gross: 0,
+        workers: new Set(),
+        titles: new Set(),
+        rateMin: ask?.rateMin ?? null,
+        rateMax: ask?.rateMax ?? null,
+      });
+    }
+    const a = askAgg.get(key)!;
+    a.gross = round2(a.gross + m.gross);
+    m.workers.forEach((w) => a.workers.add(w));
+    m.jobTitles.forEach((t) => a.titles.add(t));
+  }
+  const coverageAsks = Array.from(askAgg.values())
+    .map((a) => ({
+      entityId: a.entityId,
+      entityName: entityMeta.get(a.entityId)?.name ?? a.entityId,
+      state: a.state,
+      suggestedCode: a.code,
+      jobTitles: Array.from(a.titles).slice(0, 6),
+      periodGross: a.gross,
+      annualEstimate: Math.max(10000, Math.ceil(((a.gross / periodDays) * 365) / 10000) * 10000),
+      workers: a.workers.size,
+      comparableRateMin: a.rateMin,
+      comparableRateMax: a.rateMax,
+    }))
+    .sort((a, b) => a.entityName.localeCompare(b.entityName) || b.periodGross - a.periodGross);
 
   // ---- Forward-looking: LIVE assignments with no code ---------------------
   // Mirrors getWcPlaceholderUsage's live set + recency cutoff. status-in is a
@@ -525,5 +837,6 @@ export async function buildWcCoverageReport(input: {
     },
     unverifiedCodes,
     massPn,
+    coverageAsks,
   };
 }

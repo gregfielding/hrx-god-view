@@ -68,13 +68,24 @@ function substituteParams(text: string, params?: Record<string, string | number>
 /**
  * Translate a key. Fallback: current lang → en → key.
  * Placeholders: use {count}, {name}, etc. and pass params.
+ * Plurals (i18next-style): when params.count is a number, `key_one` / `key_other`
+ * (per Intl.PluralRules for the language) win over the bare key.
  */
 export function t(key: string, params?: Record<string, string | number>): string {
+  const count = params?.count;
+  const lookup = (messages: Messages, path: string): string | undefined => {
+    const value = getByPath(messages, path);
+    return typeof value === 'string' ? value : undefined;
+  };
   const tryLang = (lang: UiLanguage): string | undefined => {
     const messages = getCached(lang);
     if (!messages) return undefined;
-    const value = getByPath(messages, key);
-    return typeof value === 'string' ? value : undefined;
+    if (typeof count === 'number') {
+      const category = new Intl.PluralRules(lang).select(count);
+      const plural = lookup(messages, `${key}_${category}`) ?? lookup(messages, `${key}_other`);
+      if (plural !== undefined) return plural;
+    }
+    return lookup(messages, key);
   };
   const value = tryLang(currentLanguage) ?? tryLang('en');
   const raw = value ?? key;

@@ -23,7 +23,8 @@ export type CoreSettingsTab =
   | 'benefits-programs'
   | 'payroll-providers'
   | 'workers-comp'
-  | 'ai-signals';
+  | 'ai-signals'
+  | 'tier-automation';
 
 /** Core settings tabs plus one tab per catalog entry (`apis-services__<id>`). */
 export type SettingsTab = CoreSettingsTab | `apis-services__${string}`;
@@ -60,6 +61,7 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
     label: 'Hiring & AI',
     items: [
       { key: 'ai-signals', label: 'AI Interview & Hiring' },
+      { key: 'tier-automation', label: 'Tier Automation' },
       { key: 'job-titles', label: 'Job Titles' },
       { key: 'screening-types', label: 'Screening Types' },
       { key: 'credential-types', label: 'Credential Types' },

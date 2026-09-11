@@ -242,3 +242,43 @@ Mark reached), 3 only if the hybrid's single secure step still loses workers.
 Where exactly do workers stall (wizard step, email/password, the Everee step)? What does "doing it
 for them" look like concretely (whose phone, which steps, live or later from the sheet)? Is intake
 in person at the venue or remote?
+
+## ☠️ 2026-09-09 — Everee webhook processor never redeployed; every event dropped since Aug 22
+
+Found via Rodney Crockett ("I finished onboarding, Natalie just texted me
+to finish it"). `onEvereeWebhookEventCreated` (the async processor) was
+last deployed **2026-08-22**; the payload-unwrap fix (`parsePayload`
+merging `data.object` up, commit bd3e44ad on 2026-09-03) only redeployed
+`evereeWebhook` (the ingest) — the deploy-pair footgun. Result: every
+stored event was marked `processed` with actions "Worker not found
+(externalId=null, evereeWorkerId=null)" / "Reconcile skipped: could not
+resolve worker tuple". Count since Aug 22 in the C1 tenant: **5,963
+events, 5,963 skipped** — 352 `worker.onboarding-completed` (352 distinct
+workers), 2,635 `payment.paid`, 179 `worker.everify-case-updated`, 326
+`worker.updated-payment-method`, 277 TIN status changes. Only the 2-hour
+`evereeReconcileCron` sweep kept statuses moving, and it walks
+`everee_workers` alphabetically at ~15s/worker with a per-sweep cap, so a
+brand-new `c1_select_llc__…` link can sit at `created` for days.
+
+Fixes: processor redeployed 2026-09-09 (`firebase deploy --only
+functions:onEvereeWebhookEventCreated`); Rodney's link reconciled by hand
+(`functions/.scratch/rodney_reconcile.ts` calls `reconcileWorkerInternal`
+with dotenv — link went `created` → `onboarding_complete`, mirror shows
+W-4 / I-9 / DD / handbook done, TIN sent for verification, E-Verify
+authorized). Backlog replay = re-create the stored event docs (new ids)
+so the trigger reprocesses them — proposed to Greg, not run.
+
+Rules: **the webhook is a PAIR** — any change under
+`integrations/everee/evereeWebhook.ts` deploys BOTH `evereeWebhook` AND
+`onEvereeWebhookEventCreated`. Health check: the newest
+`everee_webhook_events` doc's `actions` must NOT contain "could not
+resolve worker tuple" (scratch `everee_webhook_scope.ts`).
+
+Same case, second finding: **duplicate profiles** (auth-uid orphan
+footgun) — Rodney has a May 2026 uid (C1 Events worker onboarded, all
+history, Deborah's Sep 8 Sodexo assignment + a fresh C1 Select pipeline
+that Natalie's 24h/72h follow-ups nag) and a Sep 2 uid from
+`apply_landing` (phone-verified login, the C1 Select Everee worker he
+actually onboarded). Merge direction is Greg's call — see the session
+notes in the profile.
+

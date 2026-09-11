@@ -40,6 +40,8 @@ import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from '../twilio';
 import { notifyRecruitersOnWorkerEvent } from '../messaging/notifyRecruitersOnWorkerEvent';
 import { classifyCadenceReply, type CadenceReplyIntent } from './replyClassifier';
+import { enqueueFlexTeamAsk } from '../messaging/slackAsNatalie';
+import { enqueueRecruiterEscalation, enqueueWorkerReplyRelay } from '../natalie/natalieAudit';
 import { ALL_SHIFT_REMINDER_TYPES, type ShiftReminderType } from './shiftReminderProfile';
 import { getTenantSmsBrand } from './sequenceCopyOverrides';
 
@@ -434,6 +436,23 @@ async function applyCancellation(active: ActiveCadence, context: {
     },
   });
 
+  // Flex-linked shift: Natalie asks the Indeed Flex team in Slack whether
+  // they want a replacement today (posted by the 5-min dispatcher drain).
+  await enqueueFlexTeamAsk({
+    tenantId,
+    assignmentId,
+    assignment,
+    kind: 'cancelled',
+    detail: context.matchedToken ? `replied ${context.matchedToken} by text` : undefined,
+  });
+  await enqueueRecruiterEscalation({
+    tenantId,
+    assignmentId,
+    assignment,
+    kind: 'cancelled',
+    detail: `Their text: "${truncateSnippet(context.messageBody)}"`,
+  });
+
   logger.info('[cadence_reply] cancellation applied', {
     tenantId,
     assignmentId,
@@ -809,6 +828,16 @@ export async function handleCadenceReply(
         // Exhaustiveness — new intents must be added to the switch.
         return { handled: false, reason: 'intent_unhandled' };
     }
+    // If Natalie already escalated this shift in Slack, relay the worker's
+    // answer into that thread so the recruiter sees it without asking.
+    await enqueueWorkerReplyRelay({
+      tenantId: active.tenantId,
+      assignmentId: active.assignmentId,
+      userId: user.userId,
+      workerName: `${String(active.assignment.workerFirstName ?? active.assignment.firstName ?? '')} ${String(active.assignment.workerLastName ?? active.assignment.lastName ?? '').charAt(0)}`.trim() || null,
+      text: messageBody,
+      intent: classification.intent,
+    });
   } catch (err: any) {
     logger.error('[cadence_reply] apply failed', {
       tenantId: active.tenantId,

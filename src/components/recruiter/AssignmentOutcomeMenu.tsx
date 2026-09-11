@@ -80,7 +80,7 @@ export interface AssignmentOutcomeMenuProps {
 }
 
 type MenuAction =
-  | { kind: 'set'; outcomeStatus: AssignmentOutcomeStatus }
+  | { kind: 'set'; outcomeStatus: AssignmentOutcomeStatus; noShowPenalty?: boolean }
   | { kind: 'undo' };
 
 const AssignmentOutcomeMenu: React.FC<AssignmentOutcomeMenuProps> = ({
@@ -135,6 +135,9 @@ const AssignmentOutcomeMenu: React.FC<AssignmentOutcomeMenuProps> = ({
         assignmentId,
         outcomeStatus: pendingAction.kind === 'undo' ? null : pendingAction.outcomeStatus,
         notes: notes.trim() || undefined,
+        ...(pendingAction.kind === 'set' && pendingAction.noShowPenalty
+          ? { noShowPenalty: true }
+          : {}),
       });
       setPendingAction(null);
       setNotes('');
@@ -149,6 +152,9 @@ const AssignmentOutcomeMenu: React.FC<AssignmentOutcomeMenuProps> = ({
   const dialogTitle = useMemo(() => {
     if (!pendingAction) return '';
     if (pendingAction.kind === 'undo') return 'Undo outcome';
+    if (pendingAction.outcomeStatus === 'no_show' && pendingAction.noShowPenalty) {
+      return 'Mark as No-show — with penalty';
+    }
     return `Mark as ${ASSIGNMENT_OUTCOME_LABELS[pendingAction.outcomeStatus]}`;
   }, [pendingAction]);
 
@@ -185,6 +191,12 @@ const AssignmentOutcomeMenu: React.FC<AssignmentOutcomeMenuProps> = ({
       >
         {renderMenuItem('completed', !hasStarted)}
         {renderMenuItem('no_show', !hasStarted)}
+        <MenuItem
+          disabled={!hasStarted}
+          onClick={() => startAction({ kind: 'set', outcomeStatus: 'no_show', noShowPenalty: true })}
+        >
+          No-show — with penalty
+        </MenuItem>
         {renderMenuItem('left_early', !hasStarted)}
         <Divider />
         {renderMenuItem('cancelled_business', false)}
@@ -203,8 +215,10 @@ const AssignmentOutcomeMenu: React.FC<AssignmentOutcomeMenuProps> = ({
           <DialogContent>
             <DialogContentText sx={{ mb: 2 }}>
               {pendingAction.kind === 'undo'
-                ? "Reverts this assignment's status to 'confirmed' and clears the outcome. Counters will be adjusted automatically."
-                : 'Notes are optional and visible to recruiters / admins for audit.'}
+                ? "Reverts this assignment's status to 'confirmed' and clears the outcome. Counters will be adjusted automatically. NOTE: a tier penalty applied with the outcome is NOT reverted — fix the tier from the worker's tier badge if needed."
+                : pendingAction.outcomeStatus === 'no_show' && pendingAction.noShowPenalty
+                  ? 'Also drops the worker one tier (logged under your name on their Activity tab). 40 clean timesheet hours restore the original tier automatically.'
+                  : 'Notes are optional and visible to recruiters / admins for audit.'}
             </DialogContentText>
             {error && (
               <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>

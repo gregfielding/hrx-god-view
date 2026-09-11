@@ -39,6 +39,7 @@ import {
 import type { SvgIconComponent } from '@mui/icons-material';
 import { formatPhoneNumber } from '../../utils/formatPhone';
 import { PhoneVerifiedInlineCheck } from '../PhoneVerifiedInlineCheck';
+import WorkerTierBadge from '../WorkerTierBadge';
 
 import type { JobOrder } from '../../types/recruiter/jobOrder';
 import type { UserInactiveAtAccountEntry } from '../../shared/accountWorkforce';
@@ -106,6 +107,8 @@ export interface Worker {
   licenses?: any[];
   aiProfileScore?: number;
   aiJobFitScore?: number;
+  /** Tier map (`{ global: 1|2|3, lastChange }`); absent = Tier 3 by definition. */
+  workerTiers?: Record<string, unknown>;
   /** Denormalized: `users/{uid}.scoreSummary.interviewLastScore10` (0–10), most recent scored interview. */
   interviewLastScore10?: number;
   /** Per-application job match for this job/posting context (`applications.*.jobScoreSummary`). */
@@ -153,6 +156,12 @@ export interface Worker {
   assignmentEndDate?: string;
   /** When the offer (or last reminder) was sent; ms since epoch for display */
   assignmentOfferSentAt?: number;
+  /**
+   * How the assignment came to be. 'claimed' = worker booked it via Claim
+   * Shift (born confirmed — no offer was ever sent, so the tile reads
+   * "Claimed" and hides the Confirm chip). Undefined for recruiter offers.
+   */
+  assignmentAcquisition?: string;
   /** When status is confirmed, ms when the worker confirmed (accepted) the assignment */
   assignmentConfirmedAt?: number;
   /** Master recruiter score (same source as Users table / profile header). */
@@ -1107,9 +1116,17 @@ export function PlacementWorkerTileMainColumn({
             minWidth: 0,
           }}
         >
-          <Typography variant="body2" fontWeight={600} noWrap sx={{ minWidth: 0 }}>
-            {worker.displayName}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+            <Typography variant="body2" fontWeight={600} noWrap sx={{ minWidth: 0 }}>
+              {worker.displayName}
+            </Typography>
+            <WorkerTierBadge
+              userId={worker.id}
+              user={worker as unknown as Record<string, unknown>}
+              userName={worker.displayName}
+              compact
+            />
+          </Box>
           {showMaster ? (
             <Tooltip
               title={

@@ -110,6 +110,24 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
       return;
     }
 
+    await runScreeningAutomationForConfirmedAssignment({ tenantId, assignmentId, after });
+  }
+);
+
+/**
+ * The confirmed-transition automation body, callable directly. The trigger
+ * above is onUpdate-only, so an assignment BORN confirmed (worker Claim
+ * Shift, `claims/claimShift.ts`, 2026-09-06) never produces a
+ * pending→confirmed edge — the claim path calls this after its transaction
+ * commits. Idempotent per assignment via `screening_automation_runs`.
+ */
+export async function runScreeningAutomationForConfirmedAssignment(args: {
+  tenantId: string;
+  assignmentId: string;
+  after: Record<string, unknown>;
+}): Promise<void> {
+  const { tenantId, assignmentId, after } = args;
+  {
     const cfg = await resolveScreeningAutomationConfig(tenantId);
     if (!cfg.enabled) {
       logger.info('[screeningAutomation] disabled', { tenantId, assignmentId });
@@ -819,4 +837,4 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
       });
     }
   }
-);
+}

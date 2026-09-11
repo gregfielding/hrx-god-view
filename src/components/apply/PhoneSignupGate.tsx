@@ -18,8 +18,10 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   CircularProgress,
   FormControlLabel,
+  Link,
   Radio,
   RadioGroup,
   Stack,
@@ -85,6 +87,10 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
   const [selectionToken, setSelectionToken] = useState('');
   const [pick, setPick] = useState('');
   const [existingNotice, setExistingNotice] = useState(false);
+  // Twilio 10DLC (2026-09-09): SMS consent is a separate, unchecked, optional box shown where the number is collected.
+  const [smsConsent, setSmsConsent] = useState(false);
+  // Third-party AI consent, its own unchecked box (App Store 5.1.2(i) parity with the app, 2026-09-10).
+  const [aiConsent, setAiConsent] = useState(false);
 
   const phoneE164 = toE164(phone);
 
@@ -94,16 +100,20 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
     void verify(otp);
   });
   // 18+ (W-2 staffing, Greg 2026-08-25). Server enforces the same rule.
+  // Accepts MM/DD/YYYY (slashes, dashes or dots), bare MMDDYYYY and YYYY-MM-DD: a worker
+  // who typed 04051990 sat on a dead "Text me a code" button (Deborah, 2026-09-10).
   const dobIso = (() => {
     const t = dob.trim();
-    const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    const m = t.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/) ?? t.match(/^(\d{2})(\d{2})(\d{4})$/);
     return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : t;
   })();
-  const dobAdult = (() => {
+  const dobAge = (() => {
     const m = dobIso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!m) return false;
+    if (!m) return null;
     const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    if (Number.isNaN(d.getTime())) return false;
+    if (d.getFullYear() !== Number(m[1]) || d.getMonth() !== Number(m[2]) - 1 || d.getDate() !== Number(m[3])) {
+      return null;
+    }
     const now = new Date();
     let age = now.getFullYear() - d.getFullYear();
     if (
@@ -111,10 +121,12 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
       (now.getMonth() === d.getMonth() && now.getDate() < d.getDate())
     )
       age -= 1;
-    return age >= 18 && age <= 100;
+    return age;
   })();
+  const dobAdult = dobAge != null && dobAge >= 18 && dobAge <= 100;
   const dobOk = !dobRequired || dobAdult;
-  const underage = dobRequired && dobIso.length === 10 && !dobAdult;
+  const underage = dobRequired && dobAge != null && dobAge < 18;
+  const dobUnreadable = dobRequired && Boolean(dob.trim()) && dobAge == null;
   const ready = Boolean(firstName.trim() && lastName.trim() && phoneE164 && dobOk);
 
   const finishSignIn = async (result: Record<string, unknown>) => {
@@ -162,8 +174,10 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
         signup: true,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
-        dob: dob.trim(),
+        dob: dobAge != null ? dobIso : dob.trim(),
         preferredLanguage: getLanguage(),
+        smsConsent,
+        aiConsent,
         signupSource,
         signupGroupId,
         jobContext,
@@ -219,6 +233,41 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
         </Typography>
 
         {step === 'idle' && (
+          <Box sx={{ mb: 1.5 }}>
+            <FormControlLabel
+              sx={{ alignItems: 'flex-start' }}
+              control={<Checkbox checked={smsConsent} onChange={(e) => setSmsConsent(e.target.checked)} sx={{ mt: -0.5 }} inputProps={{ 'aria-label': t('phoneSignup.smsConsentLabel') }} />}
+              label={
+                <Box>
+                  <Typography variant="body2">{t('phoneSignup.smsConsentLabel')}</Typography>
+                  <Typography variant="caption" color="text.secondary" component="div">
+                    {t('phoneSignup.smsConsentDisclosure')} {t('phoneSignup.smsConsentLinks')}{' '}
+                    <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>,{' '}
+                    <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link>{' '}
+                    &amp; <Link href="/consent" target="_blank" rel="noopener">SMS Consent</Link>.
+                  </Typography>
+                </Box>
+              }
+            />
+            <FormControlLabel
+              sx={{ alignItems: 'flex-start', mt: 1 }}
+              control={<Checkbox checked={aiConsent} onChange={(e) => setAiConsent(e.target.checked)} sx={{ mt: -0.5 }} inputProps={{ 'aria-label': t('phoneSignup.aiConsentLabel') }} />}
+              label={
+                <Box>
+                  <Typography variant="body2">{t('phoneSignup.aiConsentLabel')}</Typography>
+                  <Typography variant="caption" color="text.secondary" component="div">
+                    {t('phoneSignup.aiConsentDisclosure')}{' '}
+                    <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
+                  </Typography>
+                </Box>
+              }
+            />
+            <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
+              {t('phoneSignup.otpNote')}
+            </Typography>
+          </Box>
+        )}
+        {step === 'idle' && (
           <Button variant="contained" disabled={!ready || busy} onClick={() => void sendCode()}>
             {busy ? <CircularProgress size={20} /> : t('phoneSignup.sendCode')}
           </Button>
@@ -229,7 +278,11 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
             color={underage ? 'error' : 'text.secondary'}
             sx={{ display: 'block', mt: 1 }}
           >
-            {underage ? t('phoneSignup.mustBe18') : t('phoneSignup.fillNamePhone')}
+            {underage
+              ? t('phoneSignup.mustBe18')
+              : dobUnreadable
+                ? t('phoneSignup.dobFormat')
+                : t('phoneSignup.fillNamePhone')}
           </Typography>
         )}
 

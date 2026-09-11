@@ -32,6 +32,7 @@ import {
   Add as AddIcon,
 } from '@mui/icons-material';
 import { collection, query, where, getDocs } from 'firebase/firestore';
+import { fetchTenantStaffCandidateDocs } from '../utils/tenantStaffUsers';
 import { db } from '../firebase';
 
 interface Salesperson {
@@ -99,8 +100,12 @@ const ManageSalespeopleDialog: React.FC<ManageSalespeopleDialogProps> = ({
         if (filterByInternalTeam) {
           // Same logic as Assign Recruiters on job order: internal team (securityLevel 5–7) OR recruiter access
           try {
-            const snapshot = await getDocs(usersRef);
-            snapshot.docs.forEach((d) => {
+            // Indexed candidate queries (staff levels + recruiter flag, a few dozen
+            // docs) instead of reading every user doc; the filter below is unchanged.
+            const candidateDocs = await fetchTenantStaffCandidateDocs(db, tenantId, {
+              includeRecruiterFlag: true,
+            });
+            candidateDocs.forEach((d) => {
               const userData = d.data();
               if (!userData.tenantIds?.[tenantId]) return;
               const tenantData = userData.tenantIds[tenantId];

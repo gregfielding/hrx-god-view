@@ -19,6 +19,7 @@ import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from '../twilio';
 import { buildWorkerAiPrescreenInviteUrl } from '../utils/workerUrls';
 import { markLifecycleEventIfFirst } from '../messaging/lifecycleDedupe';
+import { isPermanentSmsFailure } from '../messaging/smsDeliveryAlerts';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -455,11 +456,23 @@ export const processScheduledInterviewInvites = onSchedule(
       const sentAt = admin.firestore.Timestamp.now();
 
       if (!smsResult.success) {
-        logger.warn('autoInterviewInvite: send failed', { uid, error: smsResult.error });
+        // Permanent failure (Twilio 21211 invalid number, opt-out, carrier
+        // block) or too many deferrals: stop rescheduling. Incident 2026-09-07:
+        // one user had 2,681 deferrals — an invalid number re-sent every 30
+        // minutes since June, ~800 Twilio rejections per 36h across 19 users.
+        const priorDeferrals = Number((docSnap.data() as Record<string, unknown>).autoInterviewInvitePhoneDeferrals ?? 0) || 0;
+        const permanent = isPermanentSmsFailure(smsResult) || priorDeferrals + 1 >= MAX_PHONE_DEFERRALS;
+        logger.warn('autoInterviewInvite: send failed', { uid, error: smsResult.error, errorCode: smsResult.errorCode ?? null, permanent, priorDeferrals });
         await docSnap.ref.set(
           {
             interviewInviteLastError: smsResult.error || 'send_failed',
-            interviewInviteScheduledAt: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS),
+            ...(permanent
+              ? {
+                  interviewInviteScheduledAt: admin.firestore.FieldValue.delete(),
+                  interviewInviteLastOutcome: 'sms_unreachable',
+                  interviewInviteUnreachableAt: admin.firestore.FieldValue.serverTimestamp(),
+                }
+              : { interviewInviteScheduledAt: admin.firestore.Timestamp.fromMillis(Date.now() + DEFERRAL_MS) }),
             autoInterviewInvitePhoneDeferrals: admin.firestore.FieldValue.increment(1),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },

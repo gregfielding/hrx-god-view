@@ -1,3 +1,4 @@
+import { AI_PROCESSING_CONSENT_VERSION } from './utils/aiProcessingConsent';
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
@@ -19,6 +20,7 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from './messaging/twilioSecrets';
+import { recordSmsCarrierBlock, recordSmsInvalidNumber, TWILIO_INVALID_TO, TWILIO_NOT_SMS_CAPABLE, TWILIO_UNSUBSCRIBED_RECIPIENT } from './messaging/smsDeliveryAlerts';
 import { maybeEmitPhoneVerifiedCategoryScore } from './categoryScoreEvolution/activityCategoryScoreEmit';
 import { shortenUrlsInBody } from './messaging/linkShortener';
 import { tenantMembershipMergePayload } from './shared/tenantMembership';
@@ -41,6 +43,19 @@ function getMessagingPhoneNumber() {
 
 function getA2PCampaign() {
   return TWILIO_A2P_CAMPAIGN.value() || process.env.TWILIO_A2P_CAMPAIGN;
+}
+
+/**
+ * Natalie Brooks' own A2P 10DLC messaging service (campaign approved 2026-09-09; sender pool =
+ * +1 312 663 8247 and +1 737 264 6753). Texts she sends — every messageTypeId starting with
+ * "natalie_" — go out from her number so workers see one consistent sender and can reply to her
+ * directly. Everything else stays on the C1 Messaging toll-free 888. If the pool is empty/unready,
+ * Twilio answers 21705/30034 and the existing fallback below retries from the 888.
+ * Override/disable with env NATALIE_MESSAGING_SERVICE_SID (empty string = off).
+ */
+const NATALIE_MESSAGING_SERVICE_SID = process.env.NATALIE_MESSAGING_SERVICE_SID ?? 'MG2dd6557d05d9be9044c996fa568a8a39';
+function isNatalieMessage(messageTypeId?: string): boolean {
+  return typeof messageTypeId === 'string' && messageTypeId.startsWith('natalie_');
 }
 
 // Initialize CORS middleware
@@ -499,6 +514,11 @@ async function resolvePhoneSignup(
     signupGroupId?: string | null;
     jobContext?: { tenantId?: string | null; tenantSlug?: string | null; jobId?: string | null } | null;
     ip: string;
+    /** The separate, unchecked-by-default SMS box on the sign-up form (Twilio 10DLC: consent may not be bundled into account creation). */
+    smsConsent?: boolean;
+    /** Separate, unchecked-by-default AI-processing checkbox (App Store 5.1.2(i), 2026-09-10). */
+    aiConsent?: boolean;
+    userAgent?: string;
   },
 ): Promise<Record<string, unknown>> {
   const existing = await resolvePhoneSignIn(phoneE164, { ip: opts.ip });
@@ -584,6 +604,10 @@ async function resolvePhoneSignup(
   const signupGroupId = String(opts.signupGroupId ?? '').trim() || null;
   const resumePath = jobId ? 'job' : signupGroupId ? 'c1_group' : 'c1_general';
   const agreementStamp = { agreed: true, version: '2025-10-21', timestamp: new Date().toISOString() };
+  // SMS consent is its OWN checkbox (2026-09-09): record exactly what the worker chose.
+  const smsConsent = opts.smsConsent === true;
+  const smsConsentStamp = { agreed: smsConsent, version: '2026-09-09', timestamp: agreementStamp.timestamp, source: 'phone_signup_checkbox' };
+  const aiProcessingStamp = { agreed: opts.aiConsent === true, version: AI_PROCESSING_CONSENT_VERSION, timestamp: agreementStamp.timestamp, source: 'phone_signup_checkbox' };
   // Wizard base-profile shape (apply/Wizard.tsx step 0) — email is null and
   // OPTIONAL now; Everee's flow collects it later when payroll needs it.
   await db.doc(`users/${uid}`).set(
@@ -635,6 +659,14 @@ async function resolvePhoneSignup(
       // as nested paths (only .update() does).
       ...tenantMembershipMergePayload(TENANT_C1, { securityLevel: '2', role: 'Applicant', addedAt: now }),
       orgType: 'Tenant',
+      // Membership must be stamped here, not at application submit: the
+      // recruiter directory, applicant rows and the on-call onboarding guard
+      // all require tenantIds.{t}, and workers who quit the wizard never
+      // submit. Phone signup is C1's flow.
+      activeTenantId: TENANT_C1,
+      tenantIds: {
+        [TENANT_C1]: { role: 'Applicant', securityLevel: '2', addedAt: now },
+      },
       preferredLanguage,
       isActive: true,
       skills: [],
@@ -648,14 +680,23 @@ async function resolvePhoneSignup(
       recruiter: false,
       jobsBoard: false,
       userGroupIds: [],
+      smsOptIn: smsConsent,
+      smsConsentAt: smsConsent ? now : null,
+      smsConsentSource: 'phone_signup_checkbox',
       userAgreements: {
         termsOfUse: agreementStamp,
-        smsConsent: agreementStamp,
+        smsConsent: smsConsentStamp,
+        aiProcessing: aiProcessingStamp,
         privacyPolicy: { acknowledged: true, version: '2025-10-21', timestamp: agreementStamp.timestamp },
       },
     },
     { merge: true },
   );
+  // Consent record (TCPA proof) — mirrors the client-side logSMSConsent shape in userConsents/{uid}.
+  await db.doc(`userConsents/${uid}`).set(
+    { uid, phone: phoneE164, smsOptIn: smsConsent, source: 'signup_form', termsVersion: '2026-09-09', ip: opts.ip || null, userAgent: opts.userAgent || null, timestamp: now, disclosureShown: true, checkboxDefault: 'unchecked' },
+    { merge: true },
+  ).catch((e) => logger.warn('[phoneSignup] userConsents write failed (non-fatal)', { err: String(e) }));
 
   await db.collection('phone_signin_audit').add({
     uid,
@@ -826,6 +867,35 @@ export const checkOtp = onCall(
     });
   }
 
+  // Worker-app sign-up after a no_account sign-in (2026-09-09): the number was
+  // OTP-verified moments ago and the recovery token minted with that
+  // no_account is the possession proof (10 min, single use here). Asking for
+  // a second code sent every new app user to the legacy Phone Verification
+  // screen (Greg's device recording). Same resolvePhoneSignup as the web.
+  if (signup === true && recoveryToken && !code) {
+    const tokenRef = db.doc(`phone_signin_pending/${String(recoveryToken)}`);
+    const tokenSnap = await tokenRef.get();
+    const tok = tokenSnap.data() as { phoneE164?: string; purpose?: string; expiresAt?: number } | undefined;
+    if (!tokenSnap.exists || tok?.purpose !== 'recovery' || tok?.phoneE164 !== phoneE164 || (tok?.expiresAt ?? 0) < Date.now()) {
+      throw new HttpsError('permission-denied', 'That session expired. Start over.');
+    }
+    await tokenRef.delete();
+    const d = request.data as Record<string, unknown>;
+    return resolvePhoneSignup(phoneE164, {
+      firstName: String(d.firstName ?? ''),
+      lastName: String(d.lastName ?? ''),
+      dob: String(d.dob ?? ''),
+      preferredLanguage: String(d.preferredLanguage ?? ''),
+      signupSource: String(d.signupSource ?? 'worker_app'),
+      signupGroupId: (d.signupGroupId as string) ?? null,
+      jobContext: (d.jobContext as { tenantId?: string; tenantSlug?: string; jobId?: string } | null) ?? null,
+      ip: callerIp,
+      smsConsent: d.smsConsent === true,
+      aiConsent: d.aiConsent === true,
+      userAgent: String(request.rawRequest?.headers?.['user-agent'] ?? '').slice(0, 300) || undefined,
+    });
+  }
+
   if (!code || !/^\d{6}$/.test(code)) {
     throw new HttpsError('invalid-argument', 'Invalid code format. Please enter a 6-digit code.');
   }
@@ -848,6 +918,9 @@ export const checkOtp = onCall(
         signupGroupId: (d.signupGroupId as string) ?? null,
         jobContext: (d.jobContext as { tenantId?: string; tenantSlug?: string; jobId?: string } | null) ?? null,
         ip: callerIp,
+        smsConsent: d.smsConsent === true,
+      aiConsent: d.aiConsent === true,
+        userAgent: String(request.rawRequest?.headers?.['user-agent'] ?? '').slice(0, 300) || undefined,
       });
     }
     return { success: true, status: 'approved', test: true };
@@ -891,6 +964,9 @@ export const checkOtp = onCall(
         signupGroupId: (d.signupGroupId as string) ?? null,
         jobContext: (d.jobContext as { tenantId?: string; tenantSlug?: string; jobId?: string } | null) ?? null,
         ip: callerIp,
+        smsConsent: d.smsConsent === true,
+      aiConsent: d.aiConsent === true,
+        userAgent: String(request.rawRequest?.headers?.['user-agent'] ?? '').slice(0, 300) || undefined,
       });
     }
 
@@ -1086,10 +1162,25 @@ export async function sendWorkerMessageInternal(
           success: false,
           messageId: null,
           status: 'skipped',
-          error: 'Recipient has opted out of SMS messages'
+          error: 'Recipient has opted out of SMS messages',
+          errorCode: 'OPTED_OUT',
         };
       }
-      
+
+      // Twilio has rejected this number outright before (21211 / 21614,
+      // stamped by recordSmsInvalidNumber) — do not burn another API call
+      // until a recruiter corrects it. Incident 2026-09-07: 817 rejections.
+      if (recipientUserData?.phoneInvalid === true) {
+        logger.info(`Skipping SMS to ${to} - phone marked invalid (${recipientUserData?.phoneInvalidReason ?? 'unknown'})`);
+        return {
+          success: false,
+          messageId: null,
+          status: 'skipped',
+          error: 'Recipient phone number is marked invalid (Twilio rejected it)',
+          errorCode: 'PHONE_INVALID',
+        };
+      }
+
       // PHASE 1.1: Check smsBlockedSystem (STOP keyword enforcement)
       if (recipientUserData?.smsBlockedSystem === true) {
         logger.info(`Skipping SMS to ${to} - user has sent STOP keyword (smsBlockedSystem=true)`);
@@ -1234,6 +1325,7 @@ export async function sendWorkerMessageInternal(
       client = getTwilioClient();
       messagingPhoneNumber = getMessagingPhoneNumber();
       a2pCampaign = getA2PCampaign();
+      if (isNatalieMessage(context?.messageTypeId) && NATALIE_MESSAGING_SERVICE_SID) a2pCampaign = NATALIE_MESSAGING_SERVICE_SID;
     } catch (configError: any) {
       logger.error('Failed to load Twilio configuration:', configError);
       return {
@@ -1280,8 +1372,8 @@ export async function sendWorkerMessageInternal(
     try {
       messageResult = await client.messages.create(messageParams);
     } catch (twilioError: any) {
-      // When using Messaging Service, fall back to direct number on invalid SID (21705) or A2P (30034)
-      if ((twilioError.code === 21705 || twilioError.code === 30034) && messageParams.messagingServiceSid && messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
+      // When using Messaging Service, fall back to direct number on invalid SID (21705), no eligible sender in the pool yet (21703 — seen 2026-09-09 minutes after adding Natalie's numbers), or A2P (30034)
+      if (([21703, 21705, 30034].includes(Number(twilioError.code))) && messageParams.messagingServiceSid && messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
         logger.warn(`Messaging Service failed (${twilioError.code}), falling back to direct number ${messagingPhoneNumber}. Error: ${twilioError.message}`);
         try {
           messageResult = await client.messages.create({
@@ -1291,6 +1383,9 @@ export async function sendWorkerMessageInternal(
           });
         } catch (fallbackError: any) {
           logger.error(`Fallback to direct number also failed: ${fallbackError.message}`);
+          if (String(fallbackError.code) === TWILIO_UNSUBSCRIBED_RECIPIENT) {
+            await recordSmsCarrierBlock({ tenantId, userId: recipientUserId, toPhone: to, errorCode: TWILIO_UNSUBSCRIBED_RECIPIENT, errorMessage: fallbackError.message, messageTypeId: context?.messageTypeId ?? null, source: 'twilio.ts' });
+          }
           return {
             success: false,
             messageId: null,
@@ -1311,6 +1406,12 @@ export async function sendWorkerMessageInternal(
           errorCode: '30034'
         };
       } else {
+        // 21610 = recipient unsubscribed at the carrier (they texted an opt-out
+        // keyword). Record + alert so the worker doesn't silently go dark
+        // (docs/claude/feedback_twilio_cancel_keyword_optout.md), then rethrow.
+        if (String(twilioError.code) === TWILIO_UNSUBSCRIBED_RECIPIENT) {
+          await recordSmsCarrierBlock({ tenantId, userId: recipientUserId, toPhone: to, errorCode: TWILIO_UNSUBSCRIBED_RECIPIENT, errorMessage: twilioError.message, messageTypeId: context?.messageTypeId ?? null, source: 'twilio.ts' });
+        }
         throw twilioError;
       }
     }
@@ -1452,26 +1553,40 @@ export async function sendWorkerMessageInternal(
     
     // Handle specific Twilio errors
     if (error.code === 21211 || error.code === 21614) {
+      // Permanent: stamp users.phoneInvalid + ops alert so nobody retries
+      // this number every hour (incident 2026-09-07, 817 × 21211 in 36h).
+      await recordSmsInvalidNumber({
+        tenantId: context?.tenantId ?? null,
+        userId: context?.userId ?? null,
+        toPhone: to,
+        errorCode: error.code === 21211 ? TWILIO_INVALID_TO : TWILIO_NOT_SMS_CAPABLE,
+        errorMessage: error.message,
+        messageTypeId: context?.messageTypeId ?? null,
+        source: 'twilio.ts',
+      });
       return {
         success: false,
         messageId: null,
         status: 'failed',
-        error: 'Invalid phone number format or not SMS capable'
+        error: 'Invalid phone number format or not SMS capable',
+        errorCode: String(error.code),
       };
     } else if (error.code === 21617) {
       return {
         success: false,
         messageId: null,
         status: 'failed',
-        error: 'Recipient has opted out of SMS messages'
+        error: 'Recipient has opted out of SMS messages',
+        errorCode: '21617',
       };
     }
-    
+
     return {
       success: false,
       messageId: null,
       status: 'failed',
-      error: error.message || 'Unknown error'
+      error: error.message || 'Unknown error',
+      errorCode: error.code != null ? String(error.code) : undefined,
     };
   }
 }

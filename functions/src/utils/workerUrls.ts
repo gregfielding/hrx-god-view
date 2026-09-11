@@ -1,16 +1,13 @@
-const DEFAULT_WORKER_WEB_BASE_URL = 'https://hrxone.com';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
 }
 
+/** Worker-facing web origin — the same PUBLIC_APP_ORIGIN every other link builder uses (config/appOrigin.ts). */
 export function getWorkerWebBaseUrl(): string {
-  const configured =
-    process.env.WORKER_WEB_BASE_URL ||
-    process.env.WEB_BASE_URL ||
-    process.env.PUBLIC_WEB_BASE_URL ||
-    DEFAULT_WORKER_WEB_BASE_URL;
-  return trimTrailingSlash(String(configured || DEFAULT_WORKER_WEB_BASE_URL));
+  const configured = process.env.WORKER_WEB_BASE_URL || PUBLIC_APP_ORIGIN;
+  return trimTrailingSlash(String(configured || PUBLIC_APP_ORIGIN));
 }
 
 export function buildWorkerDashboardUrl(): string {

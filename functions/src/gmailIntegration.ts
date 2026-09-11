@@ -44,6 +44,7 @@ const GMAIL_SCOPES = [
 ];
 
 import { defineString } from 'firebase-functions/params';
+import { PUBLIC_APP_ORIGIN } from './config/appOrigin';
 
 const clientId = defineString('GOOGLE_CLIENT_ID');
 const clientSecret = defineString('GOOGLE_CLIENT_SECRET');
@@ -342,6 +343,13 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
     if (parsedState?.purpose === 'salesOutreachMailbox') {
       const { handleSalesOutreachMailboxOAuth } = await import('./sales/sodexoOutreach');
       await handleSalesOutreachMailboxOAuth(code, parsedState, res);
+      return;
+    }
+
+    // Natalie's mailbox (n.brooks@) — tokens go to tenants/{tid}/integrations/natalieMailbox.
+    if (parsedState?.purpose === 'natalieMailbox') {
+      const { handleNatalieMailboxOAuth } = await import('./natalie/natalieMailbox');
+      await handleNatalieMailboxOAuth(code, parsedState, res);
       return;
     }
 
@@ -1969,7 +1977,7 @@ export const bulkImportGmailEmails = onCall({
         duplicatesSkipped: 0,
         message: 'No users with Gmail connected found in this tenant',
         headers: {
-          'Access-Control-Allow-Origin': 'https://hrxone.com',
+          'Access-Control-Allow-Origin': PUBLIC_APP_ORIGIN,
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization'
         }
@@ -2189,7 +2197,7 @@ return {
   userResults,
   message: `Bulk import completed: ${totalProcessedCount} emails processed, ${totalActivityLogsCreated} activity logs created, ${totalDuplicatesSkipped} duplicates skipped`,
   headers: {
-    'Access-Control-Allow-Origin': 'https://hrxone.com',
+    'Access-Control-Allow-Origin': PUBLIC_APP_ORIGIN,
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization'
   }
@@ -2201,7 +2209,7 @@ return {
       success: false,
       message: `Bulk import failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
       headers: {
-        'Access-Control-Allow-Origin': 'https://hrxone.com',
+        'Access-Control-Allow-Origin': PUBLIC_APP_ORIGIN,
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization'
       }

@@ -2,6 +2,7 @@
  * Shared scoring / enrichment / hiring decision bundle for worker AI prescreen.
  * Used by submitWorkerAiPrescreenInterview and backfill scripts.
  */
+import { aiProcessingDeclined } from '../utils/aiProcessingConsent';
 import * as admin from 'firebase-admin';
 import type { Firestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
@@ -128,7 +129,8 @@ export async function composePrescreenAiBundle(args: {
   // English-only and penalized Spanish answers inside an auto-hire gate);
   // the deterministic regex evaluator remains the always-available
   // fallback, so a Claude outage degrades to exactly the old behavior.
-  const llmQuality = await evaluatePrescreenAnswerQualityLlm(answersEffective);
+  // AI-processing consent: an explicit decline keeps answers away from Claude (rules path only).
+  const llmQuality = aiProcessingDeclined(userDoc) ? null : await evaluatePrescreenAnswerQualityLlm(answersEffective);
   const answerQualityEval = llmQuality ?? evaluatePrescreenAnswerQuality(answersEffective);
   const answerQualitySource = llmQuality ? 'llm_rubric_v1' : 'rules_regex';
   const riskProfile = computeRiskProfile(answersEffective, drugBackgroundMergeMeta);

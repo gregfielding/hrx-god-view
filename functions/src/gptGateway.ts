@@ -6,6 +6,7 @@ import { logger } from './utils/logger';
 import { withIdempotency } from './middleware/aiGuard';
 import { updateLocationAssociation as _ignore } from './updateLocationAssociation';
 import { performUpdate as performLocationUpdate } from './updateLocationAssociation';
+import { corsOriginFor } from './config/appOrigin';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -46,11 +47,11 @@ async function retrieveCodeContextForIntent(userText: string): Promise<string> {
   return blocks.join('\n\n---\n\n');
 }
 
-export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, timeoutSeconds: 60, memory: '512MiB', minInstances: 1 }, async (req, res): Promise<void> => {
+export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, timeoutSeconds: 60, memory: '512MiB' }, async (req, res): Promise<void> => {
   const startedAt = Date.now();
   try {
     if (req.method === 'OPTIONS') {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
       res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.status(204).send('');
@@ -59,7 +60,7 @@ export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, t
 
     const { tenantId, userId, threadId, messages, toolMode } = req.body || {};
     if (!tenantId || !userId || !threadId || !Array.isArray(messages)) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.status(400).json({ error: 'Missing required fields' });
       return;
     }
@@ -192,7 +193,7 @@ export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, t
       // For local testing, fallback simple echo
       const reply = messages?.slice().reverse().find((m: any) => m.role === 'user')?.content || 'Hello!';
       await persistAssistantMessage(tenantId, threadId, userId, reply);
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.status(200).json({ reply });
       return;
     }
@@ -202,7 +203,7 @@ export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, t
     // SSE path — kept for contract compatibility (no browser client uses it
     // today): the full reply is emitted as one OpenAI-shaped delta event.
     if (wantSSE) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
       res.set('Content-Type', 'text/event-stream');
       res.set('Cache-Control', 'no-cache');
       res.set('Connection', 'keep-alive');
@@ -260,13 +261,13 @@ export const chatWithGPT = onRequest({ region: 'us-central1', concurrency: 80, t
 
     const reply = primaryReply || (executed.length ? 'Action executed.' : 'No response');
     await persistAssistantMessage(tenantId, threadId, userId, reply);
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
     res.status(200).json({ reply, tools: executed, actions: executed });
     console.log('chatWithGPT completed', { latencyMs: Date.now() - startedAt, model: MODEL });
     return;
   } catch (err: any) {
     console.error('chatWithGPT error:', err);
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
     res.status(500).json({ error: err?.message || 'Internal error' });
     return;
   }

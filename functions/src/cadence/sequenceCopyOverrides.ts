@@ -90,11 +90,25 @@ export interface CadenceTemplateContext {
   address?: string;
   clockInUrl?: string;
   companyName?: string;
+  // Day-of logistics (Greg 2026-09-03): recruiter-edited templates can pull
+  // the structured fields so overridden sequences don't lose logistics
+  // content. {onsiteContact} composes "Name (Role): phone" for convenience.
+  onsiteContactName?: string;
+  onsiteContactPhone?: string;
+  onsiteContactRole?: string;
+  parking?: string;
+  checkIn?: string;
 }
 
 /** Replace {token} placeholders; unknown tokens render as empty string so a
  *  typo'd token can't leak braces into a worker's text. */
 export function renderCadenceTemplate(tpl: string, ctx: CadenceTemplateContext): string {
+  const name = (ctx.onsiteContactName ?? '').trim();
+  const role = (ctx.onsiteContactRole ?? '').trim();
+  const phone = (ctx.onsiteContactPhone ?? '').trim();
+  const onsiteContact = name
+    ? `${name}${role ? ` (${role})` : ''}${phone ? `: ${phone}` : ''}`
+    : '';
   const values: Record<string, string> = {
     brand: ctx.brand ?? DEFAULT_SMS_BRAND,
     jobTitle: ctx.jobTitle ?? '',
@@ -103,6 +117,12 @@ export function renderCadenceTemplate(tpl: string, ctx: CadenceTemplateContext):
     address: ctx.address ?? '',
     clockInUrl: ctx.clockInUrl ?? '',
     companyName: ctx.companyName ?? '',
+    onsiteContactName: name,
+    onsiteContactPhone: phone,
+    onsiteContactRole: role,
+    onsiteContact,
+    parking: (ctx.parking ?? '').trim(),
+    checkIn: (ctx.checkIn ?? '').trim(),
   };
   return tpl
     .replace(/\{(\w+)\}/g, (_, token: string) => values[token] ?? '')

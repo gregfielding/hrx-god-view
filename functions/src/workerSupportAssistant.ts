@@ -1,3 +1,4 @@
+import { loadAiProcessingDeclined } from './utils/aiProcessingConsent';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { getClaudeChat } from './utils/claudeChat';
@@ -201,6 +202,19 @@ function fallbackEscalation(topics: SupportTopic[]): SupportResponse {
   };
 }
 
+/** Worker declined AI processing: no Claude call, the question goes to a person. */
+function aiDeclinedEscalation(topics: SupportTopic[]): SupportResponse {
+  return {
+    answer:
+      'AI answers are turned off in your privacy choices, so our team will answer this one. Send it below and a recruiter will follow up. (Las respuestas con IA están desactivadas en tus opciones de privacidad; nuestro equipo te responderá.)',
+    confidence: 0,
+    suggestedActions: ['Contact recruiter', 'Open inbox'],
+    followUps: [],
+    escalate: true,
+    sourceTopics: topics,
+  };
+}
+
 export const workerSupportAssistant = onCall(
   {
     cors: true,
@@ -380,6 +394,10 @@ export const workerSupportAssistant = onCall(
     }
 
     const topics = detectTopics(trimmedQuestion);
+    if (await loadAiProcessingDeclined(request.auth.uid)) {
+      logger.info('workerSupportAssistant.ai_declined', { uid: request.auth.uid });
+      return aiDeclinedEscalation(topics);
+    }
     const mustEscalate = requiresHuman(trimmedQuestion);
     const knowledgeSnippet = buildKnowledgeSnippet(topics);
 

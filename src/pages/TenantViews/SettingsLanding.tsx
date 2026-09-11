@@ -44,6 +44,8 @@ import BenefitsProgramsPlaceholder from './settings/BenefitsProgramsPlaceholder'
 import PayrollProvidersPlaceholder from './settings/PayrollProvidersPlaceholder';
 import MessagingSequencesPage from './settings/MessagingSequencesPage';
 import AISignalsSettings from './settings/AISignalsSettings';
+import TierAutomationSettings from './settings/TierAutomationSettings';
+import MilitaryTechIcon from '@mui/icons-material/MilitaryTech';
 import WorkersCompRatesPage from './settings/WorkersCompRatesPage';
 import JobTitlesPage from './settings/JobTitlesPage';
 import ApiServiceDetailContent from './settings/ApisAndServicesPage';
@@ -85,6 +87,7 @@ const CORE_TAB_ICONS: Record<CoreSettingsTab, React.ReactNode> = {
   'payroll-providers': <AccountBalanceWalletIcon sx={TAB_ICON_SX} />,
   'workers-comp': <HealthAndSafetyIcon sx={TAB_ICON_SX} />,
   'ai-signals': <PsychologyIcon sx={TAB_ICON_SX} />,
+  'tier-automation': <MilitaryTechIcon sx={TAB_ICON_SX} />,
 };
 
 function settingsNavIcon(tab: SettingsTab): React.ReactNode {
@@ -217,6 +220,8 @@ const SettingsLanding: React.FC = () => {
         ) : null;
       case 'ai-signals':
         return <AISignalsSettings />;
+      case 'tier-automation':
+        return <TierAutomationSettings />;
       default:
         return <CompanySetup />;
     }

@@ -1,6 +1,8 @@
 import * as admin from 'firebase-admin';
 import { onDocumentCreated, onDocumentDeleted, onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions/v2';
+import { ASSIGNMENT_STATUS_QUERY_LIVE } from './utils/assignmentStatusNormalize';
+import { computeAssignmentsTarget, computeLiveFill, liveFillChanged } from './shifts/shiftLiveFill';
 
 const db = admin.firestore();
 
@@ -8,21 +10,6 @@ type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled' | 'pending_indeed_
 
 function norm(v: unknown): string {
   return String(v || '').trim().toLowerCase();
-}
-
-function computeAssignmentsTarget(shift: any): number {
-  const base = Number(shift?.totalStaffRequested ?? 1) || 1;
-
-  // Optional overstaffing fields (future UI):
-  // - overstaffCount: integer additional assignments
-  // - overstaffPercent: e.g. 40 means +40% of base (rounded up)
-  const overstaffCount = Number(shift?.overstaffCount ?? 0) || 0;
-  const overstaffPercent = Number(shift?.overstaffPercent ?? 0) || 0;
-
-  const pctExtra = overstaffPercent > 0 ? Math.ceil((base * overstaffPercent) / 100) : 0;
-  const extra = Math.max(0, overstaffCount, pctExtra);
-
-  return Math.max(1, base + extra);
 }
 
 async function recomputeShiftFill(params: {
@@ -48,13 +35,23 @@ async function recomputeShiftFill(params: {
 
   // Count "assigned" workers as assignments that are not canceled.
   // We treat proposed/confirmed/active as "count toward fill" (i.e., created assignments).
-  const assignmentsSnap = await assignmentsRef
-    .where('shiftId', '==', shiftId)
-    .where('status', 'in', ['proposed', 'confirmed', 'active'])
-    .get();
+  const [assignmentsSnap, liveSnap] = await Promise.all([
+    assignmentsRef
+      .where('shiftId', '==', shiftId)
+      .where('status', 'in', ['proposed', 'confirmed', 'active'])
+      .get(),
+    assignmentsRef
+      .where('shiftId', '==', shiftId)
+      .where('status', 'in', [...ASSIGNMENT_STATUS_QUERY_LIVE])
+      .get(),
+  ]);
 
   const assignedCount = assignmentsSnap.size;
   const target = computeAssignmentsTarget(shift);
+  const liveFill = computeLiveFill(
+    shift,
+    liveSnap.docs.map((d) => d.data() || {}),
+  );
 
   // Open (standing-crew) shifts are ongoing and always accepting workers.
   // Reaching the headcount target must NOT flip them to "filled" — that would
@@ -90,8 +87,13 @@ async function recomputeShiftFill(params: {
     prevTarget !== target ||
     prevCount !== assignedCount ||
     prevAccepting !== acceptingBackupsNext;
+  const needsLiveFillUpdate = liveFillChanged(shift.liveFill, liveFill);
 
-  if (!needsStatusUpdate && !needsDerivedUpdate) return;
+  if (!needsStatusUpdate && !needsDerivedUpdate && !needsLiveFillUpdate) return;
+
+  if (needsLiveFillUpdate) {
+    derived.liveFill = { ...liveFill, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+  }
 
   await shiftRef.update(derived);
   logger.info('Recomputed shift fill status', {
@@ -164,11 +166,13 @@ export const onJobOrderShiftUpdatedRecomputeFill = onDocumentUpdated(
     const after = event.data?.after.data();
     if (!before || !after) return;
 
-    // Only recompute when relevant fields change.
+    // Only recompute when relevant fields change. dateSchedule carries the
+    // per-day workersNeeded that feeds liveFill.targetByDay (2026-09-06).
     const relevantChanged =
       before.totalStaffRequested !== after.totalStaffRequested ||
       before.overstaffCount !== after.overstaffCount ||
-      before.overstaffPercent !== after.overstaffPercent;
+      before.overstaffPercent !== after.overstaffPercent ||
+      JSON.stringify(before.dateSchedule ?? null) !== JSON.stringify(after.dateSchedule ?? null);
 
     if (!relevantChanged) return;
     await recomputeShiftFill({ tenantId, jobOrderId, shiftId });

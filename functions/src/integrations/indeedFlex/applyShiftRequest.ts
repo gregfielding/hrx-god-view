@@ -404,9 +404,13 @@ async function applyNewRequest(ctx: ApplyCtx): Promise<Record<string, unknown>> 
     const sameDay = await joRef.collection('shifts').where('shiftDate', '==', workDate).limit(25).get();
     const dupe = sameDay.docs.find((d) => {
       const s = d.data() as Record<string, unknown>;
+      const role = roleName.toLowerCase();
       return (
         String(s.source ?? '') === 'indeed_flex_apply' &&
-        String(s.defaultJobTitle ?? '').toLowerCase() === roleName.toLowerCase()
+        // defaultJobTitle is the JO position title since 2026-09-09; the
+        // Indeed role name it came from is kept on indeedRoleName.
+        (String(s.defaultJobTitle ?? '').toLowerCase() === role ||
+          String(s.indeedRoleName ?? '').toLowerCase() === role)
       );
     });
     if (dupe) {
@@ -459,7 +463,14 @@ async function applyNewRequest(ctx: ApplyCtx): Promise<Record<string, unknown>> 
     jobOrderId: joId,
     status: 'open',
     shiftTitle: roleName ? `${roleName}${venueName ? ` — ${venueName}` : ''}` : venueName || 'Indeed Flex shift',
-    defaultJobTitle: roleName,
+    // Stamp the JO's canonical position title, not Indeed's role name — the
+    // per-position public posting only lists shifts whose title pairs with
+    // its position (JO #501 "Warehouse Operative" shifts were invisible on
+    // the "Package Handler (Warehouse Operative)" posting, 2026-09-09).
+    defaultJobTitle: dressing.positionJobTitle || roleName,
+    ...(roleName && dressing.positionJobTitle && dressing.positionJobTitle !== roleName
+      ? { indeedRoleName: roleName }
+      : {}),
     shiftDate: workDate,
     ...(endDate !== workDate ? { endDate } : {}),
     // shiftMode drives multi-day expansion in gigFinance/occurrence logic —

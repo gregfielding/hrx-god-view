@@ -106,14 +106,17 @@ export function getNotificationUrl(n: WorkerNotification & { id: string }): stri
   return n.threadId ? '/c1/workers/payroll-help' : '';
 }
 
+// Collapsed to four (Greg 2026-09-03; app mirrors in
+// notifications_screen._filterKeyFor): Shifts = assignments incl.
+// reminders; Jobs = applications + opportunities (job invites previously
+// bucketed under a System chip nobody opened). 'other'
+// (documents/profile/system) has no chip — visible under All/Unread.
 export type WorkerNotificationFilterKey =
   | 'all'
   | 'unread'
-  | 'applications'
-  | 'assignments'
-  | 'reminders'
-  | 'documents'
-  | 'system';
+  | 'shifts'
+  | 'jobs'
+  | 'other';
 
 function normalizeText(v: unknown): string {
   return String(v || '').toLowerCase();
@@ -230,13 +233,7 @@ export async function getWorkerUnreadNotificationCount(uid: string): Promise<num
 
 export function getWorkerNotificationFilterKey(n: WorkerNotification & { id: string }): Exclude<WorkerNotificationFilterKey, 'all' | 'unread'> {
   const category = n.category ?? typeToCategory(n.type);
-  const text = `${normalizeText(n.title)} ${normalizeText(n.body)}`;
-  const isReminder = category === 'assignments' && (text.includes('reminder') || text.includes('starts in') || text.includes('tomorrow'));
-  if (isReminder) return 'reminders';
-  if (n.type === 'document' || category === 'profile' || text.includes('compliance') || text.includes('certification')) {
-    return 'documents';
-  }
-  if (category === 'applications') return 'applications';
-  if (category === 'assignments') return 'assignments';
-  return 'system';
+  if (category === 'assignments') return 'shifts';
+  if (category === 'applications' || category === 'opportunities') return 'jobs';
+  return 'other';
 }

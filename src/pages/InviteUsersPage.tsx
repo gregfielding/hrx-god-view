@@ -37,6 +37,7 @@ import { format } from 'date-fns';
 import { db, functions } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { useAuth } from '../contexts/AuthContext';
+import { getAppOrigin } from '../config/appOrigin';
 
 export type InviteTabValue = 'invite' | 'past';
 
@@ -81,7 +82,8 @@ function buildApplyLink(
   jobPostId: string | null,
   groupId: string | null
 ): string {
-  const baseUrl = 'https://hrxone.com';
+  // Current origin when it is one of ours (hrxone.com today, app.c1staffing.com next), else canonical.
+  const baseUrl = getAppOrigin();
   if (path === 'general') return `${baseUrl}/c1/apply`;
   if (path === 'group' && groupId) return `${baseUrl}/c1/apply/group/${groupId}`;
   // Job Post: link to jobs board detail page (same URL candidates see), not the apply wizard

@@ -1874,8 +1874,8 @@ const Layout: React.FC = function Layout() {
                 </Tooltip>
               )}
               
-              {/* # Slack & Mentions Icon - Only for security levels 5-7 */}
-              {hasAdminLevel && (
+              {/* # Slack & Mentions Icon - hidden per Greg 2026-09-04 (routes stay live) */}
+              {/* {hasAdminLevel && (
                 <Tooltip title={mentionsUnreadCount > 0 ? `${mentionsUnreadCount} unread mention${mentionsUnreadCount !== 1 ? 's' : ''}` : 'Slack & Mentions'}>
                   <IconButton
                     onClick={() => navigateSafe('/slack')}
@@ -1886,7 +1886,7 @@ const Layout: React.FC = function Layout() {
                         fill: 'currentColor',
                         stroke: 'currentColor',
                       },
-                      '&:hover': { 
+                      '&:hover': {
                         backgroundColor: 'transparent !important',
                         color: '#FFFFFF',
                         '& svg': {
@@ -1896,29 +1896,29 @@ const Layout: React.FC = function Layout() {
                       },
                     }}
                   >
-                    <Badge 
-                      badgeContent={mentionsUnreadCount > 99 ? '99+' : mentionsUnreadCount} 
+                    <Badge
+                      badgeContent={mentionsUnreadCount > 99 ? '99+' : mentionsUnreadCount}
                       color="secondary"
                       invisible={mentionsUnreadCount === 0}
                     >
-                      <SlackHashIcon 
-                        active={location.pathname.startsWith('/slack')} 
+                      <SlackHashIcon
+                        active={location.pathname.startsWith('/slack')}
                         size={20}
                       />
                     </Badge>
                   </IconButton>
                 </Tooltip>
-              )}
-              
-              {/* Tasks Icon - Only for security levels 5-7 */}
-              {hasAdminLevel && (
+              )} */}
+
+              {/* Tasks Icon - hidden per Greg 2026-09-04 (route stays live) */}
+              {/* {hasAdminLevel && (
                 <Tooltip title="Tasks">
                   <IconButton
                     onClick={() => navigateSafe('/tasks')}
                     sx={{
                       backgroundColor: 'transparent !important',
                       color: location.pathname.startsWith('/tasks') ? '#FFFFFF' : 'rgba(255,255,255,.8)',
-                      '&:hover': { 
+                      '&:hover': {
                         backgroundColor: 'transparent !important',
                         color: '#FFFFFF',
                       },
@@ -1927,7 +1927,7 @@ const Layout: React.FC = function Layout() {
                     <DoneAllIcon sx={{ fontSize: 20 }} />
                   </IconButton>
                 </Tooltip>
-              )}
+              )} */}
               
               
               {/* ChatGPT Icon - Only for security levels 5-7 (temporarily hidden) */}

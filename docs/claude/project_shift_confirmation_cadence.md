@@ -315,3 +315,16 @@ is not evidence of anything* until the entry window has passed. Any check on
 timesheet coverage must exclude the trailing ~10 days or it manufactures alarms
 — the same shape of mistake as reading `never_asked` on backfilled assignments
 as a cadence failure.
+
+## 2026-09-07 additions
+
+- CANCEL → NO in every worker-facing string (Twilio opt-out keyword footgun,
+  see [[feedback_twilio_cancel_keyword_optout]]); `cancel` removed from the
+  Messaging Service opt-out list too.
+- New step `assignment_late_checkin_15m` (T+15m, worker-facing, Flex-linked
+  only, signed by Natalie) between `assignment_checkin_0h` and the T+30 probe
+  — on gig_standard, cort_gig AND career_placement. Details in
+  [[project_portal_worker]] ("Late check-in ask").
+- T+30 no-show probe is UNMUTED for Flex-linked assignments (real clock-in
+  feed via the portal worker's 10-minute timesheet watch); still muted
+  elsewhere.

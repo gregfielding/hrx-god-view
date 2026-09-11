@@ -39,6 +39,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import FavoriteButton from '../../../components/FavoriteButton';
+import WorkerTierBadge from '../../../components/WorkerTierBadge';
 import OpenPayrollTicketChip from '../../../components/payroll/OpenPayrollTicketChip';
 import { PhoneVerifiedInlineCheck } from '../../../components/PhoneVerifiedInlineCheck';
 import UserTableIndeedFlexBadge from '../../../components/tables/UserTableIndeedFlexBadge';
@@ -120,6 +121,31 @@ export type RecruiterUserProfileTableHeaderProps = {
   screeningLines: AccusourceScreeningLineItem[];
   screeningPackageHint: string | null;
   entitySlots: RecordHeaderEntitySlot[];
+  /** C1 Select onboarding checklist (Greg 2026-09-04): tax, direct deposit,
+   *  SSN, E-Verify from the Everee mirror — drives the Select chip color
+   *  (warning until all four complete) and the checkmark list under it. */
+  selectOnboarding?: {
+    taxComplete: boolean;
+    directDepositComplete: boolean;
+    ssnComplete: boolean;
+    everify: 'authorized' | 'pending' | 'error' | 'none';
+    allComplete: boolean;
+    /** Completed dates for attestation-form copy (Daniel 2026-09-04). */
+    taxDate?: string | null;
+    directDepositDate?: string | null;
+    i9Complete?: boolean;
+    i9Date?: string | null;
+    everifyDate?: string | null;
+  } | null;
+  /** C1 Events (1099) onboarding checklist: W-9 + direct deposit — same
+   *  chip treatment as Select (Greg 2026-09-04). */
+  eventsOnboarding?: {
+    taxComplete: boolean;
+    directDepositComplete: boolean;
+    allComplete: boolean;
+    taxDate?: string | null;
+    directDepositDate?: string | null;
+  } | null;
   /** entityKey → Everee deep link — when present the entity chip renders as
    *  a link that opens the worker's Everee record in a new tab. */
   evereeLinkByEntityKey?: Record<string, string>;
@@ -210,6 +236,8 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   screeningLines,
   screeningPackageHint,
   entitySlots,
+  selectOnboarding = null,
+  eventsOnboarding = null,
   evereeLinkByEntityKey = {},
   readinessRowsEntityKey = null,
   employerI9EntityId = null,
@@ -522,6 +550,16 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               >
                 {`${firstName} ${lastName}`.trim() || 'User Profile'}
               </Typography>
+              {canViewAdminContent &&
+                uid &&
+                targetUserSecurityLevel &&
+                !['5', '6', '7'].includes(String(targetUserSecurityLevel)) && (
+                  <WorkerTierBadge
+                    userId={uid}
+                    user={userDocForTableIcons}
+                    userName={`${firstName} ${lastName}`.trim()}
+                  />
+                )}
               {canViewAdminContent &&
                 uid &&
                 targetUserSecurityLevel &&
@@ -911,6 +949,83 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                       <Stack spacing={0.5} sx={{ mt: 0.35 }}>
                         {entitySlots.map((slot) => {
                           const v = entityChipVisuals(slot);
+                          // Entity chip color follows the Everee-mirror
+                          // onboarding items — yellow until all complete
+                          // (Greg 2026-09-04). Select = tax + DD + SSN +
+                          // E-Verify; Events (1099) = W-9 + DD.
+                          // Terminated/DNR stays red.
+                          // Row tuples: [label, state, completedDate] — the
+                          // date rides next to each line so recruiters can
+                          // copy I-9 / E-Verify dates straight onto client
+                          // attestation forms (Daniel 2026-09-04).
+                          const mirrorChecklist:
+                            | {
+                                allComplete: boolean;
+                                items: Array<[string, 'done' | 'open' | 'error', string | null]>;
+                              }
+                            | null =
+                            slot.displayState === 'terminated_or_dnr'
+                              ? null
+                              : slot.entityKey === 'select' && selectOnboarding
+                                ? {
+                                    allComplete: selectOnboarding.allComplete,
+                                    items: [
+                                      [
+                                        'Tax forms',
+                                        selectOnboarding.taxComplete ? 'done' : 'open',
+                                        selectOnboarding.taxDate ?? null,
+                                      ],
+                                      [
+                                        'Direct deposit',
+                                        selectOnboarding.directDepositComplete ? 'done' : 'open',
+                                        selectOnboarding.directDepositDate ?? null,
+                                      ],
+                                      ['SSN', selectOnboarding.ssnComplete ? 'done' : 'open', null],
+                                      [
+                                        'I-9',
+                                        selectOnboarding.i9Complete ? 'done' : 'open',
+                                        selectOnboarding.i9Date ?? null,
+                                      ],
+                                      [
+                                        selectOnboarding.everify === 'pending'
+                                          ? 'E-Verify (in progress)'
+                                          : selectOnboarding.everify === 'error'
+                                            ? 'E-Verify (needs attention)'
+                                            : 'E-Verify',
+                                        selectOnboarding.everify === 'authorized'
+                                          ? 'done'
+                                          : selectOnboarding.everify === 'error'
+                                            ? 'error'
+                                            : 'open',
+                                        selectOnboarding.everifyDate ?? null,
+                                      ],
+                                    ],
+                                  }
+                                : slot.entityKey === 'events' && eventsOnboarding
+                                  ? {
+                                      allComplete: eventsOnboarding.allComplete,
+                                      items: [
+                                        [
+                                          'Tax form (1099)',
+                                          eventsOnboarding.taxComplete ? 'done' : 'open',
+                                          eventsOnboarding.taxDate ?? null,
+                                        ],
+                                        [
+                                          'Direct deposit',
+                                          eventsOnboarding.directDepositComplete ? 'done' : 'open',
+                                          eventsOnboarding.directDepositDate ?? null,
+                                        ],
+                                      ],
+                                    }
+                                  : null;
+                          const chipColor = mirrorChecklist
+                            ? mirrorChecklist.allComplete
+                              ? 'success'
+                              : 'warning'
+                            : v.color;
+                          const chipLabel = mirrorChecklist
+                            ? `${slot.title}: ${mirrorChecklist.allComplete ? 'Active' : 'Onboarding'}`
+                            : `${slot.title}: ${slot.statusLabel}`;
                           const evereeUrl = evereeLinkByEntityKey[slot.entityKey];
                           const chipSx = {
                             height: 24,
@@ -918,6 +1033,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                             alignSelf: 'flex-start',
                             '& .MuiChip-label': { px: 0.75, fontSize: '0.74rem', fontWeight: 400 },
                           } as const;
+                          const checklistItems = mirrorChecklist?.items ?? [];
                           return (
                             <Box key={slot.entityKey}>
                               {evereeUrl ? (
@@ -933,23 +1049,64 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                                   rel="noopener noreferrer"
                                   title={`Open in Everee (new tab) — ${slot.title}`}
                                   size="small"
-                                  label={`${slot.title}: ${slot.statusLabel}`}
-                                  color={v.color}
+                                  label={chipLabel}
+                                  color={chipColor}
                                   variant={v.variant}
                                   sx={chipSx}
                                 />
                               ) : (
                                 <Chip
                                   size="small"
-                                  label={`${slot.title}: ${slot.statusLabel}`}
-                                  color={v.color}
+                                  label={chipLabel}
+                                  color={chipColor}
                                   variant={v.variant}
                                   sx={chipSx}
                                 />
                               )}
+                              {mirrorChecklist && (
+                                <Stack spacing={0.2} sx={{ mt: 0.35, pl: 1 }}>
+                                  {checklistItems.map(([label, state, completedDate]) => (
+                                    <Stack
+                                      key={label}
+                                      direction="row"
+                                      spacing={0.5}
+                                      alignItems="center"
+                                    >
+                                      {state === 'done' ? (
+                                        <CheckCircleIcon
+                                          sx={{ fontSize: 14, color: 'success.main' }}
+                                        />
+                                      ) : state === 'error' ? (
+                                        <WarningAmberIcon
+                                          sx={{ fontSize: 14, color: 'error.main' }}
+                                        />
+                                      ) : (
+                                        <HourglassEmptyIcon
+                                          sx={{ fontSize: 14, color: 'warning.main' }}
+                                        />
+                                      )}
+                                      <Typography variant="body2" sx={recordHeaderBodyTextSx}>
+                                        {label}
+                                      </Typography>
+                                      {completedDate ? (
+                                        <Typography
+                                          variant="caption"
+                                          color="text.secondary"
+                                          sx={{ whiteSpace: 'nowrap' }}
+                                        >
+                                          {completedDate}
+                                        </Typography>
+                                      ) : null}
+                                    </Stack>
+                                  ))}
+                                </Stack>
+                              )}
                               {slot.entityKey === nestKey && (
                                 <Stack spacing={0.2} sx={{ mt: 0.35, pl: 1 }}>
-                                  {pendingRows.map(renderReadinessRow)}
+                                  {(mirrorChecklist
+                                    ? pendingRows.filter((r) => r.key !== 'direct_deposit')
+                                    : pendingRows
+                                  ).map(renderReadinessRow)}
                                 </Stack>
                               )}
                             </Box>

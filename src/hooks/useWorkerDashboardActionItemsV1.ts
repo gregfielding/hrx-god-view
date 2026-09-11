@@ -20,7 +20,10 @@ import type {
   WorkerDashboardActionItemV1,
   WorkerDashboardActionItemsSnapshotV1,
 } from '../shared/workerDashboardActionItemsV1';
-import { WORKER_DASHBOARD_ACTION_ITEMS_HOME_CAP } from '../shared/workerDashboardActionItemsV1';
+import {
+  WORKER_DASHBOARD_ACTION_ITEMS_HOME_CAP,
+  WORKER_DASHBOARD_ACTION_ITEMS_HOME_STICKY_IDS,
+} from '../shared/workerDashboardActionItemsV1';
 import type {
   WorkerDashboardActionItem,
   WorkerDashboardActionId,
@@ -112,7 +115,14 @@ export function applyClientOnlyWorkerDashboardActionItemPersonalization(
     if (item.id !== 'sms_opt_in') return true;
     return !isSmsSnoozeActive(uid, nowMs);
   });
-  return Number.isFinite(cap) ? filtered.slice(0, cap) : filtered;
+  if (!Number.isFinite(cap)) return filtered;
+  // Sticky items (profile photo) ride along below the capped work items
+  // instead of being squeezed out by them. Mirrored in the Flutter provider.
+  const top = filtered.slice(0, cap);
+  const sticky = filtered.filter(
+    (item) => WORKER_DASHBOARD_ACTION_ITEMS_HOME_STICKY_IDS.includes(item.id) && !top.includes(item),
+  );
+  return [...top, ...sticky];
 }
 
 function isSmsSnoozeActive(uid: string, nowMs: number): boolean {

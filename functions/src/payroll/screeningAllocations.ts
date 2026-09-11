@@ -21,8 +21,8 @@
  */
 import * as admin from 'firebase-admin';
 
-import { qboQuery, qboEntityCreate } from '../integrations/quickbooks/qboAuth';
-import { ACCOUNT_CLASS_RULES } from './payrollCostReport';
+import { qboQuery, qboEntityCreate, qboEntityUpdate } from '../integrations/quickbooks/qboAuth';
+import { ACCOUNT_CLASS_RULES, divisionKindForClassFqn, fetchQboDivisions } from './payrollCostReport';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -96,6 +96,13 @@ export async function pushScreeningAllocations(
     accts.find((a) => /recruitment/i.test(String(a.Name)));
   if (!recruitAcct) throw new Error('5310 Background & Drug Screening account not found');
   const RECRUIT = String(recruitAcct.Id);
+  // Division: EVERY background/drug screen is Recurring (Greg 2026-09-08 —
+  // screening is a recurring-business cost regardless of the client class it
+  // is split to, National included). The class split per client stays.
+  const divisions = await fetchQboDivisions(tenantId);
+  const recurringRef = { value: divisions.recurring.Id, name: divisions.recurring.Name };
+  const divisionRefForLeaf = (_leaf: string, _cls?: Record<string, any>): Record<string, string> | undefined => recurringRef;
+  void divisionKindForClassFqn;
 
   // ── screens + assignment index ──
   const bcSnap = await db.collection('backgroundChecks').get();
@@ -191,7 +198,8 @@ export async function pushScreeningAllocations(
     if (rows.length < 1000) break;
     start += 1000;
   }
-  // existing allocation tags
+  // existing allocation tags (+ Division true-up of their debit lines)
+  const divisionFixes: Array<Record<string, unknown>> = [];
   const existingTags = new Set<string>();
   start = 1;
   for (;;) {
@@ -199,7 +207,24 @@ export async function pushScreeningAllocations(
     const r = (await qboQuery(tenantId, `SELECT * FROM JournalEntry WHERE TxnDate >= '2026-01-01' STARTPOSITION ${start} MAXRESULTS 1000`)) as Record<string, any>;
     const rows: Array<Record<string, any>> = r.QueryResponse?.JournalEntry ?? r.JournalEntry ?? [];
     for (const je of rows) {
-      for (const m of trim(je.PrivateNote).matchAll(/\[screen:([^\]]+)\]/g)) existingTags.add(trim(m[1]));
+      const tags = [...trim(je.PrivateNote).matchAll(/\[screen:([^\]]+)\]/g)].map((m) => trim(m[1]));
+      for (const t of tags) existingTags.add(t);
+      // Division true-up on existing entries: every DEBIT (5310 per class)
+      // must be Recurring (Greg 2026-09-08); amounts/classes untouched.
+      if (tags.length && /^Scrn Alloc/i.test(trim(je.DocNumber))) {
+        const debits = ((je.Line ?? []) as Array<Record<string, any>>).filter((l) => l.JournalEntryLineDetail?.PostingType === 'Debit');
+        const stale = debits.filter((l) => String(l.JournalEntryLineDetail.DepartmentRef?.value ?? '') !== recurringRef.value);
+        if (stale.length) {
+          divisionFixes.push({ docNumber: trim(je.DocNumber), id: String(je.Id), lines: stale.length, status: dryRun ? 'would_retag_recurring' : 'retagged_recurring' });
+          if (!dryRun) {
+            const newLines = ((je.Line ?? []) as Array<Record<string, any>>).map((l) =>
+              l.JournalEntryLineDetail?.PostingType === 'Debit' ? { ...l, JournalEntryLineDetail: { ...l.JournalEntryLineDetail, DepartmentRef: recurringRef } } : l,
+            );
+            // eslint-disable-next-line no-await-in-loop
+            await qboEntityUpdate(tenantId, 'JournalEntry', { ...je, Line: newLines, sparse: false });
+          }
+        }
+      }
     }
     if (rows.length < 1000) break;
     start += 1000;
@@ -250,8 +275,13 @@ export async function pushScreeningAllocations(
     const origLine = ((p.Line ?? []) as Array<Record<string, any>>).find((l) => l.AccountBasedExpenseLineDetail);
     const origAcct = String(origLine?.AccountBasedExpenseLineDetail?.AccountRef?.value ?? '');
     const origCls = origLine?.AccountBasedExpenseLineDetail?.ClassRef;
+    // The credit mirrors the ORIGINAL purchase's Division too (header
+    // Location on the card charge — Corp / Unalloc. since May 2026), so the
+    // charge nets to zero in its own column (Greg 2026-09-08).
+    const origDept = p.DepartmentRef?.value ? { DepartmentRef: { value: String(p.DepartmentRef.value), name: String(p.DepartmentRef.name ?? '') } } : {};
     const lines: Array<Record<string, unknown>> = splits.map((sp) => {
       const cls = classFor(sp.leaf);
+      const divRef = divisionRefForLeaf(sp.leaf, cls);
       return {
         DetailType: 'JournalEntryLineDetail',
         Amount: sp.amount,
@@ -260,6 +290,7 @@ export async function pushScreeningAllocations(
           PostingType: 'Debit',
           AccountRef: { value: RECRUIT },
           ...(cls ? { ClassRef: { value: String(cls.Id), name: String(cls.FullyQualifiedName) } } : {}),
+          ...(divRef ? { DepartmentRef: divRef } : {}),
         },
       };
     });
@@ -271,6 +302,7 @@ export async function pushScreeningAllocations(
         PostingType: 'Credit',
         AccountRef: { value: origAcct || RECRUIT },
         ...(origCls ? { ClassRef: origCls } : {}),
+        ...origDept,
       },
     });
     // eslint-disable-next-line no-await-in-loop
@@ -284,5 +316,5 @@ export async function pushScreeningAllocations(
     });
     existingTags.add(pid);
   }
-  return { ok: true, dryRun, charges: results };
+  return { ok: true, dryRun, charges: results, divisionFixes };
 }

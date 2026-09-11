@@ -185,7 +185,7 @@ describe('composeW2WorkedShift', () => {
     expect(out.createBreaks![0].breakStartEpochSeconds).to.equal(SHIFT_START + 3 * 3600);
   });
 
-  it('uses DEFAULT_PAID for paid breaks', () => {
+  it('never puts a paid break on the wire — Everee has no DEFAULT_PAID code; it goes in the note instead', () => {
     const out = composeW2WorkedShift(
       makeInput({
         breaks: [
@@ -193,7 +193,8 @@ describe('composeW2WorkedShift', () => {
         ],
       }),
     );
-    expect(out.createBreaks![0].segmentConfigCode).to.equal('DEFAULT_PAID');
+    expect(out.createBreaks).to.equal(undefined);
+    expect(out.note).to.contain('incl. 15m paid break');
   });
 
   it('omits displayHourlyPayRate when equal to effective rate', () => {

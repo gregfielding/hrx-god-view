@@ -1154,13 +1154,22 @@ async function submitW2(args: PathArgs) {
             : ''),
         fullyClassifiedHours: segments,
       };
-      if (window.breaks.length > 0) {
-        input.createBreaks = window.breaks.map((b) => ({
-          segmentConfigCode: b.paid ? 'DEFAULT_PAID' : 'DEFAULT_UNPAID',
+      // Only UNPAID breaks go on the wire — Everee's sole configured code is
+      // `DEFAULT_UNPAID`; sending `DEFAULT_PAID` 404s ("No break configured
+      // for code", Jourdan Daniel 2026-09-02/03, Naperville ORS Nasco). A paid
+      // break is already inside the net-sized window, so it is noted instead.
+      const unpaidBreaks = window.breaks.filter((b) => !b.paid);
+      const paidBreakMinutes = window.breaks
+        .filter((b) => b.paid)
+        .reduce((sum, b) => sum + Math.max(0, Math.round((b.endEpochSeconds - b.startEpochSeconds) / 60)), 0);
+      if (unpaidBreaks.length > 0) {
+        input.createBreaks = unpaidBreaks.map((b) => ({
+          segmentConfigCode: 'DEFAULT_UNPAID',
           breakStartEpochSeconds: b.startEpochSeconds,
           breakEndEpochSeconds: b.endEpochSeconds,
         }));
       }
+      if (paidBreakMinutes > 0) input.note = `${input.note} — incl. ${paidBreakMinutes}m paid break`;
       if (workLocationId != null) input.overrideWorkLocationId = workLocationId;
       const res = await createWorkedShift(cfg, input);
       submitted += 1;

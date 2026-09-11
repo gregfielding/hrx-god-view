@@ -141,7 +141,7 @@ export async function mirrorOutboundMessageLogToActivityLog(
       messageBody: body,
       contentSent: body,
       messagePreview: preview,
-      fromUserId: log.fromUserId,
+      fromUserId: log.fromUserId ?? null,
       providerMessageId: log.providerMessageId,
       threadId: log.threadId,
       recipientEmail: log.recipientEmail,

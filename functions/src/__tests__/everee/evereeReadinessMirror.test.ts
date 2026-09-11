@@ -459,3 +459,60 @@ describe('E.1 — pickFirstDateAlias / isoToTimestampOrNull', () => {
     expect(isoToTimestampOrNull(123)).to.equal(null);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Live-confirmed onboarding-status timeline (2026-09-03): the W-4/W-9
+// endpoints 404 in prod and WorkBright workers keep files out of Everee,
+// so the per-step timestamps must carry the mirror on their own.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('E.1 — onboarding-status timeline fallbacks (2026-09-03)', () => {
+  const timeline = {
+    applicable: true,
+    data: {
+      status: 'COMPLETE',
+      updatedAt: '2026-09-03T13:33:15Z',
+      withholdingsVerifiedAt: '2026-06-26T00:02:54Z',
+      documentsVerifiedAt: '2026-06-26T00:43:59Z',
+      documentsVerifiedByCompanyAt: '2026-09-03T13:33:15Z',
+      directDepositVerifiedAt: '2026-06-26T00:47:02Z',
+      completedOnboardingAt: '2026-09-03T13:33:15Z',
+      payable: true,
+      hasWorkbrightDocs: true,
+    },
+  };
+
+  it('W-2: tax form, worker I-9, and Section 2 land from the timeline when endpoints fail', () => {
+    const mirror = computeEvereeReadinessMirror({
+      worker: buildWorker(),
+      w4: { applicable: true }, // endpoint 404 → no data
+      w9: { applicable: false },
+      files: { ok: true, files: [] }, // WorkBright: no I-9 file in Everee
+      onboardingStatus: timeline,
+      syncSource: 'cron',
+      now: NOW,
+    });
+    expect(mirror.w4SignedAt!.toMillis()).to.equal(Date.parse('2026-06-26T00:02:54Z'));
+    expect(mirror.i9SignedAt!.toMillis()).to.equal(Date.parse('2026-06-26T00:43:59Z'));
+    expect(mirror.employerI9SignedAt!.toMillis()).to.equal(Date.parse('2026-09-03T13:33:15Z'));
+    expect(mirror.directDepositVerifiedAt!.toMillis()).to.equal(Date.parse('2026-06-26T00:47:02Z'));
+    expect(mirror.completedOnboardingAt!.toMillis()).to.equal(Date.parse('2026-09-03T13:33:15Z'));
+    expect(mirror.payable).to.equal(true);
+    expect(mirror.hasWorkbrightDocs).to.equal(true);
+  });
+
+  it('1099: withholdings step maps to w9SignedAt, never w4', () => {
+    const mirror = computeEvereeReadinessMirror({
+      worker: { ...buildWorker(), employmentType: 'CONTRACTOR' },
+      w4: { applicable: false },
+      w9: { applicable: true }, // endpoint 404 → no data
+      files: { ok: true, files: [] },
+      onboardingStatus: timeline,
+      syncSource: 'cron',
+      now: NOW,
+    });
+    expect(mirror.w9SignedAt!.toMillis()).to.equal(Date.parse('2026-06-26T00:02:54Z'));
+    expect(mirror.w4SignedAt).to.equal(null);
+    expect(mirror.employerI9SignedAt).to.equal(null); // no Section 2 for 1099
+  });
+});

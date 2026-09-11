@@ -48,6 +48,7 @@ import { formatCityStateZipInput, parseCityStateZipFromWorksiteName } from '../u
 import { normalizeStateCode } from '../utils/unemploymentRates';
 import { generateJobDescriptionWithAi } from '../utils/jobDescriptionAiGenerate';
 import { autoAddGroupsPickerValue, dedupeUserGroupsForUi } from '../utils/dedupeUserGroupsForUi';
+import type { CraigslistPosting } from '../shared/craigslist';
 
 function zipFromWorksiteAddress(wa: Record<string, unknown> | undefined): string {
   if (!wa || typeof wa !== 'object') return '';
@@ -244,6 +245,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       showPayRate: true,
       workersNeeded: 1,
       showWorkersNeeded: false,
+      claimShiftEnabled: false,
       eVerifyRequired: false,
       screeningPackageId: '',
       screeningPackageName: '',
@@ -289,6 +291,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       ...flat,
       craigslistUrl: typeof initialData?.craigslistUrl === 'string' ? initialData.craigslistUrl : '',
       indeedUrl: typeof initialData?.indeedUrl === 'string' ? initialData.indeedUrl : '',
+      craigslist: (initialData as { craigslist?: CraigslistPosting | null } | undefined)?.craigslist ?? null,
     };
   });
 
@@ -814,6 +817,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           typeof (initialData as any).craigslistUrl === 'string'
             ? (initialData as any).craigslistUrl
             : prev.craigslistUrl || '',
+        craigslist: (initialData as any).craigslist ?? prev.craigslist ?? null,
         indeedUrl:
           typeof (initialData as any).indeedUrl === 'string'
             ? (initialData as any).indeedUrl
@@ -1598,6 +1602,42 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                     checked={formData.showWorkersNeeded}
                     onChange={(e) => {
                       setFormData({ ...formData, showWorkersNeeded: e.target.checked });
+                      maybeTickPersist();
+                    }}
+                  />
+                </Box>
+              </Grid>
+            )}
+            {/*
+              Claim Shift (2026-09-06): per-posting opt-in for the worker
+              "Claim Shift" CTA — workers book a shift-day instantly
+              (assignment born confirmed, claim messaging track) instead of
+              applying and waiting for an offer. Persists to
+              `post.claimShiftEnabled`; the server refuses claims on
+              postings without it. Default off.
+            */}
+            {formData.jobType === 'gig' && (
+              <Grid item xs={12} sm={6}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    height: '100%',
+                  }}
+                >
+                  <Box>
+                    <Typography variant="body1">
+                      Instant Claim (workers book without an offer)
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Shows a &quot;Claim Shift&quot; button. Claims are confirmed on the spot, capacity-checked per day.
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={formData.claimShiftEnabled === true}
+                    onChange={(e) => {
+                      setFormData({ ...formData, claimShiftEnabled: e.target.checked });
                       maybeTickPersist();
                     }}
                   />
@@ -2843,6 +2883,49 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         />
 
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+          {/* Semi-automated Craigslist posting — opt-in per post (Greg 2026-09-09). Toggle on → Natalie drafts the ad
+              within a minute and posts it in #recruiting; a human publishes it on Craigslist and pastes the URL below. */}
+          <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1.5 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={Boolean(formData.craigslist?.enabled)}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    const prevCl = formDataRef.current.craigslist ?? null;
+                    const next: CraigslistPosting = enabled
+                      ? { ...(prevCl ?? { enabled: false, status: 'off' }), enabled: true, status: prevCl?.draft ? (prevCl.status === 'off' ? 'ready' : prevCl.status) : 'requested', requestedAt: prevCl?.requestedAt ?? new Date().toISOString() }
+                      : { ...(prevCl ?? { enabled: false, status: 'off' }), enabled: false, status: 'off' };
+                    flushSync(() => { setFormData((prev) => ({ ...prev, craigslist: next })); });
+                    formDataRef.current = { ...formDataRef.current, craigslist: next };
+                    maybeTickPersist();
+                  }}
+                />
+              }
+              label="Post to Craigslist (semi-automated)"
+            />
+            <Typography variant="caption" color="text.secondary" component="div">
+              {!formData.craigslist?.enabled && 'Off. Turn on and Natalie drafts a Craigslist-ready ad for this post and puts it in #recruiting; someone publishes it (Craigslist charges per job post) and pastes the live URL below.'}
+              {formData.craigslist?.enabled && formData.craigslist.status === 'requested' && 'Requested — Natalie is drafting the ad (about a minute). Refresh to see it.'}
+              {formData.craigslist?.enabled && formData.craigslist.status === 'error' && `Draft failed: ${formData.craigslist.lastError || 'unknown error'}. Toggle off and on to retry.`}
+              {formData.craigslist?.enabled && formData.craigslist.status === 'posted' && `Live on Craigslist since ${formData.craigslist.postedAt ? new Date(formData.craigslist.postedAt).toLocaleDateString() : '—'}${formData.craigslist.expiresAt ? `, expires ${new Date(formData.craigslist.expiresAt).toLocaleDateString()}` : ''}.`}
+              {formData.craigslist?.enabled && formData.craigslist.status === 'expired' && 'Expired on Craigslist — repost from the draft below and paste the new URL.'}
+              {formData.craigslist?.enabled && formData.craigslist.status === 'ready' && 'Draft ready — publish it on Craigslist, then paste the live URL below.'}
+            </Typography>
+            {formData.craigslist?.enabled && formData.craigslist.draft && (
+              <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Typography variant="body2"><strong>Site:</strong> {formData.craigslist.draft.site} · <strong>Category:</strong> {formData.craigslist.draft.category} · <strong>Location:</strong> {formData.craigslist.draft.specificLocation} · <strong>Compensation:</strong> {formData.craigslist.draft.compensation}</Typography>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Button size="small" variant="outlined" href={formData.craigslist.draft.postUrl} target="_blank" rel="noopener">Open Craigslist posting page</Button>
+                  <Button size="small" onClick={() => { void navigator.clipboard.writeText(formData.craigslist?.draft?.title ?? ''); }}>Copy title</Button>
+                  <Button size="small" onClick={() => { void navigator.clipboard.writeText(formData.craigslist?.draft?.body ?? ''); }}>Copy body</Button>
+                  <Typography variant="caption" color="text.secondary">Contact email in the ad: {formData.craigslist.draft.contactEmail}</Typography>
+                </Box>
+                <TextField label="Ad title" value={formData.craigslist.draft.title} fullWidth size="small" InputProps={{ readOnly: true }} />
+                <TextField label="Ad body" value={formData.craigslist.draft.body} fullWidth multiline minRows={6} size="small" InputProps={{ readOnly: true }} />
+              </Box>
+            )}
+          </Box>
           <JobPostFormAutoSaveTextField
             label="Craigslist URL"
             value={formData.craigslistUrl}

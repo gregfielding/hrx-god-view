@@ -1,3 +1,4 @@
+import { loadAiProcessingDeclined } from './utils/aiProcessingConsent';
 import * as crypto from 'crypto';
 import * as functions from 'firebase-functions';
 import { onRequest } from 'firebase-functions/v2/https';
@@ -10,6 +11,7 @@ import { maybeEmitResumeUploadedCategoryScore } from './categoryScoreEvolution/a
 import nlp from 'compromise';
 import { getClaudeChat, type ChatClientLike } from './utils/claudeChat';
 import { z } from 'zod';
+import { isAllowedBrowserOrigin, PUBLIC_APP_ORIGIN } from './config/appOrigin';
 
 // Ensure default app exists (emulators + cold starts)
 if (!admin.apps.length) {
@@ -670,9 +672,8 @@ function pickCorsOrigin(requestOrigin: string | undefined): string {
     .filter(Boolean);
   extra.forEach((e) => defaults.add(e));
   if (o && defaults.has(o)) return o;
-  if (o && /^https:\/\/([a-z0-9-]+\.)*hrxone\.com$/i.test(o)) return o;
-  if (o && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/i.test(o)) return o;
-  return 'https://hrxone.com';
+  if (o && isAllowedBrowserOrigin(o)) return o; // hrxone.com + c1staffing.com subdomains, dev ports, preview channels
+  return PUBLIC_APP_ORIGIN;
 }
 
 /**
@@ -1175,6 +1176,18 @@ export const parseResumeHttp = onRequest({
     if (!allowed) {
       res.set('Access-Control-Allow-Origin', corsOrigin);
       res.status(403).json({ error: 'Unauthorized to parse resume for this user' });
+      return;
+    }
+
+    // AI-processing consent (App Store 5.1.2(i), 2026-09-10): a worker who
+    // declined never has their resume sent to Claude.
+    if (await loadAiProcessingDeclined(String(userId))) {
+      res.set('Access-Control-Allow-Origin', corsOrigin);
+      res.status(403).json({
+        error:
+          'AI resume reading is turned off in your privacy choices. Turn on AI assistance in Profile, About & Legal, or add your work history by hand.',
+        code: 'ai_processing_declined',
+      });
       return;
     }
 

@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https'; // v2 for callable functions
 import { formatTime12h } from './utils/formatShiftTime';
+import { stripPostingMarkdown } from './integrations/fieldglass/enrichment';
 import { onSchedule } from 'firebase-functions/v2/scheduler'; // v2 for scheduler
 import { setGlobalOptions } from 'firebase-functions/v2';
 
@@ -153,6 +154,7 @@ import { getCalendarWebhookStatus } from './calendarWebhookStatus';
 // 🔄 HTTP WORKERS AND ORCHESTRATOR IMPORTS
 import { logTaskUpdate, logUserUpdate, updateActiveSalespeople } from './httpWorkers';
 import { scheduledOrchestrator } from './scheduledOrchestrator';
+import { PUBLIC_APP_ORIGIN, PUBLIC_APP_HOST } from './config/appOrigin';
 
 // Export Deal Coach endpoints for deployment
 export {
@@ -750,6 +752,9 @@ export { onWorkerI9SupportingDocumentExtract } from './onboarding/i9SupportingDo
 export { onUserAvatarChangedVerify } from './avatar/avatarVerificationTrigger';
 export { reverifyAvatar } from './avatar/reverifyAvatar';
 export { setAvatarVerificationDecision } from './avatar/setAvatarVerificationDecision';
+// Certification scan (Claude reads uploaded cards) + reviewer decision — 2026-09-08.
+export { onCertificationRecordWrittenScan } from './certifications/certificationScanTrigger';
+export { setCertificationReviewDecision } from './certifications/setCertificationReviewDecision';
 export { submitWorkerAiPrescreenInterview } from './workerAiPrescreen/submitWorkerAiPrescreenInterview';
 export { getWorkerAiPrescreenInterviewPlan } from './workerAiPrescreen/getWorkerAiPrescreenInterviewPlan';
 export { backfillPrescreenCategoryScores } from './workerAiPrescreen/backfillPrescreenCategoryScoresCallable';
@@ -953,242 +958,28 @@ Communication Style: ${(customerData || {}).communicationStyle || ''}
 
 // Generate job description using OpenAI
 export const generateJobDescription = onCall({
-  timeoutSeconds: 60,
+  timeoutSeconds: 120,
   memory: '512MiB',
   maxInstances: 5,
   cors: true
 }, async (request) => {
+  // 2026-09-09: delegates to jobs/jobDescriptionGenerator (Claude Opus 5, structured, ~350-600 words).
+  // Same request/response shape as before: { jobOrderData, toggleStates } → { description, jobDescription }.
+  if (!request.auth?.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated');
+  }
   try {
-    if (!request.auth?.uid) {
-      throw new HttpsError('unauthenticated', 'User must be authenticated');
-    }
-
-    const jobOrderData = request.data?.jobOrderData || {};
-    const toggleStates = request.data?.toggleStates || {};
-
-    // Build the prompt for ChatGPT
-    let prompt = `Write a professional job description for a job board posting (like Indeed or Craigslist) based on the following information:\n\n`;
-    
-    // Add training instructions
-    prompt += `IMPORTANT INSTRUCTIONS:\n`;
-    prompt += `- NEVER mention the client name or worksite name in the description\n`;
-    prompt += `- You can mention the worksite zip code if available\n`;
-    prompt += `- Always say "C1" is hiring (not the company name or worksite name)\n`;
-    prompt += `- Only include information that is marked as "visible" or "show" in the toggles below\n`;
-    prompt += `- If a field has its toggle set to false/off, do NOT mention that information in the description\n`;
-    prompt += `- Be professional, engaging, and clear\n`;
-    prompt += `- Format the description for job boards like Indeed or Craigslist\n\n`;
-
-    // Job Title and Name
-    if (jobOrderData.jobTitle) {
-      prompt += `Job Title: ${jobOrderData.jobTitle}\n`;
-    }
-    if (jobOrderData.jobOrderName) {
-      prompt += `Position Name: ${jobOrderData.jobOrderName}\n`;
-    }
-
-    // Client Description
-    if (jobOrderData.jobDescriptionFromClient) {
-      prompt += `\nClient's Description:\n${jobOrderData.jobDescriptionFromClient}\n`;
-    }
-
-    // Location (zip code only, never company/worksite names)
-    const zipCode = jobOrderData.zipCode || jobOrderData.worksiteAddress?.zipCode;
-    if (zipCode) {
-      prompt += `\nLocation Zip Code: ${zipCode}\n`;
-    }
-    if (jobOrderData.city || jobOrderData.state) {
-      // Only include city/state if we have them, but never mention company/worksite names
-      prompt += `Location: ${[jobOrderData.city, jobOrderData.state].filter(Boolean).join(', ')}\n`;
-    }
-
-    // Pay Rate (only if toggle is on)
-    if (toggleStates.showPayRate && jobOrderData.payRate) {
-      prompt += `\nPay Rate: $${jobOrderData.payRate}/hour (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.payRate) {
-      prompt += `\nPay Rate: $${jobOrderData.payRate}/hour (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Skills (only if toggle is on)
-    if (toggleStates.showSkills && jobOrderData.skills && jobOrderData.skills.length > 0) {
-      prompt += `\nRequired Skills: ${jobOrderData.skills.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.skills && jobOrderData.skills.length > 0) {
-      prompt += `\nRequired Skills: ${jobOrderData.skills.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Experience and Education (only if toggles are on)
-    if (toggleStates.showExperience && jobOrderData.experienceRequired) {
-      const expMap: Record<string, string> = {
-        'entry': 'Entry-Level (0-1 year)',
-        'intermediate': 'Intermediate (2-4 years)',
-        'experienced': 'Experienced (5+ years)'
-      };
-      prompt += `\nExperience Level: ${expMap[jobOrderData.experienceRequired] || jobOrderData.experienceRequired} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.experienceRequired) {
-      const expMap: Record<string, string> = {
-        'entry': 'Entry-Level (0-1 year)',
-        'intermediate': 'Intermediate (2-4 years)',
-        'experienced': 'Experienced (5+ years)'
-      };
-      prompt += `\nExperience Level: ${expMap[jobOrderData.experienceRequired] || jobOrderData.experienceRequired} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-    if (toggleStates.showEducation && jobOrderData.educationRequired) {
-      prompt += `Education Required: ${jobOrderData.educationRequired} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.educationRequired) {
-      prompt += `Education Required: ${jobOrderData.educationRequired} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Languages (only if toggle is on)
-    if (toggleStates.showLanguages && jobOrderData.languages && jobOrderData.languages.length > 0) {
-      prompt += `Languages: ${jobOrderData.languages.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.languages && jobOrderData.languages.length > 0) {
-      prompt += `Languages: ${jobOrderData.languages.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Shift Type (only if toggle is on)
-    if (toggleStates.showShift && jobOrderData.shiftType && jobOrderData.shiftType.length > 0) {
-      prompt += `Shift Type: ${jobOrderData.shiftType.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.shiftType && jobOrderData.shiftType.length > 0) {
-      prompt += `Shift Type: ${jobOrderData.shiftType.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Dates (only if toggles are on)
-    if (toggleStates.showStart && jobOrderData.startDate) {
-      prompt += `Start Date: ${jobOrderData.startDate} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.startDate) {
-      prompt += `Start Date: ${jobOrderData.startDate} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-    if (toggleStates.showEnd && jobOrderData.endDate) {
-      prompt += `End Date: ${jobOrderData.endDate} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.endDate) {
-      prompt += `End Date: ${jobOrderData.endDate} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Workers Needed (only if toggle is on)
-    if (toggleStates.showWorkersNeeded && jobOrderData.workersNeeded) {
-      prompt += `Workers Needed: ${jobOrderData.workersNeeded} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.workersNeeded) {
-      prompt += `Workers Needed: ${jobOrderData.workersNeeded} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Uniform Requirements (only if toggle is on)
-    if (toggleStates.showUniformRequirements && jobOrderData.uniformRequirements && jobOrderData.uniformRequirements.length > 0) {
-      prompt += `\nUniform Requirements: ${jobOrderData.uniformRequirements.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.uniformRequirements && jobOrderData.uniformRequirements.length > 0) {
-      prompt += `\nUniform Requirements: ${jobOrderData.uniformRequirements.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-    if (toggleStates.showUniformRequirements && jobOrderData.customUniformRequirements) {
-      prompt += `Additional Uniform Requirements: ${jobOrderData.customUniformRequirements} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.customUniformRequirements) {
-      prompt += `Additional Uniform Requirements: ${jobOrderData.customUniformRequirements} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Physical Requirements (only if toggle is on)
-    if (toggleStates.showPhysicalRequirements && jobOrderData.physicalRequirements && jobOrderData.physicalRequirements.length > 0) {
-      prompt += `Physical Requirements: ${jobOrderData.physicalRequirements.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.physicalRequirements && jobOrderData.physicalRequirements.length > 0) {
-      prompt += `Physical Requirements: ${jobOrderData.physicalRequirements.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // PPE Requirements (only if toggle is on)
-    if (toggleStates.showRequiredPpe && jobOrderData.ppeRequirements && jobOrderData.ppeRequirements.length > 0) {
-      prompt += `PPE Requirements: ${jobOrderData.ppeRequirements.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.ppeRequirements && jobOrderData.ppeRequirements.length > 0) {
-      prompt += `PPE Requirements: ${jobOrderData.ppeRequirements.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Licenses and Certifications (only if toggle is on)
-    if (toggleStates.showLicensesCerts && jobOrderData.licensesCerts && jobOrderData.licensesCerts.length > 0) {
-      prompt += `Licenses/Certifications Required: ${jobOrderData.licensesCerts.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.licensesCerts && jobOrderData.licensesCerts.length > 0) {
-      prompt += `Licenses/Certifications Required: ${jobOrderData.licensesCerts.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Background Checks (only if toggle is on)
-    if (toggleStates.showBackgroundChecks && jobOrderData.backgroundCheckPackages && jobOrderData.backgroundCheckPackages.length > 0) {
-      prompt += `Background Check: ${jobOrderData.backgroundCheckPackages.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.backgroundCheckPackages && jobOrderData.backgroundCheckPackages.length > 0) {
-      prompt += `Background Check: ${jobOrderData.backgroundCheckPackages.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Drug Screening (only if toggle is on)
-    if (toggleStates.showDrugScreening && jobOrderData.drugScreeningPanels && jobOrderData.drugScreeningPanels.length > 0) {
-      prompt += `Drug Screening: ${jobOrderData.drugScreeningPanels.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.drugScreeningPanels && jobOrderData.drugScreeningPanels.length > 0) {
-      prompt += `Drug Screening: ${jobOrderData.drugScreeningPanels.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // Additional Screenings (only if toggle is on)
-    if (toggleStates.showAdditionalScreenings && jobOrderData.additionalScreenings && jobOrderData.additionalScreenings.length > 0) {
-      prompt += `Additional Screenings: ${jobOrderData.additionalScreenings.join(', ')} (SHOW THIS IN DESCRIPTION)\n`;
-    } else if (jobOrderData.additionalScreenings && jobOrderData.additionalScreenings.length > 0) {
-      prompt += `Additional Screenings: ${jobOrderData.additionalScreenings.join(', ')} (DO NOT MENTION IN DESCRIPTION - toggle is off)\n`;
-    }
-
-    // E-Verify
-    // R.16.2a deferral — `jobOrderData` here is a client-supplied prompt
-    // payload (`request.data?.jobOrderData`), not a fetched JO document
-    // with `status` + `snapshot`. Wrapping through `getEffectiveJobOrderField`
-    // would be a no-op (the helper would always fall through to fallback
-    // since the payload lacks the snapshot envelope). Defer to R.16.2b
-    // pending a decision on whether the client should send the JO doc shape
-    // directly or this callable should re-fetch the JO server-side.
-    if (jobOrderData.eVerifyRequired) {
-      prompt += `E-Verify Required: Yes\n`;
-    }
-
-    prompt += `\nPlease write a compelling, professional job description that:\n`;
-    prompt += `- Is formatted for job boards like Indeed or Craigslist\n`;
-    prompt += `- Highlights key responsibilities and requirements\n`;
-    prompt += `- Is engaging and attracts qualified candidates\n`;
-    prompt += `- ONLY includes information marked as "SHOW THIS IN DESCRIPTION" above\n`;
-    prompt += `- NEVER mentions information marked as "DO NOT MENTION IN DESCRIPTION"\n`;
-    prompt += `- Do not include the number of workers needed or positions unless explicitly marked "SHOW THIS IN DESCRIPTION"\n`;
-    prompt += `- Always says "C1 is hiring" or "C1 Staffing is hiring" (never mention the actual company or worksite name)\n`;
-    prompt += `- You can mention the zip code if provided\n`;
-    prompt += `- Uses clear, professional language\n`;
-    prompt += `- Is approximately 200-400 words\n`;
-
-    // Call OpenAI
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a professional job description writer specializing in creating compelling job postings for job boards like Indeed and Craigslist. You always refer to the employer as "C1" or "C1 Staffing" and never mention client names or worksite names. You only include information that is explicitly marked as visible/shown in the job posting.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: 0.7,
-      max_tokens: 800
-    });
-
-    const generatedDescription = completion.choices[0]?.message?.content || '';
-
-    if (!generatedDescription) {
-      throw new HttpsError('internal', 'Failed to generate job description');
-    }
-
-    return {
-      success: true,
-      description: generatedDescription.trim(),
-      jobDescription: generatedDescription.trim() // Support both field names for backward compatibility
-    };
+    const { generateJobDescriptionText } = await import('./jobs/jobDescriptionGenerator');
+    const text = await generateJobDescriptionText((request.data?.jobOrderData || {}) as Record<string, unknown>, (request.data?.toggleStates || {}) as Record<string, boolean>);
+    if (!text) throw new HttpsError('internal', 'Failed to generate job description');
+    return { success: true, description: text, jobDescription: text };
   } catch (error: any) {
     console.error('Error generating job description:', error);
-    
-    if (error instanceof HttpsError) {
-      throw error;
-    }
-    
+    if (error instanceof HttpsError) throw error;
     throw new HttpsError('internal', error.message || 'Failed to generate job description');
   }
 });
 
-// Vector Management Functions
 export const getVectorCollections = onCall(async (request) => {
   try {
     const collectionsRef = db.collection('vectorCollections');
@@ -6104,7 +5895,7 @@ export const createInviteToken = onCall(async (request) => {
     return {
       success: true,
       token,
-      inviteUrl: `https://app.hrxone.com/invite/${token}`,
+      inviteUrl: `${PUBLIC_APP_ORIGIN}/invite/${token}`,
       expiresAt
     };
   } catch (error: any) {
@@ -8335,10 +8126,10 @@ export const inviteUserV2 = onCall(
   // Staff keep the password-setup link. (hrxone.com, not app.hrxone.com:
   // the latter is not an authorized Firebase Auth domain and
   // generatePasswordResetLink threw on it — staff invites were broken.)
-  let link = 'https://hrxone.com/login';
+  let link = `${PUBLIC_APP_ORIGIN}/login`;
   if (!workerInvite) {
     const actionCodeSettings = {
-      url: 'https://hrxone.com/setup-password',
+      url: `${PUBLIC_APP_ORIGIN}/setup-password`,
       handleCodeInApp: true,
     };
     link = await auth.generatePasswordResetLink(email, actionCodeSettings);
@@ -8478,7 +8269,7 @@ export const inviteUserV2 = onCall(
     try {
       const smsBody =
         `${templateData.tenant_name || 'C1 Staffing'}: you've been invited to join. ` +
-        `Sign in with this phone number at https://hrxone.com/login — ` +
+        `Sign in with this phone number at ${PUBLIC_APP_ORIGIN}/login — ` +
         `we'll text you a code, no password needed.`;
       await sendWorkerMessageInternal(invitePhoneE164, smsBody, {
         systemContext: true,
@@ -8544,8 +8335,8 @@ export const inviteUserV2 = onCall(
           <p style="margin-bottom: 15px;">Powered by <strong>HRX</strong> - The Future of Workforce Management</p>
           <div style="margin-bottom: 20px;">
             ${templateData.tenant_hr_email ? `<a href="mailto:${templateData.tenant_hr_email}" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Contact HR</a>` : ''}
-            <a href="https://app.hrxone.com/support" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Support</a>
-            <a href="https://app.hrxone.com/privacy" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Privacy Policy</a>
+            <a href="https://www.c1staffing.com/support" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Support</a>
+            <a href="${PUBLIC_APP_ORIGIN}/privacy" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Privacy Policy</a>
           </div>
           <div style="font-size: 12px; color: rgba(255,255,255,0.6); line-height: 1.5;">
             ${templateData.tenant_legal_footer || `This email was sent by ${templateData.tenant_sender_name} on behalf of ${templateData.tenant_name}. 
@@ -8631,11 +8422,11 @@ export const resendInviteV2 = onCall(
   const inviteDoc = (inviteDocSnap.data() || {}) as Record<string, any>;
   const workerInvite = isWorkerUserDoc(inviteDoc);
   const invitePhoneE164 = normalizePhoneE164(String(inviteDoc.phoneE164 || inviteDoc.phone || ''));
-  let link = 'https://hrxone.com/login';
+  let link = `${PUBLIC_APP_ORIGIN}/login`;
   if (!workerInvite) {
     const actionCodeSettings = {
       // hrxone.com — app.hrxone.com is not an authorized Auth domain.
-      url: 'https://hrxone.com/setup-password',
+      url: `${PUBLIC_APP_ORIGIN}/setup-password`,
       handleCodeInApp: true,
     };
     link = await auth.generatePasswordResetLink(email, actionCodeSettings);
@@ -8717,7 +8508,7 @@ export const resendInviteV2 = onCall(
     try {
       await sendWorkerMessageInternal(
         invitePhoneE164,
-        `${templateData.tenant_name || 'C1 Staffing'}: reminder — sign in with this phone number at https://hrxone.com/login. We'll text you a code, no password needed.`,
+        `${templateData.tenant_name || 'C1 Staffing'}: reminder — sign in with this phone number at ${PUBLIC_APP_ORIGIN}/login. We'll text you a code, no password needed.`,
         {
           systemContext: true,
           source: 'system',
@@ -8782,8 +8573,8 @@ export const resendInviteV2 = onCall(
           <p style="margin-bottom: 15px;">Powered by <strong>HRX</strong> - The Future of Workforce Management</p>
           <div style="margin-bottom: 20px;">
             ${templateData.tenant_hr_email ? `<a href="mailto:${templateData.tenant_hr_email}" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Contact HR</a>` : ''}
-            <a href="https://app.hrxone.com/support" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Support</a>
-            <a href="https://app.hrxone.com/privacy" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Privacy Policy</a>
+            <a href="https://www.c1staffing.com/support" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Support</a>
+            <a href="${PUBLIC_APP_ORIGIN}/privacy" style="color: rgba(255,255,255,0.8); text-decoration: none; margin: 0 10px;">Privacy Policy</a>
           </div>
           <div style="font-size: 12px; color: rgba(255,255,255,0.6); line-height: 1.5;">
             ${templateData.tenant_legal_footer || `This email was sent by ${templateData.tenant_sender_name} on behalf of ${templateData.tenant_name}. 
@@ -8937,7 +8728,7 @@ export const sendPasswordResetV2 = onCall(
         try {
           await sendWorkerMessageInternal(
             workerPhone,
-            "C1 Staffing: no password needed — sign in with this phone number at https://hrxone.com/login and we'll text you a code.",
+            `C1 Staffing: no password needed — sign in with this phone number at ${PUBLIC_APP_ORIGIN}/login and we'll text you a code.`,
             {
               systemContext: true,
               source: 'system',
@@ -8965,7 +8756,7 @@ export const sendPasswordResetV2 = onCall(
     // create the email action link" for it, which broke EVERY reset attempt
     // (worker report 2026-07-31).
     url:
-      'https://hrxone.com/setup-password' +
+      `${PUBLIC_APP_ORIGIN}/setup-password` +
       (continueUrl ? `?continueUrl=${encodeURIComponent(continueUrl)}` : ''),
     handleCodeInApp: true,
   };
@@ -9029,7 +8820,7 @@ export const sendPasswordResetV2 = onCall(
           </div>
           <p style="font-size:13px; color:#555; line-height:1.6;">
             This link works for a limited time and only once. If it has expired by the time you click it, just go to
-            <a href="https://hrxone.com/setup-password" style="color:#0057B8;">hrxone.com</a> and request a new one.
+            <a href="${PUBLIC_APP_ORIGIN}/setup-password" style="color:#0057B8;">${PUBLIC_APP_HOST}</a> and request a new one.
           </p>
           <p style="font-size:13px; color:#555; line-height:1.6;">
             If you didn't request this, you can safely ignore this email — your password won't change.
@@ -9047,7 +8838,7 @@ We received a request to reset the password for your HRX account. Open this link
 
 ${link}
 
-This link works for a limited time and only once. If it has expired, go to https://hrxone.com/setup-password and request a new one.
+This link works for a limited time and only once. If it has expired, go to ${PUBLIC_APP_ORIGIN}/setup-password and request a new one.
 
 If you didn't request this, you can safely ignore this email — your password won't change.`,
   };
@@ -9249,9 +9040,11 @@ export const activateCampaignTemplate = onCall(async (request) => {
 });
 
 // User Firestore triggers - Most are now handled by minimal triggers in index.ts
-// Only testUserUpdate is exported from firestoreTriggers.ts
-export { 
-  testUserUpdate
+// testUserUpdate export REMOVED 2026-09-09 (cost audit): it was a debug trigger dumping a
+// before/after copy of every user doc (27 KB, PII) into `test_logs` ~11k times/day. The
+// deployed function was deleted the same day; do not re-export.
+export {
+  // testUserUpdate
   // All other logging triggers have been moved to minimal implementations in this file
   // firestoreLogUserCreated, // TODO: Export missing
   // firestoreLogUserUpdated, // TODO: Export missing
@@ -9613,7 +9406,7 @@ export const logAssignmentCreated = onDocumentCreated(
         const postingPath = assignment.jobPostId
           ? `/c1/jobs-board/${assignment.jobPostId}?assignmentId=${assignmentId}&shiftId=${assignment.shiftId || ''}&intent=assignment_response`
           : '/c1/jobs-board';
-        const jobUrl = `https://hrxone.com${postingPath}`;
+        const jobUrl = `${PUBLIC_APP_ORIGIN}${postingPath}`;
         const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
 
         // OFFER SMS — this trigger (`logAssignmentCreated`) is the UNIVERSAL
@@ -10185,7 +9978,9 @@ export const updateUserLoginInfo = onCall({
     'https://hrx1-d3beb.web.app',
     'https://hrx1-d3beb.firebaseapp.com',
     'https://hrxone.com',
-    'https://www.hrxone.com'
+    'https://www.hrxone.com',
+    'https://app.hrxone.com',
+    'https://app.c1staffing.com'
   ]
 }, async (request) => {
   const { userId, loginData, initializeIfMissing, tenantId, source } = request.data || {};
@@ -10319,7 +10114,9 @@ export const updateUserActivity = onCall({
     'https://hrx1-d3beb.web.app',
     'https://hrx1-d3beb.firebaseapp.com',
     'https://hrxone.com',
-    'https://www.hrxone.com'
+    'https://www.hrxone.com',
+    'https://app.hrxone.com',
+    'https://app.c1staffing.com'
   ]
 }, async (request) => {
   const { userId, activity } = request.data || {};
@@ -10927,7 +10724,9 @@ export const addUsersToGroups = onCall({
     'https://hrx1-d3beb.web.app',
     'https://hrx1-d3beb.firebaseapp.com',
     'https://hrxone.com',
-    'https://www.hrxone.com'
+    'https://www.hrxone.com',
+    'https://app.hrxone.com',
+    'https://app.c1staffing.com'
   ]
 }, async (request) => {
   const { userId, groupIds, tenantId } = request.data;
@@ -11028,7 +10827,9 @@ export const validateUserGroupSignup = onCall({
     'https://hrx1-d3beb.web.app',
     'https://hrx1-d3beb.firebaseapp.com',
     'https://hrxone.com',
-    'https://www.hrxone.com'
+    'https://www.hrxone.com',
+    'https://app.hrxone.com',
+    'https://app.c1staffing.com'
   ]
 }, async (request) => {
   const { tenantId, groupId } = request.data || {};
@@ -13060,3 +12861,11 @@ export {
 export { sodexoReplyScanCron, sodexoReplyScanNow, resolveSodexoReply } from './sales/sodexoReplies';
 export { inboxTriageCron, inboxMorningBriefCron, inboxTriageNow, inboxMorningBriefNow } from './sales/inboxChiefOfStaff';
 export { getCrmReengagementStatus, crmReengagementSendBatch, crmReengagementDailyCron, setCrmReengagementAutopilot } from './sales/crmReengagement';
+
+// Natalie Brooks — Slack assistant (DMs + @mentions answered as her; 2026-09-07).
+// See docs/claude/reference_slack_natalie_persona.md.
+export { natalieSlackInbox } from './natalie/natalieSlackInbox';
+export { natalieMorningBrief } from './natalie/natalieBrief';
+
+// Google Jobs / SEO shell for the public job board (2026-09-09)
+export { jobPostingSeo } from './seo/jobPostingSeo';
