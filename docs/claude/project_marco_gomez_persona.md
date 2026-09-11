@@ -219,6 +219,27 @@ went live with another session's 14:08 hosting deploy — before that the URL se
 text/html), which a plain status check doesn't catch; check the content-type. Gmail never adds signatures to API sends, so Marco's automated emails use the
 plain-text signature in `sendEmail` either way.
 
+## ☠️ "You still owe onboarding" texts to finished workers (fixed + LIVE 2026-09-11)
+Greg got a 1h follow-up text claiming I-9 / Everee payroll / handbook / policies / background form were open. His
+C1 Events account (`gregpfielding@gmail.com`, uid TWXMM1mOJHepmk80Qsx128w9AiS2 — NOT his staff account) has been
+complete in Everee since 2026-04-30: directDepositVerifiedAt, w9SignedAt, handbookSignedAt, policiesSignedCount 2,
+TIN VERIFIED, onboardingComplete, employment row active/complete. Recruiters had reported the same thing.
+**Cause**: `buildOnboardingSnapshot` trusted `assignments.readinessSnapshotV1.requirements[]`, which is written
+once and goes stale, and it listed I-9/W-4 for a 1099 worker whose Everee record says `i9Applicable: false` /
+`w4Applicable: false`. The background claim came from a June "CORT Basic" `awaiting_applicant` order belonging to
+a different job order. **Scale**: a read-only scan found 31 of 86 open follow-ups would text a false "still open"
+(11 natalie / 16 unstamped / 4 marco; 15 C1 Select / 16 C1 Events). After the fix: 0 of 87.
+**Fix** (`functions/src/natalie/onboardingLiveSignals.ts`, pure + tested):
+- `readLiveSignals` ORs three sources — `worker_payroll_accounts/{uid}__{key}`,
+  `everee_workers/{entity}__{uid}.readinessMirror`, `entity_employments/{uid}__{key}`. ORing matters: the
+  onboarding engine can flip an employment row back to `status: 'onboarding'` (Claim Shift session, 2026-09-11),
+  and the Everee mirror still holds the truth.
+- `applyLiveSignals` only ever UPGRADES a step to complete / not_applicable — a worker who genuinely owes
+  something keeps being nudged — and retires I-9/W-4 when Everee says they don't apply.
+- `backgroundIsRelevant` drops errored/canceled orders and `awaiting_applicant` orders from another job order.
+- `buildOnboardingSnapshot` takes `jobOrderId` + `startedAt` so the background check is judged against this hire.
+Any recruiter-facing readiness surface should use `readLiveSignals` rather than trusting one document.
+
 ## One-time steps to go live (in order)
 1. **Slack app**: create "Marco Gomez (HRX)" from `functions/.scratch/slack-marco-app-manifest.json`
    (api.slack.com, as Greg); copy its client secret into Secret Manager `SLACK_MARCO_CLIENT_SECRET`.
