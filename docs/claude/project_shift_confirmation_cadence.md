@@ -65,8 +65,26 @@ explicitly stamped, which masked this for months.
 
 | sequenceId | track | targeting | occurrence |
 |---|---|---|---|
-| `cort_gig` | cort_gig | account CORT `iNJQeuidEg6nJodNeWjc`, gig | first_shift (until completion) |
+| `cort_gig` | cort_gig | account CORT `iNJQeuidEg6nJodNeWjc` + all 74 CORT per-location child accounts (added 2026-09-11), gig | first_shift (until completion) |
 | `oakland_arena_gig` | gig_standard | account Legends National `uhb5hq4ddyLWtSeJP9Te` + locationId `QGNUkDRD4jMej6RArOO4` (Oakland Arena only), gig | every_shift |
+
+☠️ **Targeting matches `assignment.accountId` EXACTLY — no parent lookup
+(found 2026-09-11).** CORT job orders carry per-location child accounts
+(`autoLoc_*`, `accounts/{id}.parentAccountId` = CORT national), so the
+`cort_gig` doc with only the national id matched NOTHING: every CORT gig
+shift got the plain 24h + 2h reminders, no YES/CANCEL (verified on the
+Secaucus / Javits / Pennsylvania Convention Center 9/11–9/12 reminder docs).
+Stopgap: all 74 child ids listed on the doc — a NEW CORT location must be
+added in Settings → Messaging Sequences until the resolver matches parents
+(queued with the Woodridge build). Changing targeting does not re-sync
+assignments whose reminders are already materialized — only new assignments
+pick it up unless you stamp-then-clear `shiftReminderProfile`.
+
+CORT Woodridge ("Woodbridge Warehouse", JO #121) is a CAREER job order with
+open-ended 7-day weeklySchedule crews → career fence + first-day-only
+reminder generation; every-shift confirmation there is a build (per-day asks
+from weeklySchedule + a narrow location-targeted career opt-in), not a
+targeting change.
 
 Settings → Messaging Sequences now renders EVERY sequence doc as an
 editable card (track, accounts, location-ID filter, occurrence) + "Add
