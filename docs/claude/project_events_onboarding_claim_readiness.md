@@ -166,6 +166,32 @@ interview — left as is, no demotion), pending proposals 1 (unaffected).
 - **Not in S1** (S4/S5): pre-rendering "Finish setup to claim" on the board
   before the tap, and returning the worker to the shift after setup.
 
+## S2 dry run (2026-09-11, read-only) — backfill is tiny; the gap is mostly closed already
+
+Script: `functions/.scratch/events_autohire_dryrun.ts` (counts + posting titles only).
+
+- 35 active C1 Events postings → 2,033 applications (826 submitted, 486
+  accepted, 259 confirmed, 400 `in_progress` drafts, 62 withdrawn).
+- **1,571 live applications from 1,361 workers — 1,311 of those workers
+  already have a C1 Events employment.** Hiring mostly happens today through
+  other doors (groups, recruiters, claim/assignment paths).
+- **Backfill would hire 50 workers**: 31 only on no-auto-hire postings, 16
+  "leaked" through auto-hire postings, 3 on both. All 50 have phone + email,
+  none has an Everee link. Their newest application: 1 in 8–30 days, 29 in
+  31–90 days, 20 older than 90 days. **None of the 50 postings has a shift
+  scheduled after today** (FIFA Dallas 13, BTS Stanford 8, Minnesota Yacht
+  Club 6, FIFA Fan Festival Dallas 6, Roy Kizer 5, Oakland Arena 5+2, Prep
+  Cooks 4, Eaux Claires 4, Moody 1) — festivals are over; the venue postings
+  (Oakland Arena, Moody) may get more shifts.
+- **Going forward**: 1 new worker in the last 30 days applied to a
+  no-auto-hire Events posting without an Events employment (~0/day).
+- Side finding: 34 of 35 "active" Events postings have no shift after
+  2026-09-11 (many show a 2026-06-18 last day — likely a bulk-created date,
+  not a real shift); only Sea Hear Now (9/20) is ahead. Stale active postings
+  stay on the jobs board.
+- Recommendation: build S2 **forward-only**, skip the backfill (50 cold
+  invites for finished events would feed the stuck-onboarding pile).
+
 ## Readiness, precisely
 
 Employment row: `tenants/{t}/entity_employments/{uid}__{entityKey}`
