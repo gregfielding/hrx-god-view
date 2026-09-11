@@ -49,8 +49,8 @@ const LEVEL_TO_ROLE: Record<string, string> = {
  *
  * Order matters: an 'Applicant_Worker' label must resolve to '2', not '4',
  * so the 'applicant' check runs before the '*_worker' suffix check (matches
- * assignOrgToUser's existing intent: role==='Applicant' always wins over
- * the Customer_Worker/Agency_Worker type labels).
+ * the intent of the since-deleted assignOrgToUser: role==='Applicant' always
+ * wins over the Customer_Worker/Agency_Worker type labels).
  */
 export function normalizeTenantSecurityLevel(raw: string | number | null | undefined): string {
   if (raw === null || raw === undefined || raw === '') return '2';

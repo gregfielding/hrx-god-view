@@ -68,7 +68,7 @@ Known unstable/incomplete areas:
   - worker-ish users (`<5`) are sent to `/{tenantSlug}/users/{uid}` currently.
   - admin/internal (`>=5`) to `/`.
 - No standalone public onboarding routes remain. Workers enter via the apply flow (`/apply/...`) and phone login (`/login/phone`).
-  - Legacy invite-token chain removed from the web client 2026-09-11: `/invite/:token` (`InviteTokenValidator`) -> `/onboarding/profile` (`OnboardingProfileForm`), plus the never-mounted `UserInvitationDialog`. Zero callers; prod `invites` collection was empty. Backing callables (`createInviteToken`, `validateInviteToken`, `markInviteTokenUsed`, `assignOrgToUser`) are slated for deletion. Flutter has nothing to mirror.
+  - Legacy invite-token chain removed from the web client 2026-09-11: `/invite/:token` (`InviteTokenValidator`) -> `/onboarding/profile` (`OnboardingProfileForm`), plus the never-mounted `UserInvitationDialog`. Zero callers; prod `invites` collection was empty. Backing callables (`createInviteToken`, `validateInviteToken`, `markInviteTokenUsed`, `assignOrgToUser`) deleted from Cloud Run the same day. Flutter has nothing to mirror.
   - `/onboarding/complete` was a placeholder with fake app-store links — removed 2026-09-11
 
 ### Null `securityLevel` handling

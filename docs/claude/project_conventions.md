@@ -56,6 +56,30 @@ Known debt: 8 of 96 jest suites (47 tests) fail — pre-existing, they were
 unrunnable before jest.config.js landed 2026-08-28; cadence/prescreen
 suites are green.
 
+## Cloud Run 1,000-service cap (us-central1) + freed-slot ledger
+
+Every gen2 function is a Cloud Run service, and the project sits at the
+per-region cap. A NEW function can only be created after a dead one is deleted.
+- Check headroom: `gcloud run services list --project hrx1-d3beb --region us-central1 --format='value(metadata.name)' | wc -l`
+- Before deleting, verify: zero callers (grep src/, functions/src, shared/,
+  ../c1_app), and zero invocations in 30d
+  (`gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="<lowercased name>"' --freshness=30d --limit 5`).
+- Delete: `firebase functions:delete a b --region us-central1 --project hrx1-d3beb --force`,
+  then confirm with `gcloud functions list`. Remove the export in the SAME
+  commit so the function can't be redeployed.
+
+Ledger (append new entries at the bottom):
+- Pre-ledger: Phase 1C e-sign functions (2026-06-05, see the index.ts comment);
+  `inviteUser` v1 ([[project_phone_auth]]); getResumeParsingStatus /
+  getUserResumeUploads / getResumeSignedUrl ([[project_resume_pipeline]]).
+- **2026-09-11 (−4)**: createInviteToken, validateInviteToken,
+  markInviteTokenUsed, assignOrgToUser. These backed the dead `/invite/:token` →
+  `/onboarding/profile` client chain (removed the same day). Prod `invites`
+  collection had 0 docs and there were 0 invocations in 30d. us-central1
+  services went 997 → 993. The now-orphaned `match /invites` rule in
+  firestore.rules is still there (harmless; it will drop out with the next
+  rules cleanup).
+
 ## Domain move checklist (deferred 2026-09-09 — revisit when c1staffing.com / app.c1staffing.com is added)
 - Firebase Hosting: add the domain; DNS; then 301 hrxone.com → new origin so Google transfers rankings.
 - Set `platform_config/seo.canonicalOrigin` = `https://<new host>` (jobPostingSeo derives canonicals,
