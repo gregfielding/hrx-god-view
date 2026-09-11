@@ -128,3 +128,44 @@ entries in the grid (deletes the shifts) + off-cycle payment via UI
 submit, verify every shift in the batch reaches `paid:true` once the
 period's payment finalizes — a post-approval sweep would have caught
 this same-day.
+
+## ☠️ "Unexpected Payment Calculation Issue" is usually transient — don't re-approve or resubmit (2026-09-11)
+
+The C1 Select 8/30–9/5 week went out in two quick batches (14:15Z,
+14:17Z). Everee calculated while shifts were still landing and sent
+`payment-payables.status-changed` with `paymentStatus: ERROR`,
+`paymentErrorMessage: "Unexpected Payment Calculation Issue"` for all 7
+workers' payments. It recalculated on its own at 14:21:13Z and the
+payments were approved at 14:21:25Z with matching hours. HRX fallout:
+- The webhook maps only OUR deterministic payable ids (`…::REIMBURSEMENT`
+  etc.) back to entries; Everee's `worked_shift_{id}_REGULAR_HOURLY_0`
+  ids are skipped. So only entries carrying a payable (the PVAMU \$5
+  parking) flipped to `error / payable_error`; a worker with no
+  reimbursement stayed `sent_to_everee` though her payment errored too.
+  `sent_to_everee` ≠ fine, and `payable_error` ≠ a bad payable.
+- No APPROVED webhook follows, so the red rows stay stale until PAID.
+- Re-approving them puts them back in "Submit N to Everee". Resubmit PUTs
+  the same worked shifts (no duplicate hours), but Everee rejects edits
+  to shifts inside an approved payment — or, for dates >10 days old, the
+  worker sends `correction-authorized` and edits the approved payment.
+  Meanwhile `reconcileTimesheetBatches` flips stale `approved` rows in
+  `partial` batches to `error / orchestrator_orphaned`.
+
+Triage: take `paymentId` from the stored webhook event
+(`tenants/{t}/everee_webhook_events/{eventId}`, entry `lastWebhookEventId`)
+and read `/api/v2/payments` (`status`, `calculatedAt`, `approvedAt`,
+`totalHours`). If APPROVED/PAID with the expected hours, restore the
+entries to `status: sent_to_everee`, `everee.status: SUBMITTED`, delete
+`everee.errorCode`/`errorMessage` (runner:
+`functions/.scratch/restore_pvamu_sent.ts`, exact-count guard); the PAID
+webhook flips them to paid. Unverified: `listPayables({ externalIds })`
+returned 20 payables (incl. prior weeks' PAID) for 28 ids and the items
+carry no `externalId` field to match on — the reconciler's payables
+rollup relies on that filter.
+
+Same batch, different error: `missing_everee_worker_id` for a worker who
+IS onboarded meant a duplicate HRX account — the assignment sat on an old
+record linked only to C1 Events (3138) while the new record held the
+C1 Select (3133) worker. Fix = grid pencil (`swapScheduledAssignmentWorker`)
+to the linked record, then submit just those rows (the Submit button
+counts approved rows in the search-filtered view).
