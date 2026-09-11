@@ -1,6 +1,6 @@
 # Onboarding + Claim readiness — C1 Events hire-everyone, gate at Claim (decided 2026-09-11)
 
-**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) BUILT 2026-09-11, NOT DEPLOYED; S2/S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
+**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) DEPLOYED 2026-09-11 13:30 PT (app half ships with the next app build); S2/S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
 store review. Companion to [[project_tier_system_claim_shift_spec]] (Claim
 Shift v1) and [[project_worker_onboarding_everee]] (the completion curve).
 Build slices at the bottom; web + app ship together (parity rule).
@@ -126,7 +126,7 @@ Deployed `scheduledOrchestrator` (ramp + hiring-plan sweeps) and
 Impact at ship: Tier 1 = 16 (all interviewed), Tier 2 = 172 (1 without an
 interview — left as is, no demotion), pending proposals 1 (unaffected).
 
-## ✅ S1 BUILT 2026-09-11 — claim payroll-readiness gate (not deployed yet)
+## ✅ S1 SHIPPED 2026-09-11 — claim payroll-readiness gate (e9a45af0; hosting + `respondToAssignment` deployed 13:30 PT)
 
 - **Server**: `functions/src/claims/claimReadiness.ts` (`assertClaimPayrollReady`)
   runs in `claimShift.ts` right after the headshot gate, before tier /
