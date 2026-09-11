@@ -83,4 +83,36 @@ describe('composeCheckpointText', () => {
     expect(t).toMatch(/resend it/);
     expect(t.length).toBeLessThan(600);
   });
+
+  it('C1 Events (1099) points at the web payroll page instead of the invite link', () => {
+    const events = base({
+      hiringEntityId: 'c1_events_llc',
+      entityLabel: 'C1 Events',
+      allWorkerDone: false,
+      everee: { inviteSent: true, complete: false },
+      workerTodo: ['Everee payroll setup (direct deposit)', '1099 tax form (W-9)', 'profile photo (https://hrxone.com/c1/workers/profile)'],
+    });
+    const t = composeCheckpointText({ firstName: 'Ana', jobTitle: 'Janitors and Cleaners' }, events, 'h1', { persona: 'marco', lang: 'en' });
+    expect(t).toMatch(/finish it at https:\/\/hrxone\.com\/c1\/workers\/earnings/);
+    expect(t).not.toMatch(/the link is in your texts/);
+    expect(t).toMatch(/1099 tax form \(W-9\)/);
+    expect(t).toMatch(/profile photo \(https:\/\/hrxone\.com\/c1\/workers\/profile\)/);
+    expect(t).not.toMatch(/I-9|W-4/);
+    expect(t.endsWith('— Marco, C1 Staffing')).toBe(true);
+  });
+
+  it('Spanish C1 Events copy carries both new items and the same link', () => {
+    const events = base({
+      hiringEntityId: 'c1_events_llc',
+      entityLabel: 'C1 Events',
+      allWorkerDone: false,
+      everee: { inviteSent: true, complete: false },
+      workerTodo: ['Everee payroll setup (direct deposit)', '1099 tax form (W-9)', 'profile photo (https://hrxone.com/c1/workers/profile)'],
+    });
+    const t = composeCheckpointText({ firstName: 'Ana', jobTitle: 'Janitors and Cleaners' }, events, 'h1', { persona: 'marco', lang: 'es' });
+    expect(t).toMatch(/complétalo en https:\/\/hrxone\.com\/c1\/workers\/earnings/);
+    expect(t).toMatch(/formulario de impuestos 1099 \(W-9\)/);
+    expect(t).toMatch(/foto de perfil/);
+    expect(t).toMatch(/depósito directo/);
+  });
 });

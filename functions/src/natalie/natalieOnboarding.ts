@@ -485,7 +485,14 @@ export function composeCheckpointText(f: Pick<FollowupDoc, 'firstName' | 'jobTit
   const evereeBits = other.filter((x) => /I-9|Everee|tax|handbook|policies/.test(x)).map((x) => x.replace(/^I-9 \(your section\)$/, 'I-9').replace(/^Everee payroll setup \(direct deposit\)$/, 'direct deposit').replace(/^tax forms \(W-4\)$/, 'tax forms').replace(/^handbook signature$/, 'handbook').replace(/^policies acknowledgment$/, 'policies'));
   const rest = other.filter((x) => !/I-9|Everee|tax|handbook|policies/.test(x));
   const items: string[] = [];
-  if (evereeBits.length) items.push(`your Everee onboarding (${listify(evereeBits)})${snap.everee.inviteSent ? ' — the link is in your texts/email; I can resend it' : ''}`);
+  // C1 Events workers finish payroll themselves on the web (Greg 2026-09-11); everyone else waits
+  // on the emailed/texted Everee invite.
+  const evereeWhere = snap.hiringEntityId === C1_EVENTS_ENTITY_ID
+    ? ` — finish it at ${PUBLIC_APP_ORIGIN}/c1/workers/earnings`
+    : snap.everee.inviteSent
+      ? ' — the link is in your texts/email; I can resend it'
+      : '';
+  if (evereeBits.length) items.push(`your Everee onboarding (${listify(evereeBits)})${evereeWhere}`);
   if (rest.length) items.push(listify(rest));
   if (items.length) parts.push(`Still open with us: ${items.join('; ')}.`);
   if (bgOpen) parts.push(`Your background check form hasn't been started: ${snap.background!.portalLink || 'check your texts for the AccuSource link'} (about 5 min).`);
@@ -513,7 +520,12 @@ function composeCheckpointTextEs(f: Pick<FollowupDoc, 'firstName' | 'jobTitle'>,
   const evereeBits = other.filter((x) => /I-9|Everee|tax|handbook|policies/.test(x)).map((x) => x.replace(/^I-9 \(your section\)$/, 'I-9').replace(/^Everee payroll setup \(direct deposit\)$/, 'direct deposit').replace(/^tax forms \(W-4\)$/, 'tax forms').replace(/^handbook signature$/, 'handbook').replace(/^policies acknowledgment$/, 'policies')).map((x) => ES_ITEM[x] ?? x);
   const rest = other.filter((x) => !/I-9|Everee|tax|handbook|policies/.test(x)).map((x) => ES_ITEM[x] ?? x);
   const items: string[] = [];
-  if (evereeBits.length) items.push(`tu registro en Everee (${listify(evereeBits, 'y')})${snap.everee.inviteSent ? ' — el enlace está en tus mensajes o correo; te lo puedo reenviar' : ''}`);
+  const dondeEveree = snap.hiringEntityId === C1_EVENTS_ENTITY_ID
+    ? ` — complétalo en ${PUBLIC_APP_ORIGIN}/c1/workers/earnings`
+    : snap.everee.inviteSent
+      ? ' — el enlace está en tus mensajes o correo; te lo puedo reenviar'
+      : '';
+  if (evereeBits.length) items.push(`tu registro en Everee (${listify(evereeBits, 'y')})${dondeEveree}`);
   if (rest.length) items.push(listify(rest, 'y'));
   if (items.length) parts.push(`Pendiente con nosotros: ${items.join('; ')}.`);
   if (bgOpen) parts.push(`No has empezado tu formulario de verificación de antecedentes: ${snap.background!.portalLink || 'busca el enlace de AccuSource en tus mensajes'} (unos 5 min).`);
