@@ -7,7 +7,8 @@
  * Policy (docs/claude/project_tiered_shift_access.md, 8/31 agreed spec +
  * Greg 2026-09-04): AI/threshold promotion moves Tier 3 → Tier 2 ONLY, never
  * to Tier 1 (manual). "Be picky" — defaults keep the threshold high, and a
- * worker with no completed interview cannot cross it on profile polish alone.
+ * worker with no completed interview never qualifies, whatever the total
+ * (hard gate since 2026-09-11 — see scoreTierPromotion).
  * The app-install factor takes effect 2026-10-01 (TestFlight-only before then;
  * scoring it earlier would suppress every promotion).
  */
@@ -105,6 +106,11 @@ export interface TierScorecard {
   maxPossible: number;
   threshold: number;
   qualifies: boolean;
+  /**
+   * Why a scorecard does not qualify regardless of its total. `no_interview`:
+   * promotion requires a completed interview (Greg 2026-09-11).
+   */
+  blockedBy?: 'no_interview';
   factors: TierScoreFactor[];
 }
 
@@ -345,7 +351,12 @@ export function scoreTierPromotion(
     total,
     maxPossible,
     threshold: config.threshold,
-    qualifies: total >= config.threshold,
+    // Greg 2026-09-11: a completed interview is REQUIRED for Tier 2. It is
+    // optional to be hired or to claim at C1 Events, never for promotion.
+    // A hard gate, not a weight: the full no-interview profile score can
+    // reach the threshold on its own (threshold 50 = 25+10+10+5).
+    qualifies: total >= config.threshold && interview != null,
+    ...(interview == null ? { blockedBy: 'no_interview' as const } : {}),
     factors,
   };
 }
