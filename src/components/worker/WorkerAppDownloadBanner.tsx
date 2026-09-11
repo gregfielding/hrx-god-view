@@ -5,10 +5,14 @@
  *
  * Web-only by nature (it advertises the native app), so there is no
  * c1_app counterpart; noted in the Flutter parity punch list.
+ *
+ * Step 6 (2026-09-11): on payroll pages, right after payroll setup finishes,
+ * it renders a one-time "You're ready to work" prompt instead of the slim bar
+ * (see isAppReadyMoment in src/utils/workerAppBanner.ts).
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, where } from 'firebase/firestore';
 import CloseIcon from '@mui/icons-material/Close';
 
 import { db } from '../../firebase';
@@ -19,14 +23,20 @@ import {
   APP_BANNER_DISMISS_MS,
   APP_BANNER_PREVIEW_PARAM,
   APP_BANNER_PREVIEW_SESSION_KEY,
+  APP_READY_PREVIEW_VALUE,
   WORKER_APP_BANNER_OFF,
   WORKER_APP_BANNER_SETTINGS_DOC,
   appBannerDismissKey,
+  appReadyMomentKey,
   detectAppBannerPlatform,
+  isAppReadyMoment,
+  isPayrollPath,
+  latestPayrollCompletionMs,
   parseWorkerAppBannerConfig,
   resolveWorkerAppBanner,
   type WorkerAppBannerConfig,
 } from '../../utils/workerAppBanner';
+import { C1_TENANT_ID_CANONICAL } from '../../utils/c1TenantIdNormalize';
 
 const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
 
@@ -113,7 +123,130 @@ const WorkerAppDownloadBanner: React.FC = () => {
     };
   }, [platform]);
 
+  // Step 6 (2026-09-11): the "ready to work" moment — right after payroll setup
+  // finishes on the web, payroll pages show a one-time fuller prompt instead of
+  // the slim bar (ignores the 30-day dismissal; never repeats once seen).
+  const readyPreview = useMemo(
+    () => new URLSearchParams(search).get(APP_BANNER_PREVIEW_PARAM) === APP_READY_PREVIEW_VALUE,
+    [search],
+  );
+  const [momentSeen, setMomentSeen] = useState(true);
+  const [completedAtMs, setCompletedAtMs] = useState<number | null>(null);
+  const [hasAppPushToken, setHasAppPushToken] = useState(true);
+  const momentCandidate = Boolean(
+    uid &&
+      isPayrollPath(pathname) &&
+      resolveWorkerAppBanner({ platform, config, pathname, dismissedUntil: 0, now: Date.now(), installed, preview }),
+  );
+
+  useEffect(() => {
+    if (!uid) return;
+    try {
+      setMomentSeen(window.localStorage.getItem(appReadyMomentKey(uid)) === '1');
+    } catch {
+      setMomentSeen(false);
+    }
+  }, [uid]);
+
+  // Only read employments / push tokens when the moment could actually show.
+  useEffect(() => {
+    if (!uid || !momentCandidate || momentSeen) return undefined;
+    let cancelled = false;
+    void getDocs(
+      query(collection(db, 'users', uid, 'pushTokens'), where('platform', 'in', ['iOS', 'Android', 'ios', 'android']), limit(1)),
+    )
+      .then((snap) => {
+        if (!cancelled) setHasAppPushToken(!snap.empty);
+      })
+      .catch(() => {
+        if (!cancelled) setHasAppPushToken(false);
+      });
+    const unsub = onSnapshot(
+      query(collection(db, 'tenants', C1_TENANT_ID_CANONICAL, 'entity_employments'), where('userId', '==', uid)),
+      (snap) => setCompletedAtMs(latestPayrollCompletionMs(snap.docs.map((d) => d.data()))),
+      () => setCompletedAtMs(null),
+    );
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [uid, momentCandidate, momentSeen]);
+
   if (!uid) return null;
+
+  const now = Date.now();
+  const momentBanner = resolveWorkerAppBanner({
+    platform,
+    config,
+    pathname,
+    dismissedUntil: 0,
+    now,
+    installed,
+    preview: preview || readyPreview,
+  });
+  const showMoment =
+    Boolean(momentBanner) &&
+    isPayrollPath(pathname) &&
+    (readyPreview ||
+      isAppReadyMoment({ banner: momentBanner, pathname, completedAtMs, now, seen: momentSeen, hasAppPushToken }));
+  if (showMoment && momentBanner) {
+    const markSeen = () => {
+      if (!readyPreview) {
+        try {
+          window.localStorage.setItem(appReadyMomentKey(uid), '1');
+        } catch {
+          // Storage blocked: hide for this page view only.
+        }
+      }
+      setMomentSeen(true);
+    };
+    return (
+      <aside
+        aria-label={t('appBanner.readyTitle')}
+        data-testid="worker-app-ready-moment"
+        style={{
+          padding: '14px 14px 12px',
+          marginBottom: 16,
+          background: '#fff',
+          border: '1px solid #e6e6e3',
+          borderRadius: 12,
+          fontFamily: FONT,
+          color: '#111',
+        }}
+      >
+        <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.3 }}>{t('appBanner.readyTitle')}</div>
+        <div style={{ fontSize: 14, color: '#6b6b66', lineHeight: 1.4, marginTop: 4 }}>{t('appBanner.readyBody')}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+          <a
+            href={momentBanner.storeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={markSeen}
+            style={{
+              background: '#111',
+              color: '#fff',
+              borderRadius: 999,
+              padding: '8px 14px',
+              fontSize: 14,
+              fontWeight: 600,
+              textDecoration: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {t('appBanner.cta')}
+          </a>
+          <button
+            type="button"
+            onClick={markSeen}
+            style={{ border: 0, background: 'transparent', color: '#6b6b66', fontSize: 14, cursor: 'pointer', padding: 6 }}
+          >
+            {t('appBanner.dismiss')}
+          </button>
+        </div>
+      </aside>
+    );
+  }
+
   const decision = resolveWorkerAppBanner({
     platform,
     config,

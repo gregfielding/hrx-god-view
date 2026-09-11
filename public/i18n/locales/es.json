@@ -2271,6 +2271,8 @@
     "title": "Descarga la app de C1 Staffing",
     "body": "Turnos, alertas y pago en tu teléfono.",
     "cta": "Descargar",
-    "dismiss": "Ahora no"
+    "dismiss": "Ahora no",
+    "readyTitle": "Ya estás listo para trabajar",
+    "readyBody": "Descarga la app de C1 Staffing para reservar turnos y recibir alertas de turnos en tu teléfono."
   }
 }

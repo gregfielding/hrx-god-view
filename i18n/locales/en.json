@@ -1363,7 +1363,7 @@
     "claimFinishSetup": "Finish setup",
     "claimFinishSetupCta": "Finish setup to claim",
     "claimSetupCardTitle": "Finish setup to claim shifts",
-    "claimSetupCardBody": "Claim shifts instantly once your profile photo is approved and payroll is set up.",
+    "claimSetupCardBody": "Claim shifts instantly once your profile photo, direct deposit and 1099 tax form are done.",
     "claimSetupStepPhoto": "Profile photo approved",
     "claimSetupStepPayroll": "Payroll set up (tax form and direct deposit)",
     "claimSetupProgress": "{done} of {total} done",
@@ -2271,6 +2271,8 @@
     "title": "Get the C1 Staffing app",
     "body": "Shifts, alerts, and pay on your phone.",
     "cta": "Get the app",
-    "dismiss": "Not now"
+    "dismiss": "Not now",
+    "readyTitle": "You're ready to work",
+    "readyBody": "Get the C1 Staffing app to claim shifts and get shift alerts on your phone."
   }
 }

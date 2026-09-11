@@ -2271,6 +2271,8 @@
     "title": "Get the C1 Staffing app",
     "body": "Shifts, alerts, and pay on your phone.",
     "cta": "Get the app",
-    "dismiss": "Not now"
+    "dismiss": "Not now",
+    "readyTitle": "You're ready to work",
+    "readyBody": "Get the C1 Staffing app to claim shifts and get shift alerts on your phone."
   }
 }

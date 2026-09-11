@@ -1363,7 +1363,7 @@
     "claimFinishSetup": "Completar configuración",
     "claimFinishSetupCta": "Completa tu configuración para reservar",
     "claimSetupCardTitle": "Completa tu configuración para reservar turnos",
-    "claimSetupCardBody": "Reserva turnos al instante cuando tu foto de perfil esté aprobada y tu nómina esté configurada.",
+    "claimSetupCardBody": "Reserva turnos al instante cuando tu foto de perfil, tu depósito directo y tu formulario de impuestos 1099 estén listos.",
     "claimSetupStepPhoto": "Foto de perfil aprobada",
     "claimSetupStepPayroll": "Nómina configurada (formulario de impuestos y depósito directo)",
     "claimSetupProgress": "{done} de {total} completados",
@@ -2271,6 +2271,8 @@
     "title": "Descarga la app de C1 Staffing",
     "body": "Turnos, alertas y pago en tu teléfono.",
     "cta": "Descargar",
-    "dismiss": "Ahora no"
+    "dismiss": "Ahora no",
+    "readyTitle": "Ya estás listo para trabajar",
+    "readyBody": "Descarga la app de C1 Staffing para reservar turnos y recibir alertas de turnos en tu teléfono."
   }
 }

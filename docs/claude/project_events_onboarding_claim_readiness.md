@@ -1,6 +1,6 @@
 # Onboarding + Claim readiness — C1 Events hire-everyone, gate at Claim (decided 2026-09-11)
 
-**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) DEPLOYED 2026-09-11 13:30 PT (app half ships with the next app build); S2 (C1 Events hire-on-apply, forward-only) + group hiring RETIRED — DEPLOYED 2026-09-11 14:06–14:08 PT; S4/S5 (claim-readiness UI) web DEPLOYED 2026-09-11 14:35 PT, app committed (ships with the next app build); S6 not built.** Greg, 2026-09-11, while the native apps are in
+**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) DEPLOYED 2026-09-11 13:30 PT (app half ships with the next app build); S2 (C1 Events hire-on-apply, forward-only) + group hiring RETIRED — DEPLOYED 2026-09-11 14:06–14:08 PT; S4/S5 (claim-readiness UI) web DEPLOYED 2026-09-11 14:35 PT, app committed (ships with the next app build); S6 (ready-to-work app prompt) BUILT 2026-09-11, NOT DEPLOYED.** Greg, 2026-09-11, while the native apps are in
 store review. Companion to [[project_tier_system_claim_shift_spec]] (Claim
 Shift v1) and [[project_worker_onboarding_everee]] (the completion curve).
 Build slices at the bottom; web + app ship together (parity rule).
@@ -165,6 +165,30 @@ interview — left as is, no demotion), pending proposals 1 (unaffected).
   Ships with the next app build.
 - **Not in S1** (S4/S5): pre-rendering "Finish setup to claim" on the board
   before the tap, and returning the worker to the shift after setup.
+
+## ✅ S6 BUILT 2026-09-11 — "You're ready to work" app prompt (not deployed yet)
+
+- Not a second card: the existing `WorkerAppDownloadBanner` (mounted in
+  `C1WorkerLayout`) gets a **ready-to-work mode**. On payroll pages
+  (`/c1/workers/earnings*`, `/c1/workers/payroll*`), when the worker's latest
+  payroll completion (`payrollOnboardingCompletedAt` ?? `onboardingCompletedAt`
+  on a live `entity_employments` row) is within 7 days, the prompt hasn't been
+  seen (`worker_app_ready_moment_seen_{uid}` in localStorage, set on "Get the
+  app" or "Not now"), and no iOS/Android push token exists
+  (`users/{uid}/pushTokens`), it renders "You're ready to work" + "Get the C1
+  Staffing app to claim shifts and get shift alerts on your phone." instead of
+  the slim bar. Ignores the slim bar's 30-day dismissal; never repeats.
+- Same gates as the banner: `tenants/{t}/settings/workerAppBanner` per-platform
+  switch (both OFF today), store URL, phone detection, Android installed-app
+  check. The employment + push-token reads only run on payroll pages when the
+  banner could show at all.
+- Pure logic + 4 jest tests in `src/utils/workerAppBanner.ts`
+  (`isPayrollPath`, `latestPayrollCompletionMs`, `isAppReadyMoment`).
+  QA: `?appBanner=ready` on a payroll page forces it for that page view.
+- i18n `appBanner.readyTitle / readyBody` EN/ES. Web-only by nature (it
+  advertises the native app) — no c1_app counterpart.
+- **Live only when the banner switch is turned on** for a platform (Android
+  once Play Production 14 is published; iOS after App Review approves).
 
 ## ✅ S4/S5 SHIPPED 2026-09-11 — claim-readiness UI (web live 14:35 PT, bb5c6c99; app c1_app 285c0b2)
 

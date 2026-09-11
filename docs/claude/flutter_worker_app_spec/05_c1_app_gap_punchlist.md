@@ -523,7 +523,7 @@ it with `experienceType: 'PAYMENT_HISTORY'` and the worker's known
 `evereeWorkerId` (same as web, skip re-provisioning) instead of trying to
 read/open a `pdfUrl`.
 
-- 2026-09-11 web-only, no c1_app counterpart: worker "Get the app" banner (`WorkerAppDownloadBanner`, ships off behind `tenants/{C1}/settings/workerAppBanner`). It advertises the native app, so the app itself needs nothing.
+- 2026-09-11 web-only, no c1_app counterpart: worker "Get the app" banner (`WorkerAppDownloadBanner`, ships off behind `tenants/{C1}/settings/workerAppBanner`). It advertises the native app, so the app itself needs nothing. Step 6 (same day) adds a one-time "You're ready to work" mode on payroll pages right after payroll setup finishes — same component, also web-only.
 
 ## 2026-09-11 — daily-confirm crews: shift confirmation is per WORKDAY now (app card doesn't know yet)
 
@@ -555,3 +555,6 @@ for exactly the crews with the worst no-show rate. Fix:
   was NOT redeployed with the Woodridge build (last deploy 2026-09-07; its
   bundle also carries unrelated placements changes) — deploy it together
   with the app change.
+  ✅ Resolved 2026-09-11: `respondToAssignment` was redeployed from origin/main
+  at 13:30 and 14:34 PT (Claim Shift readiness gate + `claim_prepare`), so the
+  callable change is live.

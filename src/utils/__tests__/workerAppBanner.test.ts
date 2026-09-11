@@ -1,5 +1,9 @@
 import {
+  APP_READY_MOMENT_MS,
   DEFAULT_PLAY_STORE_URL,
+  isAppReadyMoment,
+  isPayrollPath,
+  latestPayrollCompletionMs,
   WORKER_APP_BANNER_OFF,
   detectAppBannerPlatform,
   isAppBannerPath,
@@ -112,5 +116,44 @@ describe('resolveWorkerAppBanner', () => {
     const preview = input({ preview: true, config: WORKER_APP_BANNER_OFF, platform: null, dismissedUntil: 9e12 });
     expect(resolveWorkerAppBanner(preview)).toEqual({ platform: 'android', storeUrl: DEFAULT_PLAY_STORE_URL });
     expect(resolveWorkerAppBanner({ ...preview, pathname: '/c1/apply' })).toBeNull();
+  });
+});
+
+describe('ready-to-work moment (step 6)', () => {
+  const banner = { platform: 'android' as const, storeUrl: DEFAULT_PLAY_STORE_URL };
+  const now = 10 * APP_READY_MOMENT_MS;
+  const moment = (over: Partial<Parameters<typeof isAppReadyMoment>[0]> = {}) =>
+    isAppReadyMoment({ banner, pathname: '/c1/workers/earnings', completedAtMs: now - 60_000, now, seen: false, hasAppPushToken: false, ...over });
+
+  it('only on payroll pages', () => {
+    expect(isPayrollPath('/c1/workers/earnings')).toBe(true);
+    expect(isPayrollPath('/c1/workers/earnings/3138')).toBe(true);
+    expect(isPayrollPath('/c1/workers/dashboard')).toBe(false);
+    expect(moment({ pathname: '/c1/workers/dashboard' })).toBe(false);
+  });
+
+  it('shows right after payroll completion, once, when the banner could show and the app is not installed', () => {
+    expect(moment()).toBe(true);
+    expect(moment({ banner: null })).toBe(false);
+    expect(moment({ seen: true })).toBe(false);
+    expect(moment({ hasAppPushToken: true })).toBe(false);
+    expect(moment({ completedAtMs: null })).toBe(false);
+  });
+
+  it('expires 7 days after completion', () => {
+    expect(moment({ completedAtMs: now - APP_READY_MOMENT_MS })).toBe(true);
+    expect(moment({ completedAtMs: now - APP_READY_MOMENT_MS - 1 })).toBe(false);
+    expect(moment({ completedAtMs: now + 5 })).toBe(false);
+  });
+
+  it('latest completion ignores ended employments and reads Timestamp-like values', () => {
+    expect(
+      latestPayrollCompletionMs([
+        { status: 'active', payrollOnboardingCompletedAt: { toMillis: () => 100 } },
+        { status: 'onboarding', onboardingCompletedAt: { seconds: 2 } },
+        { status: 'terminated', payrollOnboardingCompletedAt: { toMillis: () => 9_999 } },
+      ]),
+    ).toBe(2000);
+    expect(latestPayrollCompletionMs([{ status: 'onboarding' }])).toBeNull();
   });
 });

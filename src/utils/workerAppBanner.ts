@@ -133,3 +133,69 @@ export function resolveWorkerAppBanner(input: AppBannerDecisionInput): AppBanner
   if (dismissedUntil > now) return null;
   return { platform, storeUrl: platformConfig.storeUrl };
 }
+
+// ---------------------------------------------------------------------------
+// "Ready to work" moment (step 6, 2026-09-11,
+// docs/claude/project_events_onboarding_claim_readiness.md): right after a
+// worker finishes payroll setup on the web, the payroll pages show a one-time
+// fuller prompt ("You're ready to work — get the app") instead of the slim
+// bar. Same switch, platform and store URL as the banner; ignores the 30-day
+// banner dismissal but never repeats once seen; skipped when the worker
+// already has an iOS/Android push token (the app is installed).
+// QA: ?appBanner=ready on a payroll page forces it for that page view.
+// ---------------------------------------------------------------------------
+
+/** How long after payroll completion the moment is still "right after". */
+export const APP_READY_MOMENT_MS = 7 * 24 * 60 * 60 * 1000;
+
+export const APP_READY_PREVIEW_VALUE = 'ready';
+
+export function appReadyMomentKey(uid: string): string {
+  return `worker_app_ready_moment_seen_${uid}`;
+}
+
+export function isPayrollPath(pathname: string): boolean {
+  const path = pathname.toLowerCase();
+  return path.startsWith('/c1/workers/earnings') || path.startsWith('/c1/workers/payroll');
+}
+
+const ENDED_EMPLOYMENT_STATUSES = new Set(['terminated', 'inactive', 'blocked']);
+
+function timestampMs(value: unknown): number | null {
+  if (!value) return null;
+  const v = value as { toMillis?: () => number; seconds?: unknown; _seconds?: unknown };
+  if (typeof v.toMillis === 'function') return v.toMillis();
+  if (value instanceof Date) return value.getTime();
+  const secs = typeof v.seconds === 'number' ? v.seconds : typeof v._seconds === 'number' ? v._seconds : null;
+  if (secs != null) return secs * 1000;
+  if (typeof value === 'string' && !Number.isNaN(Date.parse(value))) return Date.parse(value);
+  return null;
+}
+
+/** Latest payroll completion across the worker's live `entity_employments` rows, or null. */
+export function latestPayrollCompletionMs(rows: ReadonlyArray<Record<string, unknown>>): number | null {
+  let latest: number | null = null;
+  for (const row of rows) {
+    if (ENDED_EMPLOYMENT_STATUSES.has(String(row.status ?? '').trim().toLowerCase())) continue;
+    const ms = timestampMs(row.payrollOnboardingCompletedAt) ?? timestampMs(row.onboardingCompletedAt);
+    if (ms != null && (latest == null || ms > latest)) latest = ms;
+  }
+  return latest;
+}
+
+export interface AppReadyMomentInput {
+  /** `resolveWorkerAppBanner` with the banner dismissal ignored (dismissedUntil 0). */
+  banner: AppBannerDecision | null;
+  pathname: string;
+  completedAtMs: number | null;
+  now: number;
+  seen: boolean;
+  hasAppPushToken: boolean;
+}
+
+export function isAppReadyMoment(input: AppReadyMomentInput): boolean {
+  const { banner, pathname, completedAtMs, now, seen, hasAppPushToken } = input;
+  if (!banner || !isPayrollPath(pathname) || seen || hasAppPushToken || completedAtMs == null) return false;
+  const age = now - completedAtMs;
+  return age >= 0 && age <= APP_READY_MOMENT_MS;
+}
