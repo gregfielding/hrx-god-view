@@ -190,6 +190,60 @@ interview — left as is, no demotion), pending proposals 1 (unaffected).
 - **Live only when the banner switch is turned on** for a platform (Android
   once Play Production 14 is published; iOS after App Review approves).
 
+## ✅ Apply → setup checklist + Marco chases the applicants (2026-09-11 PM, Greg)
+
+Greg after the first live claim: "if they try to apply and they aren't fully
+onboarded, they are prompted to complete their C1 Events onboarding — photo,
+direct deposit, 1099", then "there are a bunch of applicants before we activated
+claiming. Can Marco reach out to each of them … then he can assign them."
+
+**The checklist is three steps everywhere: profile photo · direct deposit ·
+1099 tax form (W-9).** Per-step truth = the Everee readiness mirror
+(`directDepositReady` / `directDepositVerifiedAt` / `bankAccountCount`,
+`w9SignedAt`); **finished payroll marks BOTH payroll steps done** because
+`w9SignedAt` was missing on 969 of 2,255 Everee-complete C1 Events workers.
+Photo = the server headshot gate.
+
+- **Web (f2fa927e, NOT deployed yet)**: quick apply on the posting page and the
+  jobs board checks setup first — not set up → `/c1/workers/earnings?welcome=events`
+  (the `EventsAppliedBanner` is now the 3-step card with a button for what's
+  left: photo → profile, payroll → `/c1/workers/earnings/{evereeTenantId}`,
+  "You're all set" + Find shifts when done); already set up → stays on the
+  posting. Jobs-board `ClaimSetupCard` went 2 → 3 steps. `useClaimReadiness`
+  re-subscribes the Everee link listener after a permission-denied read (a
+  fresh hire's link would otherwise never appear). i18n EN/ES; 20 jest tests.
+- **Marco (9da2a72d, deployed 15:10 PT)**: `natalie_onboarding_followups` gained
+  source **`job_application`** — live C1 Events applications whose worker isn't
+  set up and has no live assignment on that order (applying hires them via
+  `eventsEntityAutoHire`, which leaves no onboarding instance or plan row, so
+  the other three sources never saw them). `functions/src/natalie/eventsApplicantSetup.ts`
+  holds the C1 Events checklist (no I-9 / W-4) + `placeApplicantOnAppliedShift`.
+  When the follow-up sees everything done, Marco places them on the shift they
+  applied for as **pending** — `logAssignmentCreated` sends the standard offer
+  text — skipping anyone already on the order, a withdrawn application, a
+  started shift or a full one. Applicant follow-ups re-check every 10 min so a
+  placement isn't stuck behind the 24h text; the 20h no-double-text guard now
+  applies only to texting passes. 9 tests.
+- **Chiefs Bowl dry run (JO #543)**: 15 applicants — 7 already placed, 3 fully
+  set up were offered the Sep 14 shift on the spot (Marco-authored pending
+  assignments, offer texts 22:01Z), 5 unfinished went to Marco's follow-ups.
+
+### ☠️ 271 C1 Events workers read "Onboarding" although Everee is done
+
+The placement tile's amber **Onboarding** chip
+(`placementEmploymentChipFromEntityData`) reads `entity_employments`:
+green only when `onboardingComplete === true` / `active === true` / status
+`active`. `mirrorEvereeOnboardingCompleteToEmployments` stamps
+`taxIdentityStatus: 'complete'` + flips the row active, but that (RA.2) landed
+after these workers finished, and the mirror only runs on a completion event —
+so **271 of 7,423 C1 Events rows sit at `status: 'onboarding'` with Everee
+complete** (8 of the 10 on the Chiefs shift, Greg included). They can claim and
+get paid — the Claim gate reads Everee, not this row — but every recruiter
+surface reads them as unfinished. Fix = re-run the mirror for those 271 (no
+code change, no triggers listen on `entity_employments` writes). **Waiting on
+Greg's OK.** The other 5,417 `onboarding` rows never finished Everee — those
+are the real backlog, and the pool Marco's new follow-ups work.
+
 ## ✅ S4/S5 SHIPPED 2026-09-11 — claim-readiness UI (web live 14:35 PT, bb5c6c99; app c1_app 285c0b2)
 
 - **Server**: `respondToAssignment` decision **`claim_prepare`** `{ tenantId,

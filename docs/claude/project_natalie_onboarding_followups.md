@@ -20,6 +20,7 @@ Code: `functions/src/natalie/natalieOnboarding.ts`. Runs inside the `natalieSlac
 | Trigger | Where it is read | Clock starts |
 |---|---|---|
 | Recruiter starts onboarding | `tenants/{T}/onboarding_instances/{assignmentId}` (createdBy.userId = recruiter, status ≠ complete) | instance `createdAt` |
+| C1 Events applicant hasn't finished setup (2026-09-11, Greg) | `tenants/{T}/applications` — live (submitted/waitlisted) C1 Events application, no live assignment on that order, setup not done | application `appliedAt` / `createdAt` |
 | Job-order hiring plan hires a worker (2026-09-11) | `tenants/{T}/job_orders/{jo}/hiring_plan_hires/{uid}` status `ok` on every JO with `hiringPlan.enabled` (onboarded into the on-call pool, or screening-only) | `onboardedAt` / `completedAt` |
 | A human orders a screening | top-level `backgroundChecks` (candidateId, tenantId, hrxStatus in awaiting_applicant / submitted / in_progress / report_ready) | check `createdAt` |
 
