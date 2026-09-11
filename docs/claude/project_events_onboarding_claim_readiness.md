@@ -495,3 +495,16 @@ one-time "You're ready to work — get the app for shift alerts" card (reuse
   with `not_hired`; the credential half stays with that spec.
 - Illinois AEDT: entity-wide hire-everyone is not score-based (no AEDT
   exposure); the interview→Tier 2 rule is, and rides the existing Illinois notice.
+
+## 2026-09-11: 270 C1 Events employments un-stuck from amber "Onboarding" (data fix, Greg approved)
+Found by the Claim Shift session: C1 Events `entity_employments` rows that Everee had completed pre-RA.2 never
+got `payrollStatus` / `taxIdentityStatus` stamped, so recruiter surfaces showed them amber "Onboarding".
+Scope (read-only dry run): Everee-complete (evereeOnboardingStatus complete OR payrollOnboardingCompletedAt)
+AND (status != active OR payrollStatus != complete OR taxIdentityStatus != complete), excluding
+terminated/inactive/blocked = **270 rows of 7,423** (the "271" estimate was one high), all status 'onboarding',
+active:false, payrollStatus 'in_progress', completions May–Aug 2026.
+Ran 2026-09-11 16:02 PT: `functions/.scratch/events_employment_amber_fix.ts --apply` (read-only without the flag) calls
+`mirrorEvereeOnboardingCompleteToEmployments` per user — 270 ok, 0 failed, re-count 0 still stale; spot checks
+read status active / active true / payrollStatus complete / taxIdentityStatus complete. The mirror sends no
+SMS, so nobody was messaged. Re-runnable and idempotent (it skips terminal states).
+
