@@ -297,3 +297,21 @@ Greg's (see the report artifact).
   Fix: copied the working Profile Status Change URL (with secret) into both
   slots in-page, saved, reloaded → all 13 slots identical and well-formed;
   portal Test on both returned 200 OK.
+
+### Both hosts behave the same (2026-09-11, Greg: "ideally both sites work perfectly while we migrate")
+- ☠️ Sign-in code autofill: web `sendOtp` calls (PhoneLoginPage, PhoneSignupGate,
+  utils/phoneVerificationTwilio) pass `webOtpHost: window.location.hostname`;
+  `functions/src/utils/webOtpHost.ts` echoes it into the SMS's
+  `@<host> #<code>` line when it's in `WEB_OTP_HOSTS` (hrxone.com,
+  www/app.hrxone.com, app.c1staffing.com, web.app, firebaseapp.com), else
+  `PUBLIC_APP_HOST`. So Android one-tap autofill works on every host now —
+  the OTP line no longer needs a change at the flip. Native app unchanged.
+- ☠️ Web push duplicates: `src/firebaseMessaging.ts` stores `origin` + full
+  `userAgent` on each token and, on registration, sets `enabled:false`
+  (`disabledReason: superseded_by_other_origin`) on the same browser's tokens
+  from OTHER origins (`src/utils/pushTokenDedupe.ts`; legacy tokens without
+  origin count as hrxone.com). All server senders filter `enabled == true`,
+  so the most recently used host wins; going back re-enables that host's token.
+- Google OAuth: `https://app.c1staffing.com` added to Authorized JavaScript
+  origins on all three web clients (HRX Web Integration v2, HRX Gmail
+  Integration, HRX ONE WEB APP) — verified after reload.
