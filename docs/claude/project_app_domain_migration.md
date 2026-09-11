@@ -212,9 +212,8 @@ Greg's (see the report artifact).
   No event webhook configured. Inbound Parse `ingest.hrxone.com` →
   cloudfunctions.net (unaffected; keep the MX). Sender auth valid for
   c1staffing.com and one hrxone.com record (6 stale invalid hrxone.com entries).
-- Twilio: credentials aren't in `functions/.env*` (Secret Manager), so the
-  toll-free verification URLs, messaging-service callbacks and number webhooks
-  were NOT checked — Greg in the Twilio console.
+- Twilio: credentials aren't in `functions/.env*` (Secret Manager); checked in
+  the console instead — see below.
 
 ### Deploy results 2026-09-11
 - Hosting (web copy fixes) deployed from a clean worktree (main.9886f869.js);
@@ -226,3 +225,26 @@ Greg's (see the report artifact).
   both files to 512MiB (+ the `triggerAINoteReview` callable) and redeployed:
   success. Verified a POST from `Origin: https://app.c1staffing.com` now
   returns `access-control-allow-origin: https://app.c1staffing.com` + `Vary: Origin`.
+
+### Slack + Twilio consoles checked 2026-09-11 (read-only, Greg's Chrome)
+- Slack app "HRX Messaging Bridge" (A0A64K3EWAX): Event Subscriptions Request
+  URL is `https://hrx1-d3beb.web.app/slack/events` — NOT hrxone.com, so the
+  domain move never affects it. No Interactivity URL. The "Natalie Brooks
+  (HRX)" app isn't in this Slack user's app list (owned by another account) —
+  its `hrxone.com/slack/oauth/callback` redirect only matters on re-auth, and
+  option 1 keeps hrxone.com serving.
+- Twilio numbers: +1 888 805 8650 and +1 312 500 4352 both route messages via
+  the "C1 Messaging" service; number SMS webhook
+  `https://us-central1-hrx1-d3beb.cloudfunctions.net/handleInboundSms`;
+  service inbound `…/twilioInboundSmsWebhook` — unaffected.
+- Toll-free verification (888), APPROVED 2026-01-08: business website
+  `https://www.c1staffing.com/`, opt-in workflow URL
+  `https://hrxone.com/c1/apply`, plus `hrxone.com/privacy` and
+  `hrxone.com/consent`. ☠️ Add `/c1/apply` to the hrxone.com keep-list.
+- A2P 10DLC: campaign CM6ad9ea96b377abe2e29d8b65e06b4167 (MG2dd6…) VERIFIED
+  2026-09-09 cites `https://hrxone.com`, `/privacy`, `/terms`, `/signup`,
+  `/sms-optin.html`, `/consent`. Two older campaigns (MG98999…, MGd6a69…)
+  are Failed/Rejected (2025-10-09) and irrelevant.
+- Conclusion under option 1: no Slack or Twilio change needed. Only a future
+  hrxone.com retirement would touch them (keep-list: `/c1/apply`, `/signup`,
+  `/privacy`, `/terms`, `/consent`, `/sms-optin.html`, `/sms-privacy`).
