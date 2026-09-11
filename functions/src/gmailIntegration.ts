@@ -353,6 +353,13 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
       return;
     }
 
+    // Marco's mailbox (m.gomez@, 2026-09-11) — tokens go to tenants/{tid}/integrations/marcoMailbox.
+    if (parsedState?.purpose === 'marcoMailbox') {
+      const { handlePersonaMailboxOAuth } = await import('./natalie/natalieMailbox');
+      await handlePersonaMailboxOAuth('marco', code, parsedState, res);
+      return;
+    }
+
     // Deborah's mailbox (d.waltermyer@) — Sodexo contact intros; tokens go to
     // tenants/{tid}/integrations/deborahMailbox.
     if (parsedState?.purpose === 'deborahMailbox') {

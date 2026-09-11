@@ -1,26 +1,28 @@
 /**
- * Natalie's Gmail (n.brooks@c1staffing.com) — roadmap Phase 4.
+ * Persona Gmail — Natalie (n.brooks@c1staffing.com, roadmap Phase 4) and Marco
+ * (m.gomez@c1staffing.com, 2026-09-11; personas.ts).
  *
  * Same tenant-level grant shape as the sales-outreach mailbox
- * (tenants/{t}/integrations/natalieMailbox { connected, gmailTokens.refresh_token,
- * email }), obtained once by opening the consent URL while signed into Google
- * as Natalie. The shared gmailOAuthCallback HTTP handler routes
- * state.purpose === 'natalieMailbox' here.
+ * (tenants/{t}/integrations/{natalieMailbox|marcoMailbox} { connected,
+ * gmailTokens.refresh_token, email }), obtained once by opening the consent URL
+ * while signed into Google as the persona. The shared gmailOAuthCallback HTTP
+ * handler routes state.purpose === 'natalieMailbox' / 'marcoMailbox' here.
  *
  * Tools built on it: read_inbox (recent threads, who/what/needs-reply) and
- * send_email (as her, only when a recruiter explicitly asks). The morning
- * brief lists unread threads that look like they need a human.
+ * send_email (as the persona, only when a recruiter explicitly asks). The
+ * morning brief lists unread threads that look like they need a human.
  */
 import * as admin from 'firebase-admin';
 import { google, type gmail_v1 } from 'googleapis';
 import { defineString } from 'firebase-functions/params';
 import type { Response } from 'express';
 import { logger } from 'firebase-functions/v2';
+import { PERSONAS, type PersonaId } from './personas';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
 
-export const NATALIE_EMAIL = 'n.brooks@c1staffing.com';
+export const NATALIE_EMAIL = PERSONAS.natalie.email;
 const clientId = defineString('GOOGLE_CLIENT_ID');
 const clientSecret = defineString('GOOGLE_CLIENT_SECRET');
 const redirectUri = defineString('GOOGLE_REDIRECT_URI');
@@ -29,27 +31,39 @@ export const NATALIE_GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/userinfo.email',
 ];
+/** Marco also gets settings.basic so his Gmail signature can be set by API (Natalie's was set in the UI). */
+export const PERSONA_GMAIL_SCOPES: Record<PersonaId, string[]> = {
+  natalie: NATALIE_GMAIL_SCOPES,
+  marco: [...NATALIE_GMAIL_SCOPES, 'https://www.googleapis.com/auth/gmail.settings.basic'],
+};
+/** OAuth state.purpose and the integrations doc id. */
+export const MAILBOX_PURPOSE: Record<PersonaId, string> = { natalie: 'natalieMailbox', marco: 'marcoMailbox' };
 
 const trim = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
-export const mailboxRef = (tenantId: string) => db.doc(`tenants/${tenantId}/integrations/natalieMailbox`);
+export const mailboxRef = (tenantId: string, persona: PersonaId = 'natalie') => db.doc(`tenants/${tenantId}/integrations/${MAILBOX_PURPOSE[persona]}`);
 
 function newOAuthClient() {
   return new google.auth.OAuth2(clientId.value(), clientSecret.value(), redirectUri.value());
 }
 
-/** Consent URL for Greg to open while signed into Google as Natalie. */
-export function natalieMailboxAuthUrl(tenantId: string, connectedBy: string): string {
+/** Consent URL for Greg to open while signed into Google as the persona. */
+export function personaMailboxAuthUrl(persona: PersonaId, tenantId: string, connectedBy: string): string {
   return newOAuthClient().generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
-    scope: NATALIE_GMAIL_SCOPES,
-    login_hint: NATALIE_EMAIL,
-    state: JSON.stringify({ purpose: 'natalieMailbox', tenantId, connectedBy }),
+    scope: PERSONA_GMAIL_SCOPES[persona],
+    login_hint: PERSONAS[persona].email,
+    state: JSON.stringify({ purpose: MAILBOX_PURPOSE[persona], tenantId, connectedBy }),
   });
 }
 
+export function natalieMailboxAuthUrl(tenantId: string, connectedBy: string): string {
+  return personaMailboxAuthUrl('natalie', tenantId, connectedBy);
+}
+
 /** Branch of the shared gmailOAuthCallback HTTP handler. */
-export async function handleNatalieMailboxOAuth(code: string, state: { tenantId?: string; connectedBy?: string }, res: Response): Promise<void> {
+export async function handlePersonaMailboxOAuth(persona: PersonaId, code: string, state: { tenantId?: string; connectedBy?: string }, res: Response): Promise<void> {
+  const P = PERSONAS[persona];
   const page = (title: string, body: string) =>
     `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body style="font-family: Arial, sans-serif; padding: 24px;"><h1>${title}</h1><p>${body}</p><p>You can close this window.</p></body></html>`;
   try {
@@ -64,39 +78,47 @@ export async function handleNatalieMailboxOAuth(code: string, state: { tenantId?
     const gmail = google.gmail({ version: 'v1', auth: oauth2 });
     const profile = await gmail.users.getProfile({ userId: 'me' });
     const email = trim(profile.data.emailAddress).toLowerCase();
-    if (email !== NATALIE_EMAIL) {
-      res.status(400).send(page('Wrong Google account', `This connect is for <b>${NATALIE_EMAIL}</b>, but you authorized <b>${email || 'an unknown account'}</b>. Nothing was saved — open the link in a window signed in as Natalie.`));
+    if (email !== P.email) {
+      res.status(400).send(page('Wrong Google account', `This connect is for <b>${P.email}</b>, but you authorized <b>${email || 'an unknown account'}</b>. Nothing was saved — open the link in a window signed in as ${P.firstName}.`));
       return;
     }
     if (!tokens.refresh_token) {
-      res.status(400).send(page('No refresh token', 'Google did not return a refresh token. Remove the app at myaccount.google.com/permissions for Natalie and try the link again.'));
+      res.status(400).send(page('No refresh token', `Google did not return a refresh token. Remove the app at myaccount.google.com/permissions for ${P.firstName} and try the link again.`));
       return;
     }
-    await mailboxRef(tenantId).set(
+    await mailboxRef(tenantId, persona).set(
       {
         connected: true,
         email,
         gmailTokens: { refresh_token: tokens.refresh_token, email },
         connectedBy: trim(state.connectedBy) || null,
         connectedAt: admin.firestore.FieldValue.serverTimestamp(),
-        scopes: NATALIE_GMAIL_SCOPES,
+        scopes: PERSONA_GMAIL_SCOPES[persona],
       },
       { merge: true },
     );
-    res.status(200).send(page('Natalie\'s mailbox is connected', `HRX can now read and send as <b>${email}</b>.`));
+    res.status(200).send(page(`${P.firstName}'s mailbox is connected`, `HRX can now read and send as <b>${email}</b>.`));
   } catch (err) {
-    logger.error('[natalie] mailbox OAuth failed', { err: err instanceof Error ? err.message : String(err) });
+    logger.error(`[${persona}] mailbox OAuth failed`, { err: err instanceof Error ? err.message : String(err) });
     res.status(500).send(page('Connection failed', 'Something went wrong storing the grant. Check the function logs.'));
   }
 }
 
-export async function natalieGmail(tenantId: string): Promise<gmail_v1.Gmail | null> {
-  const cfg = (await mailboxRef(tenantId).get()).data() ?? {};
+export async function handleNatalieMailboxOAuth(code: string, state: { tenantId?: string; connectedBy?: string }, res: Response): Promise<void> {
+  return handlePersonaMailboxOAuth('natalie', code, state, res);
+}
+
+export async function personaGmail(persona: PersonaId, tenantId: string): Promise<gmail_v1.Gmail | null> {
+  const cfg = (await mailboxRef(tenantId, persona).get()).data() ?? {};
   const rt = trim((cfg.gmailTokens as Record<string, unknown> | undefined)?.refresh_token);
   if (cfg.connected !== true || !rt) return null;
   const oauth2 = newOAuthClient();
   oauth2.setCredentials({ refresh_token: rt });
   return google.gmail({ version: 'v1', auth: oauth2 });
+}
+
+export async function natalieGmail(tenantId: string): Promise<gmail_v1.Gmail | null> {
+  return personaGmail('natalie', tenantId);
 }
 
 function header(msg: gmail_v1.Schema$Message, name: string): string {
@@ -133,8 +155,8 @@ export interface InboxItem {
 }
 
 /** Recent inbox threads (newest first). `query` is Gmail search syntax. */
-export async function readInbox(tenantId: string, opts: { query?: string; max?: number } = {}): Promise<{ connected: boolean; items: InboxItem[] }> {
-  const gmail = await natalieGmail(tenantId);
+export async function readInbox(tenantId: string, opts: { query?: string; max?: number; persona?: PersonaId } = {}): Promise<{ connected: boolean; items: InboxItem[] }> {
+  const gmail = await personaGmail(opts.persona ?? 'natalie', tenantId);
   if (!gmail) return { connected: false, items: [] };
   const list = await gmail.users.messages.list({ userId: 'me', q: opts.query || 'in:inbox newer_than:3d', maxResults: Math.min(opts.max ?? 15, 40) });
   const items: InboxItem[] = [];
@@ -164,10 +186,11 @@ function b64url(s: string): string {
   return Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** Send (or reply, when threadId + inReplyTo are given) as Natalie. */
-export async function sendEmail(tenantId: string, input: { to: string; subject: string; body: string; threadId?: string; inReplyToMessageId?: string }): Promise<{ sent: boolean; messageId?: string; error?: string }> {
-  const gmail = await natalieGmail(tenantId);
-  if (!gmail) return { sent: false, error: 'Natalie\'s mailbox is not connected yet' };
+/** Send (or reply, when threadId + inReplyTo are given) as the persona. */
+export async function sendEmail(tenantId: string, input: { to: string; subject: string; body: string; threadId?: string; inReplyToMessageId?: string }, persona: PersonaId = 'natalie'): Promise<{ sent: boolean; messageId?: string; error?: string }> {
+  const P = PERSONAS[persona];
+  const gmail = await personaGmail(persona, tenantId);
+  if (!gmail) return { sent: false, error: `${P.firstName}'s mailbox is not connected yet` };
   let refs = '';
   if (input.inReplyToMessageId) {
     try {
@@ -179,8 +202,8 @@ export async function sendEmail(tenantId: string, input: { to: string; subject: 
       /* send without threading headers */
     }
   }
-  const signature = '\n\n—\nNatalie Brooks\nRecruiting Assistant, C1 Staffing\nn.brooks@c1staffing.com';
-  const raw = `From: Natalie Brooks <${NATALIE_EMAIL}>\r\nTo: ${input.to}\r\nSubject: ${input.subject}\r\n${refs}Content-Type: text/plain; charset=utf-8\r\n\r\n${input.body.trim()}${signature}`;
+  const signature = `\n\n—\n${P.displayName}\n${P.title}, C1 Staffing\n${P.email}`;
+  const raw = `From: ${P.displayName} <${P.email}>\r\nTo: ${input.to}\r\nSubject: ${input.subject}\r\n${refs}Content-Type: text/plain; charset=utf-8\r\n\r\n${input.body.trim()}${signature}`;
   try {
     const res = await gmail.users.messages.send({ userId: 'me', requestBody: { raw: b64url(raw), ...(input.threadId ? { threadId: input.threadId } : {}) } });
     return { sent: true, messageId: res.data.id ?? undefined };

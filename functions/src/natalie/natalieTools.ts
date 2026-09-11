@@ -188,13 +188,13 @@ export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: 'read_inbox',
     description:
-      "Read Natalie's own email inbox (n.brooks@c1staffing.com): recent threads with sender, subject, and a preview, flagged when they come from automated senders (Fieldglass / Flex notifications). Use for 'anything in your email from Sodexo?' or 'did the Flex team email you?'. Optional Gmail search query (e.g. 'from:indeedflex newer_than:1d').",
+      "Read your own C1 email inbox: recent threads with sender, subject, and a preview, flagged when they come from automated senders (Fieldglass / Flex notifications). Use for 'anything in your email from Sodexo?' or 'did the Flex team email you?'. Optional Gmail search query (e.g. 'from:indeedflex newer_than:1d').",
     input_schema: { type: 'object', properties: { query: { type: 'string' }, max: { type: 'number' } }, required: [] },
   },
   {
     name: 'send_email',
     description:
-      'Send an email as Natalie (n.brooks@c1staffing.com). Only when the person explicitly asked you to email someone; keep it short and professional. To reply in an existing thread pass threadId and inReplyToMessageId from read_inbox.',
+      'Send an email as yourself from your own C1 mailbox. Only when the person explicitly asked you to email someone; keep it short and professional. To reply in an existing thread pass threadId and inReplyToMessageId from read_inbox.',
     input_schema: {
       type: 'object',
       properties: { to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' }, threadId: { type: 'string' }, inReplyToMessageId: { type: 'string' } },
@@ -744,12 +744,12 @@ export async function runNatalieTool(name: string, input: Record<string, unknown
     case 'worker_reach_blast':
       return workerReachBlast({ tenantId: ctx.tenantId, jobOrderId: s(input.jobOrderId), radiusMiles: Number(input.radiusMiles) || 30, message: s(input.message) || undefined, askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack });
     case 'read_inbox': {
-      const r = await readInbox(ctx.tenantId, { query: s(input.query) || undefined, max: Number(input.max) || 15 });
-      return r.connected ? r : { error: "Natalie's mailbox is not connected to HRX yet — Greg needs to run the one-time Google consent for n.brooks@." };
+      const r = await readInbox(ctx.tenantId, { query: s(input.query) || undefined, max: Number(input.max) || 15, persona: personaOf(ctx).id });
+      return r.connected ? r : { error: `${personaOf(ctx).firstName}'s mailbox is not connected to HRX yet — Greg needs to run the one-time Google consent for ${personaOf(ctx).email}.` };
     }
     case 'send_email': {
-      const r = await sendEmail(ctx.tenantId, input as { to: string; subject: string; body: string; threadId?: string; inReplyToMessageId?: string });
-      await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'email', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { to: s(input.to), subject: s(input.subject) }, result: r as Record<string, unknown>, summary: r.sent ? `Emailed ${s(input.to)}: "${s(input.subject).slice(0, 80)}"` : `Tried to email ${s(input.to)} but it failed (${r.error})` });
+      const r = await sendEmail(ctx.tenantId, input as { to: string; subject: string; body: string; threadId?: string; inReplyToMessageId?: string }, personaOf(ctx).id);
+      await recordNatalieAction({ tenantId: ctx.tenantId, persona: ctx.persona, kind: 'email', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { to: s(input.to), subject: s(input.subject) }, result: r as Record<string, unknown>, summary: r.sent ? `Emailed ${s(input.to)}: "${s(input.subject).slice(0, 80)}"` : `Tried to email ${s(input.to)} but it failed (${r.error})` });
       return r;
     }
     case 'add_worker_note':
