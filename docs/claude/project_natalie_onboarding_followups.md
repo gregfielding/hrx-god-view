@@ -20,7 +20,23 @@ Code: `functions/src/natalie/natalieOnboarding.ts`. Runs inside the `natalieSlac
 | Trigger | Where it is read | Clock starts |
 |---|---|---|
 | Recruiter starts onboarding | `tenants/{T}/onboarding_instances/{assignmentId}` (createdBy.userId = recruiter, status ≠ complete) | instance `createdAt` |
+| Job-order hiring plan hires a worker (2026-09-11) | `tenants/{T}/job_orders/{jo}/hiring_plan_hires/{uid}` status `ok` on every JO with `hiringPlan.enabled` (onboarded into the on-call pool, or screening-only) | `onboardedAt` / `completedAt` |
 | A human orders a screening | top-level `backgroundChecks` (candidateId, tenantId, hrxStatus in awaiting_applicant / submitted / in_progress / report_ready) | check `createdAt` |
+
+**Plan hires have no assignment and no onboarding instance** (`runStartOnCallEmploymentFlow` only
+writes `worker_onboarding` + `entity_employments`), so before 2026-09-11 Natalie only caught them
+through the screening order — with no job context and an empty checklist. Now the plan's attempt log
+enrolls them (`source: 'hiring_plan'`, job title/site/state/hiring entity from the JO); a follow-up
+the screening path armed first is upgraded in place. With no assignment, `buildOnboardingSnapshot`
+builds the checklist with `stepsWithoutAssignment` from the same inputs assignment readiness uses
+(`worker_payroll_accounts/{uid}__{entityKey}`, `everee_workers/{entityId}__{uid}.readinessMirror`,
+`entity_employments/{uid}__{entityKey}`, `users.workEligibilityAttestation`) — restated from
+`src/utils/employmentMinimalChecklistModel.ts` because that file is outside functions' tsc root; keep
+them in step.
+
+**Natalie as the assigned recruiter (OnTrac JOs, 2026-09-11)**: escalations DM the JO's
+`assignedRecruiters`, and her HRX uid maps to her own Slack user `U0BV79X65R9`. `escalationDmTargets`
+drops her, so a Natalie-only order posts to #recruiting instead of a DM to herself.
 
 Natalie's OWN screening orders already carry `natalie_sms_watches/{uid}.bgFollowup` (daily
 nudges); when both exist, a checkpoint text stamps `bgFollowup.lastNudgeAt` so the worker never

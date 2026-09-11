@@ -64,8 +64,12 @@
   (`functions/.scratch/cl-mark-posted-524.ts`). Claude filled the form in Greg's Chrome only after
   the session left Auto mode — the Auto-mode classifier blocked typing into and submitting the
   Craigslist form even with Greg's go-ahead in chat.
-- The form's existing `craigslistUrl` field doubles as the "live URL" input; `craigslist.status`
-  is set to 'posted' by the tool or (TODO) by the form when a craigslist.org URL is pasted.
+- The form's existing `craigslistUrl` field doubles as the "live URL" input. The form never flips
+  `craigslist.status`, so three OnTrac posts (#534/#536/#537) sat at 'ready' with live URLs and no
+  expiry (2026-09-11). Since then `drainCraigslistDrafts` marks any 'ready' post whose
+  `craigslistUrl` is a craigslist.org link as posted (`normalizeCraigslistUrl` adds the missing
+  https://; +30d expiry via `craigslistMarkPosted`) and says so in the draft's #recruiting thread.
+  A later form save can still write back the stale 'ready' object; the drain then re-marks it.
 - Site map covers the metros C1 works in; unknown cities fall back to the state default.
 - Queries use equality on nested fields (`craigslist.status`, `craigslist.enabled`) — auto-indexed.
 

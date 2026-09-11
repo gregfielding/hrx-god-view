@@ -12,6 +12,7 @@ released (say why).
 
 | When (PT) | Who | Target | What | Commit | Result | Notes |
 |---|---|---|---|---|---|---|
+| 2026-09-11 12:10 | Greg (Claude) | functions | `submitWorkerAiPrescreenInterview`, `reviewAndRescoreUser`, `natalieSlackInbox` | e560c81e | ✅ | Interview scores reach the tier scorecard (riskProfile.topRisks serverTimestamp-in-array fix); Natalie follows job-order hiring-plan hires + never DMs herself on escalations; Craigslist ready+URL → posted (4 OnTrac posts flipped at 19:01Z). Built from a clean worktree (main had another session's uncommitted Sodexo intro work) |
 | 2026-09-11 12:04 | Greg (Claude) | functions | `dispatchScheduledWorkerReminders`, `handleInboundSms`, `twilioInboundSmsWebhook` | 6aeefa58 | ✅ | T+15 late check-in gate (Flex punch lookup + feed-freshness guard, canonical-type fix); a NO after start now binds to the started shift (reply handler, so the inbound pair together). All three source zips diffed first: only older committed blobs differed. Built from a worktree with main's env files (shasum-identical), `--non-interactive`. T+30 probe still muted |
 | 2026-09-11 11:45 | Greg (Claude) | hosting | Per-host OTP autofill (web passes webOtpHost) + web push dedupe across origins | 55bcb9ea | ✅ | Retry with 8GB heap; main.c30b0508.js; deep links 200 on both hosts |
 | 2026-09-11 11:43 | Greg (Claude) | hosting | Per-host OTP autofill (web passes webOtpHost) + web push dedupe across origins | 55bcb9ea | ❌ | Build OOM (fork-ts-checker) — nothing uploaded; retry succeeded 11:45 |
