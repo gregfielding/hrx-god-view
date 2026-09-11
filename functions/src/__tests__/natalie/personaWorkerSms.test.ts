@@ -1,4 +1,4 @@
-import { classifySender, describeShift, emailsInText, matchNameAmongAccounts, parseWorkerDecision, phoneFormatVariants, recentReplyCount, workerSmsSystemPrompt } from '../../natalie/personaWorkerSms';
+import { classifySender, describeShift, emailsInText, matchNameAmongAccounts, parseWorkerDecision, payrollLinkText, payrollSetupUrl, phoneFormatVariants, recentReplyCount, workerSmsSystemPrompt } from '../../natalie/personaWorkerSms';
 
 const T = 'BCiP2bQ9CgVOCTfV6MhD';
 
@@ -89,5 +89,20 @@ describe('identifying a texter', () => {
   it('emailsInText', () => {
     expect(emailsInText('I applied with Ana.Ibarra@Gmail.com and ana@yahoo.com')).toEqual(['ana.ibarra@gmail.com', 'ana@yahoo.com']);
     expect(emailsInText('no email here')).toEqual([]);
+  });
+});
+
+describe('payroll link fallback (the Everee resend is a dead path for both entities)', () => {
+  it('links the entity-scoped payroll page, and a bare one when the entity is unknown', () => {
+    expect(payrollSetupUrl('https://hrxone.com', 'c1_events_llc')).toBe('https://hrxone.com/c1/workers/earnings/3138');
+    expect(payrollSetupUrl('https://hrxone.com', 'c1_select_llc')).toBe('https://hrxone.com/c1/workers/earnings/3133');
+    expect(payrollSetupUrl('https://hrxone.com', null)).toBe('https://hrxone.com/c1/workers/earnings');
+  });
+  it('keeps the promise in the worker language, signed by the persona', () => {
+    expect(payrollLinkText('marco', 'Ana', 'https://hrxone.com/c1/workers/earnings/3138', 'es'))
+      .toBe('Hola Ana, aquí está tu configuración de pago (depósito directo y formularios): https://hrxone.com/c1/workers/earnings/3138 — inicia sesión con este mismo número. — Marco, C1 Staffing');
+    const en = payrollLinkText('natalie', '', 'https://hrxone.com/c1/workers/earnings/3133', 'en');
+    expect(en.startsWith("Hi, here's your payroll setup")).toBe(true);
+    expect(en.endsWith('— Natalie, C1 Staffing')).toBe(true);
   });
 });

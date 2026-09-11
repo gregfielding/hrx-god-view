@@ -117,6 +117,30 @@ export function emailsInText(text: string): string[] {
   return [...new Set((text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []).map((e) => e.toLowerCase()))].slice(0, 3);
 }
 
+/**
+ * Pure: where a worker finishes payroll setup on the web.
+ *
+ * ☠️ 2026-09-11 (found by the Claim Shift session): `runPayrollOnboardingInviteResend` is a DEAD path for both
+ * Everee entities — c1_events_llc and c1_select_llc have `payrollSettings: null` and no onboarding URL, so it
+ * returns ok:false `payroll_not_applicable_or_no_url` every time. A worker was told "sending your Everee link
+ * now" and nothing went out. Real Everee invites go out at hire time via
+ * runEvereePayrollOnboardingInviteAfterOnCallProvision; when the resend is skipped, send this link instead so the
+ * persona's promise is kept. Entity-scoped form matches payrollPaymentIssueSweep / the readiness action items.
+ */
+export const EVEREE_TENANT_BY_ENTITY: Record<string, string> = { c1_select_llc: '3133', c1_events_llc: '3138' };
+export function payrollSetupUrl(origin: string, hiringEntityId?: string | null): string {
+  const tid = EVEREE_TENANT_BY_ENTITY[s(hiringEntityId)];
+  return `${origin}/c1/workers/earnings${tid ? `/${tid}` : ''}`;
+}
+
+/** Pure: the text sent when the Everee resend is skipped, so "I'm sending it now" stays true. */
+export function payrollLinkText(persona: PersonaId, firstName: string, url: string, lang: 'en' | 'es'): string {
+  const hi = firstName ? ` ${firstName}` : '';
+  return lang === 'es'
+    ? `Hola${hi}, aquí está tu configuración de pago (depósito directo y formularios): ${url} — inicia sesión con este mismo número. ${smsSignature(persona, 'es')}`
+    : `Hi${hi}, here's your payroll setup (direct deposit and tax forms): ${url} — sign in with this same number. ${smsSignature(persona)}`;
+}
+
 /** Pure: replies sent to this phone in the last hour. */
 export function recentReplyCount(replyTimes: number[], nowMs: number): number {
   return replyTimes.filter((t) => nowMs - t < HOUR).length;
@@ -380,11 +404,25 @@ export async function drainWorkerPersonaSms(tokens: PersonaTokens): Promise<numb
             const r = await sendWorkerMessageInternal(phone, portalLinkText(ctx.firstName, ctx.snapshot.background.portalLink, ctx.snapshot.background.packageName, false, { persona, lang: ctx.lang }), { tenantId: TENANT, userId: uid, source: 'system', messageTypeId: `${P.smsPrefix}bg_portal_link`, systemContext: true } as never);
             notes.push(r.success ? 'resent their background-check form link' : 'background link resend failed');
           } else if (a === 'resend_everee_invite' && ctx.snapshot?.everee.inviteSent && !ctx.snapshot.everee.complete && ctx.snapshot.hiringEntityId) {
+            let resent = false;
+            let skipReason = '';
             try {
               const { runPayrollOnboardingInviteResend } = await import('../messaging/payrollInviteResend');
               const r = await runPayrollOnboardingInviteResend({ tenantId: TENANT, userId: uid, hiringEntityId: ctx.snapshot.hiringEntityId, initiatedByUid: persona, assignmentId: ctx.assignmentId });
-              notes.push(r.ok ? 'resent their Everee invite' : `Everee resend skipped (${s((r as { skipReason?: string }).skipReason) || 'not ok'})`);
-            } catch (e) { notes.push(`Everee resend failed: ${String(e).slice(0, 100)}`); }
+              resent = r.ok === true;
+              skipReason = s((r as { skipReason?: string }).skipReason);
+            } catch (e) { skipReason = String(e).slice(0, 100); }
+            if (resent) {
+              notes.push('resent their Everee invite');
+            } else {
+              // Never leave "I'm sending it now" unfulfilled: the Everee resend is a dead path for both entities,
+              // so send the web payroll page instead and put the reason in the thread.
+              const url = payrollSetupUrl(PUBLIC_APP_ORIGIN, ctx.snapshot.hiringEntityId);
+              const r2 = await sendWorkerMessageInternal(phone, payrollLinkText(persona, ctx.firstName, url, ctx.lang), { tenantId: TENANT, userId: uid, source: 'system', messageTypeId: `${P.smsPrefix}payroll_link`, systemContext: true } as never);
+              notes.push(r2.success
+                ? `Everee resend is a dead path (${skipReason || 'not ok'}) — texted them ${url} instead`
+                : `:warning: Everee resend skipped (${skipReason || 'not ok'}) AND the payroll link text failed (${r2.error ?? r2.errorCode}) — they were promised a link and got nothing`);
+            }
           }
         }
       }
