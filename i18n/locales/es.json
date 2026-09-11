@@ -1363,7 +1363,7 @@
     "claimFinishSetup": "Completar configuración",
     "claimFinishSetupCta": "Completa tu configuración para reservar",
     "claimSetupCardTitle": "Completa tu configuración para reservar turnos",
-    "claimSetupCardBody": "Reserva turnos al instante cuando tu foto de perfil, tu depósito directo y tu formulario de impuestos 1099 estén listos.",
+    "claimSetupCardBody": "Reserva turnos al instante cuando tu foto de perfil esté aprobada y tu nómina esté configurada.",
     "claimSetupStepPhoto": "Foto de perfil aprobada",
     "claimSetupStepPayroll": "Nómina configurada (formulario de impuestos y depósito directo)",
     "claimSetupProgress": "{done} de {total} completados",
