@@ -9,7 +9,7 @@
 
 The full `npx jest` run reports these 27 tests as "skipped". Skipped tests can go stale without anyone noticing: on 2026-09-11 one of them had a broken assertion. It checked `a && b && c` with `.to.equal(false)`, but the expression short-circuits to `undefined`, not `false`.
 
-**Full run, including them:** `npm run test:jest` from `functions/`. The script wraps the whole jest suite in `firebase emulators:exec --only firestore --project demo-test`. It uses the repo-root firebase-tools (`npm --prefix .. exec`). The inner command calls `node node_modules/jest/bin/jest.js` (cwd stays `functions/`) rather than bare `jest`. Inside `npm --prefix .. exec`, the root's `node_modules/.bin` comes first on PATH, and bare `jest` resolves to react-scripts' jest 27.5.1, not functions' jest 29. Plain `npx jest` still works without Java 21 but skips these 27 tests.
+**Full run, including them:** `npm run test:jest` from `functions/`. The script wraps the whole jest suite in `firebase emulators:exec --only firestore --project demo-test`. It uses the repo-root firebase-tools (`npm --prefix .. exec`). The inner command calls `node node_modules/jest/bin/jest.js` (cwd stays `functions/`) rather than bare `jest`. Inside `npm --prefix .. exec`, the root's `node_modules/.bin` comes first on PATH, and bare `jest` resolves to react-scripts' jest 27.5.1, not functions' jest 29. `npm test` (plain `jest`, since 2026-09-11; it used to be a mocha run that aborted at load on the jest-only specs) and `npx jest` still work without Java 21 but skip these 27 tests.
 
 **Just these three** (from the repo root; the emulator starts, runs the command, then stops):
 

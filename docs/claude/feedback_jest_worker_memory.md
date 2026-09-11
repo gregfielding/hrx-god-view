@@ -24,8 +24,10 @@ workers, and two of them reached 2.3 GB.
 - One or two files: `npx jest --runInBand <files>` (no pool at all).
 - `--maxWorkers=N` on the command line overrides the config — only raise it
   when nothing else heavy is running, and never to the default.
-- The mocha suite (`npm test` → `mocha -r ts-node/register …`) runs in a
-  single process and wasn't part of this.
+- `npm test` is plain `jest` (since 2026-09-11, so these caps apply to it).
+  It used to run mocha over the same files, but mocha aborted at load on the
+  jest-only specs. `npm run test:jest` is the full run with the Firestore
+  emulator suites; see feedback_functions_emulator_tests.md.
 
 **Diagnosing next time:**
 - `top -l 1 -o mem -stats pid,ppid,command,mem,cmprs` shows memory including
