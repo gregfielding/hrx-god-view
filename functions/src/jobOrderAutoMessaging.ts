@@ -433,7 +433,8 @@ interface RunAutoMessagingOptions {
 export async function runJobOrderAutoMessagingForShift(
   tenantId: string,
   jobOrderId: string,
-  shiftId: string,
+  /** Null for a posting-only blast: career job orders are often a jobs-board posting with no shifts (Greg 2026-09-11). */
+  shiftId: string | null,
   options: RunAutoMessagingOptions = {},
 ): Promise<RunAutoMessagingResult> {
   const { bypassCooldown = false, source = 'shift_created', triggeredByUid = null } = options;
@@ -530,7 +531,9 @@ export async function runJobOrderAutoMessagingForShift(
   const boardUrl = buildWorkerJobPostUrl(jobPostId || undefined);
   // ?invite=1 flips the landing page into its invited state (banner +
   // expectation copy) — part of the Tier 1 invitation framing.
-  const inviteUrl = boardUrl
+  // Posting-only blasts (no shift) land on the plain posting — the invited
+  // state promises a shift.
+  const inviteUrl = boardUrl && shiftId
     ? `${boardUrl}${boardUrl.includes('?') ? '&' : '?'}invite=1`
     : boardUrl;
 
@@ -543,10 +546,10 @@ export async function runJobOrderAutoMessagingForShift(
   const invitePayRate = Number(jobOrder.payRate);
   let inviteDateIso: string | null = null;
   try {
-    const shiftSnap = await db
-      .doc(`tenants/${tenantId}/job_orders/${jobOrderId}/shifts/${shiftId}`)
-      .get();
-    const rawStart = shiftSnap.data()?.startDate;
+    const shiftSnap = shiftId
+      ? await db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}/shifts/${shiftId}`).get()
+      : null;
+    const rawStart = shiftSnap?.data()?.startDate;
     const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(rawStart ?? '').trim());
     inviteDateIso = m ? m[1] : null;
   } catch {
@@ -760,7 +763,7 @@ export async function runJobOrderAutoMessagingForShift(
                 : source === 'manual_resend'
                   ? 'auto_messaging_shift_resend'
                   : 'auto_messaging_shift',
-              sourceId: `${jobOrderId}_${shiftId}`,
+              sourceId: `${jobOrderId}_${shiftId ?? 'posting'}`,
               messageTypeId: 'shift_invite',
             });
             if (result.success) smsDelivered += 1;
@@ -1181,7 +1184,8 @@ export const sendJobOrderWorkerReachBlast = onCall(
     await assertWorkerReachStaff(request.auth.uid, request.auth.token as Record<string, unknown>, tenantId);
 
     // Anchor the send-log row to the newest shift (same convention as the
-    // resend callable).
+    // resend callable). A job order with no shifts — a career posting —
+    // blasts the posting itself (Greg 2026-09-11: OnTrac careers).
     const shiftsRef = db.collection(`tenants/${tenantId}/job_orders/${jobOrderId}/shifts`);
     let shiftSnap;
     try {
@@ -1189,10 +1193,7 @@ export const sendJobOrderWorkerReachBlast = onCall(
     } catch {
       shiftSnap = await shiftsRef.limit(1).get();
     }
-    const shiftId = shiftSnap?.docs?.[0]?.id;
-    if (!shiftId) {
-      throw new HttpsError('failed-precondition', 'No shifts on this job order to blast for.');
-    }
+    const shiftId = shiftSnap?.docs?.[0]?.id ?? null;
 
     const result = await runJobOrderAutoMessagingForShift(tenantId, jobOrderId, shiftId, {
       bypassCooldown: true,

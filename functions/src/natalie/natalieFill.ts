@@ -513,8 +513,8 @@ export async function acceptOfferFromReply(watch: Record<string, unknown>, reply
 export async function workerReachBlast(input: { tenantId: string; jobOrderId: string; radiusMiles: number; message?: string; askedBySlackUserId?: string; askedByName?: string; slack?: SlackRef }): Promise<Record<string, unknown>> {
   const radius = [15, 30, 60].includes(Number(input.radiusMiles)) ? Number(input.radiusMiles) : 30;
   const shifts = await upcomingShifts(input.tenantId, input.jobOrderId, 1);
-  if (!shifts.length) return { sent: false, error: 'no upcoming shift on this order' };
-  const result = await runJobOrderAutoMessagingForShift(input.tenantId, input.jobOrderId, shifts[0].shiftId, {
+  // No upcoming shift (e.g. a career posting): blast the posting itself.
+  const result = await runJobOrderAutoMessagingForShift(input.tenantId, input.jobOrderId, shifts[0]?.shiftId ?? null, {
     bypassCooldown: true,
     source: 'manual_blast',
     triggeredByUid: NATALIE_HRX_UID,
