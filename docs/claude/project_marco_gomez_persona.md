@@ -195,6 +195,16 @@ first search our users to see who it is". `functions/src/natalie/personaWorkerSm
   `natalie_actions` + worker activity feed (kind `worker_sms_reply`); queue `persona_worker_sms_inbox`, history
   `persona_sms_threads/{persona}__{phone}.workerTurns`.
 - **Kill switch**: `tenants/{T}/app_config/natalie.workerSmsConversations = false`.
+- **LIVE 2026-09-11 15:04** (functions natalieSlackInbox + handleInboundSms + twilioInboundSmsWebhook @ 0a4e0c45);
+  no errors since. Staff ↔ persona texting/email shipped at 14:08 in the same way.
+
+## ☠️ Email Subject encoding (fixed 2026-09-11, LIVE)
+Natalie's `sendEmail` hand-rolled `Subject: ${input.subject}` with raw UTF-8, so an em dash reached inboxes as
+`â€”` — and because the persona now answers staff email in-thread, every Re: re-garbled the previous subject
+(Greg's screenshot: "Re: Resume text ÃƒÂ‚Ã‚Â¢…"). Both personas now send through `buildMimeMessage`
+(`composePersonaEmailRaw`), and `mimeHeaders.repairMojibake()` / `normalizeReplySubject()` clean subjects on the
+way in and out, so existing garbled threads heal on the next reply. See feedback_email_header_encoding.md.
+LIVE via the Claim Shift session's natalieSlackInbox deploy 2026-09-11 15:10 (9da2a72d contains 6c768c62).
 
 ## Gmail connect (Marco) — ✅ CONNECTED 2026-09-11 (grant has gmail.settings.basic)
 `gmailOAuthCallback` handles `state.purpose === 'marcoMailbox'` (deployed 2026-09-11 from a clean worktree —
