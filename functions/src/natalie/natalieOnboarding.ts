@@ -35,6 +35,7 @@ import { postAsNatalie } from '../messaging/slackAsNatalie';
 import { recordNatalieAction, type SlackRef } from './natalieAudit';
 import { NATALIE_MODEL } from './natalieAgent';
 import { latestBackgroundCheckDoc } from './natalieFill';
+import { C1_EVENTS_ENTITY_ID, loadEventsSetupSteps, eventsSetupDone, placeApplicantOnAppliedShift } from './eventsApplicantSetup';
 import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 import { PERSONAS, effectivePersona, loadPersonaRuntime, scopePersona, smsSignature, tokenFor, workerLanguage, type PersonaId, type PersonaRuntime, type PersonaTokens } from './personas';
 
@@ -180,6 +181,9 @@ export async function buildOnboardingSnapshot(tenantId: string, userId: string, 
       if (r.key === 'background_check') continue;
       steps.push({ key: r.key, label: STEP_LABELS[r.key] || r.label, status: r.status, actor: r.key === 'payroll_setup' && r.status === 'missing' ? 'recruiter' : 'worker' });
     }
+  } else if (hiringEntityId === C1_EVENTS_ENTITY_ID) {
+    // C1 Events (1099) with no assignment: profile photo · direct deposit · W-9 — no I-9 / W-4 (2026-09-11).
+    steps.push(...(await loadEventsSetupSteps(db, tenantId, userId)));
   } else if (hiringEntityId) {
     // Hiring-plan / on-call pool hire: no assignment, so no readinessSnapshotV1 to read.
     const entityKey = ENTITY_KEYS[hiringEntityId];
@@ -228,7 +232,9 @@ export async function buildOnboardingSnapshot(tenantId: string, userId: string, 
 interface FollowupDoc {
   tenantId: string; userId: string; workerName: string; firstName: string; phoneE164: string;
   assignmentId: string | null; jobOrderId: string | null; jobTitle: string; site: string; hiringEntityId: string;
-  recruiterUid: string | null; recruiterName: string; source: 'onboarding_instance' | 'background_check' | 'hiring_plan';
+  recruiterUid: string | null; recruiterName: string; source: 'onboarding_instance' | 'background_check' | 'hiring_plan' | 'job_application';
+  /** job_application: the shift they applied for — placed there once their C1 Events setup is done. */
+  shiftId?: string | null; shiftDate?: string | null;
   startedAt: admin.firestore.Timestamp; tz: string; status: 'active' | 'done' | 'declined' | 'parked' | 'removed' | 'no_phone';
   nextCheckpoint: 'h1' | 'h24' | 'h72' | 'd7' | null; checkpoints: Record<string, unknown>;
   slack: SlackRef | null; transcript: Array<{ at: string; dir: 'out' | 'in'; text: string }>;
@@ -274,7 +280,7 @@ async function threadFor(token: string, channel: string, key: { jobOrderId: stri
   return slack;
 }
 
-type FollowupBase = { userId: string; assignmentId: string | null; jobOrderId: string | null; recruiterUid: string | null; startedAt: Date; source: FollowupDoc['source']; packageName?: string; hiringEntityId?: string | null };
+type FollowupBase = { userId: string; assignmentId: string | null; jobOrderId: string | null; recruiterUid: string | null; startedAt: Date; source: FollowupDoc['source']; packageName?: string; hiringEntityId?: string | null; shiftId?: string | null; shiftDate?: string | null };
 
 /** Job title / site / state / hiring entity for a follow-up: the assignment when there is one, else the job order (hiring-plan hires). */
 async function followupContext(tenantId: string, base: FollowupBase): Promise<{ asg: Record<string, unknown>; jobTitle: string; site: string; state: string; entity: string; jobOrderId: string | null; scope: PersonaId }> {
@@ -311,12 +317,15 @@ async function createFollowup(tokens: PersonaTokens, runtime: PersonaRuntime, na
     ? `• ${who} — onboarding started ${startedLabel} MT; first check at ${firstLabel}.`
     : base.source === 'hiring_plan'
       ? `• ${who} — hired into the pool by the hiring plan ${startedLabel} MT${base.packageName ? ` (${base.packageName} ordered)` : ''}; first check at ${firstLabel}.`
-      : `• ${who} — ${base.packageName || 'background check'} ordered; I'll make sure the form gets done and that they know the drug screen (if any) is a separate step.`;
+      : base.source === 'job_application'
+        ? `• ${who} — applied for ${jobTitle}${base.shiftDate ? ` on ${base.shiftDate}` : ''} but hasn't finished C1 Events setup (photo · direct deposit · W-9); first check at ${firstLabel}. When they're done I'll put them on that shift.`
+        : `• ${who} — ${base.packageName || 'background check'} ordered; I'll make sure the form gets done and that they know the drug screen (if any) is a separate step.`;
   await postAsNatalie(token, { channel: thread.channel, text: phone ? line : `${line}\n:warning: no usable phone on file — I can't text them: ${PUBLIC_APP_ORIGIN}/users/${base.userId}`, threadTs: thread.ts });
   const doc: FollowupDoc = {
     tenantId, userId: base.userId, workerName, firstName: s(u.firstName) || workerName.split(' ')[0], phoneE164: phone,
     assignmentId: base.assignmentId, jobOrderId, jobTitle, site, hiringEntityId: entity,
     recruiterUid: base.recruiterUid, recruiterName: rName, source: base.source,
+    ...(base.source === 'job_application' ? { shiftId: base.shiftId ?? null, shiftDate: base.shiftDate ?? null } : {}),
     startedAt: admin.firestore.Timestamp.fromDate(base.startedAt), tz: stateTz(state), status: phone ? 'active' : 'no_phone',
     nextCheckpoint: first, checkpoints: {}, slack: thread,
     transcript: [], lastIntent: null, createdAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -402,6 +411,29 @@ export async function enrollOnboardingFollowups(tokensIn: string | PersonaTokens
     const ok = await createFollowup(tokens, runtime, channel, { userId, assignmentId: asg?.id ?? null, jobOrderId: s(asg?.data.jobOrderId) || s(x.jobOrderId) || null, recruiterUid: s(x.createdBy) || s(x.requestedBy) || null, startedAt, source: 'background_check', packageName: s(x.requestedPackageName) });
     if (ok) created += 1;
   }
+  // 4) C1 Events applicants who haven't finished setup (Greg 2026-09-11: "Can Marco reach out to each of
+  // them to help them get their onboarding complete? Then he can assign them."). Applying hires them at
+  // C1 Events (eventsEntityAutoHire) with no onboarding instance or plan row, so paths 1–3 never see it.
+  // Setup = profile photo · direct deposit · W-9; once it's done the checkpoint loop places them on the
+  // shift they applied for. Single-field range (auto-indexed) + in-memory entity filter.
+  const apps = await db.collection(`tenants/${TENANT}/applications`).where('createdAt', '>=', since).orderBy('createdAt', 'desc').limit(400).get().catch(() => null);
+  const seenApplicants = new Set<string>();
+  for (const d of apps?.docs ?? []) {
+    if (created >= 10) break;
+    const x = d.data() as Record<string, unknown>;
+    const userId = s(x.userId);
+    const jobOrderId = s(x.jobOrderId);
+    if (!userId || !jobOrderId || seenApplicants.has(userId)) continue;
+    if (s(x.hiringEntityId) !== C1_EVENTS_ENTITY_ID || !['submitted', 'waitlisted'].includes(s(x.status).toLowerCase())) continue;
+    seenApplicants.add(userId); // newest live application per worker
+    const startedAt = tsToDate(x.appliedAt) ?? tsToDate(x.createdAt) ?? new Date();
+    const existing = (await db.collection(FOLLOWUPS).doc(userId).get()).data() as FollowupDoc | undefined;
+    if (existing && (existing.status === 'active' || (tsToDate(existing.startedAt)?.getTime() ?? 0) >= startedAt.getTime() - 60_000)) continue;
+    const theirs = await db.collection(`tenants/${TENANT}/assignments`).where('userId', '==', userId).limit(100).get();
+    if (theirs.docs.some((a) => s(a.get('jobOrderId')) === jobOrderId && !['cancelled', 'canceled', 'declined', 'ended', 'completed'].includes(s(a.get('status')).toLowerCase()))) continue;
+    if (eventsSetupDone(await loadEventsSetupSteps(db, TENANT, userId))) continue;
+    if (await createFollowup(tokens, runtime, channel, { userId, assignmentId: null, jobOrderId, recruiterUid: null, startedAt, source: 'job_application', hiringEntityId: C1_EVENTS_ENTITY_ID, shiftId: s(x.shiftId) || null, shiftDate: s(x.shiftDate) || null })) created += 1;
+  }
   return created;
 }
 
@@ -423,6 +455,9 @@ function listify(items: string[], and = 'and'): string {
 const ES_ITEM: Record<string, string> = {
   'I-9': 'I-9', 'direct deposit': 'depósito directo', 'tax forms': 'formularios de impuestos', handbook: 'manual', policies: 'políticas',
   'work authorization declaration': 'declaración de autorización para trabajar',
+  // C1 Events checklist (eventsApplicantSetup.ts EVENTS_STEP_LABELS — keep in step).
+  '1099 tax form (W-9)': 'formulario de impuestos 1099 (W-9)',
+  [`profile photo (${PUBLIC_APP_ORIGIN}/c1/workers/profile)`]: `foto de perfil (${PUBLIC_APP_ORIGIN}/c1/workers/profile)`,
 };
 
 export function composeCheckpointText(f: Pick<FollowupDoc, 'firstName' | 'jobTitle'>, snap: OnboardingSnapshot, checkpoint: string, opts: { persona?: PersonaId; lang?: 'en' | 'es' } = {}): string {
@@ -541,10 +576,15 @@ export async function runOnboardingCheckpoints(tokensIn: string | PersonaTokens)
     const cp = f.nextCheckpoint;
     if (!cp) continue;
     const due = (tsToDate(f.startedAt)?.getTime() ?? 0) + CHECKPOINT_HOURS[cp] * H;
-    if (Date.now() < due) continue;
-    if (!inTextingHours(f.tz || 'America/Denver')) continue; // wait for the worker's daytime
+    // Applicants waiting on a shift (job_application) are re-checked every 10 min between checkpoints so
+    // they get placed soon after they finish — no extra texts on those passes.
+    const isApplicant = f.source === 'job_application';
+    const probeDue = isApplicant && Date.now() - (tsToDate((f as unknown as { doneProbeAt?: unknown }).doneProbeAt)?.getTime() ?? 0) >= 10 * 60_000;
+    if (Date.now() < due && !probeDue) continue;
+    if (!inTextingHours(f.tz || 'America/Denver')) continue; // wait for the worker's daytime (placing sends a text too)
     const lastText = tsToDate((f as unknown as { lastTextAt?: unknown }).lastTextAt)?.getTime() ?? 0;
-    if (Date.now() - lastText < 20 * H) continue; // never two follow-up texts in one day
+    const textingPass = Date.now() >= due && Date.now() - lastText >= 20 * H; // never two follow-up texts in one day
+    if (!textingPass && !probeDue) continue;
     if (sentThisTick >= 15) break;
     const claimed = await db.runTransaction(async (tx) => {
       const cur = await tx.get(d.ref);
@@ -568,7 +608,7 @@ export async function runOnboardingCheckpoints(tokensIn: string | PersonaTokens)
         await disarmWatch(f.userId);
         touched += 1; continue;
       }
-      if (cp === 'h1' && snapshot.allWorkerDone) {
+      if (cp === 'h1' && snapshot.allWorkerDone && !isApplicant) {
         // Nothing open (or readiness not populated yet) an hour in: no text, no close — the 24h check decides.
         await d.ref.set({ nextCheckpoint: 'h24', checkpoints: { [cp]: stamp }, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         touched += 1; continue;
@@ -578,11 +618,29 @@ export async function runOnboardingCheckpoints(tokensIn: string | PersonaTokens)
           ? `:white_check_mark: ${f.workerName} has finished everything on their side.\n${slackSummary(snapshot)}\nOnly recruiter steps remain.`
           : `:white_check_mark: ${f.workerName} is fully onboarded — nothing left on either side.\n${slackSummary(snapshot)}`;
         await d.ref.set({ status: 'done', nextCheckpoint: null, checkpoints: { [cp]: stamp }, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-        await say(closing);
-        if (cp !== 'h24' || f.transcript.length) await sendSms(f, composeDoneText(f, { persona: who.persona, lang }), `${P.smsPrefix}onboarding_done`).catch(() => undefined);
+        // Applicants: put them on the shift they applied for — pending, so the standard offer text goes out.
+        let placement: { placed: boolean; assignmentId?: string; reason?: string; title?: string; date?: string } | null = null;
+        if (isApplicant && f.jobOrderId && f.shiftId) {
+          placement = await placeApplicantOnAppliedShift({ db, tenantId: f.tenantId, userId: f.userId, jobOrderId: f.jobOrderId, shiftId: f.shiftId, tz: f.tz || 'America/Chicago', persona: who.persona })
+            .catch((e: unknown) => ({ placed: false, reason: String(e).slice(0, 160) }));
+          await d.ref.set({ placement: { placed: placement.placed, assignmentId: placement.assignmentId ?? null, reason: placement.reason ?? null, at: admin.firestore.FieldValue.serverTimestamp() } }, { merge: true });
+        }
+        const placedLine = !placement
+          ? ''
+          : placement.placed
+            ? `\n:calendar: Put them on ${placement.title} on ${placement.date} as pending — the offer text went out: ${PUBLIC_APP_ORIGIN}/assignments/${placement.assignmentId}`
+            : `\n:warning: Didn't put them on the shift they applied for (${placement.reason || 'unknown'}) — a recruiter can place them from the job order.`;
+        await say(`${closing}${placedLine}`);
+        // A placed applicant's offer text is their "you're set" — no separate done text.
+        if (!placement?.placed && (cp !== 'h24' || f.transcript.length || isApplicant)) await sendSms(f, composeDoneText(f, { persona: who.persona, lang }), `${P.smsPrefix}onboarding_done`).catch(() => undefined);
         await disarmWatch(f.userId);
-        await recordNatalieAction({ tenantId: f.tenantId, persona: who.persona, kind: 'onboarding_followup_done', summary: `${f.workerName} finished their onboarding steps`, userId: f.userId, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, slack });
+        await recordNatalieAction({ tenantId: f.tenantId, persona: who.persona, kind: 'onboarding_followup_done', summary: `${f.workerName} finished their onboarding steps${placement?.placed ? ` — placed on ${placement.title} ${placement.date}` : ''}`, userId: f.userId, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, slack });
         touched += 1; continue;
+      }
+      if (!textingPass) {
+        // Applicant re-check between checkpoints: still open, nothing to text yet.
+        await d.ref.set({ doneProbeAt: admin.firestore.FieldValue.serverTimestamp(), checkpointClaimAt: admin.firestore.FieldValue.delete() }, { merge: true });
+        continue;
       }
       if (cp === 'd7') {
         await d.ref.set({ status: 'parked', nextCheckpoint: null, checkpoints: { [cp]: stamp }, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
