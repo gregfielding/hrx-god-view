@@ -1,6 +1,6 @@
 # Onboarding + Claim readiness — C1 Events hire-everyone, gate at Claim (decided 2026-09-11)
 
-**Status: DECIDED, NOT BUILT.** Greg, 2026-09-11, while the native apps are in
+**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) COMMITTED 2026-09-11 (4faec962) — DEPLOY PENDING; S1/S2/S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
 store review. Companion to [[project_tier_system_claim_shift_spec]] (Claim
 Shift v1) and [[project_worker_onboarding_everee]] (the completion curve).
 Build slices at the bottom; web + app ship together (parity rule).
@@ -78,6 +78,55 @@ Plus the model these sit inside (proposed, Greg agreed):
   that a 1099 setup (SSN, W-9, bank) takes minutes when a claim is waiting.
 - Only **1** active posting has `claimShiftEnabled` today — no existing claims
   to migrate.
+
+## ✅ S0 result (2026-09-11) — the readiness signal in "Readiness, precisely" was WRONG
+
+Read-only scripts: `functions/.scratch/verify_events_readiness_signal{,2}.ts`,
+`verify_events_readiness_live13.ts` (live Everee GET, flags only).
+
+- **`status == 'active' || onboardingComplete` would have locked out paid
+  workers**: of the **174** C1 Events workers paid in the last 30 days
+  (`timesheet_entries` status `paid`, `hiringEntityId == 'c1_events_llc'`,
+  `workerId`), **92** read not-ready. 79 of those are Everee-complete — the
+  onboarding ENGINE row stays `status: 'onboarding'` because its
+  `onboardingComplete` covers more than payroll (and isn't re-synced). Across
+  all 3,158 Events links, 515 Everee-complete workers read not-ready.
+- **Use rule C instead** (matches Everee on every paid worker checked):
+  ready = link `tenants/{t}/everee_workers/c1_events_llc__{uid}` has
+  `status == 'onboarding_complete'` or `apiObservedOnboardingCompleteAt`,
+  OR the employment row has `evereeOnboardingStatus == 'complete'` /
+  `payrollOnboardingCompletedAt` / `payrollStatus == 'complete'` /
+  `status == 'active'` / `onboardingComplete === true`. **161 / 174** paid
+  workers pass.
+- **The other 13 are really unfinished**: live `GET /api/v2/workers/{id}`
+  returns `onboardingStatus: IN_PROGRESS`, `onboardingComplete: false` for all
+  13. **Everee pays C1 Events workers who haven't finished onboarding.**
+  Decision 1 as written blocks those 13 from claiming until they finish —
+  confirm with Greg (and check the 1099/W-9 exposure of paying unfinished
+  contractors).
+- **S1 must fall back to a live Everee GET** (same call as
+  `evereeGetMyOnboardingStatus`) before refusing a claim: caches lag webhooks,
+  and the check only runs on a refusal, so it's cheap. On a positive read,
+  mirror it the way that callable does.
+
+- **Client pre-render is allowed by rules**: workers can read their own
+  `entity_employments` row (`resource.data.userId == uid`) and their own
+  `everee_workers` link (`resource.data.firebaseUid == uid`) — single-doc
+  gets by the known ids; any query must filter on that field to be
+  list-provable.
+
+## S3 COMMITTED 2026-09-11 (commit 4faec962) — deploy pending
+
+`scoreTierPromotion` now returns `qualifies: total >= threshold &&
+interviewScore100 != null` plus `blockedBy: 'no_interview'` (shared/ +
+src/shared/; functions/src/shared is a symlink). 5 mocha tests in
+`functions/src/__tests__/tierAutomation/workerTierScoring.test.ts`.
+**⚠️ NOT YET DEPLOYED** (the deploy was held for Greg's OK): it takes effect
+only when `scheduledOrchestrator` (ramp + hiring-plan sweeps) and
+`scheduledScoringDistribution` (nightly promotion sweep) — the only callers —
+are redeployed. Until then production still promotes on score alone.
+Impact at ship: Tier 1 = 16 (all interviewed), Tier 2 = 172 (1 without an
+interview — left as is, no demotion), pending proposals 1 (unaffected).
 
 ## Readiness, precisely
 
