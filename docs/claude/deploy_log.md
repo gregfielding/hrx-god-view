@@ -12,6 +12,8 @@ released (say why).
 
 | When (PT) | Who | Target | What | Commit | Result | Notes |
 |---|---|---|---|---|---|---|
+| 2026-09-11 14:35 | Greg (Claude) | hosting | Step 5 claim-readiness UI: Finish setup to claim CTAs, jobs board setup card, payroll Back to your shift + You're in banners, C1 Events applies land on payroll first | bb5c6c99 | ✅ | Clean worktree of origin/main (contains 010c6894); main.49cabf32.js; deep links 200 on hrxone.com + app.c1staffing.com; released right after respondToAssignment (web calls claim_prepare) |
+| 2026-09-11 14:34 | Greg (Claude) | functions | `respondToAssignment` | bb5c6c99 | ✅ | New decision `claim_prepare` (claims/claimReadiness.prepareClaimForWorker): payroll-readiness gate only, starts C1 Events onboarding, books nothing |
 | 2026-09-11 14:34 | Greg (Claude) | functions | `natalieSlackInbox` | a361e086 | ✅ | Retry after the Cloud Runtime Config outage — binds Marco's MARCO_SLACK_USER_TOKEN; his inbox initialized 21:30:09Z (30 conversations tracked, no backlog answered), no warnings. Marco now answers Slack DMs/@mentions; his automated work still OFF (app_config/marco.enabled unset) |
 | 2026-09-11 14:23 | Greg (Claude) | functions | `natalieSlackInbox` | a361e086 | ❌ | Bind Marco's new MARCO_SLACK_USER_TOKEN version — Google-side outage: "Cloud Runtime Config is currently experiencing issues", nothing released. Retrying from the same clean worktree after 3 min |
 | 2026-09-11 14:08 | Greg (Claude) | hosting | Group hiring retired in the UI: group Hiring tab shows a notice; group signup links take the general-signup path (no "approved" copy) | e46cc102 | ✅ | Clean worktree of origin/main (contains f181f80c); main.cc0fd231.js; deep links 200 on hrxone.com + app.c1staffing.com |

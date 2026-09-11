@@ -1,6 +1,6 @@
 # Onboarding + Claim readiness — C1 Events hire-everyone, gate at Claim (decided 2026-09-11)
 
-**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) DEPLOYED 2026-09-11 13:30 PT (app half ships with the next app build); S2 (C1 Events hire-on-apply, forward-only) + group hiring RETIRED — DEPLOYED 2026-09-11 14:06–14:08 PT; S4/S5 (claim-readiness UI, web + app) BUILT 2026-09-11, NOT DEPLOYED; S6 not built.** Greg, 2026-09-11, while the native apps are in
+**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) DEPLOYED 2026-09-11 13:30 PT (app half ships with the next app build); S2 (C1 Events hire-on-apply, forward-only) + group hiring RETIRED — DEPLOYED 2026-09-11 14:06–14:08 PT; S4/S5 (claim-readiness UI) web DEPLOYED 2026-09-11 14:35 PT, app committed (ships with the next app build); S6 not built.** Greg, 2026-09-11, while the native apps are in
 store review. Companion to [[project_tier_system_claim_shift_spec]] (Claim
 Shift v1) and [[project_worker_onboarding_everee]] (the completion curve).
 Build slices at the bottom; web + app ship together (parity rule).
@@ -166,7 +166,7 @@ interview — left as is, no demotion), pending proposals 1 (unaffected).
 - **Not in S1** (S4/S5): pre-rendering "Finish setup to claim" on the board
   before the tap, and returning the worker to the shift after setup.
 
-## ✅ S4/S5 BUILT 2026-09-11 — claim-readiness UI (not deployed yet)
+## ✅ S4/S5 SHIPPED 2026-09-11 — claim-readiness UI (web live 14:35 PT, bb5c6c99; app c1_app 285c0b2)
 
 - **Server**: `respondToAssignment` decision **`claim_prepare`** `{ tenantId,
   jobOrderId, jobPostId }` → `{ success, ready, stage: 'ready'|'started'|'in_progress',
@@ -205,7 +205,22 @@ interview — left as is, no demotion), pending proposals 1 (unaffected).
 - **i18n** `jobs.claimFinishSetupCta / claimSetupCard* / claimSetupStep* /
   claimSetupProgress / claimPreparing / pendingClaim* / eventsApplied* /
   takeInterviewCta / eventsPayrollSettingUp*` EN/ES.
-- **App (S5)**: same model, strings and flows in c1_app (see its commit).
+- **App (S5)** — c1_app `2335c78` + `285c0b2` (☠️ `2335c78` and the follow-up
+  `8db531b` did NOT compile — duplicate `postId` in `apply_screen.dart`; fixed in
+  `285c0b2`, no build was cut in between). Same model and strings:
+  `domain/claim_readiness.dart` (pure mirror, tests copied from the server),
+  `domain/pending_claim_intent.dart` (shared_preferences, per user, 24h),
+  `presentation/providers/claim_readiness_providers.dart`, `ClaimPrepareRequest/
+  Response` + `prepareClaim` (one retry on a transient network failure),
+  "Finish setup to claim" rows, `?claim=&date=` on the three job-detail routes,
+  payroll screen banners (refresh on resume / embed close / pull), jobs board
+  card, C1 Events quick apply AND full apply wizard → payroll first.
+  Agent-reported adaptations: board card also shows when only the photo is
+  missing; "Profile photo approved" follows the claim gate (pending /
+  unverified / quality-only rejections count as done; the worked-before grace
+  that ends 2026-09-21 is not mirrored — same as web); hiring entity comes from
+  the posting's `hiringEntityId` (server checks the JO's `entityId` first and
+  stays authoritative); the "You're in!" banner is in-memory until dismissed.
 
 ## ✅ S2 SHIPPED 2026-09-11 — C1 Events hires everyone who applies (forward-only; deployed 14:06 PT, e46cc102)
 
