@@ -717,3 +717,32 @@ Also planned for 1.0.1:
 - Cosmetic bug seen in the recording, next build: tapping Continue on
   sign-up flashes "Choose and validate a suggested address" under an
   already-validated address.
+
+## Web "Get the app" banner (built 2026-09-11, ships OFF)
+Greg: soft-launch the native app to Android web users once Play Production
+build 14 is live (build 8, live until then, has the dead sign-up — never
+promote it). iOS later, after App Review approval.
+- Code: `src/utils/workerAppBanner.ts` (pure rules + tests in
+  `src/utils/__tests__/workerAppBanner.test.ts`),
+  `src/components/worker/WorkerAppDownloadBanner.tsx`, mounted at the top of
+  the main column in `src/layouts/C1WorkerLayout.tsx`. Strings `appBanner.*`
+  EN/ES. `public/manifest.json` lists the Play app in
+  `related_applications` so Chrome can hide the bar when the app is
+  installed (best effort — the Android app declares app links but no
+  `asset_statements`, so detection may return nothing; the 30-day dismissal
+  covers it).
+- Shows only: signed-in worker, phone (Android now; iOS needs
+  `ios.enabled` + a real App Store URL), `/c1/workers/*` pages except
+  `/c1/workers/prescreen`. Never on the jobs board, postings, `/c1/apply`,
+  or `/apply/*`. Slim inline bar, not an interstitial.
+- ☠️ SWITCH (no deploy): Firestore doc
+  `tenants/BCiP2bQ9CgVOCTfV6MhD/settings/workerAppBanner`
+  `{ android: { enabled: true } }` turns Android on (optional
+  `storeUrl` must start `https://play.google.com/`; default carries
+  `utm_source=hrxone_web&utm_medium=banner&utm_campaign=worker_app_softlaunch`
+  as the Play install referrer). Delete the doc or set `enabled: false` to
+  turn off. Missing/unreadable = OFF. Workers read it via the tenant
+  settings rule (`isAssignedToTenant`), so workers with no C1 tenant link
+  never see it. Config is read once per page load.
+- QA preview anywhere: `?appBanner=preview` on a `/c1/workers` page (sticks
+  for the tab session); `?appBanner=off` or tapping X clears it.

@@ -2247,5 +2247,11 @@
     "loadError": "Couldn't load your account details right now. Pull to refresh or try again later.",
     "empty": "Payroll setup hasn't started yet — once you're hired, direct deposit appears here.",
     "saved": "Bank account updated."
+  },
+  "appBanner": {
+    "title": "Get the C1 Staffing app",
+    "body": "Shifts, alerts, and pay on your phone.",
+    "cta": "Get the app",
+    "dismiss": "Not now"
   }
 }

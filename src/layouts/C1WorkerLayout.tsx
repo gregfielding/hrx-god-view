@@ -4,6 +4,7 @@ import { Box, Container, ThemeProvider } from '@mui/material';
 import WorkerBottomTabs from '../components/worker/WorkerBottomTabs';
 import WorkerAppBar from '../components/worker/WorkerAppBar';
 import WorkerPageTransition from '../components/worker/WorkerPageTransition';
+import WorkerAppDownloadBanner from '../components/worker/WorkerAppDownloadBanner';
 import { useAuth } from '../contexts/AuthContext';
 import { WorkerToastProvider } from '../contexts/WorkerToastContext';
 import { usePushNotifications } from '../hooks/usePushNotifications';
@@ -55,6 +56,7 @@ const C1WorkerLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) 
                 isolation: 'isolate',
               }}
             >
+              <WorkerAppDownloadBanner />
               <WorkerPageTransition>{children ?? <Outlet />}</WorkerPageTransition>
             </Container>
           </Box>

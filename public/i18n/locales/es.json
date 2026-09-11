@@ -2247,5 +2247,11 @@
     "loadError": "No pudimos cargar los datos de tu cuenta en este momento. Inténtalo de nuevo más tarde.",
     "empty": "La configuración de nómina aún no ha comenzado; cuando te contraten, el depósito directo aparecerá aquí.",
     "saved": "Cuenta bancaria actualizada."
+  },
+  "appBanner": {
+    "title": "Descarga la app de C1 Staffing",
+    "body": "Turnos, alertas y pago en tu teléfono.",
+    "cta": "Descargar",
+    "dismiss": "Ahora no"
   }
 }

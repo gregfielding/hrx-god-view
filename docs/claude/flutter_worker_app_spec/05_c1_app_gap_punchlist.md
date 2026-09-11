@@ -522,3 +522,5 @@ should be easy to port: the app's Everee WebView bridge
 it with `experienceType: 'PAYMENT_HISTORY'` and the worker's known
 `evereeWorkerId` (same as web, skip re-provisioning) instead of trying to
 read/open a `pdfUrl`.
+
+- 2026-09-11 web-only, no c1_app counterpart: worker "Get the app" banner (`WorkerAppDownloadBanner`, ships off behind `tenants/{C1}/settings/workerAppBanner`). It advertises the native app, so the app itself needs nothing.
