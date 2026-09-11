@@ -3,7 +3,11 @@
 > Greg 2026-09-11: "Marco Gomez — a 'Natalie' style recruiter that is built to work for Rosa —
 > primarily supporting venuesmart, but also every other 'c1 events' account besides oakland arena."
 
-Status: **BUILT + DEPLOYED, SWITCHED OFF** (2026-09-11) — go-live steps at the bottom. Model: [[project_natalie_roadmap]] /
+Status: **LIVE** — switched on 2026-09-11 21:35:23Z (`tenants/{T}/app_config/marco.enabled = true`, Greg:
+"flip it on now"). At that moment 70 onboarding follow-ups were active (18 stamped natalie + 52 created before
+persona stamping) — they all finish with Natalie; no pending escalations or SMS watches were scoped to Marco.
+New C1 Events (minus Oakland Arena) follow-ups, escalations, offers and relays route to Marco from here.
+Kill switch: set `enabled: false` — `tokenFor` hands everything back to Natalie on the next tick, no data changes. Model: [[project_natalie_roadmap]] /
 [[reference_slack_natalie_persona]] / [[project_natalie_onboarding_followups]].
 
 ## Decisions (Greg, 2026-09-11)
