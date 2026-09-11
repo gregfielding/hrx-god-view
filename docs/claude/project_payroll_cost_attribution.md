@@ -169,3 +169,19 @@ record linked only to C1 Events (3138) while the new record held the
 C1 Select (3133) worker. Fix = grid pencil (`swapScheduledAssignmentWorker`)
 to the linked record, then submit just those rows (the Submit button
 counts approved rows in the search-filtered view).
+
+Same worker, two more hops (all 2026-09-11, paid same day):
+- Resubmit → worked-shifts 500 `"No hourly position present"`: the new
+  Everee worker's hireDate/position start was 9/08 but shifts were 8/31–9/03
+  (see [[feedback_everee_wire_gotchas]] §position effective date). Greg
+  moved the start date to 8/31 in the Everee dashboard; resubmit went through.
+- Then the calc RACE above hit again: payment calculated at the first
+  shift's arrival (8h, \$132.56) and never picked up the other 3. Make-whole:
+  `revertSentTimesheetEntryToDraft` on the 3 unattached rows (confirm
+  `listWorkedShifts` shows `payableDetails.paymentId` absent first — never
+  revert the attached one), off-cycle for their hours, note the draft rows
+  "PAID via off-cycle … DO NOT approve or submit".
+- An off-cycle payable for a worker who already has an open regular
+  payment MERGES into it (one payment, both earnings, 25.62h / \$424.52) —
+  the off-cycle doc's `everee.payRunId` stays null with no `payoutError`.
+  That is success, not a failed payout.
