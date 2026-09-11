@@ -285,7 +285,13 @@ Greg's (see the report artifact).
   (cheap insurance). Consent-screen links can stay on app.hrxone.com while it
   serves; if it's ever retired, add `c1staffing.com` as an authorized domain and
   repoint the three links.
-- AccuSource SourceDirect (`www.accusourcedirect.com` → API v1.0 → WebHooks):
-  NOT checked — the portal was at its login screen in Claude's Chrome. Greg
-  to confirm whether the 13 webhook slots use `hrxone.com/api/integrations/accusource/webhooks`
-  (keep-list) or the cloudfunctions URL.
+- AccuSource SourceDirect (https://accusourcedirect.com/portal/api/webhooks,
+  company C1 Staffing), checked 2026-09-11: ALL 13 slots post to
+  `https://hrxone.com/api/integrations/accusource/webhooks` (hosting rewrite)
+  → that path is a permanent keep-list item unless every slot is re-pointed.
+  ☠️ Two slot problems found (not domain-related, not yet fixed — need Greg's OK
+  to edit the portal): (1) "Order Completed" has NO `?secret=` param, so with
+  ENFORCE=true its POSTs would 401; (2) "Service Status Changes" URL is
+  malformed (`https://hrxone.comhttps//hrxone.com/api/…`) — host doesn't
+  resolve, never delivers. Logs 2026-09-04→11: 698 requests, all 200, no 401s
+  (so Order Completed hasn't fired that week).
