@@ -9,6 +9,14 @@ Code: `functions/src/payroll/payrollPaymentIssueSweep.ts` (IO) +
 `payroll_payment_issues/_sweep_meta.lastRunAtMs`). Texting doctrine and
 message types: [[project_sms_audit_2026_08]].
 
+**Status 2026-09-11: DEPLOYED.** Functions `scheduledOrchestrator` +
+`createOffCyclePayment` from commit 6340caa2; hosting release
+`main.ed8260a7.js`; `entities/c1_events_llc.evereeFundingAccounts` set
+(Everee bankAccountId 4027). The first live sweep run is the first hourly
+tick after 19:20Z (6h gate). A dry run on the live config expected three
+older returns to become `funds_returned`, with one import entry flagged
+(see "Dry run" below).
+
 ## ☠️ The incident (2026-09-11)
 
 After ~30–45 days of failed deposits Everee gave up and sent $896.48 back to
