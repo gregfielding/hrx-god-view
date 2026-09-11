@@ -185,3 +185,41 @@ Same worker, two more hops (all 2026-09-11, paid same day):
   payment MERGES into it (one payment, both earnings, 25.62h / \$424.52) —
   the off-cycle doc's `everee.payRunId` stays null with no `payoutError`.
   That is success, not a failed payout.
+
+## ☠️ Everee "Return of Failed Payments" — money comes back to C1, tracker says "resolved" (2026-09-11)
+
+After ~30–45 days of bounced deposits Everee stops holding the funds and
+sends them to the entity's funding account (email from Everee ops, e.g.
+"Return of Failed Payments - C1 Events", xlsx of workers, one total —
+2026-09-11: $896.48). Everee-side the payments then read `PAID /
+DEPOSITED`, and `GET /api/v2/payments/{id}` shows the `depositList` bank
+switched to C1's own Relay business checking (`updatedAt` = the return
+time). `payrollPaymentIssueSweep` sees no issue anymore and marks the
+`payroll_payment_issues` doc `resolved` — **wrong: the worker was never
+paid.** (Fix chip filed: detect funds-returned in the sweep.)
+
+Identify the workers without the attachment: open `deposit_returned` /
+just-auto-resolved issue docs whose `grossAmount`s sum to the email total
+(1099 → net = gross); confirm each via `GET /api/v2/payments/{id}`.
+
+Adjustments made 2026-09-11 (pattern to reuse):
+- Issue docs → `status: 'funds_returned'`, `resolvedAt` deleted,
+  `fundsReturnedAt/Amount/Source/Note`, `stillOwed: true`. The sweep only
+  resolves `status=='open'` and only re-opens payments still showing an
+  issue, so it leaves these alone.
+- Underlying `timesheet_entries` (here `import__…` CSV rows) →
+  `status: 'error'`, `everee.status: 'DEPOSIT_RETURNED'`,
+  `everee.errorCode: 'deposit_returned'` (same shape as the
+  `payment.deposit-returned` webhook) + message "repay with an off-cycle;
+  do NOT resubmit" — resubmitting reuses the deterministic payable
+  externalId, Everee dedupes against the PAID original, nobody gets money.
+- **Check for an earlier re-pay before calling anyone owed.** One of the
+  four (a pre-HRX-link Everee profile whose externalWorkerId was the
+  worker's NAME) had already been repaid by off-cycle to her linked profile
+  (off-cycle notes named the same event dates, same \$135, DEPOSITED to her
+  bank). Marked `funds_returned_already_repaid`, `stillOwed: false`; that
+  returned money stays with C1.
+- Repay the rest via User Details → Payments (off-cycle) once the worker
+  fixes bank info in Everee; Everee draws funding again. QBO: the returned
+  deposit is a worker-payment return → labor reversal on 5010 in the
+  entity's Division (`expenseDivisions.ts`).
