@@ -15,4 +15,10 @@ module.exports = {
   moduleFileExtensions: ['ts', 'js', 'json'],
   // Keep unit tests hermetic — no emulator, no network.
   transform: { '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.json', diagnostics: false }] },
+  // Memory cap (2026-09-11): uncapped, jest starts cores − 1 workers (13 on
+  // Greg's 14-core, 24 GB Mac) and each ts-jest worker holds ~2–3 GB — one
+  // run reached ~31 GB and filled swap. Two workers, each restarted once it
+  // passes 1 GB. See docs/claude/feedback_jest_worker_memory.md.
+  maxWorkers: 2,
+  workerIdleMemoryLimit: '1GB',
 };
