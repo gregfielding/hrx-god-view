@@ -27,10 +27,10 @@ Status: **BUILT + DEPLOYED, SWITCHED OFF** (2026-09-11) — go-live steps at the
 ## Ownership (Greg, 2026-09-11 PM — confirmed)
 "Marco will be the contact for users/applicants for C1 Events jobs (excluding Oakland) and Natalie will
 stick to Indeed Flex (and family of companies) and Sodexo."
-- Code today (`scopePersona`): C1 Events minus Oakland Arena → Marco; **everything else → Natalie**, which
-  also covers Oakland Arena (Danny's — e.g. the every_shift confirmation escalations DM Danny as Natalie)
-  and any C1 Select / Workforce account that is neither Flex nor Sodexo. Whether those edge accounts
-  should get no persona at all is an open question to Greg.
+- Code (`scopePersona`): C1 Events minus Oakland Arena → Marco; **everything else → Natalie**, including
+  Oakland Arena (Danny's — e.g. the every_shift confirmation escalations DM Danny as Natalie) and any
+  C1 Select / Workforce account that is neither Flex nor Sodexo. **Greg confirmed 2026-09-11: "Oakland and
+  other accounts stay with Natalie"** — no "no persona" bucket.
 
 ## Scope data (live probe 2026-09-11, `functions/.scratch/marco_scope_probe.ts`)
 72 job orders on `c1_events_llc`:
@@ -150,13 +150,18 @@ Both personas, `functions/src/natalie/personaConversations.ts` (tests: `__tests_
   n.brooks@ is answered automatically from this deploy on.
 - Tools asked for by text/email have no Slack thread, so portal follow-ups aren't posted back.
 
-## Gmail connect (Marco)
+## Gmail connect (Marco) — ✅ CONNECTED 2026-09-11 (grant has gmail.settings.basic)
 `gmailOAuthCallback` handles `state.purpose === 'marcoMailbox'` (deployed 2026-09-11 from a clean worktree —
 the first attempt died on another session's uncommitted WIP). m.gomez@ is an OAuth test user (Greg). Open
 `functions/.scratch/marco-gmail-consent-url.txt` in an Incognito window signed into Google as m.gomez@ →
 Allow → "Marco's mailbox is connected" → `tenants/{T}/integrations/marcoMailbox`. Scopes include
 `gmail.settings.basic` so the signature (`.scratch/marco-signature.html`) can be set by API. The OAuth app is
 in Testing mode → refresh tokens expire after 7 days (same as Natalie) until publishing status is In production.
+**Signature NOT set yet**: `https://hrxone.com/brand/marco-gomez-512.jpg` still serves the SPA index.html (200
+text/html) because no hosting deploy has shipped since the image was committed. Once it serves image/jpeg, run
+`functions/.scratch/marco_signature_set.ts` (checks the scope + that the URL is an image, `sendAs.patch`es the
+template, reads it back). Gmail never adds signatures to API sends, so Marco's automated emails use the
+plain-text signature in `sendEmail` either way.
 
 ## One-time steps to go live (in order)
 1. **Slack app**: create "Marco Gomez (HRX)" from `functions/.scratch/slack-marco-app-manifest.json`
