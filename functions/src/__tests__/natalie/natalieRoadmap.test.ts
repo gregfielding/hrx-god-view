@@ -6,6 +6,13 @@ jest.mock('firebase-admin', () => {
 });
 jest.mock('firebase-functions/v2', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 jest.mock('firebase-functions/v2/scheduler', () => ({ onSchedule: (_o: unknown, fn: unknown) => fn }));
+// natalieFill imports jobOrderAutoMessaging(+Radius), which define onCall functions — the real
+// onCall breaks against the fake admin above, so stub the https module too.
+jest.mock('firebase-functions/v2/https', () => ({
+  onCall: (_o: unknown, fn: unknown) => fn,
+  onRequest: (_o: unknown, fn: unknown) => fn,
+  HttpsError: class HttpsError extends Error { constructor(public code: string, message?: string) { super(message); } },
+}));
 jest.mock('firebase-functions/params', () => ({ defineSecret: (name: string) => ({ name, value: () => '' }), defineString: (name: string) => ({ name, value: () => '' }) }));
 jest.mock('googleapis', () => ({ google: { auth: { OAuth2: class {} }, gmail: () => ({}) } }));
 jest.mock('@anthropic-ai/sdk', () => ({ __esModule: true, default: class {} }));
@@ -46,8 +53,9 @@ describe('summarizePortalOutcome', () => {
 describe('renderBriefFallback', () => {
   it('renders counts without the model', () => {
     const facts: BriefFacts = {
-      dateLabel: 'Monday, Sep 8', isMonday: true, unacceptedFlexRequests: [{}, {}], fieldglassLast24h: { passes: 3, updated: 2, closed: 1, created: 0, failures: 0, lastAt: null },
-      todayShifts: { total: 40, unconfirmed: [{}], flexLinked: 12 }, yesterdayLateNoAnswer: [{}], yesterdayNoShows: 1, portal: {}, emailNeedingReply: [],
+      dateLabel: 'Monday, Sep 8', isMonday: true, unacceptedFlexRequests: [{}, {}], expiredFlexRequests: [], headcountChanges: [],
+      fieldglassLast24h: { passes: 3, updated: 2, closed: 1, created: 0, failures: 0, lastAt: null },
+      todayShifts: { total: 40, unconfirmed: [{}], flexLinked: 12 }, yesterdayLateNoAnswer: [{}], yesterdayNoShows: 1, dailyCrews: [], portal: {}, emailNeedingReply: [],
     };
     const t = renderBriefFallback(facts);
     expect(t).toContain('*Morning brief — Monday, Sep 8*');
