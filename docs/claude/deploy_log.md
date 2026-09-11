@@ -12,6 +12,8 @@ released (say why).
 
 | When (PT) | Who | Target | What | Commit | Result | Notes |
 |---|---|---|---|---|---|---|
+| 2026-09-11 11:43 | Greg (Claude) | hosting | Per-host OTP autofill (web passes webOtpHost) + web push dedupe across origins | 55bcb9ea | ❌ | Build OOM (fork-ts-checker) — nothing uploaded; retrying |
+| 2026-09-11 11:36 | Greg (Claude) | functions | `sendOtp` | ba6e24ee | ✅ | SMS WebOTP line echoes the page host when it's ours (utils/webOtpHost.ts); callers that don't send it get PUBLIC_APP_HOST (unchanged behavior) |
 | 2026-09-11 10:46 | Greg (Claude) | functions | `triggerAINoteReview`, `triggerAINoteReviewHttp`, `updateLocationAssociationHttp` | 025a811e | ✅ | CORS now echoes app.c1staffing.com; memory 256MiB → 512MiB |
 | 2026-09-11 10:41 | Greg (Claude) | functions | `triggerAINoteReviewHttp`, `updateLocationAssociationHttp` | 16f8e975 | ❌ | Cloud Run startup probe failed: 256MiB OOM on cold start. Old revisions kept serving |
 | 2026-09-11 10:41 | Greg (Claude) | hosting | Web copy fixes for the app.c1staffing.com move (DeleteAccount, SMSPrivacy, job JSON-LD, agency slug text) | 6e91b73c | ✅ | Built from a clean worktree with `NODE_OPTIONS=--max-old-space-size=8192`; main.9886f869.js; deep link 200 |
