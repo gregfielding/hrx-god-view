@@ -4,6 +4,10 @@
 
 **What happened**: the live release of 2026-09-11 01:37Z (6:37 PM PT 9/10, main.eec411e1.js) was built from a checkout with no `.env`. The ONLY `AIza…` key left in the bundle was the Firebase config key hardcoded in `src/firebase.ts` (GCP key `df5feedd…`, "Browser key (auto created by Firebase)"); the Maps key (`61f88c8b…`, the other "Browser key (auto created by Firebase)") and `REACT_APP_FIREBASE_VAPID_KEY` (web push) were both absent. Danny reported it the next morning from Users → Add Smart Group → Address.
 
+**Resolved** 2026-09-11 14:48Z: rebuilt from origin/main `a3be15de` with `.env` present and redeployed (main.0b6cc4c4.js; both keys verified in the live chunks; deep link 200). Down ~13h (01:37Z → 14:48Z). Mark's checkout needs its `.env` restored before his next hosting deploy (the guard will now stop that build).
+
+**Build OOM footgun (same day)**: plain `npm run build` died with "JavaScript heap out of memory" in the fork-ts-checker child (`RpcIpcMessagePortClosedError … SIGABRT`, no `build/`), and a `cmd; echo exit=$?` wrapper in a background task still reported success. Build with `NODE_OPTIONS=--max-old-space-size=8192 npm run build` and check that `build/index.html` exists before deploying.
+
 **Why it's easy to hit**: `.env` is gitignored, and CRA inlines `REACT_APP_*` at BUILD time. Claude Code worktrees (`.claude/worktrees/*`) and fresh clones have no `.env`, and the build succeeds silently with the values empty.
 
 **Guard**: `scripts/check-build-env.js` runs in `prebuild` and fails the build when `REACT_APP_GOOGLE_MAPS_API_KEY` or `REACT_APP_FIREBASE_VAPID_KEY` is not set in the environment or any CRA env file (prints names only). `SKIP_BUILD_ENV_CHECK=1` bypasses it — never for a deploy build. In a worktree, copy `.env` from your main checkout first. If you add another build-time secret to `.env`, add it to `REQUIRED` there.
