@@ -83,7 +83,9 @@ demo.twilio.com welcome, and both numbers are in email signatures. Greg: no voic
 twimlet with TwiML: English Say (Polly.Joanna) "you've reached <Name> with C1 Staffing… doesn't take calls or
 voicemail… please text this same number, we'll help you by text", Spanish Say (Polly.Mia, es-MX), Hangup. No
 deploy, no function. The script probes the twimlet first and refuses numbers with a voice app/trunk; SMS URLs
-stay on handleInboundSms. To change the wording, edit the script and re-run it.
+stay on handleInboundSms. To change the wording, edit the script and re-run it. Texts that callers send after hearing it are answered by
+the persona (workers/applicants: `personaWorkerSms.ts`, staff: `personaConversations.ts`) — see
+project_marco_gomez_persona.md.
 
 ## 2026-09-11: two personas share MG2dd6… — sends are pinned per persona
 Pool = +1 737 264 6753 (Marco) + +1 312 663 8247 (Natalie) (`node functions/.scratch/twilio-natalie-go-live.cjs`,

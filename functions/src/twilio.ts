@@ -58,9 +58,9 @@ import { PERSONAS, personaForMessageType } from './natalie/personas';
  * retries from the 888. Override/disable with env NATALIE_MESSAGING_SERVICE_SID (empty string = off).
  */
 const NATALIE_MESSAGING_SERVICE_SID = process.env.NATALIE_MESSAGING_SERVICE_SID ?? 'MG2dd6557d05d9be9044c996fa568a8a39';
-/** Persona replies to staff (natalie/personaConversations.ts) are a conversation, not worker outreach — the early-funnel and duplicate guards don't apply. */
+/** Persona replies in a conversation someone started (staff: personaConversations.ts, workers: personaWorkerSms.ts) — not outreach, so the early-funnel and duplicate guards don't apply. */
 function isStaffReplyMessage(messageTypeId?: string): boolean {
-  return Boolean(personaForMessageType(messageTypeId)) && String(messageTypeId).endsWith('_staff_reply');
+  return Boolean(personaForMessageType(messageTypeId)) && /_(staff|worker)_reply$/.test(String(messageTypeId));
 }
 
 function personaSmsRoute(messageTypeId?: string): { serviceSid: string; from: string } | null {

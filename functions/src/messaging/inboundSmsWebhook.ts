@@ -110,6 +110,11 @@ export const handleInboundSms = onRequest(
         logger.warn('[persona-sms] staff routing failed (non-blocking)', { err: staffErr?.message || String(staffErr) });
       }
 
+      // Set when a persona watch already owns the reply (offer YES, onboarding conversation) — the worker
+      // conversation below then stays out; set when this text was filed as a tech issue.
+      let handledByPersonaWatch = false;
+      let techIssueFlagged = false;
+
       // Natalie's SMS watches (2026-09-07): when she texted someone an offer
       // from Slack/Claude, relay their reply into that Slack thread. Fail-open.
       try {
@@ -125,6 +130,7 @@ export const handleInboundSms = onRequest(
             const intent = /(^|[^a-záéíóúñü])(yes|si|sí|yeah|yep|ok|sure|confirm(ed)?)(?=$|[^a-záéíóúñü])/i.test(String(messageBody)) ? 'yes' : /\b(no|nope|can't|cannot|cant)\b/i.test(String(messageBody)) ? 'no' : null;
             let placement = '';
             if (intent === 'yes' && w.get('offer')) {
+              handledByPersonaWatch = true;
               try {
                 const { acceptOfferFromReply } = await import('../natalie/natalieFill');
                 const placed = await acceptOfferFromReply(w.data() as Record<string, unknown>, String(messageBody));
@@ -151,6 +157,7 @@ export const handleInboundSms = onRequest(
             // (natalieOnboarding.drainSmsConversations) instead of only relaying to Slack.
             const onb = w.get('onboardingFollowup') as { active?: boolean } | undefined;
             if (onb?.active === true && !/^\s*(stop|help|start|unstop)\s*$/i.test(String(messageBody))) {
+              handledByPersonaWatch = true;
               await db.collection('natalie_sms_convos').add({
                 tenantId: w.get('tenantId') ?? null,
                 userId: w.get('userId') ?? w.id,
@@ -187,6 +194,7 @@ export const handleInboundSms = onRequest(
             const lo = await db.collection(`tenants/${tenantId}/messageLogs`).where('userId', '==', uid).where('direction', '==', 'outbound').orderBy('createdAt', 'desc').limit(1).get().catch(() => null);
             if (lo && !lo.empty) lastOutbound = { messageTypeId: lo.docs[0].get('messageTypeId') ?? null, text: String(lo.docs[0].get('contentSent') ?? '').slice(0, 300), at: lo.docs[0].get('createdAt') ?? null };
           }
+          techIssueFlagged = true;
           await db.collection('natalie_tech_issues').add({
             tenantId,
             userId: uid,
@@ -197,6 +205,8 @@ export const handleInboundSms = onRequest(
             messageSid: messageSid ? String(messageSid) : null,
             status: 'open',
             source: 'sms',
+            // Texts to a persona's own number get a persona reply (personaWorkerSms) — no separate tech-ack text.
+            personaConversation: Boolean((await import('../natalie/personaConversations')).personaForNumber(toNumber)),
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
         }
@@ -252,6 +262,18 @@ export const handleInboundSms = onRequest(
         // Twilio expects 200 response
         response.status(200).type('text/xml').send('<Response></Response>');
         return;
+      }
+
+      // Workers / applicants texting a persona's own number (Natalie's 312, Marco's 737): that persona answers in
+      // the next natalieSlackInbox tick (personaWorkerSms.ts). Skipped when a watch already owns the reply; cadence
+      // replies and STOP/HELP returned above. The text still goes to the recruiter inbox below so humans see it.
+      if (!handledByPersonaWatch) {
+        try {
+          const { enqueueWorkerPersonaSms } = await import('../natalie/personaWorkerSms');
+          await enqueueWorkerPersonaSms({ from: phoneE164, to: toNumber, body: messageBody, messageSid: messageSid ? String(messageSid) : undefined, techIssueFlagged });
+        } catch (workerErr: any) {
+          logger.warn('[persona-worker-sms] routing failed (non-blocking)', { err: workerErr?.message || String(workerErr) });
+        }
       }
 
       // Not a keyword - handle as regular inbound message via two-way messaging

@@ -309,6 +309,11 @@ export const natalieSlackInbox = onSchedule(
       const sms = await conversations.drainStaffSms(runtime);
       if (sms) logger.info('[persona] staff texts answered', { sms });
     } catch (err) { logger.warn('[persona] staff sms drain failed', { err: String(err) }); }
+    try {
+      const { drainWorkerPersonaSms } = await import('./personaWorkerSms');
+      const workerSms = await drainWorkerPersonaSms({ natalie: token, marco: marcoToken || undefined, runtime });
+      if (workerSms) logger.info('[persona] worker texts answered', { workerSms });
+    } catch (err) { logger.warn('[persona] worker sms drain failed', { err: String(err) }); }
     const outbox = await drainNatalieOutbox({ natalie: token, marco: marcoToken || undefined, runtime });
     if (outbox.followups || outbox.escalations || outbox.relays || outbox.techIssues) logger.info('[natalie] outbox drained', outbox);
     try {

@@ -168,6 +168,34 @@ Both personas, `functions/src/natalie/personaConversations.ts` (tests: `__tests_
   n.brooks@ is answered automatically from this deploy on.
 - Tools asked for by text/email have no Slack thread, so portal follow-ups aren't posted back.
 
+## Workers & applicants texting the persona numbers (both personas, 2026-09-11)
+Greg: the voice lines say "please text this number" — "build it for both Marco and Natalie", and "they should
+first search our users to see who it is". `functions/src/natalie/personaWorkerSms.ts`
+(tests `__tests__/natalie/personaWorkerSms.test.ts`).
+- **Routing priority** (`handleInboundSms`): staff → persona watches (offer YES, active onboarding
+  conversation set `handledByPersonaWatch`) → tech-issue filing → cadence confirmation replies (return) →
+  STOP/HELP (return) → **`enqueueWorkerPersonaSms`** (only texts TO the 312/737, never from our own numbers,
+  never keywords) → recruiter inbox (`handleRegularInboundMessage`, still runs so humans see the text).
+- **Who is texting**: users by `phoneE164` AND raw `phone` formats (`phoneFormatVariants`, ≤30 for `in`).
+  Exactly one tenant member → identified. Shared number → persona asks for full name; the one account on that
+  number whose first+last name they texted is identified (`matchNameAmongAccounts`, accent-insensitive).
+  Unknown number → persona asks for name + email; `users.email` matches are posted in Slack for a human to
+  confirm — never texted back (email is trivially spoofable).
+- **Model**: no tools; CONTEXT = the texter's own applications, upcoming/recent shifts (`describeShift` —
+  times only from HH:MM strings or a Timestamp + known zone), open onboarding items + Everee state
+  (`buildOnboardingSnapshot`), background stage (under review/failed → never discussed, escalate), preferred
+  language, jobs board link. JSON out; actions whitelisted: `resend_background_link`, `resend_everee_invite`,
+  `escalate`. Bad output → language-aware fallback + escalate. Doesn't volunteer that it's automated, won't
+  deny it. Pay disputes, cancellations/changes, safety → escalate.
+- **Guards**: ≤8 replies per phone per hour (`rate_limited`); replies `{prefix}worker_reply` exempt from the
+  worker early-funnel/duplicate guards; a tech-issue text to a persona number sets `personaConversation` so
+  Natalie's separate tech-ack text is skipped (the persona reply acknowledges it).
+- **Oversight**: every exchange in `persona_worker_sms_threads/{persona}__{MT day}` → a daily Slack thread in
+  the persona's channel (Marco: #events-recruiting, Natalie: #recruiting), :rotating_light: = escalated;
+  `natalie_actions` + worker activity feed (kind `worker_sms_reply`); queue `persona_worker_sms_inbox`, history
+  `persona_sms_threads/{persona}__{phone}.workerTurns`.
+- **Kill switch**: `tenants/{T}/app_config/natalie.workerSmsConversations = false`.
+
 ## Gmail connect (Marco) — ✅ CONNECTED 2026-09-11 (grant has gmail.settings.basic)
 `gmailOAuthCallback` handles `state.purpose === 'marcoMailbox'` (deployed 2026-09-11 from a clean worktree —
 the first attempt died on another session's uncommitted WIP). m.gomez@ is an OAuth test user (Greg). Open

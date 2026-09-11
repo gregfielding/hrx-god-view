@@ -245,7 +245,8 @@ async function drainTechIssues(token: string): Promise<number> {
     const res = await postAsNatalie(token, { channel: DEV_CHANNEL, text });
     if (!res.ok) { logger.warn('[natalie] tech issue post failed', { error: res.error }); continue; }
     // Acknowledge the worker by text (once).
-    if (uid && s(t.phoneE164)) {
+    // Texts to a persona's own number are acknowledged in the persona's reply (personaWorkerSms) — no second text.
+    if (uid && s(t.phoneE164) && t.personaConversation !== true) {
       try {
         const { sendWorkerMessageInternal } = await import('../twilio');
         await sendWorkerMessageInternal(s(t.phoneE164), "Thanks for letting us know — that sounds like a problem on our side. I've flagged it to our tech team and I'll text you as soon as it's fixed. — Natalie, C1 Staffing", { tenantId, userId: uid, source: 'system', messageTypeId: 'natalie_tech_ack', systemContext: true } as never);
