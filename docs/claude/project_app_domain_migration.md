@@ -202,3 +202,16 @@ Still for flip day: OTP `@host` line, env vars both sides, og tags +
 robots.txt, canonicalOrigin → app, Firestore template/posting text, Search
 Console, Squarespace, Slack redirect, announcement. Console checks remain
 Greg's (see the report artifact).
+
+### Console checks run 2026-09-11 (read-only)
+- Google Cloud API keys (all 6 incl. both Firebase browser keys): **no
+  website/referrer restrictions** → nothing to add for app.c1staffing.com.
+- SendGrid: DEFAULT link branding is `url6316.hrxone.com` (valid) — every
+  tracked link in email rides that hrxone.com subdomain, so keep its DNS
+  forever (or switch the default to the already-valid `url6167.c1staffing.com`).
+  No event webhook configured. Inbound Parse `ingest.hrxone.com` →
+  cloudfunctions.net (unaffected; keep the MX). Sender auth valid for
+  c1staffing.com and one hrxone.com record (6 stale invalid hrxone.com entries).
+- Twilio: credentials aren't in `functions/.env*` (Secret Manager), so the
+  toll-free verification URLs, messaging-service callbacks and number webhooks
+  were NOT checked — Greg in the Twilio console.
