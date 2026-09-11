@@ -66,6 +66,11 @@ ahead (`firstCheckpointFor`) so nobody gets the 24h and 72h texts back to back.
 - A FAILED background parks the follow-up and tells Slack; she never texts about onboarding then.
 
 ## Cadence
+- **1h** (added 2026-09-11, Greg): welcome text listing what's left, while the hire is fresh
+  (`natalie_onboarding_1h`). Enrollments under 6h old start here (`firstCheckpointFor`). If nothing is
+  open an hour in — often readiness just isn't populated yet — no text and no close; it moves to 24h.
+  A worker texted at 1h hits the 20h no-double-text guard, so the 24h text lands ~23h later (or the
+  next morning when the hour falls outside 9am–7pm local).
 - **24h**: text listing open items (Everee/tax/direct deposit, I-9, handbook; AccuSource link if the
   form isn't started; the "drug screen is a separate second step" note once the form is done).
 - **72h**: same, firmer, and she re-sends the Everee onboarding invite

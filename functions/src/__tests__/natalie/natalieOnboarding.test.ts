@@ -1,4 +1,15 @@
-import { composeCheckpointText, drugFromCheck, stepsWithoutAssignment, type OnboardingSnapshot } from '../../natalie/natalieOnboarding';
+import { composeCheckpointText, drugFromCheck, firstCheckpointFor, stepsWithoutAssignment, type OnboardingSnapshot } from '../../natalie/natalieOnboarding';
+
+describe('firstCheckpointFor (1h check added 2026-09-11)', () => {
+  const now = Date.parse('2026-09-11T20:00:00Z');
+  const hoursAgo = (h: number) => new Date(now - h * 3600_000);
+  it('a fresh start gets the 1h check', () => expect(firstCheckpointFor(hoursAgo(0.1), now)).toBe('h1'));
+  it('late enrollments skip ahead instead of texting back to back', () => {
+    expect(firstCheckpointFor(hoursAgo(8), now)).toBe('h24');
+    expect(firstCheckpointFor(hoursAgo(40), now)).toBe('h72');
+    expect(firstCheckpointFor(hoursAgo(24 * 6.5), now)).toBe('d7');
+  });
+});
 
 describe('stepsWithoutAssignment (hiring-plan hires have no assignment readiness)', () => {
   const status = (steps: ReturnType<typeof stepsWithoutAssignment>) => Object.fromEntries(steps.map((x) => [x.key, `${x.status}/${x.actor}`]));

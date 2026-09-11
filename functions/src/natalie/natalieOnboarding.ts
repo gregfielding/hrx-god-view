@@ -223,16 +223,18 @@ interface FollowupDoc {
   assignmentId: string | null; jobOrderId: string | null; jobTitle: string; site: string; hiringEntityId: string;
   recruiterUid: string | null; recruiterName: string; source: 'onboarding_instance' | 'background_check' | 'hiring_plan';
   startedAt: admin.firestore.Timestamp; tz: string; status: 'active' | 'done' | 'declined' | 'parked' | 'removed' | 'no_phone';
-  nextCheckpoint: 'h24' | 'h72' | 'd7' | null; checkpoints: Record<string, unknown>;
+  nextCheckpoint: 'h1' | 'h24' | 'h72' | 'd7' | null; checkpoints: Record<string, unknown>;
   slack: SlackRef | null; transcript: Array<{ at: string; dir: 'out' | 'in'; text: string }>;
   lastIntent: string | null; createdAt: admin.firestore.FieldValue; updatedAt: admin.firestore.FieldValue;
 }
 
 /** Enrolling late (e.g. first deploy, or an instance created days ago): start at the checkpoint that is still meaningful. */
-function firstCheckpointFor(startedAt: Date): 'h24' | 'h72' | 'd7' {
-  const ageH = (Date.now() - startedAt.getTime()) / H;
-  return ageH < 36 ? 'h24' : ageH < 24 * 6 ? 'h72' : 'd7';
+export function firstCheckpointFor(startedAt: Date, nowMs = Date.now()): 'h1' | 'h24' | 'h72' | 'd7' {
+  const ageH = (nowMs - startedAt.getTime()) / H;
+  return ageH < 6 ? 'h1' : ageH < 36 ? 'h24' : ageH < 24 * 6 ? 'h72' : 'd7';
 }
+
+const CHECKPOINT_LABEL: Record<string, string> = { h1: '1h', h24: '24h', h72: '72h', d7: '7d' };
 
 async function recruiterName(uid: string): Promise<string> {
   if (!uid) return '';
@@ -256,7 +258,7 @@ async function threadFor(token: string, channel: string, key: { jobOrderId: stri
   if (cur?.ts) return { channel: cur.channel || channel, ts: cur.ts };
   const what = key.source === 'background_check' ? 'screening' : 'onboarding';
   const startedBy = key.recruiterName ? ` (started by ${key.recruiterName})` : key.source === 'hiring_plan' ? ' (hired by the job order hiring plan)' : '';
-  const opener = `${what === 'onboarding' ? 'Onboarding' : 'Screening'} follow-ups — *${key.jobTitle}*${key.site ? ` at ${key.site}` : ''}${startedBy}. I check each worker's steps at 24h and 72h (tax forms, Everee payroll/direct deposit, I-9, handbook, background form, drug screen${key.entity === 'c1_select_llc' ? ', E-Verify on our side' : ''}), text them from my number about anything open, and post their replies here.`;
+  const opener = `${what === 'onboarding' ? 'Onboarding' : 'Screening'} follow-ups — *${key.jobTitle}*${key.site ? ` at ${key.site}` : ''}${startedBy}. I check each worker's steps at 1h, 24h and 72h (tax forms, Everee payroll/direct deposit, I-9, handbook, background form, drug screen${key.entity === 'c1_select_llc' ? ', E-Verify on our side' : ''}), text them from my number about anything open, and post their replies here.`;
   const res = await postAsNatalie(token, { channel, text: opener });
   const slack: SlackRef = res.ok && res.ts ? { channel, ts: res.ts } : { channel };
   await ref.set({ ...slack, jobOrderId: key.jobOrderId, jobTitle: key.jobTitle, day, createdAt: admin.firestore.FieldValue.serverTimestamp() });
@@ -291,7 +293,7 @@ async function createFollowup(token: string, channel: string, base: FollowupBase
   const who = `<${PUBLIC_APP_ORIGIN}/users/${base.userId}|${workerName}>`;
   const thread = await threadFor(token, channel, { jobOrderId, jobTitle, site, recruiterName: rName, entity, source: base.source });
   const first = firstCheckpointFor(base.startedAt);
-  const firstLabel = first === 'h24' ? '24h' : first === 'h72' ? '72h' : '7d';
+  const firstLabel = CHECKPOINT_LABEL[first];
   const startedLabel = base.startedAt.toLocaleString('en-US', { timeZone: 'America/Denver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const line = base.source === 'onboarding_instance'
     ? `• ${who} — onboarding started ${startedLabel} MT; first check at ${firstLabel}.`
@@ -387,11 +389,13 @@ export async function enrollOnboardingFollowups(token: string): Promise<number> 
 }
 
 // ---------------------------------------------------------------------------------------------
-// Checkpoints: 24h, 72h, 7d after onboarding started.
+// Checkpoints: 1h, 24h, 72h, 7d after onboarding started (1h added by Greg 2026-09-11: catch the
+// worker while the hire is fresh — most skip the background form's second step).
 // ---------------------------------------------------------------------------------------------
 
-const CHECKPOINT_HOURS: Record<string, number> = { h24: 24, h72: 72, d7: 24 * 7 };
-const NEXT: Record<string, FollowupDoc['nextCheckpoint']> = { h24: 'h72', h72: 'd7', d7: null };
+const CHECKPOINT_HOURS: Record<string, number> = { h1: 1, h24: 24, h72: 72, d7: 24 * 7 };
+const NEXT: Record<string, FollowupDoc['nextCheckpoint']> = { h1: 'h24', h24: 'h72', h72: 'd7', d7: null };
+const CHECKPOINT_MESSAGE_TYPE: Record<string, string> = { h1: 'natalie_onboarding_1h', h24: 'natalie_onboarding_24h', h72: 'natalie_onboarding_72h' };
 
 function listify(items: string[]): string {
   if (items.length <= 1) return items.join('');
@@ -402,7 +406,9 @@ export function composeCheckpointText(f: Pick<FollowupDoc, 'firstName' | 'jobTit
   const name = f.firstName || 'there';
   const parts: string[] = [];
   const forJob = f.jobTitle && f.jobTitle !== 'your assignment' ? ` for ${f.jobTitle}` : ' with C1';
-  const intro = checkpoint === 'h24'
+  const intro = checkpoint === 'h1'
+    ? `Hi ${name}, it's Natalie with C1 Staffing — welcome aboard${forJob}! Here's what's left to get you ready to work.`
+    : checkpoint === 'h24'
     ? `Hi ${name}, it's Natalie with C1 Staffing. Quick check on your onboarding${forJob}.`
     : checkpoint === 'h72'
       ? `Hi ${name}, Natalie with C1 Staffing again — a few onboarding items are still open${forJob} and we can't schedule you until they're done.`
@@ -494,6 +500,11 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
         await disarmWatch(f.userId);
         touched += 1; continue;
       }
+      if (cp === 'h1' && snapshot.allWorkerDone) {
+        // Nothing open (or readiness not populated yet) an hour in: no text, no close — the 24h check decides.
+        await d.ref.set({ nextCheckpoint: 'h24', checkpoints: { [cp]: stamp }, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        touched += 1; continue;
+      }
       if (snapshot.allWorkerDone) {
         const closing = snapshot.recruiterTodo.length
           ? `:white_check_mark: ${f.workerName} has finished everything on their side.\n${slackSummary(snapshot)}\nOnly recruiter steps remain.`
@@ -513,7 +524,7 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
       }
       // Text the worker about what's open; on the 72h pass also re-send the Everee invite if payroll is still open.
       const text = composeCheckpointText(f, snapshot, cp);
-      const sent = await sendSms(f, text, cp === 'h24' ? 'natalie_onboarding_24h' : 'natalie_onboarding_72h');
+      const sent = await sendSms(f, text, CHECKPOINT_MESSAGE_TYPE[cp] ?? 'natalie_onboarding_72h');
       if (sent.success) sentThisTick += 1;
       let resent = '';
       if (cp === 'h72' && snapshot.everee.inviteSent && !snapshot.everee.complete && f.hiringEntityId) {
@@ -528,7 +539,7 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
       while (next && (tsToDate(f.startedAt)?.getTime() ?? 0) + CHECKPOINT_HOURS[next] * H < Date.now() && next !== 'd7') next = NEXT[next];
       await d.ref.set({ nextCheckpoint: next, checkpoints: { [cp]: { ...stamp, sent: sent.success, error: sent.error ?? null } }, transcript, lastTextAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
       if (sent.success) await armWatch(f);
-      const label = cp === 'h24' ? '24h' : '72h';
+      const label = CHECKPOINT_LABEL[cp] ?? cp;
       await say(sent.success
         ? `${label} check on ${f.workerName}:\n${slackSummary(snapshot)}\nTexted them about the open items.${resent} Replies will show up here.`
         : `:warning: ${label} check on ${f.workerName}: text failed (${sent.error || 'unknown'}).\n${slackSummary(snapshot)}`);
