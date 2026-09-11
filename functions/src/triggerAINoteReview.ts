@@ -1,5 +1,6 @@
 import { onCall, onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { corsOriginFor } from './config/appOrigin';
 
 export const triggerAINoteReview = onCall({
   cors: true,
@@ -70,7 +71,8 @@ export const triggerAINoteReviewHttp = onRequest({
   try {
     // Handle preflight requests
     if (req.method === 'OPTIONS') {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
+      res.set('Vary', 'Origin');
       res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
       res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.status(204).send('');
@@ -81,7 +83,8 @@ export const triggerAINoteReviewHttp = onRequest({
     const { noteId, entityType, tenantId, content, category, priority, tags } = payload || {};
 
     if (!noteId || !entityType || !tenantId || !content) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
+      res.set('Vary', 'Origin');
       res.status(400).json({
         success: false,
         message: 'Missing required parameters'
@@ -98,12 +101,14 @@ export const triggerAINoteReviewHttp = onRequest({
     const snap = await noteRef.get();
     const d = snap.exists ? snap.data() as any : {};
     if (d?.aiReviewed === true) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
+      res.set('Vary', 'Origin');
       res.status(200).json({ success: true, skipped: true, reason: 'already_reviewed' });
       return;
     }
     if (d?._aiReviewProcessing === true && d?._aiReviewProcessingAt && (Date.now() - d._aiReviewProcessingAt.toMillis?.() || 0) < 60000) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
+      res.set('Vary', 'Origin');
       res.status(200).json({ success: true, skipped: true, reason: 'in_progress' });
       return;
     }
@@ -131,12 +136,14 @@ export const triggerAINoteReviewHttp = onRequest({
       insights: aiInsights
     };
 
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
+      res.set('Vary', 'Origin');
     res.status(200).json(result);
 
   } catch (error: any) {
     console.error('❌ Error in AI note review:', error);
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
+      res.set('Vary', 'Origin');
     res.status(500).json({
       success: false,
       message: `AI review failed: ${error.message || 'Unknown error'}`

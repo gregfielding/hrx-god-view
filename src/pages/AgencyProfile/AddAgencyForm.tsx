@@ -6,6 +6,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { db } from '../../firebase';
 import { geocodeAddress } from '../../utils/geocodeAddress';
+import { getAppOrigin } from '../../config/appOrigin';
 
 function formatPhoneNumber(value: string) {
   // Remove all non-digit characters
@@ -199,7 +200,7 @@ const AddAgencyForm = () => {
         Add New Tenant
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Create a new tenant that will be accessible at app.hrxone.com/{form.slug || 'tenant-slug'}
+        Create a new tenant that will be accessible at {new URL(getAppOrigin()).host}/{form.slug || 'tenant-slug'}
       </Typography>
       
       <form onSubmit={handleSubmit}>

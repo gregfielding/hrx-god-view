@@ -13,6 +13,7 @@ import { NATALIE_MODEL } from './natalieAgent';
 import { drainAcceptFills } from './natalieAcceptFill';
 import { drainCraigslistDrafts } from './natalieCraigslist';
 import { drainThinJobDescriptions } from './natalieDescriptions';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -115,7 +116,7 @@ async function drainEscalations(token: string): Promise<number> {
         : e.kind === 'cancelled'
           ? `${who} just cancelled ${s(e.jobTitle) || 'their shift'}${e.site ? ` at ${e.site}` : ''} (${fmtWhen(e.startTime)}) by text.`
           : `${who} isn't responding about ${s(e.jobTitle) || 'their shift'}${e.site ? ` at ${e.site}` : ''} (${fmtWhen(e.startTime)}).`;
-    const text = `${lead}${e.detail ? ` ${e.detail}` : ''}\n• Phone: ${phone || 'none on file'}\n• <https://hrxone.com/assignments/${e.assignmentId}|Open in HRX>${e.userId ? ` · <https://hrxone.com/users/${e.userId}|Profile>` : ''}\nI've asked the client whether they want a replacement where that applies. Want me to text anyone else?`;
+    const text = `${lead}${e.detail ? ` ${e.detail}` : ''}\n• Phone: ${phone || 'none on file'}\n• <${PUBLIC_APP_ORIGIN}/assignments/${e.assignmentId}|Open in HRX>${e.userId ? ` · <${PUBLIC_APP_ORIGIN}/users/${e.userId}|Profile>` : ''}\nI've asked the client whether they want a replacement where that applies. Want me to text anyone else?`;
 
     const dmIds: string[] = [];
     for (const uid of recruiters) {
@@ -224,7 +225,7 @@ async function drainTechIssues(token: string): Promise<number> {
       logger.warn('[natalie] tech issue diagnosis failed', { err: String(err) });
     }
     const who = s(t.workerName) || `…${s(t.phoneE164).slice(-4)}`;
-    const text = `:wrench: *Worker-reported problem* — ${who}${uid ? ` (<https://hrxone.com/users/${uid}|profile>)` : ''} texted: "${s(t.text).slice(0, 300)}"\n${t.lastOutbound ? `Last thing we sent them: ${s((t.lastOutbound as Record<string, unknown>).messageTypeId)} — "${s((t.lastOutbound as Record<string, unknown>).text).slice(0, 140)}"\n` : ''}${diagnosis ? `\n${diagnosis}\n` : ''}\nI've told them we're on it. Reply here when it's fixed and I'll text them (issue \`${d.id}\`).`;
+    const text = `:wrench: *Worker-reported problem* — ${who}${uid ? ` (<${PUBLIC_APP_ORIGIN}/users/${uid}|profile>)` : ''} texted: "${s(t.text).slice(0, 300)}"\n${t.lastOutbound ? `Last thing we sent them: ${s((t.lastOutbound as Record<string, unknown>).messageTypeId)} — "${s((t.lastOutbound as Record<string, unknown>).text).slice(0, 140)}"\n` : ''}${diagnosis ? `\n${diagnosis}\n` : ''}\nI've told them we're on it. Reply here when it's fixed and I'll text them (issue \`${d.id}\`).`;
     const res = await postAsNatalie(token, { channel: DEV_CHANNEL, text });
     if (!res.ok) { logger.warn('[natalie] tech issue post failed', { error: res.error }); continue; }
     // Acknowledge the worker by text (once).
@@ -319,12 +320,12 @@ async function drainBackgroundFollowups(token: string): Promise<number> {
     // partial_profile orders sit at awaiting_applicant until the worker finishes the form; any later hrxStatus means they did.
     const done = bgDoc.get('profileCompleted') === true || ['submitted', 'in_progress', 'report_ready', 'drug_report_ready', 'completed'].includes(hrxStatus);
     if (done || bgDoc.get('finalReportReady') === true) { await close('completed', `*${who}* completed the AccuSource form — their ${s(bgDoc.get('requestedPackageName')) || 'background check'} is now ${hrxStatus.replace(/_/g, ' ') || 'in progress'}.`); continue; }
-    if (['canceled', 'error'].includes(hrxStatus)) { await close(hrxStatus, `*${who}*'s background order is ${hrxStatus} — needs a human look: https://hrxone.com/users/${userId}`); continue; }
-    if (ageH > 6 * 24) { await close('gave_up', `*${who}* still hasn't completed the AccuSource form after 6 days and ${Number(f.nudges ?? 0)} reminders — parking it. https://hrxone.com/users/${userId}`); continue; }
+    if (['canceled', 'error'].includes(hrxStatus)) { await close(hrxStatus, `*${who}*'s background order is ${hrxStatus} — needs a human look: ${PUBLIC_APP_ORIGIN}/users/${userId}`); continue; }
+    if (ageH > 6 * 24) { await close('gave_up', `*${who}* still hasn't completed the AccuSource form after 6 days and ${Number(f.nudges ?? 0)} reminders — parking it. ${PUBLIC_APP_ORIGIN}/users/${userId}`); continue; }
     const link = s(bgDoc.get('applicantPortalLink')) || s(bgDoc.get('applicantPortalUrl'));
     if (!link) continue; // link not issued yet — check again next minute
     const to = s(w.phoneE164);
-    if (!to) { await close('no_phone', `*${who}* has no usable phone, so I can't text the AccuSource form link — please send it manually: https://hrxone.com/users/${userId}`); continue; }
+    if (!to) { await close('no_phone', `*${who}* has no usable phone, so I can't text the AccuSource form link — please send it manually: ${PUBLIC_APP_ORIGIN}/users/${userId}`); continue; }
     const lastNudge = tsToDate(f.lastNudgeAt)?.getTime() ?? 0;
     const nudges = Number(f.nudges ?? 0);
     const firstName = s(who).split(' ')[0];

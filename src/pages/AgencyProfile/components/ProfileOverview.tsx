@@ -20,6 +20,7 @@ import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { db } from '../../../firebase';
+import { getAppOrigin } from '../../../config/appOrigin';
 
 // Function to validate slug
 function validateSlug(slug: string): { isValid: boolean; error?: string } {
@@ -337,10 +338,10 @@ const ProfileOverview = ({ tenantId }: { tenantId: string }) => {
               error={!!slugError}
               helperText={
                 slugError || 
-                (form.slug ? `Accessible at app.hrxone.com/${form.slug}` : '')
+                (form.slug ? `Accessible at ${new URL(getAppOrigin()).host}/${form.slug}` : '')
               }
               InputProps={{
-                startAdornment: <Typography variant="body2" sx={{ mr: 1 }}>app.hrxone.com/</Typography>,
+                startAdornment: <Typography variant="body2" sx={{ mr: 1 }}>{new URL(getAppOrigin()).host}/</Typography>,
               }}
             />
             {checkingSlug && (

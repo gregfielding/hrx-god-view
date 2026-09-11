@@ -18,7 +18,7 @@ const COPY = {
   en: {
     title: 'Delete your C1 Staffing account',
     subtitle:
-      'This page explains how to request deletion of the account you created in the C1 Staffing mobile app or at hrxone.com, and what happens to your data.',
+      'This page explains how to request deletion of the account you created in the C1 Staffing mobile app or on the C1 Staffing website, and what happens to your data.',
     howTitle: 'How to request deletion',
     howIntro: 'You can request deletion in either of two ways:',
     howApp:
@@ -53,7 +53,7 @@ const COPY = {
   es: {
     title: 'Elimina tu cuenta de C1 Staffing',
     subtitle:
-      'Esta página explica cómo solicitar la eliminación de la cuenta que creaste en la app móvil de C1 Staffing o en hrxone.com, y qué pasa con tus datos.',
+      'Esta página explica cómo solicitar la eliminación de la cuenta que creaste en la app móvil de C1 Staffing o en el sitio web de C1 Staffing, y qué pasa con tus datos.',
     howTitle: 'Cómo solicitar la eliminación',
     howIntro: 'Puedes solicitar la eliminación de dos maneras:',
     howApp:

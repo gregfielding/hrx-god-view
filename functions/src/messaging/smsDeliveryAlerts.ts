@@ -21,6 +21,7 @@
  */
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -256,14 +257,14 @@ function formatAlert(a: Record<string, unknown>): string {
       `:no_entry: *SMS blocked by Twilio* — ${who} is unsubscribed at the carrier (error ${a.errorCode}). ` +
       `Every text to them fails until *they* text START to the 888. Last attempt: ${a.messageTypeId ?? 'unknown message'}` +
       (Number(a.occurrences) > 1 ? ` · ${a.occurrences} attempts today` : '') +
-      (a.userId ? `\nhttps://hrxone.com/users/${a.userId}` : '')
+      (a.userId ? `\n${PUBLIC_APP_ORIGIN}/users/${a.userId}` : '')
     );
   }
   if (kind === 'sms_invalid_number') {
     return (
       `:phone: *Invalid phone number on file* — ${who}: Twilio rejected it (error ${a.errorCode}), so texts to this worker cannot be delivered. ` +
       `HRX has stopped sending until a recruiter corrects the number on their profile. Last attempt: ${a.messageTypeId ?? 'unknown message'}` +
-      (a.userId ? `\nhttps://hrxone.com/users/${a.userId}` : '')
+      (a.userId ? `\n${PUBLIC_APP_ORIGIN}/users/${a.userId}` : '')
     );
   }
   return `:warning: ops alert ${kind}: ${JSON.stringify(a).slice(0, 300)}`;

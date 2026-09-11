@@ -22,6 +22,7 @@ import { resolveWorksiteCoordinates, runJobOrderAutoMessagingForShift } from '..
 import { NATALIE_DISPLAY_NAME, NATALIE_HRX_UID, recordNatalieAction, registerFollowup, type SlackRef } from './natalieAudit';
 import { enqueuePortalAction } from '../integrations/portalActions/enqueuePortalAction';
 import { buildCareerDefaultWeeklySchedule, shiftHasUsableWeeklySchedule } from '../timesheets/careerWeeklySchedule';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -193,7 +194,7 @@ export async function backgroundSummary(tenantId: string, userId: string): Promi
     orderedAt: tsToIso(x.createdAt),
     reportAt: tsToIso(x.providerFinalReportAt ?? x.completedAt),
     checkId: d.id,
-    link: `https://hrxone.com/users/${userId}?tab=background`,
+    link: `${PUBLIC_APP_ORIGIN}/users/${userId}?tab=background`,
   };
 }
 
@@ -263,7 +264,7 @@ async function enrich(tenantId: string, userId: string, appliedToThisOrder: bool
     background: bgSummary.status,
     score,
     reasons,
-    profileLink: `https://hrxone.com/users/${userId}`,
+    profileLink: `${PUBLIC_APP_ORIGIN}/users/${userId}`,
   };
 }
 

@@ -14,6 +14,7 @@ import { postAsNatalie } from '../messaging/slackAsNatalie';
 import { recordNatalieAction } from './natalieAudit';
 import { isThinDescription, generateDescriptionForPosting } from '../jobs/jobDescriptionGenerator';
 import { craigslistCategoryFor, craigslistExpiryDays, craigslistPostUrl, craigslistSiteFor, type CraigslistDraft, type CraigslistPosting } from '../shared/craigslist';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 const db = admin.firestore();
 const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
@@ -49,7 +50,7 @@ async function composeDraft(post: Record<string, unknown>, postId: string): Prom
   const { category, slug } = craigslistCategoryFor(s(post.jobType));
   const pay = Number(post.payRate);
   const compensation = Number.isFinite(pay) && pay > 0 ? `$${pay.toFixed(2)}/hour, paid weekly` : 'Competitive hourly pay, paid weekly';
-  const applyUrl = `https://hrxone.com/c1/jobs-board/${postId}`;
+  const applyUrl = `${PUBLIC_APP_ORIGIN}/c1/jobs-board/${postId}`;
   let description = s(post.jobDescription);
   if (isThinDescription(description)) {
     const generated = await generateDescriptionForPosting(TENANT, postId, { by: 'natalie-craigslist', force: true });
@@ -81,7 +82,7 @@ export async function drainCraigslistDrafts(token: string): Promise<number> {
         `Craigslist draft for *${draft.title}* (post ${s(post.jobPostId) || d.id}, ${draft.site} · ${draft.category}):`,
         '```' + draft.body + '```',
         `Location: ${draft.specificLocation} · Compensation: ${draft.compensation}`,
-        `Publish it here: ${draft.postUrl} — Craigslist settings (Greg 2026-09-10): job posts are *full-time* and *entry level*; email option *no replies to this email* with *remember contact preferences* ticked, since applicants use the Apply Here link. Then paste the live URL into the post's Craigslist URL field (<https://hrxone.com/jobs/job-orders|HRX>). Craigslist charges per post (Denver labor gigs $7; Chicago jobs $45 per category).`,
+        `Publish it here: ${draft.postUrl} — Craigslist settings (Greg 2026-09-10): job posts are *full-time* and *entry level*; email option *no replies to this email* with *remember contact preferences* ticked, since applicants use the Apply Here link. Then paste the live URL into the post's Craigslist URL field (<${PUBLIC_APP_ORIGIN}/jobs/job-orders|HRX>). Craigslist charges per post (Denver labor gigs $7; Chicago jobs $45 per category).`,
       ].join('\n');
       const res = await postAsNatalie(token, { channel, text });
       const next: CraigslistPosting = { ...cl, enabled: true, status: 'ready', draft, lastError: null, slackTs: res.ts ?? cl.slackTs ?? null };
@@ -119,7 +120,7 @@ export async function craigslistQueue(tenantId: string): Promise<unknown> {
   const snap = await db.collection(`tenants/${tenantId}/job_postings`).where('craigslist.enabled', '==', true).limit(100).get();
   return snap.docs.map((d) => {
     const cl = (d.get('craigslist') ?? {}) as CraigslistPosting;
-    return { postId: d.id, jobPostId: d.get('jobPostId') ?? null, title: s(d.get('postTitle')) || s(d.get('jobTitle')), city: s(d.get('city')), status: cl.status, site: cl.draft?.site ?? null, category: cl.draft?.category ?? null, postUrl: cl.draft?.postUrl ?? null, adTitle: cl.draft?.title ?? null, liveUrl: s(d.get('craigslistUrl')) || null, postedAt: cl.postedAt ?? null, expiresAt: cl.expiresAt ?? null, hrxLink: `https://hrxone.com/c1/jobs-board/${d.id}` };
+    return { postId: d.id, jobPostId: d.get('jobPostId') ?? null, title: s(d.get('postTitle')) || s(d.get('jobTitle')), city: s(d.get('city')), status: cl.status, site: cl.draft?.site ?? null, category: cl.draft?.category ?? null, postUrl: cl.draft?.postUrl ?? null, adTitle: cl.draft?.title ?? null, liveUrl: s(d.get('craigslistUrl')) || null, postedAt: cl.postedAt ?? null, expiresAt: cl.expiresAt ?? null, hrxLink: `${PUBLIC_APP_ORIGIN}/c1/jobs-board/${d.id}` };
   });
 }
 

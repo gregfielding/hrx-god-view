@@ -2897,7 +2897,7 @@ const JobPostingDetail: React.FC = () => {
       description: posting.jobDescription || '',
       identifier: {
         '@type': 'PropertyValue',
-        name: posting.companyName || 'HRX',
+        name: posting.companyName || 'C1 Staffing',
         value: posting.jobPostId || posting.id,
       },
       datePosted: toISOString(posting.createdAt) || new Date().toISOString(),
@@ -2905,8 +2905,8 @@ const JobPostingDetail: React.FC = () => {
       employmentType: posting.jobType === 'gig' ? 'TEMPORARY' : 'FULL_TIME',
       hiringOrganization: {
         '@type': 'Organization',
-        name: posting.companyName || 'HRX',
-        sameAs: `https://hrxone.com`,
+        name: posting.companyName || 'C1 Staffing',
+        sameAs: 'https://www.c1staffing.com',
       },
       jobLocation: {
         '@type': 'Place',
@@ -2970,7 +2970,7 @@ const JobPostingDetail: React.FC = () => {
       {/* Google Jobs Structured Data */}
       <Helmet>
         <title>
-          {posting.postTitle} - {posting.companyName || 'HRX'}
+          {posting.postTitle} - {posting.companyName || 'C1 Staffing'}
         </title>
         <meta name="description" content={posting.jobDescription?.substring(0, 160) || ''} />
         <script type="application/ld+json">{JSON.stringify(generateJobPostingSchema())}</script>

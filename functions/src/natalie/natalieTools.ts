@@ -11,6 +11,7 @@ import { enqueuePortalAction } from '../integrations/portalActions/enqueuePortal
 import { NATALIE_DISPLAY_NAME, NATALIE_HRX_UID, recordNatalieAction, registerFollowup, type SlackRef } from './natalieAudit';
 import { readInbox, sendEmail } from './natalieMailbox';
 import { bookInFlexIfLinked, candidatesForJobOrder, offerShiftToWorker, placeWorkerOnShift, upcomingShifts, workerReachBlast } from './natalieFill';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -306,7 +307,7 @@ async function workerStatus(tenantId: string, userId: string): Promise<unknown> 
         cancelledAt: tsToIso(cort.cancelledAt),
         flexLinked: s(a.assignmentSource) === 'indeed_flex_portal' || Boolean(a.flexJobId),
         jobOrderId: s(a.jobOrderId) || null,
-        hrxLink: `https://hrxone.com/assignments/${d.id}`,
+        hrxLink: `${PUBLIC_APP_ORIGIN}/assignments/${d.id}`,
       };
     })
     .filter((r) => r.start)
@@ -338,7 +339,7 @@ async function workerStatus(tenantId: string, userId: string): Promise<unknown> 
       smsBlocked: x.smsBlockedSystem === true,
       smsBlockedReason: s(x.smsBlockedReason) || null,
       phoneInvalid: x.phoneInvalid === true,
-      profileLink: `https://hrxone.com/users/${userId}`,
+      profileLink: `${PUBLIC_APP_ORIGIN}/users/${userId}`,
     },
     backgroundCheck,
     notes,
@@ -490,7 +491,7 @@ async function jobOrderFillStatus(tenantId: string, query: string): Promise<unkn
       jobType: s(j.jobType) || null,
       upcomingShifts: shiftRows,
       workersAssignedUpcoming: assignedUpcoming,
-      link: `https://hrxone.com/jobs/job-orders/${d.id}`,
+      link: `${PUBLIC_APP_ORIGIN}/jobs/job-orders/${d.id}`,
     });
     if (out.length >= 8) break;
   }
@@ -534,7 +535,7 @@ async function addWorkerNote(ctx: NatalieToolContext, input: { userId: string; n
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'worker_note', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { note: content }, result: { noteId: ref.id }, summary: `Added a note: "${content.slice(0, 120)}"`, userId: input.userId });
-  return { saved: true, noteId: ref.id, profileLink: `https://hrxone.com/users/${input.userId}` };
+  return { saved: true, noteId: ref.id, profileLink: `${PUBLIC_APP_ORIGIN}/users/${input.userId}` };
 }
 
 export interface WorkerReliability {
@@ -622,7 +623,7 @@ async function rankWorkers(tenantId: string, query: string, limit: number): Prom
       /* ignore */
     }
   }
-  return { ranked: top.map((w) => ({ ...w, profileLink: `https://hrxone.com/users/${w.userId}` })), consideredWorkers: rows.length, window: '90 days', note: top.length === 0 ? 'Nobody matched — try a broader query.' : undefined };
+  return { ranked: top.map((w) => ({ ...w, profileLink: `${PUBLIC_APP_ORIGIN}/users/${w.userId}` })), consideredWorkers: rows.length, window: '90 days', note: top.length === 0 ? 'Nobody matched — try a broader query.' : undefined };
 }
 
 async function createTask(ctx: NatalieToolContext, input: { title: string; assigneeName: string; dueDate: string; details?: string; userId?: string; priority?: string }): Promise<unknown> {
@@ -672,7 +673,7 @@ async function createTask(ctx: NatalieToolContext, input: { title: string; assig
     updatedAt: now,
   });
   await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'task', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: input as Record<string, unknown>, result: { taskId: ref.id, assigneeId }, summary: `Created a task for ${assigneeLabel}: "${input.title.trim().slice(0, 100)}" due ${input.dueDate}`, userId: input.userId ?? null });
-  return { created: true, taskId: ref.id, assignedTo: assigneeLabel, dueDate: input.dueDate, link: 'https://hrxone.com/tasks' };
+  return { created: true, taskId: ref.id, assignedTo: assigneeLabel, dueDate: input.dueDate, link: `${PUBLIC_APP_ORIGIN}/tasks` };
 }
 
 export async function runNatalieTool(name: string, input: Record<string, unknown>, ctx: NatalieToolContext): Promise<unknown> {
@@ -729,7 +730,7 @@ export async function runNatalieTool(name: string, input: Record<string, unknown
       const r = await placeWorkerOnShift(ctx.tenantId, s(input.jobOrderId), s(input.shiftId), s(input.userId), { source: 'natalie_slack_place', note: `Placed by Natalie (asked by ${ctx.askedByName} in Slack)` });
       await recordNatalieAction({ tenantId: ctx.tenantId, kind: 'place_worker', askedBySlackUserId: ctx.askedBySlackUserId, askedByName: ctx.askedByName, slack: ctx.slack, input: { jobOrderId: s(input.jobOrderId), shiftId: s(input.shiftId) }, result: r as Record<string, unknown>, summary: r.placed ? 'Placed the worker on the shift' : `Could not place the worker (${r.error ?? (r.already ? 'already on it' : 'unknown')})`, userId: s(input.userId), jobOrderId: s(input.jobOrderId), assignmentId: r.assignmentId || null });
       const flex = r.placed ? await bookInFlexIfLinked(ctx.tenantId, s(input.jobOrderId), s(input.shiftId), s(input.userId), { slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId }) : { queued: false, reason: 'not placed' };
-      return { ...r, hrxLink: r.assignmentId ? `https://hrxone.com/assignments/${r.assignmentId}` : null, flexBooking: flex };
+      return { ...r, hrxLink: r.assignmentId ? `${PUBLIC_APP_ORIGIN}/assignments/${r.assignmentId}` : null, flexBooking: flex };
     }
     case 'book_in_flex':
       return bookInFlexIfLinked(ctx.tenantId, s(input.jobOrderId), s(input.shiftId), s(input.userId), { slack: ctx.slack, askedByName: ctx.askedByName, askedBySlackUserId: ctx.askedBySlackUserId });

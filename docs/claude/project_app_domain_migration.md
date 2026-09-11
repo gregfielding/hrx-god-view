@@ -163,3 +163,42 @@ only much later, with an expanded keep-list (below).
   links, Fieldglass extension matches.
 - User impact at flip: re-sign-in (per-origin auth), web push re-grant and
   duplicate notifications (tokens per origin), browser-stored settings reset.
+
+## Option 1 chosen + "fix now" done (2026-09-11)
+Greg chose option 1: flip the canonical to app.c1staffing.com later and keep
+hrxone.com serving (no redirect). Done today, behavior-neutral on hrxone.com:
+- Natalie / Slack alert / Craigslist-ad links (27 literals in
+  `natalie/{Tools,Outbox,Onboarding,Fill,Craigslist,Descriptions,Brief}.ts`,
+  `messaging/smsDeliveryAlerts.ts`) now use `PUBLIC_APP_ORIGIN`. Not deployed
+  (still resolve to hrxone.com) — they go out with the flip redeploy
+  (`grep -rl PUBLIC_APP_ORIGIN functions/src` now lists them).
+- CORS: `triggerAINoteReviewHttp` and `updateLocationAssociationHttp` now echo
+  `corsOriginFor(req.headers.origin)` + `Vary: Origin`; deployed today.
+- VERIFIED the runbook's CORS redeploy already went out: preflight from
+  app.c1staffing.com returns the origin on chatWithAI, chatWithGPT,
+  enhancedChatWithGPT, apolloPingHttp, findDecisionMakersHttp, sendMessageApi,
+  parseResumeHttp, updateUserLoginInfo, updateUserActivity,
+  resendAssignmentOffer, submitWorkerAiPrescreenInterview.
+  (`getUserParsedResumes` 403s OPTIONS from hrxone.com too — not domain.)
+- Storage: the LIVE bucket `hrx1-d3beb.firebasestorage.app` CORS is
+  `origin ["*"], GET` — already fine. The repo `cors.json` was stale and
+  NARROWER (would have broken web.app/app hosts if applied); it now mirrors
+  live. Don't apply the old list.
+- `platform_config/seo.canonicalOrigin = https://hrxone.com` (was unset →
+  both hosts self-canonical). Change to app.c1staffing.com at the flip.
+- Web copy: DeleteAccount (EN/ES) no longer says hrxone.com; SMSPrivacy link
+  text uses `getAppOrigin()`; JobPostingDetail JSON-LD sameAs →
+  www.c1staffing.com and "HRX" fallbacks → "C1 Staffing"; agency slug helper
+  text uses the current host. Deployed with hosting.
+- c1_app (for 1.0.1, NOT built): entitlements + AndroidManifest claim
+  app.c1staffing.com (8 filters mirroring hrxone.com), worker.c1staffing.com
+  removed everywhere (parser, manifest, entitlements, Everee returnUrl →
+  app.c1staffing.com). 160 tests pass.
+- Known pre-existing: `__tests__/natalie/natalieSlackInbox` and
+  `natalieRoadmap` suites fail to load ("Right-hand side of 'instanceof'")
+  via jobOrderAutoMessaging's onCall under the jest mock — fails without
+  these edits too.
+Still for flip day: OTP `@host` line, env vars both sides, og tags +
+robots.txt, canonicalOrigin → app, Firestore template/posting text, Search
+Console, Squarespace, Slack redirect, announcement. Console checks remain
+Greg's (see the report artifact).

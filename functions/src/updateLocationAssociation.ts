@@ -1,5 +1,6 @@
 import { onCall, onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { corsOriginFor } from './config/appOrigin';
 
 export async function performUpdate(payload: {
   tenantId: string;
@@ -77,7 +78,8 @@ export const updateLocationAssociation = onCall({ cors: true }, async (request) 
 export const updateLocationAssociationHttp = onRequest({ cors: true, region: 'us-central1', concurrency: 80, timeoutSeconds: 30, memory: '256MiB', minInstances: 0 }, async (req, res) => {
   try {
     if (req.method === 'OPTIONS') {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
+      res.set('Vary', 'Origin');
       res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
       res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.status(204).send('');
@@ -86,10 +88,12 @@ export const updateLocationAssociationHttp = onRequest({ cors: true, region: 'us
 
     const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
     const result = await performUpdate(payload || {});
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
+      res.set('Vary', 'Origin');
     res.status(200).json(result);
   } catch (error: any) {
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
+      res.set('Vary', 'Origin');
     res.status(500).json({ error: error.message || 'Failed to update location association' });
   }
 });

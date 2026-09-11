@@ -35,6 +35,7 @@ import { postAsNatalie } from '../messaging/slackAsNatalie';
 import { recordNatalieAction, type SlackRef } from './natalieAudit';
 import { NATALIE_MODEL } from './natalieAgent';
 import { latestBackgroundCheckDoc } from './natalieFill';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 const db = admin.firestore();
 const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
@@ -222,13 +223,13 @@ async function createFollowup(token: string, channel: string, base: { userId: st
   const rName = await recruiterName(s(base.recruiterUid));
   const jobTitle = s(asg.jobTitle) || s(asg.title) || s(asg.jobOrderName) || (base.packageName ? `${base.packageName} screening` : 'your assignment');
   const site = s(asg.locationName) || s(asg.worksiteName) || s(asg.companyName);
-  const who = `<https://hrxone.com/users/${base.userId}|${workerName}>`;
+  const who = `<${PUBLIC_APP_ORIGIN}/users/${base.userId}|${workerName}>`;
   const thread = await threadFor(token, channel, { jobOrderId: base.jobOrderId || s(asg.jobOrderId) || null, jobTitle, site, recruiterName: rName, entity: s(asg.hiringEntityId) || s(asg.entityId), source: base.source });
   const first = firstCheckpointFor(base.startedAt);
   const line = base.source === 'onboarding_instance'
     ? `• ${who} — onboarding started ${base.startedAt.toLocaleString('en-US', { timeZone: 'America/Denver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} MT; first check at ${first === 'h24' ? '24h' : first === 'h72' ? '72h' : '7d'}.`
     : `• ${who} — ${base.packageName || 'background check'} ordered; I'll make sure the form gets done and that they know the drug screen (if any) is a separate step.`;
-  await postAsNatalie(token, { channel: thread.channel, text: phone ? line : `${line}\n:warning: no usable phone on file — I can't text them: https://hrxone.com/users/${base.userId}`, threadTs: thread.ts });
+  await postAsNatalie(token, { channel: thread.channel, text: phone ? line : `${line}\n:warning: no usable phone on file — I can't text them: ${PUBLIC_APP_ORIGIN}/users/${base.userId}`, threadTs: thread.ts });
   const doc: FollowupDoc = {
     tenantId, userId: base.userId, workerName, firstName: s(u.firstName) || workerName.split(' ')[0], phoneE164: phone,
     assignmentId: base.assignmentId, jobOrderId: base.jobOrderId || s(asg.jobOrderId) || null, jobTitle, site, hiringEntityId: s(asg.hiringEntityId) || s(asg.entityId),
@@ -394,7 +395,7 @@ export async function runOnboardingCheckpoints(token: string): Promise<number> {
       const stamp = { at: admin.firestore.FieldValue.serverTimestamp(), workerTodo: snapshot.workerTodo, recruiterTodo: snapshot.recruiterTodo, sent: false };
       if (snapshot.background?.failed) {
         await d.ref.set({ status: 'parked', nextCheckpoint: null, checkpoints: { [cp]: stamp }, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-        await say(`:x: ${f.workerName}'s background check came back FAILED — I'm not texting them about onboarding. Recruiter decision needed: https://hrxone.com/users/${f.userId}`);
+        await say(`:x: ${f.workerName}'s background check came back FAILED — I'm not texting them about onboarding. Recruiter decision needed: ${PUBLIC_APP_ORIGIN}/users/${f.userId}`);
         await disarmWatch(f.userId);
         touched += 1; continue;
       }
@@ -589,6 +590,6 @@ export async function listOnboardingFollowups(tenantId: string, opts: { includeC
     const f = d.data() as FollowupDoc;
     const last = (f.checkpoints ?? {}) as Record<string, { workerTodo?: string[]; recruiterTodo?: string[] }>;
     const latest = last.d7 ?? last.h72 ?? last.h24 ?? null;
-    return { userId: f.userId, worker: f.workerName, job: f.jobTitle, site: f.site, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, recruiter: f.recruiterName, source: f.source, status: f.status, startedAt: tsToDate(f.startedAt)?.toISOString() ?? null, nextCheckpoint: f.nextCheckpoint, workerStillOwes: latest?.workerTodo ?? null, recruiterOwes: latest?.recruiterTodo ?? null, lastIntent: f.lastIntent, textsSent: (f.transcript ?? []).filter((t) => t.dir === 'out').length, lastReply: [...(f.transcript ?? [])].reverse().find((t) => t.dir === 'in')?.text ?? null, hrxLink: `https://hrxone.com/users/${f.userId}` };
+    return { userId: f.userId, worker: f.workerName, job: f.jobTitle, site: f.site, jobOrderId: f.jobOrderId, assignmentId: f.assignmentId, recruiter: f.recruiterName, source: f.source, status: f.status, startedAt: tsToDate(f.startedAt)?.toISOString() ?? null, nextCheckpoint: f.nextCheckpoint, workerStillOwes: latest?.workerTodo ?? null, recruiterOwes: latest?.recruiterTodo ?? null, lastIntent: f.lastIntent, textsSent: (f.transcript ?? []).filter((t) => t.dir === 'out').length, lastReply: [...(f.transcript ?? [])].reverse().find((t) => t.dir === 'in')?.text ?? null, hrxLink: `${PUBLIC_APP_ORIGIN}/users/${f.userId}` };
   });
 }

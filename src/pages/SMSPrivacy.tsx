@@ -15,6 +15,7 @@ import LanguageIcon from '@mui/icons-material/Language';
 import { useGuestLanguage } from '../hooks/useGuestLanguage';
 import { langToggleStyle } from './authMinimalStyles';
 import { useT, setLanguage } from '../i18n';
+import { getAppOrigin } from '../config/appOrigin';
 
 const SMSPrivacy: React.FC = () => {
   const [guestLanguage, setGuestLanguage] = useGuestLanguage();
@@ -160,7 +161,7 @@ const SMSPrivacy: React.FC = () => {
         </Typography>
         <Typography paragraph>
           {t('legal.smsPrivacy.s7P2')}{' '}
-          <Link href="/privacy">https://hrxone.com/privacy</Link>
+          <Link href="/privacy">{`${getAppOrigin()}/privacy`}</Link>
         </Typography>
       </Box>
 

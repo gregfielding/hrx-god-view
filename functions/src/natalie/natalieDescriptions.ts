@@ -10,6 +10,7 @@ import { logger } from 'firebase-functions/v2';
 import { postAsNatalie } from '../messaging/slackAsNatalie';
 import { recordNatalieAction } from './natalieAudit';
 import { isThinDescription, buildInputFromPosting, generateDescriptionForPosting } from '../jobs/jobDescriptionGenerator';
+import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
 
 const db = admin.firestore();
 const TENANT = 'BCiP2bQ9CgVOCTfV6MhD';
@@ -40,7 +41,7 @@ export async function drainThinJobDescriptions(token: string): Promise<number> {
       budget -= 1;
       const text = await generateDescriptionForPosting(TENANT, d.id, { by: 'natalie-autofill', force: true });
       await d.ref.set({ descriptionAutoFillAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-      if (text) filled.push(`<https://hrxone.com/c1/jobs-board/${d.id}|${title}>`);
+      if (text) filled.push(`<${PUBLIC_APP_ORIGIN}/c1/jobs-board/${d.id}|${title}>`);
     } catch (err) {
       logger.warn('[natalie] description autofill failed', { postId: d.id, err: String(err) });
     }
