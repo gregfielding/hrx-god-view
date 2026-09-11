@@ -3,7 +3,7 @@
 > Greg 2026-09-11: "Marco Gomez — a 'Natalie' style recruiter that is built to work for Rosa —
 > primarily supporting venuesmart, but also every other 'c1 events' account besides oakland arena."
 
-Status: **DECIDED, NOT BUILT** (2026-09-11). Model: [[project_natalie_roadmap]] /
+Status: **BUILT + DEPLOYED, SWITCHED OFF** (2026-09-11) — go-live steps at the bottom. Model: [[project_natalie_roadmap]] /
 [[reference_slack_natalie_persona]] / [[project_natalie_onboarding_followups]].
 
 ## Decisions (Greg, 2026-09-11)
@@ -23,6 +23,14 @@ Status: **DECIDED, NOT BUILT** (2026-09-11). Model: [[project_natalie_roadmap]] 
   language the worker writes in.
 - **Headshot**: AI-generated square portrait (navy blazer, "Staffing & Recruitment · English | Español"
   office backdrop) supplied by Greg in chat 2026-09-11.
+
+## Ownership (Greg, 2026-09-11 PM — confirmed)
+"Marco will be the contact for users/applicants for C1 Events jobs (excluding Oakland) and Natalie will
+stick to Indeed Flex (and family of companies) and Sodexo."
+- Code today (`scopePersona`): C1 Events minus Oakland Arena → Marco; **everything else → Natalie**, which
+  also covers Oakland Arena (Danny's — e.g. the every_shift confirmation escalations DM Danny as Natalie)
+  and any C1 Select / Workforce account that is neither Flex nor Sodexo. Whether those edge accounts
+  should get no persona at all is an open question to Greg.
 
 ## Scope data (live probe 2026-09-11, `functions/.scratch/marco_scope_probe.ts`)
 72 job orders on `c1_events_llc`:
@@ -47,11 +55,22 @@ Assistant", `recruiter: true`, `integrations.slack` + `tenants/{T}/slackUsers/{s
 `app_config/natalie` is currently EMPTY at both root and tenant paths — she runs on code defaults.
 
 ## Accounts (2026-09-11)
+- **HRX user `WevlId9Sedb8Yb0nnGFLJB0DIbn1`** (created 2026-09-11 by `functions/.scratch/create_marco_account.ts`,
+  mirrors Natalie): Auth user with no password/providers, custom claims `roles.{T} = Admin / "7"`;
+  users doc with `isAutomationPersona`, Recruiting Assistant, recruiter + crm_sales, `tenantIds.{T}`
+  (securityLevel "7", role Admin, status active), phone/phoneE164 = the 737, twilioNumberSid
+  PN54f9b011…, `integrations.slack`, avatar `https://hrxone.com/brand/marco-gomez-512.jpg`, and
+  `interviewStatus: 'skipped'` / `interviewSource: 'automation_persona'` — ☠️ creating Natalie's doc
+  fired `onUserCreatedScheduleAutoInterviewInvite` at her own number (it only skips when interviewStatus
+  is already completed/invited/skipped). `tenants/{T}/slackUsers/U0C14BDAX2P` → his uid.
+  Local `admin.auth()` fails (ADC has no quota project); the script uses Identity Toolkit REST with
+  `x-goog-user-project: hrx1-d3beb` instead.
 - Slack user **`U0C14BDAX2P`** (Marco Gomez, title Recruiting Assistant, avatar = the square headshot).
 - Google Workspace **m.gomez@c1staffing.com** created by Greg.
-- `#events-recruiting` does NOT exist yet — until `tenants/{T}/app_config/marco.homeChannelId` is set,
-  Marco's posts default to #recruiting.
-- No HRX user doc yet (`PERSONAS.marco.hrxUid = null` → authorship falls back to the literal `marco`).
+- `#events-recruiting` **C0C1EEYG820** created 2026-09-11 (by Greg via the Slack connector; Rosa, Mark,
+  Marco invited — Maria Rabadan has no Slack account under that name) and set as
+  `tenants/{T}/app_config/marco.homeChannelId` (`enabled` still unset = off).
+- `PERSONAS.marco.hrxUid = 'WevlId9Sedb8Yb0nnGFLJB0DIbn1'` (authorship of notes/tasks/placements).
 
 ## Email signature
 Natalie's live Gmail signature (read 2026-09-11 via her mailbox grant, `sendAs.get`) is an HTML table:

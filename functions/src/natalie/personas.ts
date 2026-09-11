@@ -54,7 +54,7 @@ export const PERSONAS: Record<PersonaId, Persona> = {
     displayName: 'Marco Gomez',
     firstName: 'Marco',
     title: 'Recruiting Assistant',
-    hrxUid: null,
+    hrxUid: 'WevlId9Sedb8Yb0nnGFLJB0DIbn1', // created 2026-09-11, mirrors Natalie (Admin / 7, isAutomationPersona)
     slackUserId: 'U0C14BDAX2P',
     email: 'm.gomez@c1staffing.com',
     smsPrefix: 'marco_',
