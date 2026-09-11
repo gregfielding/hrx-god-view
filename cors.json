@@ -1,8 +1,7 @@
 [
   {
-    "origin": ["http://localhost:3000", "https://hrxone.com"],
-    "method": ["GET", "POST", "PUT", "DELETE", "HEAD"],
-    "maxAgeSeconds": 3600,
-    "responseHeader": ["Content-Type", "Authorization", "x-goog-meta-*"]
+    "origin": ["*"],
+    "method": ["GET"],
+    "maxAgeSeconds": 3600
   }
 ]
