@@ -1,7 +1,7 @@
 /**
  * Inbound SMS → Conversations bridge: findOrCreate, idempotent append, rollups.
- * Run with Firestore emulator for integration tests:
- *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 GCLOUD_PROJECT=your-project npm run test:bridge
+ * Run with Firestore emulator for integration tests (from functions/; needs Java 21+):
+ *   npm run test:bridge   — starts the emulator via `firebase emulators:exec`, runs this file, stops it
  * Without the emulator, the integration tests are skipped.
  */
 
