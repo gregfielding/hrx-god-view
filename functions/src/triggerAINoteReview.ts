@@ -6,7 +6,7 @@ export const triggerAINoteReview = onCall({
   cors: true,
   maxInstances: 10,
   timeoutSeconds: 60,
-  memory: '256MiB'
+  memory: '512MiB'
 }, async (request) => {
   try {
     const { noteId, entityType, tenantId, content, category, priority, tags } = request.data;
@@ -66,7 +66,7 @@ export const triggerAINoteReviewHttp = onRequest({
   cors: true,
   maxInstances: 10,
   timeoutSeconds: 60,
-  memory: '256MiB'
+  memory: '512MiB'
 }, async (req, res) => {
   try {
     // Handle preflight requests

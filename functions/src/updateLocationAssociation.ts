@@ -75,7 +75,7 @@ export const updateLocationAssociation = onCall({ cors: true }, async (request) 
 });
 
 // HTTP wrapper (supports direct fetch with proper CORS)
-export const updateLocationAssociationHttp = onRequest({ cors: true, region: 'us-central1', concurrency: 80, timeoutSeconds: 30, memory: '256MiB', minInstances: 0 }, async (req, res) => {
+export const updateLocationAssociationHttp = onRequest({ cors: true, region: 'us-central1', concurrency: 80, timeoutSeconds: 30, memory: '512MiB', minInstances: 0 }, async (req, res) => {
   try {
     if (req.method === 'OPTIONS') {
       res.set('Access-Control-Allow-Origin', corsOriginFor(req.headers.origin));
