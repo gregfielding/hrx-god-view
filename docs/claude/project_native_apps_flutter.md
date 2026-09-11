@@ -697,3 +697,23 @@ Also planned for 1.0.1:
   `android/app/build.gradle` release config (fix by Feb 2027).
 - Optional: drop iPad (`TARGETED_DEVICE_FAMILY = 1`) if we don't want to
   maintain the 13-inch screenshot set.
+
+## iOS resubmitted 2026-09-11 8:58 AM PT — 1.0.0 (14) Waiting for Review
+- Greg recorded on build 14 (TestFlight) with 0101; Claude reviewed frames,
+  trimmed to 1:24, cleared the 0101 account (Firestore + Auth REST).
+- Build 14 attached (replacing 9); video on App Review Information →
+  Attachment and on the reply; condensed reply posted; resubmitted.
+  Auto-release after approval is ON. Play Production 14 still in review.
+- ☠️ ASC "Reply to App Review" caps at 4,000 chars, same as Notes. Keep the
+  answer to Apple's numbered questions under ~3,800.
+- ☠️ After swapping the build on a rejected version, "Resubmit to App Review"
+  on the submission page stays DISABLED until you click **Update Review** on
+  the version page. That moves the item to "Ready for Review" and enables it.
+- Chrome file_upload caps at 10 MB. Device recordings run ~60 MB, so
+  re-encode with AVAssetReader/AVAssetWriter in a Swift script: H.264,
+  590x1280, ~750 kbps gave 7.8 MB for 84 s and stayed legible. No ffmpeg
+  on this Mac. AVAssetImageGenerator + a Swift contact-sheet script is
+  also how recordings get reviewed frame by frame.
+- Cosmetic bug seen in the recording, next build: tapping Continue on
+  sign-up flashes "Choose and validate a suggested address" under an
+  already-validated address.
