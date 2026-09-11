@@ -255,9 +255,16 @@ Greg's (see the report artifact).
   target `https://us-central1-hrx1-d3beb.cloudfunctions.net/evereeWebhook`,
   enabled — unaffected by the domain move. No embed allowed-domain /
   frame-ancestors setting exists in the dashboard, and account settings have
-  no hrxone.com. The embed returnUrl follows the page origin; an end-to-end
-  embed test on app.c1staffing.com still needs a worker with an active Everee
-  onboarding session (the reviewer demo account isn't enrolled).
+  no hrxone.com.
+- ✅ Payroll embed VERIFIED on app.c1staffing.com (2026-09-11, Everee SANDBOX
+  tenant 2320, test worker `shrinktest_20260828`; script
+  `functions/.scratch/shrink-10-appdomain.ts`): session create accepted
+  `returnUrl=https://app.c1staffing.com/c1/workers/payroll/2320`; the embed
+  page (`app.everee.com/embedded`) sends no CSP frame-ancestors or
+  X-Frame-Options; framed inside a live app.c1staffing.com page with the
+  MessageChannel port transfer it replied `MESSAGE_PORT_REGISTERED` and
+  rendered "Let's get started / Welcome, Shrink". Didn't click Get started
+  (no sandbox state changed). Demo account deliberately NOT used (in Apple review).
 - SendGrid: the ONLY template is "Worker Invitation Template"
   `d-36383cd72987421fa5335e9ea7db10d9` (active). Its footer hardcodes
   `https://app.hrxone.com/support` and `https://app.hrxone.com/privacy`
