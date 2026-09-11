@@ -118,6 +118,19 @@ batch-submit reliability matters (Everee calc-race footgun in
 [payroll cost attribution](project_payroll_cost_attribution.md)).
 Key unknown: start date / ramp curve — sequencing pins to it.
 
+## Career recruiting push (2026-09-11)
+
+Ten OnTrac job orders (#501 Denver gig + careers #524 Romeoville, #534 Bohemia, #535 Stoneham,
+#536 DeSoto, #537 Denton, #538 Romulus, #539 Randolph, #540 Kentwood, #541 Fridley): all on
+Craigslist, all with job-order hiring plans on, Natalie the assigned recruiter (her escalations fall
+back to #recruiting). The careers are generic postings with no shifts — Worker Reach used to refuse
+them ("No shifts on this job order to blast for"); since b1fa3afa a shiftless order blasts its
+posting. 30-mile reach at the time: Fridley 218, Romeoville 807, DeSoto 402 (each capped at 200 per
+blast), Denton 49, Romulus 14, Bohemia 4, Stoneham 2, Randolph 2, Kentwood 0 — the Northeast and
+Grand Rapids sites have almost no HRX workers nearby, so Craigslist carries them. Natalie sent the
+blasts as scheduled actions staggered 10 minutes apart (one 200-person blast fills most of her 540s
+tick). The tier bar was lowered to 50 the same day (see project_tier_system_claim_shift_spec.md).
+
 ## DECISION (Greg 2026-08-20): I-9 Section 2 = just-in-time
 563 of 770 Select workers lack employer Section 2 (visible on
 /reports/i9-status). Do NOT run a broad backlog sweep — complete
