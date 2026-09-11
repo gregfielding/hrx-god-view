@@ -9,8 +9,10 @@
  *   - Identity: every text starts with a user search (phoneE164 + raw `phone` formats). Personal data only when
  *     that resolves to exactly ONE tenant member. Shared numbers (346 phones are shared): the persona asks for
  *     their full name and identifies the one account on that number whose first AND last name they texted.
- *     Unknown numbers: users are searched by any email they text, but a match goes to Slack for a human to
- *     confirm — an unverified number never gets account details by text (anyone can type someone's email).
+ *     Unknown numbers: users are searched by any email they text. Greg 2026-09-11: "have the persona answer
+ *     those directly to verify and don't bother slack with that" — an email that matches EXACTLY ONE tenant
+ *     member identifies them and they get their own context (accepted risk: someone who knows a worker's
+ *     email can ask about that worker's shifts/onboarding by text). Two or more matches stay anonymous.
  *   - Existing flows keep priority (inboundSmsWebhook): STOP/HELP, cadence confirmations, offer YES and
  *     onboarding conversations are handled before a text is queued here. Our own numbers never get a reply.
  *   - At most RATE_MAX replies per phone per hour (loops with auto-responders, abuse).
@@ -205,7 +207,7 @@ async function workerContext(uid: string, user: Record<string, unknown>): Promis
 function anonymousContext(sender: SenderMatch, possibleMatch: boolean): string {
   const who = sender.kind === 'ambiguous'
     ? `Sender: this phone number is shared by ${sender.count} accounts, so the texter could NOT be identified yet. Ask them to reply with their full first and last name so you can find their account.`
-    : `Sender: this phone number is not on file, so the texter could NOT be identified. ${possibleMatch ? 'They wrote an email that matches an account — say a recruiter will confirm their account and follow up by text.' : 'If they say they already work with us or applied, ask for their full name and the email they applied with, and say a recruiter will confirm their account.'}`;
+    : `Sender: this phone number is not on file, so the texter could NOT be identified. ${possibleMatch ? 'The email they wrote matches more than one account, so nothing can be confirmed — say a recruiter will follow up.' : 'If they say they already work with us or applied, ask for the email they applied with (that identifies them) or their full name, and say a recruiter can help.'}`;
   return `${who} Do not reveal or confirm any account, application, shift or personal details.\nJobs board (open jobs, apply): ${PUBLIC_APP_ORIGIN}/c1/jobs-board`;
 }
 
@@ -328,21 +330,29 @@ export async function drainWorkerPersonaSms(tokens: PersonaTokens): Promise<numb
         const account = hit ? accounts.find((m) => m.id === hit) : undefined;
         if (account) { sender = { kind: 'worker', uid: account.id, user: account.data }; identifiedBy = 'name_on_shared_number'; }
       }
-      // Unknown number: search users by any email they wrote — surfaced to a HUMAN in Slack only. An unverified number
-      // never gets account details by text (anyone can type someone else's email).
-      const possibleMatches: Array<{ id: string; name: string }> = [];
+      // Unknown number: search users by any email they wrote. Exactly one tenant member → that's who they are
+      // (Greg 2026-09-11). Two or more → stay anonymous.
+      const possibleMatches: Array<{ id: string; name: string; data: Record<string, unknown> }> = [];
       if (sender.kind === 'unknown') {
         for (const email of emailsInText(inbound)) {
-          const q = await db().collection('users').where('email', '==', email).limit(2).get().catch(() => null);
+          const q = await db().collection('users').where('email', '==', email).limit(3).get().catch(() => null);
           for (const u of q?.docs ?? []) {
-            if (classifySender([{ id: u.id, data: u.data() as Record<string, unknown> }], TENANT).kind === 'worker') possibleMatches.push({ id: u.id, name: `${s(u.get('firstName'))} ${s(u.get('lastName'))}`.trim() || email });
+            const data = u.data() as Record<string, unknown>;
+            if (classifySender([{ id: u.id, data }], TENANT).kind === 'worker' && !possibleMatches.some((m) => m.id === u.id)) {
+              possibleMatches.push({ id: u.id, name: `${s(data.firstName)} ${s(data.lastName)}`.trim() || email, data });
+            }
           }
+        }
+        if (possibleMatches.length === 1) {
+          sender = { kind: 'worker', uid: possibleMatches[0].id, user: possibleMatches[0].data };
+          identifiedBy = 'email_in_text';
         }
       }
       const ctx: WorkerContext = sender.kind === 'worker'
         ? await workerContext(sender.uid, sender.user)
-        : { text: anonymousContext(sender, possibleMatches.length > 0), snapshot: null, firstName: '', lang: 'en', assignmentId: null, backgroundFailed: false };
+        : { text: anonymousContext(sender, possibleMatches.length > 1), snapshot: null, firstName: '', lang: 'en', assignmentId: null, backgroundFailed: false };
       if (identifiedBy === 'name_on_shared_number') ctx.text = `${ctx.text}\n(Identified by the full name they texted — this phone number is shared with other accounts.)`;
+      if (identifiedBy === 'email_in_text') ctx.text = `${ctx.text}\n(Identified by the email address they texted; this phone number is not the one on their profile — mention that a recruiter can update their number if it changed.)`;
       const uid = sender.kind === 'worker' ? sender.uid : null;
       const context = [
         ctx.text,
@@ -357,6 +367,7 @@ export async function drainWorkerPersonaSms(tokens: PersonaTokens): Promise<numb
       });
       const raw = res.content.map((c) => (c.type === 'text' ? c.text : '')).join('').trim();
       const decision = parseWorkerDecision(raw, persona, ctx.lang, ctx.firstName);
+      // Still unidentified (no phone, name or email match) → a person should look at it.
       if (sender.kind !== 'worker' && !decision.actions.includes('escalate')) decision.actions.push('escalate');
       if (ctx.backgroundFailed && ['onboarding', 'question'].includes(decision.intent) && !decision.actions.includes('escalate')) decision.actions.push('escalate');
       const { sendWorkerMessageInternal } = await import('../twilio');
@@ -385,13 +396,13 @@ export async function drainWorkerPersonaSms(tokens: PersonaTokens): Promise<numb
         replyTimes: [...replyTimes, Date.now()].slice(-20),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
-      await d.ref.update({ status: sent.success ? 'answered' : 'send_failed', userId: uid, senderKind: sender.kind, identifiedBy: identifiedBy || null, possibleMatches, reply: decision.reply, intent: decision.intent, actions: decision.actions, note: decision.note || null, sendError: sent.success ? null : sent.error ?? sent.errorCode ?? 'unknown', answeredAt: admin.firestore.FieldValue.serverTimestamp() });
+      await d.ref.update({ status: sent.success ? 'answered' : 'send_failed', userId: uid, senderKind: sender.kind, identifiedBy: identifiedBy || null, possibleMatches: possibleMatches.map((m) => ({ id: m.id, name: m.name })), reply: decision.reply, intent: decision.intent, actions: decision.actions, note: decision.note || null, sendError: sent.success ? null : sent.error ?? sent.errorCode ?? 'unknown', answeredAt: admin.firestore.FieldValue.serverTimestamp() });
       try {
         const t = await dayThread(persona, tokens);
         const who = uid
           ? `<${PUBLIC_APP_ORIGIN}/users/${uid}|${`${s(sender.kind === 'worker' ? sender.user.firstName : '')} ${s(sender.kind === 'worker' ? sender.user.lastName : '')}`.trim() || 'worker'}>`
-          : sender.kind === 'ambiguous' ? `shared number …${phone.slice(-4)} (${sender.count} accounts — asked for their full name)` : `unknown number …${phone.slice(-4)}${possibleMatches.length ? ` — possible account from the email they texted: ${possibleMatches.map((m) => `<${PUBLIC_APP_ORIGIN}/users/${m.id}|${m.name}>`).join(', ')} (please confirm it's them)` : ''}`;
-        const how = identifiedBy === 'name_on_shared_number' ? ' _(identified by name on a shared number)_' : '';
+          : sender.kind === 'ambiguous' ? `shared number …${phone.slice(-4)} (${sender.count} accounts — asked for their full name)` : `unknown number …${phone.slice(-4)}${possibleMatches.length > 1 ? ` — ${possibleMatches.length} accounts share the email they texted, so no details were shared` : ''}`;
+        const how = identifiedBy === 'name_on_shared_number' ? ' _(identified by name on a shared number)_' : identifiedBy === 'email_in_text' ? ` _(identified by the email they texted — number …${phone.slice(-4)} is not on their profile)_` : '';
         const line = `${escalate ? ':rotating_light: ' : ''}*${who}*${how} (${decision.intent.replace(/_/g, ' ')}): "${inbound.slice(0, 300)}"\nMe: "${decision.reply}"${sent.success ? '' : ` _(send failed: ${sent.error ?? sent.errorCode})_`}${decision.note ? `\n• ${decision.note}` : ''}${notes.length ? `\n${notes.map((n) => `• ${n}`).join('\n')}` : ''}`;
         await postAsNatalie(t.token, { channel: t.channel, text: line, threadTs: t.ts });
       } catch (err) {

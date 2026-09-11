@@ -51,6 +51,14 @@ describe('parseWorkerDecision', () => {
   });
 });
 
+describe('prompt asks unknown numbers for the identifying email (Greg 2026-09-11)', () => {
+  it.each(['natalie', 'marco'] as const)('%s', (persona) => {
+    const p = workerSmsSystemPrompt(persona);
+    // The identity rule itself lives in CONTEXT (anonymousContext); the prompt must keep deferring to it.
+    expect(p).toContain("follow CONTEXT's instruction");
+  });
+});
+
 describe('workerSmsSystemPrompt guardrails', () => {
   it.each(['natalie', 'marco'] as const)('%s', (persona) => {
     const p = workerSmsSystemPrompt(persona);
