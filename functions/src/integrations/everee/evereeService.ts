@@ -1330,6 +1330,13 @@ export async function getPayStatement(
     ...match,
     gross: stmtAmount((raw as Record<string, unknown> | null)?.grossEarnings) ?? match.gross ?? null,
     net: stmtAmount((raw as Record<string, unknown> | null)?.netEarnings) ?? match.net ?? null,
+    // Always null — Everee has no REST endpoint for a per-statement signed
+    // PDF. Pay stubs are only reachable through an embedded session (see
+    // "13. Onboarding-login lockout" note in feedback_everee_wire_gotchas.md:
+    // "ALL worker-facing Everee access — pay stubs, deposits, tax docs —
+    // already flows through embedded sessions"). The client mints one via
+    // `evereeCreateOnboardingSession` with `experienceType: 'PAYMENT_HISTORY'`
+    // instead of reading this field. Don't try to populate it.
     pdfUrl: null,
     earnings: earnings.length ? earnings : null,
     deductions: deductions.length ? deductions : null,

@@ -27,6 +27,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
 import WorkerPageHeader from '../../../components/worker/WorkerPageHeader';
 import PaymentIssueBanner from '../../../components/worker/PaymentIssueBanner';
+import EvereePayrollSetupEmbed from '../../../components/everee/EvereePayrollSetupEmbed';
 import {
   USD,
   useWorkerEmployerLinkages,
@@ -100,6 +101,7 @@ const WorkerPayHistoryPage: React.FC = () => {
   const [detail, setDetail] = useState<StatementDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [stubDialogOpen, setStubDialogOpen] = useState(false);
 
   const isDetail = Boolean(evereeTenantId && statementId);
 
@@ -196,20 +198,31 @@ const WorkerPayHistoryPage: React.FC = () => {
                 </CardContent>
               </Card>
             ) : null}
-            {detail.pdfUrl ? (
-              <Button
-                variant="contained"
-                endIcon={<OpenInNewIcon />}
-                onClick={() => window.open(detail.pdfUrl as string, '_blank', 'noopener,noreferrer')}
-                sx={{ alignSelf: 'flex-start', px: 3 }}
-              >
-                {t('earnings.viewPdf')}
-              </Button>
-            ) : (
-              <Typography variant="caption" color="text.secondary">
-                {t('earnings.noPdf')}
-              </Typography>
-            )}
+            <Button
+              variant="contained"
+              endIcon={<OpenInNewIcon />}
+              onClick={() => setStubDialogOpen(true)}
+              sx={{ alignSelf: 'flex-start', px: 3 }}
+            >
+              {t('earnings.viewInEveree')}
+            </Button>
+            {(() => {
+              const linkage = linkages.find((l) => l.evereeTenantId === evereeTenantId);
+              if (!scopeTenantId || !linkage || !user?.uid) return null;
+              return (
+                <EvereePayrollSetupEmbed
+                  open={stubDialogOpen}
+                  onClose={() => setStubDialogOpen(false)}
+                  tenantId={scopeTenantId}
+                  entityId={linkage.entityId}
+                  userId={user.uid}
+                  evereeWorkerId={linkage.evereeWorkerId}
+                  experienceType="PAYMENT_HISTORY"
+                  title={t('earnings.viewInEveree')}
+                  sessionContext="pay_history_stub"
+                />
+              );
+            })()}
           </Stack>
         ) : (
           <Alert severity="info">{t('earnings.statementError')}</Alert>

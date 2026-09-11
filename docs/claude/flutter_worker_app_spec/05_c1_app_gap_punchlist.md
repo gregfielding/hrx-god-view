@@ -391,3 +391,33 @@ career track) — Greg 2026-09-03: gig/open-shift/career messaging
 treatment needs a deep dive before touching the other tracks. Caveat:
 messagingSequences copy OVERRIDES replace the built-in SMS body — an
 overridden sequence won't show logistics until its template adds them.
+
+## 2026-09-10 — pay stub viewing: web now opens a real Everee embed, app still expects dead `pdfUrl`
+
+Web fix (`payHistory.tsx` statement detail — worker pay history): the "View
+PDF statement" button always rendered the empty state, because
+`getPayStatement` (evereeService.ts) hardcoded `pdfUrl: null` — Everee has
+no REST endpoint for a per-statement signed PDF; pay stubs only render
+inside an embedded worker session (`feedback_everee_wire_gotchas.md` §12:
+"ALL worker-facing Everee access — pay stubs, deposits, tax docs — already
+flows through embedded sessions"). Fix: the button now opens
+`EvereePayrollSetupEmbed` (extended with an `experienceType` prop, default
+still `ONBOARDING`) minted with `experienceType: 'PAYMENT_HISTORY'` and the
+already-known `evereeWorkerId` (new optional prop — skips
+`evereeEnsureWorker`, which would otherwise try to provision a fresh
+worker). Verified live in a real browser: dialog → iframe → message bridge
+→ Everee's actual PAYMENT_HISTORY screen renders with real payment data.
+`pdfUrl` stays in the `EvereePayStatementSummary` type (harmless, always
+null) — don't try to populate it; it's a REST dead end by design.
+
+**App gap**: per `04_payroll_profile_support.md` §30, the app's pay
+statement screen has the identical shape — `pdfUrl` → "View PDF statement"
+window.open, else `earnings.noPdf` — reading from the same
+`evereeGetPayStatement` callable, so it hits the same permanently-null
+field and the PDF button/state never functions on-device either. The fix
+should be easy to port: the app's Everee WebView bridge
+(`payroll_embed_screen.dart`) is already marked "Already solved" above
+(dynamic channel name, EMB-201/202 swap, session-expiry re-mint) — reuse
+it with `experienceType: 'PAYMENT_HISTORY'` and the worker's known
+`evereeWorkerId` (same as web, skip re-provisioning) instead of trying to
+read/open a `pdfUrl`.

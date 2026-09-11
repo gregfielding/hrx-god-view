@@ -43,6 +43,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import {
   evereeCreateOnboardingSession,
   evereeEnsureWorker,
+  type EvereeEmbedExperienceType,
   type EvereeWorkerType,
 } from '../../services/everee/evereeCallables';
 import { formatFirebaseHttpsError } from '../../utils/firebaseHttpsErrors';
@@ -93,6 +94,21 @@ export interface EvereePayrollSetupEmbedProps {
   /** Accessibility / copy override. Defaults to "Complete payroll setup". */
   title?: string;
   /**
+   * Everee Embed Component to show. Defaults to `ONBOARDING` (this
+   * component's original purpose). Other screens (`PAYMENT_HISTORY`,
+   * `TAX_DOCUMENTS`, `PAYMENT_DEPOSIT`, `HOME_ADDRESS`) reuse the exact same
+   * iframe + bridge plumbing — only the session's `experienceType` differs.
+   */
+  experienceType?: EvereeEmbedExperienceType;
+  /**
+   * When the caller already knows the Everee worker id (e.g. viewing an
+   * existing pay stub), pass it here to skip `evereeEnsureWorker` — that
+   * call provisions a NEW Everee worker if none exists, which is only
+   * correct for the onboarding flow. A worker requesting to view pay
+   * history obviously already has one.
+   */
+  evereeWorkerId?: string;
+  /**
    * Why this open happened ('open' user click | 'auto_resume' reopened after
    * a page reload). Forwarded to the session callable for field diagnostics.
    */
@@ -124,6 +140,8 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
   returnUrl,
   title = 'Complete payroll setup',
   sessionContext = 'open',
+  experienceType,
+  evereeWorkerId: knownEvereeWorkerId,
 }) => {
   const [phase, setPhase] = useState<Phase>({ state: 'idle' });
   const portRef = useRef<MessagePort | null>(null);
@@ -329,18 +347,21 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
       // every intentional exit (close / dismiss / complete).
       markEvereeEmbedOpen(tenantId, entityId, userId);
       try {
-        const ensured = await evereeEnsureWorker({
-          tenantId,
-          entityId,
-          userId,
-          workerType,
-          email: prefill?.email,
-          firstName: prefill?.firstName,
-          lastName: prefill?.lastName,
-          phone: prefill?.phone,
-        });
-        if (cancelled) return;
-        const evereeWorkerId = ensured.data?.evereeWorkerId?.trim();
+        let evereeWorkerId = knownEvereeWorkerId?.trim() || '';
+        if (!evereeWorkerId) {
+          const ensured = await evereeEnsureWorker({
+            tenantId,
+            entityId,
+            userId,
+            workerType,
+            email: prefill?.email,
+            firstName: prefill?.firstName,
+            lastName: prefill?.lastName,
+            phone: prefill?.phone,
+          });
+          if (cancelled) return;
+          evereeWorkerId = ensured.data?.evereeWorkerId?.trim() || '';
+        }
         if (!evereeWorkerId) {
           setPhase({
             state: 'error',
@@ -355,6 +376,7 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
           evereeWorkerId,
           returnUrl,
           context: sessionContext,
+          ...(experienceType ? { experienceType } : {}),
         });
         if (cancelled) return;
         const embedUrl = session.data?.embedUrl?.trim();
@@ -388,7 +410,7 @@ const EvereePayrollSetupEmbed: React.FC<EvereePayrollSetupEmbedProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [open, tenantId, entityId, userId, workerType, prefill?.email, prefill?.firstName, prefill?.lastName, prefill?.phone, returnUrl, teardownPort, sessionContext]);
+  }, [open, tenantId, entityId, userId, workerType, prefill?.email, prefill?.firstName, prefill?.lastName, prefill?.phone, returnUrl, teardownPort, sessionContext, experienceType, knownEvereeWorkerId]);
 
   const handleClose = useCallback(() => {
     clearEvereeEmbedMark(tenantId, entityId, userId);
