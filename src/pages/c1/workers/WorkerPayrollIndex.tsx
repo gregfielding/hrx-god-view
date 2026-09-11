@@ -328,17 +328,8 @@ const WorkerPayrollIndex: React.FC = () => {
         </Typography>
         <EventsAppliedBanner />
         <PendingClaimBanner />
-        {arrivedFromEventsApply ? (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-            <CircularProgress size={20} />
-            <Box>
-              <Typography variant="body2">{t('jobs.eventsPayrollSettingUp')}</Typography>
-              <Typography variant="caption" color="text.secondary">
-                {t('jobs.eventsPayrollSettingUpHelper')}
-              </Typography>
-            </Box>
-          </Box>
-        ) : (
+        {/* After a C1 Events apply the setup card above shows "setting up". */}
+        {arrivedFromEventsApply ? null : (
           <Typography variant="body2" color="text.secondary" paragraph>
             No payroll account yet — contact your recruiter if you were expecting access.
           </Typography>

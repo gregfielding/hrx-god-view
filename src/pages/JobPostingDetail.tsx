@@ -1876,10 +1876,15 @@ const JobPostingDetail: React.FC = () => {
             // interview; repeat workers stay on the posting — their fresh
             // application auto-completes server-side from the answer bank,
             // so the interview page would be noise (2026-08-29, Greg).
-            // C1 Events hires everyone who applies (2026-09-11): payroll setup
-            // comes first; the payroll page offers the interview as optional.
+            // C1 Events hires everyone who applies (2026-09-11): a worker who
+            // isn't fully set up there (photo · direct deposit · 1099 tax form)
+            // goes to the setup checklist on the payroll page, interview
+            // optional; a set-up worker stays on the posting.
             if (posting.hiringEntityId === 'c1_events_llc') {
-              navigate(`/c1/workers/earnings?welcome=events&applicationId=${encodeURIComponent(`${user.uid}_${postId}`)}`);
+              const { fetchEventsSetupComplete } = await import('../utils/claimShift/eventsSetup');
+              if (!(await fetchEventsSetupComplete(posting.tenantId, user.uid))) {
+                navigate(`/c1/workers/earnings?welcome=events&applicationId=${encodeURIComponent(`${user.uid}_${postId}`)}`);
+              }
               return;
             }
             const { hasCompletedPrescreen } = await import('../utils/quickApplicationSubmit');

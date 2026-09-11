@@ -1,6 +1,8 @@
 import {
   claimNeedsSetup,
   evaluateClaimReadiness,
+  eventsSetupSteps,
+  isEventsSetupComplete,
   isHeadshotReadyForClaim,
   isPayrollReadyForClaim,
 } from '../claimReadiness';
@@ -33,6 +35,40 @@ describe('claimReadiness — payroll (mirror of claimShiftPolicy)', () => {
     expect(claimNeedsSetup('start_onboarding')).toBe(true);
     expect(claimNeedsSetup('setup_in_progress')).toBe(true);
     for (const k of ['ready', 'not_hired', 'employment_ended', null] as const) expect(claimNeedsSetup(k)).toBe(false);
+  });
+});
+
+describe('eventsSetupSteps — photo · direct deposit · 1099 tax form', () => {
+  it('finished payroll marks both payroll steps done without per-step mirror stamps', () => {
+    expect(
+      eventsSetupSteps({ photoReady: true, payrollReady: true, link: { status: 'onboarding_complete', readinessMirror: { w9SignedAt: null } } }),
+    ).toEqual({ photo: true, directDeposit: true, taxForm: true });
+  });
+
+  it('mid-setup steps follow the readiness mirror', () => {
+    expect(eventsSetupSteps({ photoReady: false, payrollReady: false, link: { readinessMirror: { directDepositReady: true } } })).toEqual({
+      photo: false,
+      directDeposit: true,
+      taxForm: false,
+    });
+    expect(eventsSetupSteps({ photoReady: true, payrollReady: false, link: { readinessMirror: { w9SignedAt: { seconds: 1 } } } })).toEqual({
+      photo: true,
+      directDeposit: false,
+      taxForm: true,
+    });
+    expect(eventsSetupSteps({ photoReady: true, payrollReady: false, link: { readinessMirror: { bankAccountCount: 1 } } }).directDeposit).toBe(true);
+    expect(eventsSetupSteps({ photoReady: true, payrollReady: false, link: { readinessMirror: { directDepositVerifiedAt: { seconds: 1 } } } }).directDeposit).toBe(true);
+  });
+
+  it('no link or mirror leaves both payroll steps open', () => {
+    expect(eventsSetupSteps({ photoReady: true, payrollReady: false, link: null })).toEqual({ photo: true, directDeposit: false, taxForm: false });
+    expect(eventsSetupSteps({ photoReady: true, payrollReady: false, link: { status: 'created' } })).toEqual({ photo: true, directDeposit: false, taxForm: false });
+  });
+
+  it('complete only when all three are done', () => {
+    expect(isEventsSetupComplete({ photo: true, directDeposit: true, taxForm: true })).toBe(true);
+    expect(isEventsSetupComplete({ photo: false, directDeposit: true, taxForm: true })).toBe(false);
+    expect(isEventsSetupComplete({ photo: true, directDeposit: true, taxForm: false })).toBe(false);
   });
 });
 

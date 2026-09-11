@@ -7,8 +7,11 @@
  * authoritative. Flutter twin: lib/features/assignments/domain/claim_readiness.dart.
  */
 
+/** C1 Events — 1099 on-call entity that hires everyone who applies. */
+export const C1_EVENTS_ENTITY_ID = 'c1_events_llc';
+
 /** Entities a worker can get hired at on their own: C1 Events hires everyone. */
-export const SELF_SERVE_HIRE_ENTITY_IDS: ReadonlySet<string> = new Set(['c1_events_llc']);
+export const SELF_SERVE_HIRE_ENTITY_IDS: ReadonlySet<string> = new Set([C1_EVENTS_ENTITY_ID]);
 
 export type ClaimReadinessKind = 'ready' | 'start_onboarding' | 'setup_in_progress' | 'not_hired' | 'employment_ended';
 
@@ -49,6 +52,41 @@ export function evaluateClaimReadiness(args: {
 /** The worker must finish payroll setup before claiming ("Finish setup to claim"). */
 export function claimNeedsSetup(kind: ClaimReadinessKind | null | undefined): boolean {
   return kind === 'start_onboarding' || kind === 'setup_in_progress';
+}
+
+export interface EventsSetupSteps {
+  photo: boolean;
+  directDeposit: boolean;
+  taxForm: boolean;
+}
+
+/**
+ * C1 Events setup checklist — profile photo · direct deposit · 1099 tax form
+ * (Greg 2026-09-11: an applicant who isn't fully set up is prompted for all
+ * three). Finished payroll marks both payroll steps done: the readiness
+ * mirror's `w9SignedAt` was missing on 969 of 2,255 Everee-complete C1 Events
+ * workers that day, so the mirror's per-step flags only matter mid-setup.
+ * `link` = `everee_workers/{entityId}__{uid}` (carries `readinessMirror`).
+ */
+export function eventsSetupSteps(args: {
+  photoReady: boolean;
+  payrollReady: boolean;
+  link: Row | null | undefined;
+}): EventsSetupSteps {
+  const mirror = (args.link?.readinessMirror ?? null) as Row | null;
+  return {
+    photo: args.photoReady,
+    directDeposit:
+      args.payrollReady ||
+      mirror?.directDepositReady === true ||
+      Boolean(mirror?.directDepositVerifiedAt) ||
+      Number(mirror?.bankAccountCount ?? 0) > 0,
+    taxForm: args.payrollReady || Boolean(mirror?.w9SignedAt),
+  };
+}
+
+export function isEventsSetupComplete(steps: EventsSetupSteps): boolean {
+  return steps.photo && steps.directDeposit && steps.taxForm;
 }
 
 const BLOCKING_REJECTION_REASONS = new Set(['no_face', 'multiple_faces', 'inappropriate', 'manual_override']);

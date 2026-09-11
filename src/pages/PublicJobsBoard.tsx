@@ -1363,10 +1363,17 @@ const PublicJobsBoard: React.FC = () => {
             // First-time interviewees go into the stand-out interview;
             // repeat workers see the posting's submitted state — their
             // application auto-completes from the answer bank server-side.
-            // C1 Events hires everyone who applies (2026-09-11): payroll setup
-            // comes first; the payroll page offers the interview as optional.
+            // C1 Events hires everyone who applies (2026-09-11): a worker who
+            // isn't fully set up there (photo · direct deposit · 1099 tax form)
+            // goes to the setup checklist on the payroll page, interview
+            // optional; a set-up worker lands on the posting.
             if (job.hiringEntityId === 'c1_events_llc') {
-              navigate(`/c1/workers/earnings?welcome=events&applicationId=${encodeURIComponent(`${user.uid}_${job.id}`)}`);
+              const { fetchEventsSetupComplete } = await import('../utils/claimShift/eventsSetup');
+              if (await fetchEventsSetupComplete(job.tenantId, user.uid)) {
+                navigate(`/c1/jobs-board/${job.id}`, { replace: true });
+              } else {
+                navigate(`/c1/workers/earnings?welcome=events&applicationId=${encodeURIComponent(`${user.uid}_${job.id}`)}`);
+              }
               return;
             }
             const { hasCompletedPrescreen } = await import('../utils/quickApplicationSubmit');
@@ -1830,7 +1837,8 @@ const PublicJobsBoard: React.FC = () => {
       {showClaimSetupCard ? (
         <ClaimSetupCard
           photoReady={boardClaimReadiness.photoReady}
-          payrollReady={boardClaimReadiness.payrollReady}
+          directDepositReady={boardClaimReadiness.directDepositReady}
+          taxFormReady={boardClaimReadiness.taxFormReady}
           busy={claimSetupBusy}
           onFinishSetup={() => void handleBoardFinishSetup()}
         />
