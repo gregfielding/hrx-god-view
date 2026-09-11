@@ -26,6 +26,7 @@ import UserGroupMembersTable, {
   type MemberPreferenceStatus,
 } from '../components/recruiter/userGroup/UserGroupMembersTable';
 import RecruiterMultiSelect from '../components/recruiter/RecruiterMultiSelect';
+import { USER_GROUP_HIRING_RETIRED, USER_GROUP_HIRING_RETIRED_NOTICE } from '../config/userGroupHiring';
 
 interface TenantUserGroup {
   id: string;
@@ -453,17 +454,21 @@ const RecruiterUserGroupDetails: React.FC = () => {
             <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>
               Hiring control
             </Typography>
-            <UserGroupHiringControlPanel
-              tenantId={tenantId}
-              groupId={group.id}
-              memberCount={membersData.length}
-              memberProfiles={membersData.map((m) => ({
-                userId: m.id,
-                aiProfileScore: m.aiProfileScore,
-                aiJobFitScore: m.aiJobFitScore,
-              }))}
-              onSaved={() => void loadGroup()}
-            />
+            {USER_GROUP_HIRING_RETIRED ? (
+              <Alert severity="info">{USER_GROUP_HIRING_RETIRED_NOTICE}</Alert>
+            ) : (
+              <UserGroupHiringControlPanel
+                tenantId={tenantId}
+                groupId={group.id}
+                memberCount={membersData.length}
+                memberProfiles={membersData.map((m) => ({
+                  userId: m.id,
+                  aiProfileScore: m.aiProfileScore,
+                  aiJobFitScore: m.aiJobFitScore,
+                }))}
+                onSaved={() => void loadGroup()}
+              />
+            )}
           </Box>
         ) : tenantId && groupId ? (
           <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>

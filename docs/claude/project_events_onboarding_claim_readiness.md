@@ -195,6 +195,35 @@ interview — left as is, no demotion), pending proposals 1 (unaffected).
 - No Flutter change: the app's quick apply writes `status: submitted`,
   `appliedAt` (new docs), `submittedAt`, `hiringEntityId`.
 
+### ☠️ GROUP HIRING RETIRED 2026-09-11 (Greg: "retire group hiring now")
+
+- **Switch**: `USER_GROUP_HIRING_RETIRED = true` in
+  `functions/src/recruiter/userGroupHiringRetired.ts` + web mirror
+  `src/config/userGroupHiring.ts`. While true:
+  `autoOnboardForGroupIfEligible` returns not-considered (kills BOTH group
+  doors: `onUserGroupMemberAddedAutoOnboard` and the application-signals
+  branch), `userGroupHirePassedCandidates` refuses `execute`,
+  `validateUserGroupSignup` returns `hiringActive: false, hireEveryone: null`
+  (the wizard takes the general-signup path → dashboard, no "approved" copy —
+  `Wizard.autoHireGroupSignup` now requires `signupGroupAutoHires === true`),
+  and `eventsEntityAutoHire` never defers to a group (it owns EVERY C1 Events
+  application). The group Hiring tab (RecruiterUserGroupDetails +
+  AgencyProfile UserGroupDetails) shows a notice instead of the panel.
+- **Data**: the 23 groups with `hiringConfig.automation.hiringActive: true`
+  (22 C1 Events hire_everyone + Domino's Distribution Center Missouri at
+  C1 Select) flipped to false with `retiredAt/retiredBy`; backup in gitignored
+  `functions/.scratch/group_hiring_retired_backup_2026-09-11.json`.
+  Flipped BEFORE the deploy so the old code's group doors stopped instantly
+  (no double invites), then a gap check for Events applicants in between.
+- **What stopped**: group signup links (72 in 60 days) and "add to group =
+  hire" no longer onboard — those workers get onboarded at their first Claim
+  Shift tap. The C1 Select Domino's group no longer hires; use the JO Hiring
+  plan.
+- **Rollback**: set both constants false, redeploy `onApplicationHiringSignalsChangedAutoOnboard,
+  onUserGroupMemberAddedAutoOnboard, userGroupHirePassedCandidates,
+  validateUserGroupSignup` + hosting, then
+  `cd functions && npx ts-node .scratch/retire_group_hiring.ts rollback`.
+
 ### Group hiring usage (read-only, 60 days to 2026-09-11) — input for hiding it
 
 `functions/.scratch/group_hiring_usage.ts`:
@@ -209,8 +238,8 @@ interview — left as is, no demotion), pending proposals 1 (unaffected).
 - Retiring group hiring = turn `hiringActive` off on those 23 groups (C1 Events
   job applies keep hiring through S2; **group signup links and
   "add to group = hire" stop hiring** — those workers would be onboarded at
-  their first Claim tap instead) + hide the group Hiring tab UI. Decision
-  pending with Greg.
+  their first Claim tap instead) + hide the group Hiring tab UI. Decided: retired
+  2026-09-11 (section above).
 
 ## S2 dry run (2026-09-11, read-only) — backfill is tiny; the gap is mostly closed already
 

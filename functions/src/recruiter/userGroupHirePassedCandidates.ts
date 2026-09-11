@@ -6,6 +6,7 @@
  * `execute`: same scan + audit, then starts on-call onboarding (`runStartOnCallEmploymentFlow`) for each
  * eligible distinct user (requires group `hiringConfig.employment` on-call + hiring entity).
  */
+import { USER_GROUP_HIRING_RETIRED } from './userGroupHiringRetired';
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
@@ -292,6 +293,14 @@ export const userGroupHirePassedCandidates = onCall(
 
     if (!tenantId || !groupId) {
       throw new HttpsError('invalid-argument', 'tenantId and groupId are required');
+    }
+
+    // Group hiring is retired (Greg 2026-09-11) — see userGroupHiringRetired.ts.
+    if (mode === 'execute' && USER_GROUP_HIRING_RETIRED) {
+      throw new HttpsError(
+        'failed-precondition',
+        "Group hiring is turned off. C1 Events hires everyone who applies; C1 Select hiring runs from each job order's Hiring plan.",
+      );
     }
 
     if (!(await canManageOnboarding(request.auth, tenantId, request.auth.uid))) {

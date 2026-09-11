@@ -8,7 +8,9 @@
  * hires in the 60 days to 2026-09-11), so hiring here too would race it and
  * double-send invites. Switch a group's hiring off and its postings move to
  * this rule automatically. Before this only the Events postings feeding a
- * `hire_everyone` group hired on apply (18 of 35 active).
+ * `hire_everyone` group hired on apply (18 of 35 active). Group hiring was
+ * retired the same day (userGroupHiringRetired.ts): while retired, no group
+ * hires, so this rule owns EVERY C1 Events application.
  *
  * Forward-only by construction:
  *   - hires only at the apply moment (application created past `in_progress`,
@@ -28,6 +30,7 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 
 import { isGroupHireEveryonePreset, readGroupOnCallHiringContext } from './userGroupHirePassedCandidates';
+import { USER_GROUP_HIRING_RETIRED } from './userGroupHiringRetired';
 
 export const EVENTS_AUTO_HIRE_ENTITY_ID = 'c1_events_llc';
 export const APPLY_RECENCY_MS = 48 * 3600 * 1000;
@@ -139,6 +142,7 @@ async function groupsHireEveryoneAtEvents(
   tenantId: string,
   application: Record<string, unknown>,
 ): Promise<boolean> {
+  if (USER_GROUP_HIRING_RETIRED) return false;
   const ids = new Set<string>();
   if (typeof application.groupId === 'string' && application.groupId.trim()) ids.add(application.groupId.trim());
   if (Array.isArray(application.groupIds)) {

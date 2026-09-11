@@ -23,6 +23,7 @@
  * `entity_employments` row exists for the (user, entity) pair, so re-firing
  * the trigger on multiple signal changes is safe.
  */
+import { USER_GROUP_HIRING_RETIRED } from './userGroupHiringRetired';
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 
@@ -295,6 +296,11 @@ export async function autoOnboardForGroupIfEligible(
     eligibilityMode = 'current_policy',
     note,
   } = args;
+
+  // Group hiring is retired (Greg 2026-09-11) — see userGroupHiringRetired.ts.
+  if (USER_GROUP_HIRING_RETIRED) {
+    return { considered: false, evaluation: null, onboardingStarted: false };
+  }
 
   const groupSnap = await db.doc(`tenants/${tenantId}/userGroups/${groupId}`).get();
   if (!groupSnap.exists) {

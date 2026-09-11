@@ -78,6 +78,7 @@ import {
 
 import AgencyProfileHeader from './AgencyProfileHeader';
 import { fetchAgencyUserGroupManagerCandidates } from '../../../utils/userGroupManagerCandidateUsers';
+import { USER_GROUP_HIRING_RETIRED, USER_GROUP_HIRING_RETIRED_NOTICE } from '../../../config/userGroupHiring';
 
 const userGroupLastEvaluatedStorageKey = (tid: string, gid: string) =>
   `userGroupEvaluateLastAt:${tid}:${gid}`;
@@ -1171,17 +1172,21 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
             <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>
               Hiring control
             </Typography>
-            <UserGroupHiringControlPanel
-              tenantId={tenantId}
-              groupId={groupId}
-              memberCount={memberIds.length}
-              memberProfiles={membersData.map((m: { id: string; aiProfileScore?: number; aiJobFitScore?: number }) => ({
-                userId: m.id,
-                aiProfileScore: m.aiProfileScore,
-                aiJobFitScore: m.aiJobFitScore,
-              }))}
-              onSaved={() => void fetchGroup()}
-            />
+            {USER_GROUP_HIRING_RETIRED ? (
+              <Alert severity="info">{USER_GROUP_HIRING_RETIRED_NOTICE}</Alert>
+            ) : (
+              <UserGroupHiringControlPanel
+                tenantId={tenantId}
+                groupId={groupId}
+                memberCount={memberIds.length}
+                memberProfiles={membersData.map((m: { id: string; aiProfileScore?: number; aiJobFitScore?: number }) => ({
+                  userId: m.id,
+                  aiProfileScore: m.aiProfileScore,
+                  aiJobFitScore: m.aiJobFitScore,
+                }))}
+                onSaved={() => void fetchGroup()}
+              />
+            )}
           </Box>
         )}
 

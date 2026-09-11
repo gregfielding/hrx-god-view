@@ -10477,13 +10477,16 @@ export const validateUserGroupSignup = onCall({
     // application doc), score-gated groups get an application doc so the
     // interview + orchestrator thresholds can decide ("the system decides").
     const { isGroupHireEveryonePreset } = await import('./recruiter/userGroupHirePassedCandidates');
+    // Group hiring retired (Greg 2026-09-11): a signup link only joins the
+    // group — `hireEveryone: null` sends the wizard down the general-signup path.
+    const { USER_GROUP_HIRING_RETIRED } = await import('./recruiter/userGroupHiringRetired');
     return {
       success: true,
       groupId: String(groupId),
       tenantId: String(tenantId),
       title: String(data?.title || '').trim() || null,
-      hiringActive: data?.hiringConfig?.automation?.hiringActive === true,
-      hireEveryone: isGroupHireEveryonePreset(data ?? {}),
+      hiringActive: USER_GROUP_HIRING_RETIRED ? false : data?.hiringConfig?.automation?.hiringActive === true,
+      hireEveryone: USER_GROUP_HIRING_RETIRED ? null : isGroupHireEveryonePreset(data ?? {}),
     };
   } catch (error: any) {
     if (error instanceof HttpsError) throw error;

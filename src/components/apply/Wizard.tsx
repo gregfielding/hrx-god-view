@@ -3822,6 +3822,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       (userProfile as any)?.hasWorkerAiPrescreenInterview === true ||
       (userProfile as any)?.interviewStatus === 'completed';
     const isGatedGroup = Boolean(signupGroupId && signupGroupAutoHires === false && gatedGroupUid);
+    // Only a group that really auto-hires lands on payroll with "approved" copy.
+    // Group hiring was retired 2026-09-11 (validateUserGroupSignup returns
+    // hireEveryone: null), so signup links now take the general-signup path.
+    const autoHireGroupSignup = Boolean(signupGroupId && signupGroupAutoHires === true);
     // Repeat interviewees on a score-gated group go to the dashboard — the
     // answer-bank auto-complete + signals reactor resolve their outcome in
     // the background within moments.
@@ -3834,26 +3838,26 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     return (
       <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
         <PostSubmitRedirect
-          to={gatedGroupTo ?? (signupGroupId ? '/c1/workers/earnings' : '/c1/workers/dashboard')}
+          to={gatedGroupTo ?? (autoHireGroupSignup ? '/c1/workers/earnings' : '/c1/workers/dashboard')}
           delayMs={1500}
           headlineKey={
             isGatedGroup
               ? 'apply.applicationSubmittedMessage'
-              : signupGroupId
+              : autoHireGroupSignup
                 ? 'apply.approvedTitle'
                 : 'apply.hiredTitle'
           }
           subheadKey={
             isGatedGroup
               ? 'apply.nextInterviewSubhead'
-              : signupGroupId
+              : autoHireGroupSignup
                 ? 'apply.takingYouToPayroll'
                 : 'apply.takingYouHome'
           }
           helperKey={
             isGatedGroup
               ? 'apply.nextInterviewHelper'
-              : signupGroupId
+              : autoHireGroupSignup
                 ? 'apply.payrollNowHint'
                 : 'apply.payrollLaterHint'
           }
