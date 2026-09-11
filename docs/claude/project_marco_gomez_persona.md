@@ -75,6 +75,11 @@ Assistant", `recruiter: true`, `integrations.slack` + `tenants/{T}/slackUsers/{s
   (stores MARCO_SLACK_USER_TOKEN only if the token is U0C14BDAX2P's; revokes anyone else's). Authorize URL:
   `https://slack.com/oauth/v2/authorize?client_id=7582435419591.12038800831555&user_scope=chat:write,channels:read,groups:read,channels:history,groups:history,users:read,im:write,im:history,im:read,mpim:history,mpim:read&redirect_uri=https://hrxone.com/slack/oauth/callback`
   After a new token version: redeploy `natalieSlackInbox` (secret versions are pinned at deploy).
+- ✅ **Token stored 2026-09-11 ~14:21 PT**: Greg authorized in Incognito as m.gomez@; the exchange verified
+  `authed_user.id == U0C14BDAX2P` (team C1 Staffing, all 11 user scopes incl. im/mpim history) and added a new
+  `MARCO_SLACK_USER_TOKEN` version over the `unset` placeholder. `natalieSlackInbox` redeployed to bind it;
+  Marco's first tick only records cursors in `app_config/marco_slack_inbox` (no backlog answered), then he
+  answers DMs + @mentions in channels he has joined.
 - Google Workspace **m.gomez@c1staffing.com** created by Greg.
 - `#events-recruiting` **C0C1EEYG820** created 2026-09-11 (by Greg via the Slack connector; Rosa, Mark,
   Marco invited — Maria Rabadan has no Slack account under that name) and set as
