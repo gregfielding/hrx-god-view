@@ -82,3 +82,12 @@ Managed bulk delete bills as ordinary deletes (nam5 $0.02/100k) → ~$360 one-ti
 
 **2026-09-10 — client full-`users` scans fixed** (the "reads + egress" lever above): 10 surfaces moved to indexed staff queries / the worker directory / id chunks / count aggregations; details + conventions in [[feature_users_read_rules]] (2026-09-10 section). Client-only change — takes effect on the next hosting deploy. Expected: most of the ~$70/mo reads + ~$25/mo Firestore egress.
 - 2026-09-11 check: `data_and_index_storage_bytes` last published 09-10 11:46Z at 8.403 TiB — the metric has emitted NO new point for 27h (backups metric last 09-10 05:55Z, 8.39 TiB). Billing export is current to 09-11 07:00Z overall, but Firestore storage SKU rows still end at 09-08 (8.409 TiB, $51.66/day; backups 16.796 TiB, $17.20/day) — storage SKUs post with a multi-day lag. Reclamation not yet visible; support-case trigger stays 2026-09-17.
+
+## ☠️ 2026-09-11 — the TTL shortcut cost $14,341.70 (estimate was ~$360)
+
+- On 2026-09-09 17:21Z Claude enabled TTL policies (`timestamp` field) on context_analysis / tasks_ai_analysis / crm_analysis / test_logs to speed up the cleanup, assuming TTL deletes bill per document like the managed op. They did not.
+- TTL deleted **1,426,951,871 docs** (metric `document/ttl_deletion_count`, 09-09 17:00Z → 09-10 10:00Z) and was billed as SKU **Cloud Firestore TTL Deletes** (4B9F-7CF7-C094, service F17B-412E-CB64): **71,708,522,696 units × $0.02/100k = $14,341.70** → **50.3 billed units per document** (these docs were `{logId, analysis map, timestamp}` — the ratio looks like index entries, not documents).
+- Same data, managed `gcloud firestore bulk-delete`: 378,374,351 docs billed as **Entity Deletes 378,374,572 units ($75.67)** — 1:1.
+- Google's TTL doc says TTL deletes "count towards your document delete costs" — the 50× ratio contradicts that. Billing support case with these numbers recommended to Greg 2026-09-11 (request a credit).
+- Charges stopped 09-10 10:00Z (last hour $1.79). All four TTL policies disabled 2026-09-11. Invoice month 202609 = $15,017.96 as of 09-11 12:28Z; the card charge Greg saw (~$10K) is a payment-threshold charge against that.
+- **Rules:** (1) NEVER use TTL policies to clear existing large data — use `gcloud firestore bulk-delete` and accept the slower rate. (2) Before ANY large paid operation, run a pilot (~100k docs) and read the billing-export SKU units per doc before scaling. (3) Docs-based unit assumptions are not verification; the billing export is.
