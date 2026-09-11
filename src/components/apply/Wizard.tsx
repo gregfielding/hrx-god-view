@@ -2674,7 +2674,18 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       };
       if (personal.firstName) profileUpdate.firstName = String(personal.firstName).trim();
       if (personal.lastName) profileUpdate.lastName = String(personal.lastName).trim();
-      if (personal.email) profileUpdate.email = String(personal.email).trim();
+      const emailSubmit = String(personal.email || '').trim();
+      // Validate before writing — this unconditional final-submit path used to
+      // save whatever was typed with no format check (unlike the debounced
+      // auto-persist effect above, which does validate), so a worker typing a
+      // username/handle into the optional Email field silently corrupted
+      // `users/{uid}.email` with a non-email string. That later broke Everee
+      // worker creation (its API rejects malformed email, surfaced to admins
+      // as a generic "internal" error) — found via Liliana Ramirez, C1
+      // Events, 2026-09-09.
+      if (emailSubmit && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailSubmit)) {
+        profileUpdate.email = emailSubmit.toLowerCase();
+      }
       if (personal.phone && isValidUsPhone10(String(personal.phone))) {
         profileUpdate.phone = normalizeUsPhoneDigits(String(personal.phone));
       }
