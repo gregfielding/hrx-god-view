@@ -13,7 +13,9 @@
  *      `claimShiftEnabled: true` + status active (recruiter opt-in per post).
  *   2. Policy gates (claimShiftPolicy): gig JO not paused/closed, shift not
  *      cancelled/open-type, valid day with hours, not yet started, DNR,
- *      headshot gate (typed HEADSHOT_* error, same as accept), tier window
+ *      headshot gate (typed HEADSHOT_* error, same as accept), payroll
+ *      readiness at the shift's hiring entity (claimReadiness — may start
+ *      C1 Events onboarding; `setup_required`), tier window
  *      (wired, off), overlap with any live assignment, unproven-worker cap.
  *   3. Transaction on the SHIFT doc: re-read shift + this worker's day doc
  *      (idempotent: already live → return it), count live assignments on
@@ -37,6 +39,7 @@ import { logger } from 'firebase-functions/v2';
 import { assertWorkerHeadshotApproved } from '../avatar/headshotAcceptGate';
 import { runScreeningAutomationForConfirmedAssignment } from '../compliance/screeningAutomationTrigger';
 import { filterDnrRecipients } from '../dnr/filterDnrRecipients';
+import { assertClaimPayrollReady } from './claimReadiness';
 import { ensureWorkerOnboardingPipeline } from '../onboarding/workerOnboardingPipeline';
 import {
   buildAssignmentDocId,
@@ -173,6 +176,10 @@ export async function claimShiftForWorker(args: ClaimShiftArgs): Promise<ClaimSh
   // Same typed HEADSHOT_* contract as Accept (web renders the inline
   // uploader, the app shows the headshot sheet); grace clause via tenantId.
   await assertWorkerHeadshotApproved(uid, userData, { tenantId });
+
+  // Payroll must be finished at the shift's hiring entity (Greg 2026-09-11).
+  // A C1 Events worker never hired there gets onboarding started on this tap.
+  await assertClaimPayrollReady({ db, tenantId, uid, jobOrderId, jobOrder, posting: posting.data });
 
   const tier = resolveWorkerTier(userData);
   const tierWindow = evaluateClaimTierWindow({

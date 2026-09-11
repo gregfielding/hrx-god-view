@@ -198,6 +198,7 @@ const JobPostingDetail: React.FC = () => {
   const [claimSubmitting, setClaimSubmitting] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimGate, setClaimGate] = useState<FormattedHeadshotGateError | null>(null);
+  const [claimSetupRequired, setClaimSetupRequired] = useState(false);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [applicationData, setApplicationData] = useState<any>(null);
@@ -2634,6 +2635,7 @@ const JobPostingDetail: React.FC = () => {
 
   const handleSubmitClaim = async () => {
     if (!claimSheet || !resolvedTenantId || !user?.uid || !posting?.jobOrderId) return;
+    setClaimSetupRequired(false);
     if (!(claimAckUniform && claimAckTransport && claimAckArrival && claimAckNoShow)) {
       setClaimError(t('jobs.claimAllAcksRequired'));
       return;
@@ -2684,6 +2686,7 @@ const JobPostingDetail: React.FC = () => {
       const claimErr = formatClaimShiftError(err);
       if (claimErr) {
         setClaimError(claimErr.message);
+        setClaimSetupRequired(claimErr.setupRequired);
         if (claimErr.shiftFilled) setAppliedShiftsRefresh((n) => n + 1);
         return;
       }
@@ -4549,7 +4552,17 @@ const JobPostingDetail: React.FC = () => {
         ) : null}
 
         {claimError ? (
-          <Alert severity="error" sx={{ mt: 2 }}>
+          <Alert
+            severity={claimSetupRequired ? 'info' : 'error'}
+            sx={{ mt: 2 }}
+            action={
+              claimSetupRequired ? (
+                <Button color="inherit" size="small" onClick={() => navigate('/c1/workers/earnings')}>
+                  {t('jobs.claimFinishSetup')}
+                </Button>
+              ) : undefined
+            }
+          >
             {claimError}
           </Alert>
         ) : null}

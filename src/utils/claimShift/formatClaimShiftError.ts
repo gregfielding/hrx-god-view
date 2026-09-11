@@ -5,7 +5,8 @@
  *
  * Server contract: `HttpsError('failed-precondition', msg, { code, ...extra })`
  * where `code` ∈ shift_filled | tier_locked | conflict | claim_cap |
- * ineligible | not_claimable. The Firebase callable client surfaces that as a
+ * ineligible | not_claimable | setup_required (payroll not finished at the
+ * shift's hiring entity — send the worker to payroll setup). The Firebase callable client surfaces that as a
  * `FirebaseError` with `.code === 'functions/failed-precondition'` and
  * `.details` = the server's third argument. The headshot gate rides the same
  * callable with its own `HEADSHOT_*` codes — check `formatHeadshotGateError`
@@ -21,7 +22,8 @@ export type ClaimShiftErrorCode =
   | 'conflict'
   | 'claim_cap'
   | 'ineligible'
-  | 'not_claimable';
+  | 'not_claimable'
+  | 'setup_required';
 
 const CODES: ReadonlySet<string> = new Set([
   'shift_filled',
@@ -30,6 +32,7 @@ const CODES: ReadonlySet<string> = new Set([
   'claim_cap',
   'ineligible',
   'not_claimable',
+  'setup_required',
 ]);
 
 export interface ClaimShiftErrorDetails {
@@ -37,6 +40,9 @@ export interface ClaimShiftErrorDetails {
   reason?: string;
   opensAtMs?: number;
   cap?: number;
+  entityId?: string;
+  /** `setup_required`: 'started' = this claim just started onboarding. */
+  stage?: 'started' | 'in_progress';
   conflict?: {
     assignmentId?: string;
     jobTitle?: string;
@@ -54,6 +60,8 @@ export interface FormattedClaimShiftError {
   message: string;
   /** True when the row should flip to a terminal "filled" state. */
   shiftFilled: boolean;
+  /** True when the worker must finish payroll setup first (show "Finish setup"). */
+  setupRequired: boolean;
 }
 
 function formatClock(hhmm?: string): string {
@@ -93,7 +101,9 @@ function messageFor(details: ClaimShiftErrorDetails, fallback: string): string {
     case 'claim_cap':
       return t('jobs.claimErrorCap', { cap: String(details.cap ?? 2) });
     case 'ineligible':
-      return t('jobs.claimErrorIneligible');
+      return details.reason === 'not_hired' ? t('jobs.claimErrorNotHired') : t('jobs.claimErrorIneligible');
+    case 'setup_required':
+      return details.stage === 'started' ? t('jobs.claimErrorSetupStarted') : t('jobs.claimErrorSetupRequired');
     case 'not_claimable':
       return details.reason === 'started' ? t('jobs.claimErrorStarted') : t('jobs.claimErrorNotClaimable');
     default:
@@ -127,5 +137,6 @@ export function formatClaimShiftError(err: unknown): FormattedClaimShiftError | 
     details,
     message: messageFor(details, rawMessage || t('jobs.claimErrorGeneric')),
     shiftFilled: details.code === 'shift_filled',
+    setupRequired: details.code === 'setup_required',
   };
 }

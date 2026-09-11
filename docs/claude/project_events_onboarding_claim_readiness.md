@@ -1,6 +1,6 @@
 # Onboarding + Claim readiness — C1 Events hire-everyone, gate at Claim (decided 2026-09-11)
 
-**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1/S2/S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
+**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) BUILT 2026-09-11, NOT DEPLOYED; S2/S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
 store review. Companion to [[project_tier_system_claim_shift_spec]] (Claim
 Shift v1) and [[project_worker_onboarding_everee]] (the completion curve).
 Build slices at the bottom; web + app ship together (parity rule).
@@ -101,9 +101,9 @@ Read-only scripts: `functions/.scratch/verify_events_readiness_signal{,2}.ts`,
 - **The other 13 are really unfinished**: live `GET /api/v2/workers/{id}`
   returns `onboardingStatus: IN_PROGRESS`, `onboardingComplete: false` for all
   13. **Everee pays C1 Events workers who haven't finished onboarding.**
-  Decision 1 as written blocks those 13 from claiming until they finish —
-  confirm with Greg (and check the 1099/W-9 exposure of paying unfinished
-  contractors).
+  **Greg 2026-09-11: block them until they finish** (decision 1 stands as
+  written). Still worth checking the 1099/W-9 exposure of paying unfinished
+  contractors before 1099 season.
 - **S1 must fall back to a live Everee GET** (same call as
   `evereeGetMyOnboardingStatus`) before refusing a claim: caches lag webhooks,
   and the check only runs on a refusal, so it's cheap. On a positive read,
@@ -125,6 +125,46 @@ Deployed `scheduledOrchestrator` (ramp + hiring-plan sweeps) and
 `scheduledScoringDistribution` (nightly promotion sweep) — the only callers.
 Impact at ship: Tier 1 = 16 (all interviewed), Tier 2 = 172 (1 without an
 interview — left as is, no demotion), pending proposals 1 (unaffected).
+
+## ✅ S1 BUILT 2026-09-11 — claim payroll-readiness gate (not deployed yet)
+
+- **Server**: `functions/src/claims/claimReadiness.ts` (`assertClaimPayrollReady`)
+  runs in `claimShift.ts` right after the headshot gate, before tier /
+  conflict / cap. Pure rules in `claimShiftPolicy.ts`:
+  `SELF_SERVE_HIRE_ENTITY_IDS` (= `c1_events_llc`), `isPayrollReadyForClaim`
+  (rule C from S0), `evaluateClaimReadiness` → ready / start_onboarding /
+  setup_in_progress / not_hired / employment_ended. 12 mocha tests.
+- **Hiring entity** = `jobOrder.entityId`, else `posting.hiringEntityId`; neither
+  → gate skipped + `[claimReadiness]` warning (never invent a block).
+- **Rows**: `entity_employments where userId == uid`, filtered to the entity
+  (no entity-key derivation); link `everee_workers/{entityId}__{uid}`.
+- **C1 Events, no employment** → `runStartOnCallEmploymentFlow`
+  (`workerType: 'entity_default'`, new trigger source `claim_intent`,
+  **`suppressNotifications: true`** — `respondToAssignment` binds no
+  Twilio/SendGrid secrets and the client routes straight to setup) → error
+  `setup_required` `{ entityId, stage: 'started' }`. A start failure is logged
+  and still returns `setup_required` (the next tap retries).
+- **Hired, not ready** → live Everee `GET /api/v2/workers/{id}`; complete →
+  mirror (link `onboarding_complete` + `apiObservedOnboardingCompleteAt`,
+  `mirrorEvereeOnboardingCompleteToEmployments`, now exported) and the claim
+  continues; otherwise `setup_required` `{ stage: 'in_progress' }`. Everee
+  failure = refuse.
+- **Non-self-serve, no employment** → `ineligible` `{ reason: 'not_hired' }`;
+  **only ended rows** → `ineligible` `{ reason: 'employment_ended' }`.
+- **The 13** paid-but-unfinished Events workers are refused by design
+  (Greg 2026-09-11).
+- `respondToAssignment` memory → 512MiB (was the 256MiB default; the claim
+  path can now run the onboarding flow).
+- **Web**: `formatClaimShiftError` knows `setup_required` (+ `setupRequired`
+  flag) and `not_hired` copy; the JobPostingDetail claim sheet shows an info
+  Alert with **Finish setup** → `/c1/workers/earnings`. i18n EN/ES
+  `jobs.claimErrorSetupRequired / claimErrorSetupStarted / claimErrorNotHired /
+  claimFinishSetup`. 5 jest tests.
+- **App (parity, same session)**: `ClaimShiftBlockCode.setupRequired` + `stage`,
+  dialog **Finish setup** → `AppRoutes.payroll`, `AppStrings` EN/ES; Dart test.
+  Ships with the next app build.
+- **Not in S1** (S4/S5): pre-rendering "Finish setup to claim" on the board
+  before the tap, and returning the worker to the shift after setup.
 
 ## Readiness, precisely
 

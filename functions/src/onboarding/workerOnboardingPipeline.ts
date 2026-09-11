@@ -339,6 +339,8 @@ export type WorkerOnboardingPipelineTriggerSource =
   | "manual"
   /** Recruiter-initiated hire without an assignment yet (on-call / bench). */
   | "on_call"
+  /** Worker tapped Claim Shift at C1 Events with no employment there (claims/claimReadiness.ts, 2026-09-11). */
+  | "claim_intent"
   | "assignment_confirmed"
   /**
    * Public/authenticated apply trigger pre-creates on-call employment for

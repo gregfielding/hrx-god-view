@@ -1698,7 +1698,7 @@ export const placementsCreateAssignments = onCall(
 );
 
 export const respondToAssignment = onCall(
-  { cors: true },
+  { cors: true, memory: '512MiB' },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');

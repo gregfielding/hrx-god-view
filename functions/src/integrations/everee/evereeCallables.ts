@@ -1134,7 +1134,7 @@ export async function __test__mirrorEvereeOnboardingCompleteToEmployments(args: 
   return mirrorEvereeOnboardingCompleteToEmployments(args);
 }
 
-async function mirrorEvereeOnboardingCompleteToEmployments(args: {
+export async function mirrorEvereeOnboardingCompleteToEmployments(args: {
   tenantId: string;
   entityId: string;
   userId: string;

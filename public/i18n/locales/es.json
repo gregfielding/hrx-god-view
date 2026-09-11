@@ -1356,7 +1356,11 @@
     "claimErrorNotClaimable": "Este turno no está abierto para reservas instantáneas en este momento.",
     "claimErrorStarted": "Este turno ya comenzó.",
     "claimErrorGeneric": "No pudimos reservar este turno. Inténtalo de nuevo.",
-    "claimHeadshotHint": "Agrega una foto de perfil abajo y terminaremos tu reserva."
+    "claimHeadshotHint": "Agrega una foto de perfil abajo y terminaremos tu reserva.",
+    "claimErrorSetupRequired": "Completa tu configuración de nómina para reservar turnos; solo toma unos minutos.",
+    "claimErrorSetupStarted": "Configura tu nómina para reservar este turno. Ya la empezamos por ti: agrega tu formulario de impuestos y tu depósito directo (unos minutos).",
+    "claimErrorNotHired": "Este turno es para trabajadores ya contratados con esta empresa. Postúlate a una vacante para empezar.",
+    "claimFinishSetup": "Completar configuración"
   },
   "assignment": {
     "title": "Asignación",

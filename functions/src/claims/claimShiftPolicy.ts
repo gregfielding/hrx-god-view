@@ -34,8 +34,10 @@ export type ClaimShiftErrorCode =
   | 'conflict'
   /** Unproven worker already holds the max concurrent claimed shifts. */
   | 'claim_cap'
-  /** Worker can't be booked here at all (DNR, missing profile). */
-  | 'ineligible';
+  /** Worker can't be booked here at all (DNR, missing profile, not hired at a non-self-serve entity). */
+  | 'ineligible'
+  /** Payroll isn't finished at the shift's hiring entity (Greg 2026-09-11). */
+  | 'setup_required';
 
 export interface ClaimConflictDetails {
   assignmentId: string;
@@ -54,6 +56,10 @@ export interface ClaimShiftErrorDetails {
   cap?: number;
   remaining?: number;
   conflict?: ClaimConflictDetails;
+  /** Hiring entity the readiness gate checked (`setup_required`, `ineligible`/not_hired). */
+  entityId?: string;
+  /** `setup_required`: 'started' = onboarding was just started by this claim. */
+  stage?: ClaimSetupStage;
 }
 
 export function claimError(
@@ -346,4 +352,75 @@ export function resolvePostingPublishedAtMs(posting: Record<string, unknown> | n
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Payroll readiness at the shift's hiring entity (Greg 2026-09-11)
+// docs/claude/project_events_onboarding_claim_readiness.md
+// ---------------------------------------------------------------------------
+
+/**
+ * Entities a worker can get hired at on their own: C1 Events hires everyone.
+ * Anywhere else a claim needs an employment a recruiter or the hiring plan
+ * already started.
+ */
+export const SELF_SERVE_HIRE_ENTITY_IDS: ReadonlySet<string> = new Set(['c1_events_llc']);
+
+export type ClaimSetupStage = 'started' | 'in_progress';
+
+const ENDED_EMPLOYMENT_STATUSES = new Set(['terminated', 'inactive', 'blocked']);
+
+function lowerTrim(v: unknown): string {
+  return String(v ?? '').trim().toLowerCase();
+}
+
+/**
+ * Payroll is finished at this entity. The onboarding engine's
+ * `status`/`onboardingComplete` alone lags (it covers more than payroll): the
+ * 2026-09-11 check found it read 92 of 174 paid C1 Events workers as not
+ * ready. The Everee link or any payroll field below matched Everee for every
+ * paid worker. Rows must already be filtered to this user + entity.
+ */
+export function isPayrollReadyForClaim(
+  employments: ReadonlyArray<Record<string, unknown>>,
+  link: Record<string, unknown> | null | undefined,
+): boolean {
+  if (link && (lowerTrim(link.status) === 'onboarding_complete' || Boolean(link.apiObservedOnboardingCompleteAt))) {
+    return true;
+  }
+  return employments.some((e) => {
+    if (ENDED_EMPLOYMENT_STATUSES.has(lowerTrim(e.status))) return false;
+    return (
+      lowerTrim(e.status) === 'active' ||
+      e.onboardingComplete === true ||
+      lowerTrim(e.evereeOnboardingStatus) === 'complete' ||
+      Boolean(e.payrollOnboardingCompletedAt) ||
+      lowerTrim(e.payrollStatus) === 'complete'
+    );
+  });
+}
+
+export type ClaimReadinessDecision =
+  | { kind: 'ready' }
+  /** Self-serve entity, never hired there: start onboarding, then send them to setup. */
+  | { kind: 'start_onboarding' }
+  /** Hired there, payroll not finished per cached signals (ask Everee live before refusing). */
+  | { kind: 'setup_in_progress' }
+  /** Not self-serve and no employment there: the worker applies instead. */
+  | { kind: 'not_hired' }
+  /** Every employment row at this entity is terminated / inactive / blocked. */
+  | { kind: 'employment_ended' };
+
+export function evaluateClaimReadiness(args: {
+  entityId: string;
+  /** This worker's `entity_employments` rows AT `entityId`. */
+  employments: ReadonlyArray<Record<string, unknown>>;
+  /** `everee_workers/{entityId}__{uid}` or null. */
+  link: Record<string, unknown> | null | undefined;
+}): ClaimReadinessDecision {
+  const live = args.employments.filter((e) => !ENDED_EMPLOYMENT_STATUSES.has(lowerTrim(e.status)));
+  if (args.employments.length > 0 && live.length === 0) return { kind: 'employment_ended' };
+  if (isPayrollReadyForClaim(live, args.link)) return { kind: 'ready' };
+  if (live.length > 0) return { kind: 'setup_in_progress' };
+  return SELF_SERVE_HIRE_ENTITY_IDS.has(args.entityId) ? { kind: 'start_onboarding' } : { kind: 'not_hired' };
 }

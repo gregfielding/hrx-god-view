@@ -1356,7 +1356,11 @@
     "claimErrorNotClaimable": "This shift isn't open for instant claims right now.",
     "claimErrorStarted": "This shift has already started.",
     "claimErrorGeneric": "We couldn't claim this shift. Please try again.",
-    "claimHeadshotHint": "Add a headshot below and we'll finish your claim."
+    "claimHeadshotHint": "Add a headshot below and we'll finish your claim.",
+    "claimErrorSetupRequired": "Finish your payroll setup to claim shifts — it only takes a few minutes.",
+    "claimErrorSetupStarted": "Set up payroll to claim this shift. We've started it for you — add your tax form and direct deposit (a few minutes).",
+    "claimErrorNotHired": "This shift is for workers already hired with this company. Apply to a posting to get started.",
+    "claimFinishSetup": "Finish setup"
   },
   "assignment": {
     "title": "Assignment",

@@ -8,10 +8,13 @@ import { HttpsError } from 'firebase-functions/v2/https';
 import {
   CLAIM_TIER_WINDOWS_ENABLED,
   CLAIM_UNPROVEN_CONCURRENT_CAP,
+  SELF_SERVE_HIRE_ENTITY_IDS,
   allAcknowledged,
   assignmentOccupiesDay,
   claimError,
   computeShiftAssignmentsTarget,
+  evaluateClaimReadiness,
+  isPayrollReadyForClaim,
   countsTowardCapacity,
   evaluateClaimCap,
   evaluateClaimTierWindow,
@@ -209,5 +212,75 @@ describe('claimShiftPolicy — acknowledgements + publish clock', () => {
     expect(resolvePostingPublishedAtMs({ createdAt: new Date(5000) })).to.equal(5000);
     expect(resolvePostingPublishedAtMs({ createdAt: '2026-09-10T12:00:00Z' })).to.equal(Date.UTC(2026, 8, 10, 12));
     expect(resolvePostingPublishedAtMs({})).to.equal(null);
+  });
+});
+
+describe('claimShiftPolicy — payroll readiness (2026-09-11)', () => {
+  const EVENTS = 'c1_events_llc';
+  const SELECT = 'c1_select_llc';
+  const ts = { seconds: 1 };
+
+  it('C1 Events is the only self-serve hiring entity', () => {
+    expect([...SELF_SERVE_HIRE_ENTITY_IDS]).to.deep.equal([EVENTS]);
+  });
+
+  it('an engine-active row is ready', () => {
+    expect(isPayrollReadyForClaim([{ status: 'active', onboardingComplete: true }], null)).to.equal(true);
+  });
+
+  it('Everee-complete workers whose engine row still says onboarding are ready', () => {
+    expect(
+      isPayrollReadyForClaim(
+        [{ status: 'onboarding', onboardingComplete: false, payrollStatus: 'in_progress', evereeOnboardingStatus: 'complete' }],
+        null,
+      ),
+    ).to.equal(true);
+    expect(isPayrollReadyForClaim([{ status: 'onboarding', payrollStatus: 'not_started', payrollOnboardingCompletedAt: ts }], null)).to.equal(true);
+    expect(isPayrollReadyForClaim([{ status: 'onboarding', payrollStatus: 'in_progress' }], { status: 'onboarding_complete' })).to.equal(true);
+    expect(isPayrollReadyForClaim([], { status: 'created', apiObservedOnboardingCompleteAt: ts })).to.equal(true);
+  });
+
+  it('a worker still in progress at Everee is not ready', () => {
+    expect(isPayrollReadyForClaim([{ status: 'onboarding', payrollStatus: 'in_progress' }], { status: 'created' })).to.equal(false);
+  });
+
+  it('an ended employment never counts as ready', () => {
+    expect(isPayrollReadyForClaim([{ status: 'terminated', payrollStatus: 'complete' }], null)).to.equal(false);
+  });
+
+  it('ready → ready', () => {
+    expect(evaluateClaimReadiness({ entityId: EVENTS, employments: [{ status: 'active' }], link: null }).kind).to.equal('ready');
+  });
+
+  it('C1 Events with no employment → start onboarding (even with a stale link)', () => {
+    expect(evaluateClaimReadiness({ entityId: EVENTS, employments: [], link: null }).kind).to.equal('start_onboarding');
+    expect(evaluateClaimReadiness({ entityId: EVENTS, employments: [], link: { status: 'created' } }).kind).to.equal('start_onboarding');
+  });
+
+  it('C1 Select with no employment → not hired (apply instead)', () => {
+    expect(evaluateClaimReadiness({ entityId: SELECT, employments: [], link: null }).kind).to.equal('not_hired');
+  });
+
+  it('hired but payroll unfinished → setup in progress, at any entity', () => {
+    const employments = [{ status: 'onboarding', payrollStatus: 'in_progress' }];
+    expect(evaluateClaimReadiness({ entityId: EVENTS, employments, link: { status: 'created' } }).kind).to.equal('setup_in_progress');
+    expect(evaluateClaimReadiness({ entityId: SELECT, employments, link: null }).kind).to.equal('setup_in_progress');
+  });
+
+  it('only ended employments → employment ended, even when Everee says complete', () => {
+    expect(
+      evaluateClaimReadiness({ entityId: EVENTS, employments: [{ status: 'terminated' }], link: { status: 'onboarding_complete' } }).kind,
+    ).to.equal('employment_ended');
+  });
+
+  it('a live row beside an ended one still counts', () => {
+    expect(
+      evaluateClaimReadiness({ entityId: EVENTS, employments: [{ status: 'inactive' }, { status: 'active' }], link: null }).kind,
+    ).to.equal('ready');
+  });
+
+  it('setup_required carries the entity and stage in the error details', () => {
+    const err = claimError('setup_required', 'Finish payroll setup.', { entityId: EVENTS, stage: 'started' });
+    expect(err.details).to.deep.equal({ code: 'setup_required', entityId: EVENTS, stage: 'started' });
   });
 });
