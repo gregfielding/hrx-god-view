@@ -289,9 +289,11 @@ Greg's (see the report artifact).
   company C1 Staffing), checked 2026-09-11: ALL 13 slots post to
   `https://hrxone.com/api/integrations/accusource/webhooks` (hosting rewrite)
   → that path is a permanent keep-list item unless every slot is re-pointed.
-  ☠️ Two slot problems found (not domain-related, not yet fixed — need Greg's OK
-  to edit the portal): (1) "Order Completed" has NO `?secret=` param, so with
+  ☠️ Two slot problems found (not domain-related) — FIXED 2026-09-11 on Greg's OK: (1) "Order Completed" has NO `?secret=` param, so with
   ENFORCE=true its POSTs would 401; (2) "Service Status Changes" URL is
   malformed (`https://hrxone.comhttps//hrxone.com/api/…`) — host doesn't
   resolve, never delivers. Logs 2026-09-04→11: 698 requests, all 200, no 401s
   (so Order Completed hasn't fired that week).
+  Fix: copied the working Profile Status Change URL (with secret) into both
+  slots in-page, saved, reloaded → all 13 slots identical and well-formed;
+  portal Test on both returned 200 OK.
