@@ -746,3 +746,15 @@ promote it). iOS later, after App Review approval.
   never see it. Config is read once per page load.
 - QA preview anywhere: `?appBanner=preview` on a `/c1/workers` page (sticks
   for the tab session); `?appBanner=off` or tapping X clears it.
+- DEPLOYED OFF 2026-09-11 (hosting, main.5b863fa9.js, commit db596f38).
+  Turn on: `cd functions && npx ts-node .scratch/set_worker_app_banner.ts android on`
+  (`status` / `android off` too; the script is gitignored scratch — recreate
+  from this doc if missing).
+- ☠️ Hosting build OOM (2026-09-11): `craco build`'s fork-ts-checker child hit
+  "JavaScript heap out of memory" from a clean worktree. The first run
+  aborted the build (nothing deployed); the retry with
+  `NODE_OPTIONS=--max-old-space-size=8192 npx firebase deploy --only hosting`
+  still logged the checker crash but webpack compiled and the release went
+  out. The type check is effectively skipped in that case, so run
+  `npx tsc --noEmit -p tsconfig.json` yourself before deploying. Pipe deploy
+  output to a file, not `| tail`: a tail hides the exit code and the cause.
