@@ -215,3 +215,14 @@ Greg's (see the report artifact).
 - Twilio: credentials aren't in `functions/.env*` (Secret Manager), so the
   toll-free verification URLs, messaging-service callbacks and number webhooks
   were NOT checked — Greg in the Twilio console.
+
+### Deploy results 2026-09-11
+- Hosting (web copy fixes) deployed from a clean worktree (main.9886f869.js);
+  deep link check 200.
+- ☠️ First functions deploy of the CORS fix FAILED the Cloud Run startup
+  probe: `triggerAINoteReviewHttp` / `updateLocationAssociationHttp` were
+  `256MiB` and OOM'd on cold start (logs: "Memory limit of 256 MiB exceeded",
+  and triggerAINoteReviewHttp was already OOMing before the change). Bumped
+  both files to 512MiB (+ the `triggerAINoteReview` callable) and redeployed:
+  success. Verified a POST from `Origin: https://app.c1staffing.com` now
+  returns `access-control-allow-origin: https://app.c1staffing.com` + `Vary: Origin`.

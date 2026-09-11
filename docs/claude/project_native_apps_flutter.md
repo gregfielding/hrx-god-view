@@ -758,3 +758,27 @@ promote it). iOS later, after App Review approval.
   out. The type check is effectively skipped in that case, so run
   `npx tsc --noEmit -p tsconfig.json` yourself before deploying. Pipe deploy
   output to a file, not `| tail`: a tail hides the exit code and the cause.
+
+## SMS short links open the app (c1_app 1.0.1, built 2026-09-11)
+Problem: every worker SMS link is rewritten to `https://hrxone.com/l/{slug}`
+(`functions/src/messaging/linkShortener.ts`, in both low-level senders), and
+neither iOS nor Android claimed `/l/*`. Phones never hand a server 302 to the
+app, so job/assignment texts ALWAYS opened the browser. Android also never
+claimed `/c1/jobs-board/` (what `buildWorkerJobPostUrl` sends).
+Fix (Greg chose "claim the short links"):
+- App: `lib/app/navigation/short_link_resolver.dart` — GET `/l/{slug}` on the
+  tapped host with `followRedirects = false`, read `Location`, route via
+  `AppDeepLinkParser`; homepage/login → dashboard; web-only pages
+  (setup-password, unsubscribe, documents) and other sites (Everee) → in-app
+  browser (doesn't re-trigger universal links, so no loop); failure →
+  dashboard. `short_link_screen.dart` + route `/l/:slug`, allowed in every
+  auth state; target keeps the pending-deep-link resume. No new function
+  (Cloud Run cap); the tap still bumps `short_links.clickCount`.
+- Android: `/l/` + `/c1/jobs-board/` intent filters on hrxone.com and
+  app.c1staffing.com (inside the build).
+- ☠️ iOS: `/l/*` must be added to `public/.well-known/apple-app-site-association`
+  and hosting deployed ONLY once 1.0.1 is live in the App Store — the AASA
+  applies to every installed build claiming hrxone.com, and 1.0.0 can't
+  resolve slugs. Tracked in c1_app RELEASE_CHECKLIST.md.
+- `linkRedirect` unknown slug → 302 to `PUBLIC_APP_ORIGIN` root (verified on
+  both hosts), which the app maps to the dashboard.
