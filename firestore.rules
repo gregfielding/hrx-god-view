@@ -2810,12 +2810,6 @@ service cloud.firestore {
       allow write: if isHRX();
     }
 
-    // --- INVITES ---
-    match /invites/{inviteId} {
-      allow read, write: if isHRX();
-      allow read: if isAuthenticated() && resource.data.email == request.auth.token.email;
-    }
-
     // --- COMPANY NEWS CACHE ---
     match /companyNewsCache/{companyId}/{date} {
       allow read: if isAuthenticated();

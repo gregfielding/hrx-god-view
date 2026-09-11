@@ -76,9 +76,8 @@ Ledger (append new entries at the bottom):
   markInviteTokenUsed, assignOrgToUser. These backed the dead `/invite/:token` →
   `/onboarding/profile` client chain (removed the same day). Prod `invites`
   collection had 0 docs and there were 0 invocations in 30d. us-central1
-  services went 997 → 993. The now-orphaned `match /invites` rule in
-  firestore.rules is still there (harmless; it will drop out with the next
-  rules cleanup).
+  services went 997 → 993. The orphaned `match /invites` rule was removed
+  and rules were deployed the same day.
 
 ## Domain move checklist (deferred 2026-09-09 — revisit when c1staffing.com / app.c1staffing.com is added)
 - Firebase Hosting: add the domain; DNS; then 301 hrxone.com → new origin so Google transfers rankings.
