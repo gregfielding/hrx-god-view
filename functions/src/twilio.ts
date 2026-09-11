@@ -24,6 +24,7 @@ import { recordSmsCarrierBlock, recordSmsInvalidNumber, TWILIO_INVALID_TO, TWILI
 import { maybeEmitPhoneVerifiedCategoryScore } from './categoryScoreEvolution/activityCategoryScoreEmit';
 import { shortenUrlsInBody } from './messaging/linkShortener';
 import { tenantMembershipMergePayload } from './shared/tenantMembership';
+import { buildOtpSmsBody, resolveWebOtpHost } from './utils/webOtpHost';
 
 // Twilio Verify is only used here (kept local)
 const verifyServiceSid = defineSecret('TWILIO_VERIFY_SERVICE_SID');
@@ -145,7 +146,7 @@ async function testPhoneFixedCode(phoneE164: string): Promise<string | null> {
 // Self-managed SMS OTP (2026-08-25 — WebOTP autofill).
 //
 // Twilio Verify's managed template can't carry the WebOTP origin-binding
-// last line (`@hrxone.com #123456`) that Android Chrome needs for one-tap
+// last line (`@<host> #123456`) that Android Chrome needs for one-tap
 // code autofill, so we mint and check our own codes and send them over the
 // A2P messaging number (also ~6x cheaper than Verify per verification).
 // Verify remains the CHECK-side fallback for codes in flight at deploy
@@ -177,7 +178,7 @@ async function selfOtpEnabled(): Promise<boolean> {
   }
 }
 
-async function sendSelfOtp(phoneE164: string): Promise<void> {
+async function sendSelfOtp(phoneE164: string, webOtpHost?: unknown): Promise<void> {
   const ref = otpDocRef(phoneE164);
   const now = Date.now();
   const prev = (await ref.get()).data() as Record<string, unknown> | undefined;
@@ -204,11 +205,12 @@ async function sendSelfOtp(phoneE164: string): Promise<void> {
   if (!from) throw new HttpsError('internal', 'Messaging number not configured.');
   const client = getTwilioClient();
   // Last line is the WebOTP origin binding — format is exact:
-  // "@" + top-level origin + " #" + code, on its own final line.
+  // "@" + top-level host + " #" + code, on its own final line. The host is
+  // the page the browser asked from, when it's one of ours (webOtpHost.ts).
   await client.messages.create({
     to: phoneE164,
     from,
-    body: `Your C1 Staffing verification code is ${code}. It expires in 10 minutes.\n\n@hrxone.com #${code}`,
+    body: buildOtpSmsBody(code, resolveWebOtpHost(webOtpHost)),
   });
 }
 
@@ -250,7 +252,7 @@ export const sendOtp = onCall(
   //   throw new HttpsError('unauthenticated', 'Must be signed in to verify phone');
   // }
 
-  const { phoneE164 } = request.data as { phoneE164: string };
+  const { phoneE164, webOtpHost } = request.data as { phoneE164: string; webOtpHost?: string };
   const uid = request.auth?.uid; // Get uid from request auth if available
 
   // Validate phone format (E.164)
@@ -268,7 +270,7 @@ export const sendOtp = onCall(
   try {
     if (await selfOtpEnabled()) {
       // Self-managed code with the WebOTP template (see helpers above).
-      await sendSelfOtp(phoneE164);
+      await sendSelfOtp(phoneE164, webOtpHost);
     } else {
       const client = getTwilioClient();
       const verifyServiceSid = getVerifyServiceSid();

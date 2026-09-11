@@ -153,7 +153,7 @@ const PhoneSignupGate: React.FC<PhoneSignupGateProps> = ({
     setBusy(true);
     setError(null);
     try {
-      await httpsCallable(getFunctions(), 'sendOtp')({ phoneE164 });
+      await httpsCallable(getFunctions(), 'sendOtp')({ phoneE164, webOtpHost: window.location.hostname });
       setStep('code');
     } catch (e) {
       setError(e instanceof Error ? e.message : t('phoneSignup.genericError'));

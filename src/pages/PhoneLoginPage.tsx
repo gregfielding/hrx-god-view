@@ -226,7 +226,7 @@ const PhoneLoginPage: React.FC = () => {
     setError('');
     setRawError('');
     try {
-      await httpsCallable(fns, 'sendOtp')({ phoneE164: e164 });
+      await httpsCallable(fns, 'sendOtp')({ phoneE164: e164, webOtpHost: window.location.hostname });
       setCode('');
       setStep('code');
     } catch (e) {

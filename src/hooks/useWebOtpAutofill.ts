@@ -3,8 +3,10 @@ import { useEffect } from 'react';
 /**
  * WebOTP autofill (Android Chrome, 2026-08-25): while `active`, listens for
  * the incoming verification SMS and hands the code to `onCode` — the SMS must
- * end with the origin-binding line `@hrxone.com #123456` (see sendSelfOtp in
- * functions/src/twilio.ts). iOS/Safari ignores this API and autofills via
+ * end with the origin-binding line `@<this page's host> #123456`. Callers pass
+ * `webOtpHost: window.location.hostname` to `sendOtp`, which echoes it when it's
+ * one of our hosts (functions/src/utils/webOtpHost.ts), so autofill works on
+ * hrxone.com and app.c1staffing.com alike. iOS/Safari ignores this API and autofills via
  * autocomplete="one-time-code" on the input instead — keep both.
  * No-op on unsupported browsers; aborts the listener on unmount/deactivate.
  */

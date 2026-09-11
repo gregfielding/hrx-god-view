@@ -22,7 +22,7 @@ export async function startPhoneVerification(e164: string): Promise<void> {
   try {
     // Primary path: callable function
     const sendOtp = httpsCallable(firebaseFunctions, 'sendOtp');
-    const result = await sendOtp({ phoneE164: e164 });
+    const result = await sendOtp({ phoneE164: e164, webOtpHost: typeof window !== 'undefined' ? window.location.hostname : undefined });
     if (result.data && (result.data as any).success) {
       console.log('SMS verification sent to:', e164);
       return;

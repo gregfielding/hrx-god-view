@@ -4,8 +4,9 @@
  */
 
 import { getMessaging, getToken, onMessage, isSupported, type Messaging } from 'firebase/messaging';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { app, db } from './firebase';
+import { findSupersededWebTokens, webPushDeviceId, type WebPushTokenDoc } from './utils/pushTokenDedupe';
 
 let messagingInstance: Messaging | null = null;
 
@@ -54,24 +55,56 @@ export async function registerPushToken(uid: string): Promise<void> {
     const token = await getToken(messaging, { vapidKey });
     if (!token) return;
 
+    const userAgent = navigator.userAgent ?? '';
+    const origin = window.location.origin;
     await setDoc(
       doc(db, 'users', uid, 'pushTokens', token),
       {
         token,
         platform: 'web',
-        deviceId: 'web-' + (navigator.userAgent?.slice(0, 80) ?? 'unknown'),
+        deviceId: webPushDeviceId(userAgent),
+        userAgent,
+        origin,
         enabled: true,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       },
       { merge: true }
     );
+    await disableSameBrowserOnOtherOrigins(uid, { token, origin, userAgent });
   } catch (e) {
     if (isBenignPushFailure(e)) return;
     if (process.env.NODE_ENV === 'development') {
       // eslint-disable-next-line no-console
       console.warn('[FCM] registerPushToken failed (non-fatal):', e);
     }
+  }
+}
+
+/**
+ * Stop duplicate pushes when the same browser is registered on hrxone.com and
+ * app.c1staffing.com (see utils/pushTokenDedupe.ts). Best effort.
+ */
+async function disableSameBrowserOnOtherOrigins(
+  uid: string,
+  current: { token: string; origin: string; userAgent: string },
+): Promise<void> {
+  try {
+    const snap = await getDocs(query(collection(db, 'users', uid, 'pushTokens'), where('platform', '==', 'web')));
+    const docs: WebPushTokenDoc[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<WebPushTokenDoc, 'id'>) }));
+    const ids = findSupersededWebTokens(docs, current);
+    await Promise.all(
+      ids.map((id) =>
+        updateDoc(doc(db, 'users', uid, 'pushTokens', id), {
+          enabled: false,
+          disabledReason: 'superseded_by_other_origin',
+          supersededByOrigin: current.origin,
+          updatedAt: serverTimestamp(),
+        }),
+      ),
+    );
+  } catch {
+    // Non-fatal: worst case the worker keeps getting duplicate pushes.
   }
 }
 
