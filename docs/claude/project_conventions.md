@@ -52,9 +52,11 @@ a starved machine makes `firebase deploy` fail with "Cannot determine
 backend specification. Timeout after 10000" — retry serialized with
 `FUNCTIONS_DISCOVERY_TIMEOUT=120`, and never trust a deploy piped through
 `tail` (the pipe masks the exit code — capture to a file and check `$?`).
-Known debt: 8 of 96 jest suites (47 tests) fail — pre-existing, they were
-unrunnable before jest.config.js landed 2026-08-28; cadence/prescreen
-suites are green.
+Status 2026-09-11: `npm run test:jest` green — 134 suites / 1,865 tests,
+0 skipped (the old "8 of 96 failing" debt is gone). That's the full run,
+from functions/: it wraps jest in `firebase emulators:exec` so the 3
+Firestore-emulator suites run instead of skipping (needs Java 21+; see
+feedback_functions_emulator_tests.md); 11–20 min at 2 workers.
 
 ## Cloud Run 1,000-service cap (us-central1) + freed-slot ledger
 
