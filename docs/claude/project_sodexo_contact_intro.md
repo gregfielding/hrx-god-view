@@ -1,6 +1,6 @@
 # sodexo contact intro
 
-> "Intro email sent FROM and AS Deborah (d.waltermyer@c1staffing.com) to a contact newly attached to a new Sodexo job order. It goes out in the contact's daytime, never overnight, and a same-thread follow-up goes 48h later if nobody replied. Built 2026-09-11; OFF until the mailbox is connected, Greg's scripts are in code, and the kill switch is flipped"
+> "Intro email sent FROM and AS Deborah (d.waltermyer@c1staffing.com) to a contact newly attached to a new Sodexo job order. It goes out in the contact's daytime, never overnight, and a same-thread follow-up goes 48h later if nobody replied. Deployed 2026-09-11 (commit d3f94fd9: gmailOAuthCallback + onJobOrderStatusTransitionSnapshot + NEW sodexoContactIntroCron); consent link emailed to Deborah from Greg's Gmail the same day. OFF until she connects and the kill switch is flipped (dry run first)"
 
 ## What it does
 
