@@ -66,6 +66,15 @@ Assistant", `recruiter: true`, `integrations.slack` + `tenants/{T}/slackUsers/{s
   Local `admin.auth()` fails (ADC has no quota project); the script uses Identity Toolkit REST with
   `x-goog-user-project: hrx1-d3beb` instead.
 - Slack user **`U0C14BDAX2P`** (Marco Gomez, title Recruiting Assistant, avatar = the square headshot).
+- Slack app **"Marco Gomez (HRX)"** — App ID `A0C14PJQFGB`, Client ID `7582435419591.12038800831555` (public),
+  created 2026-09-11 by Greg from `functions/.scratch/slack-marco-app-manifest.json`; client secret in Secret
+  Manager `SLACK_MARCO_CLIENT_SECRET`. Only the creator's api.slack.com login is a collaborator — the Chrome
+  profile Claude drives sees "Contact a member of your team who is a Collaborator", so Client ID / settings
+  have to come from Greg. (A Slack client_id suffix is NOT the base-36 App ID — don't try to derive it.)
+  Token exchange: `node functions/.scratch/slack-marco-token-exchange.cjs 7582435419591.12038800831555 <code-or-url>`
+  (stores MARCO_SLACK_USER_TOKEN only if the token is U0C14BDAX2P's; revokes anyone else's). Authorize URL:
+  `https://slack.com/oauth/v2/authorize?client_id=7582435419591.12038800831555&user_scope=chat:write,channels:read,groups:read,channels:history,groups:history,users:read,im:write,im:history,im:read,mpim:history,mpim:read&redirect_uri=https://hrxone.com/slack/oauth/callback`
+  After a new token version: redeploy `natalieSlackInbox` (secret versions are pinned at deploy).
 - Google Workspace **m.gomez@c1staffing.com** created by Greg.
 - `#events-recruiting` **C0C1EEYG820** created 2026-09-11 (by Greg via the Slack connector; Rosa, Mark,
   Marco invited — Maria Rabadan has no Slack account under that name) and set as
