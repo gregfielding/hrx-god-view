@@ -1,6 +1,6 @@
 # Onboarding + Claim readiness — C1 Events hire-everyone, gate at Claim (decided 2026-09-11)
 
-**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) DEPLOYED 2026-09-11 13:30 PT (app half ships with the next app build); S2/S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
+**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) DEPLOYED 2026-09-11 13:30 PT (app half ships with the next app build); S2 (C1 Events hire-on-apply, forward-only) BUILT 2026-09-11, NOT DEPLOYED; S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
 store review. Companion to [[project_tier_system_claim_shift_spec]] (Claim
 Shift v1) and [[project_worker_onboarding_everee]] (the completion curve).
 Build slices at the bottom; web + app ship together (parity rule).
@@ -165,6 +165,52 @@ interview — left as is, no demotion), pending proposals 1 (unaffected).
   Ships with the next app build.
 - **Not in S1** (S4/S5): pre-rendering "Finish setup to claim" on the board
   before the tap, and returning the worker to the shift after setup.
+
+## ✅ S2 BUILT 2026-09-11 — C1 Events hires everyone who applies (forward-only, not deployed yet)
+
+- `functions/src/recruiter/eventsEntityAutoHire.ts`, called from
+  `onApplicationHiringSignalsChangedAutoOnboard` (no new function; trigger
+  memory → 512MiB). 12 mocha tests in `__tests__/recruiter/`.
+- **Hires only at the apply moment**: application created past `in_progress`
+  (must be dated within 48h — imports never hire) or a draft leaving
+  `in_progress` (no recency check: the wizard stamps `appliedAt` when the draft
+  starts). Prescreen / orchestrator re-runs never hire.
+- Entity = `application.hiringEntityId` (web quick apply, wizard and the Flutter
+  quick apply all write it) → posting `hiringEntityId` → JO `entityId`.
+- Skips workers with ANY C1 Events employment row (ended rows never restart).
+- `runStartOnCallEmploymentFlow` (`entity_default`, trigger source
+  `auto_application_c1_events`, `enforceOnCallOnboardingPolicy: true`,
+  notifications ON — same as group hiring today).
+- **Ownership (Greg: "ignore/hide group hiring — our new plan takes
+  precedence")**: the rule owns C1 Events applications and the group branch of
+  the trigger is skipped for them — EXCEPT when the application's group still
+  actively hires everyone at C1 Events. Group MEMBERSHIP is hired by
+  `onUserGroupMemberAddedAutoOnboard` at the same moment as the apply, so a
+  second door would race it and double-send invites. Switch a group's hiring
+  off and its postings move to this rule automatically — group hiring can be
+  retired without losing hires.
+- **Kill switch**: `tenants/{t}/settings/eventsAutoHire` `{ enabled: false }`
+  turns the rule off AND hands C1 Events applications back to group hiring
+  (cached 60s per instance).
+- No Flutter change: the app's quick apply writes `status: submitted`,
+  `appliedAt` (new docs), `submittedAt`, `hiringEntityId`.
+
+### Group hiring usage (read-only, 60 days to 2026-09-11) — input for hiding it
+
+`functions/.scratch/group_hiring_usage.ts`:
+- Employments created: 1,272. C1 Events: **444 via
+  `auto_user_group_membership_added`** (joining a hiring group — incl. applying
+  to a posting that feeds one), 21 via `auto_user_group_application_signals`,
+  155 with no source (recruiter/manual), 428 `address_backfill` (a script, not a
+  hire door). C1 Select: 219 no source, 5 backfill.
+- 504 user groups; **23 with hiring active**: 22 C1 Events `hire_everyone`
+  on-call (none orders screening) + 1 C1 Select on-call.
+- **72 group signup links** (`/c1/apply/group/:id`, no job) used.
+- Retiring group hiring = turn `hiringActive` off on those 23 groups (C1 Events
+  job applies keep hiring through S2; **group signup links and
+  "add to group = hire" stop hiring** — those workers would be onboarded at
+  their first Claim tap instead) + hide the group Hiring tab UI. Decision
+  pending with Greg.
 
 ## S2 dry run (2026-09-11, read-only) — backfill is tiny; the gap is mostly closed already
 

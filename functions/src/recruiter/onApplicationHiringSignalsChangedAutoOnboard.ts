@@ -43,6 +43,7 @@ import {
 } from '../messaging/twilioSecrets';
 import { extractOrchestratorDecision } from './userGroupHirePassedCandidates';
 import { autoOnboardForGroupIfEligible } from './userGroupHiringAutoOnboardCore';
+import { maybeAutoHireEventsApplicant } from './eventsEntityAutoHire';
 import { maybeAutoOnboardTierTwoApplicant } from '../tierAutomation/tier2AutoOnboard';
 
 if (!admin.apps.length) {
@@ -80,6 +81,8 @@ export const onApplicationHiringSignalsChangedAutoOnboard = onDocumentWritten(
   {
     document: 'tenants/{tenantId}/applications/{applicationId}',
     secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+    // The on-call onboarding graph OOMs at 256MiB (see startOnCallEmployment).
+    memory: '512MiB',
   },
   async (event) => {
     const { tenantId, applicationId } = event.params;
@@ -113,6 +116,23 @@ export const onApplicationHiringSignalsChangedAutoOnboard = onDocumentWritten(
       applicationId,
       application: after,
     });
+
+    // C1 Events hires everyone who applies (Greg 2026-09-11) — keyed on the
+    // posting's hiring entity, hiring only at the apply moment (forward-only).
+    // The rule OWNS C1 Events applications (Greg: the new plan takes
+    // precedence over group hiring), so group hiring below is skipped for them
+    // — except applications whose group still actively hires everyone at
+    // C1 Events, which stay with group hiring (the member-added trigger hires
+    // them at the same moment; two doors would double-send invites). Kill
+    // switch: settings/eventsAutoHire. Never throws; an unexpected error
+    // returns false so group hiring still runs.
+    const eventsRuleOwns = await maybeAutoHireEventsApplicant(admin.firestore(), {
+      tenantId,
+      applicationId,
+      application: after,
+      signal: createdPastInProgress ? 'created' : statusLeftInProgress ? 'left_in_progress' : 'other',
+    });
+    if (eventsRuleOwns) return;
 
     const groupIdRaw = after.groupId;
     const groupId = typeof groupIdRaw === 'string' ? groupIdRaw.trim() : '';
