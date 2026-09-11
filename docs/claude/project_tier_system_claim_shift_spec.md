@@ -1,5 +1,7 @@
 # Tier system / Claim Shift — planning spec (for Friday planning)
 
+> **2026-09-11 — readiness decisions live in [[project_events_onboarding_claim_readiness]]**: Claim requires payroll finished at the shift's hiring entity (button "Finish setup to claim"), C1 Events hire-everyone goes entity-wide, interview required for Tier 2.
+
 **Status:** Claim Shift v1 BUILT + DEPLOYED 2026-09-06 (endpoint, web +
 app buttons/sheets, messaging track). Tier release windows are wired but
 OFF; tier movement cron + worker-visible tier UI + cancel teeth remain
