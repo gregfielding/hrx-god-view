@@ -115,3 +115,51 @@ updateExternalOnboardingStepVerification, getI9SupportingDocumentSignedUrl).
   map with markers CA / NV / AZ / TX / IL / NY-NJ) and no text — it renders
   blank in headless/automation viewports because the image lazy-loads; it
   is fine for humans.
+
+## Full audit 2026-09-11 (gaps the 09-05 pass missed)
+Report artifact: https://claude.ai/code/artifact/e298a23e-ee17-4404-8df0-ffba9fb0afe7
+Status: app.c1staffing.com serves the site (200, cert live). Recommended:
+flip the canonical and keep hrxone.com serving; retire behind a redirect
+only much later, with an expanded keep-list (below).
+- ☠️ New hardcoded `https://hrxone.com` since the switch (≈25 lines):
+  `functions/src/natalie/{natalieTools,natalieOutbox,natalieOnboarding,natalieFill,natalieCraigslist,natalieDescriptions,natalieBrief}.ts`,
+  `messaging/smsDeliveryAlerts.ts:259,266`. `natalieCraigslist.ts:52` is the
+  PUBLIC ad body. Convert to `PUBLIC_APP_ORIGIN`.
+- ☠️ CORS bugs not using `corsOriginFor`: `triggerAINoteReview.ts` (Add Note
+  AI review FAILS from app.c1staffing.com today), `updateLocationAssociation.ts`.
+- ☠️ `functions/src/twilio.ts:211` OTP SMS ends `@hrxone.com #code` (WebOTP is
+  host-bound) — flip with PUBLIC_APP_HOST or pass the page host + allowlist.
+- ☠️ `cors.json` (Storage bucket) lists only localhost + hrxone.com.
+- `platform_config/seo.canonicalOrigin` is unset → both hosts self-canonical
+  (duplicate content). Set it to hrxone.com now, app.c1staffing.com at flip.
+- Client: `REACT_APP_PUBLIC_APP_ORIGIN` isn't in `.env` or the build check —
+  a clean build silently keeps hrxone.com. `robots.txt` Sitemap line,
+  `index.html` og tags, `JobPostingDetail.tsx:2909` sameAs,
+  `DeleteAccount.tsx:21,56` + `SMSPrivacy.tsx:163` copy.
+- Firestore data with typed hrxone.com: 4 C1 messageTemplates (Application
+  Waitlisted EN/ES, Application Rejected ES, +1), 5 job_postings (3 active;
+  jobDescription + craigslist.draft.body), job order "Lollapalooza 2026"
+  staffInstructions.checkIn.text. `short_links`: 73,082 docs, all targets
+  hrxone.com, still being created — keep `/l/**` on hrxone.com (or have
+  linkRedirect rewrite the host).
+- c1_app 1.0.1: `worker.c1staffing.com` has NO DNS — remove it from
+  Runner.entitlements, AndroidManifest (3 filters; on Android ≤11 one failing
+  autoVerify host breaks verification for all hosts), deep-link parser, and
+  `payroll_embed_screen.dart:221` returnUrl; add app.c1staffing.com.
+- Keep-list for hrxone.com retirement (serve directly, no redirect):
+  `/.well-known/*`, `/privacy` `/terms` `/consent` `/sms-privacy`
+  `/sms-optin.html(+png)` `/signup` (approved Twilio 10DLC evidence — don't edit
+  the campaign), `/legal/*.html`, `/l/**`, `/unsubscribe`, `/delete-account`
+  (Play data safety URL), `/c1/jobs-board/**` (live Craigslist ads),
+  `/img/**` `/brand/**` (signatures), `/slack/events` and
+  `/api/integrations/accusource/webhooks` if registered on hrxone.com.
+  DNS to keep: `go.hrxone.com` (old Twilio links), `ingest.hrxone.com` MX
+  (Indeed Flex + Fieldglass intake), hrxone.com MX/DKIM (senders).
+- Consoles to verify: Twilio toll-free verification URLs, Slack events
+  Request URL + Natalie app redirect, AccuSource 13 webhook slots, Everee
+  embed domains, SendGrid link branding/event webhook/invite template
+  d-36383cd7…, Firebase browser key restrictions, Google OAuth consent screen,
+  Intuit app URLs, Search Console property + Indexing API owner, Squarespace
+  links, Fieldglass extension matches.
+- User impact at flip: re-sign-in (per-origin auth), web push re-grant and
+  duplicate notifications (tokens per origin), browser-stored settings reset.
