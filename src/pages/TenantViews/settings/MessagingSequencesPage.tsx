@@ -173,6 +173,9 @@ function coerceTargeting(raw: Partial<SequenceTargeting> | undefined, fallbackLa
         : ['gig'],
     occurrence: raw?.occurrence === 'every_shift' ? 'every_shift' : 'first_shift',
     locationIds: Array.isArray(raw?.locationIds) ? raw.locationIds.map(String) : [],
+    // Round-trip the career daily-confirm opt-in — dropping it here would wipe
+    // it the first time anyone saved the card.
+    ...(raw?.includeCareer === true ? { includeCareer: true } : {}),
   };
 }
 

@@ -1766,23 +1766,34 @@ export const respondToAssignment = onCall(
   // never the assignment's own status (recruiters triage cancels).
   if (decision === 'cadence_confirm' || decision === 'cadence_cancel') {
     const cort = assignment.cortConfirmation as Record<string, unknown> | undefined;
-    const state = String(cort?.state || '').toLowerCase();
+    let state = String(cort?.state || '').toLowerCase();
     if (!cort) {
       throw new HttpsError('failed-precondition', 'No shift confirmation is pending on this assignment.');
+    }
+    // Daily-confirm crews (2026-09-11) confirm ONE workday at a time: the
+    // client may name it (`workDate`), else the mirror's current day.
+    let workDate: string | undefined;
+    if (cort.dailyConfirm === true) {
+      const { dayStateOf } = await import('./cadence/dailyConfirm');
+      workDate = String((request.data as { workDate?: unknown } | undefined)?.workDate ?? cort.workDate ?? '').trim();
+      state = workDate ? dayStateOf(assignment, workDate) : '';
+      if (!state) {
+        throw new HttpsError('failed-precondition', 'No shift confirmation is pending for that day.');
+      }
     }
     if (decision === 'cadence_confirm') {
       // SMS parity: re-confirm is idempotent; only cancelled / checked_in block it.
       if (state === 'cancelled' || state === 'checked_in') {
         throw new HttpsError('failed-precondition', `Cannot confirm from state '${state}'.`);
       }
-      await applyAppShiftConfirmation({ tenantId, assignmentId, uid });
-      return { ok: true, state: 'confirmed' };
+      await applyAppShiftConfirmation({ tenantId, assignmentId, uid, assignment, workDate });
+      return { ok: true, state: 'confirmed', ...(workDate ? { workDate } : {}) };
     }
     if (state === 'cancelled' || state === 'checked_in') {
       throw new HttpsError('failed-precondition', `Cannot cancel from state '${state}'.`);
     }
-    await applyAppShiftCancellation({ tenantId, assignmentId, uid, assignment });
-    return { ok: true, state: 'cancelled' };
+    await applyAppShiftCancellation({ tenantId, assignmentId, uid, assignment, workDate });
+    return { ok: true, state: 'cancelled', ...(workDate ? { workDate } : {}) };
   }
 
   // Day-of hero "Running late" (worker app, 2026-09-03): informational only —

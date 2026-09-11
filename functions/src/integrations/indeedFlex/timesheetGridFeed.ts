@@ -24,6 +24,7 @@
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { createDraftTimesheetEntryCore, DraftEntryError } from '../../timesheets/createDraftTimesheetEntryCallable';
+import { applyDailyDayPatchInTx } from '../../cadence/dailyConfirmWrites';
 
 const SYSTEM_ACTOR = 'system_indeed_flex_timesheets';
 
@@ -209,16 +210,31 @@ export async function applyFlexPunchesToGrid(
  * Flip `cortConfirmation.state` to checked_in when a clock-in exists and the
  * cadence still thinks the worker is pending/confirmed (or has no state).
  * Never downgrades cancelled/no_show/checked_in. Returns true when written.
+ *
+ * Daily-confirm crews (2026-09-11) stamp the punch's own workday
+ * (`cortConfirmationDays[workDate]`) — before per-day state, one 8/31 punch
+ * left the whole Woodridge crew `checked_in` for every later day.
  */
 export async function stampCheckInFromPunch(db: admin.firestore.Firestore, p: FlexPunchInput): Promise<boolean> {
   const ref = db.doc(`tenants/${p.tenantId}/assignments/${p.assignmentId}`);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) return false;
-    const conf = (snap.get('cortConfirmation') ?? {}) as { state?: string };
+    const conf = (snap.get('cortConfirmation') ?? {}) as { state?: string; dailyConfirm?: boolean };
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const checkedInVia = { channel: 'indeed_flex_timesheet', clockIn: p.clockIn, flexEntryId: p.flexEntryId, workDate: p.workDate };
+    if (conf.dailyConfirm === true) {
+      return applyDailyDayPatchInTx(
+        tx,
+        ref,
+        snap.data() as Record<string, unknown>,
+        p.workDate,
+        { state: 'checked_in', checkedInAt: now, checkedInVia },
+        { createIfMissing: true, onlyIfState: (st) => st !== 'checked_in' && st !== 'cancelled' && st !== 'no_show' },
+      ).written;
+    }
     const state = String(conf.state ?? '');
     if (state === 'checked_in' || state === 'cancelled' || state === 'no_show') return false;
-    const now = admin.firestore.FieldValue.serverTimestamp();
     tx.set(
       ref,
       {
@@ -226,7 +242,7 @@ export async function stampCheckInFromPunch(db: admin.firestore.Firestore, p: Fl
           state: 'checked_in',
           checkedInAt: now,
           updatedAt: now,
-          checkedInVia: { channel: 'indeed_flex_timesheet', clockIn: p.clockIn, flexEntryId: p.flexEntryId, workDate: p.workDate },
+          checkedInVia,
         },
       },
       { merge: true },

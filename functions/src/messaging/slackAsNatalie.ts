@@ -56,6 +56,10 @@ export interface FlexTeamAskInput {
   kind: FlexTeamAskKind;
   /** Free-form detail (matched SMS token, minutes late, …). */
   detail?: string;
+  /** Daily-confirm crews: the workday this ask is about (one ask per day). */
+  workDate?: string;
+  /** That workday's start (Timestamp) for the "when" label. */
+  startAt?: unknown;
 }
 
 function pickName(a: Record<string, unknown>): string {
@@ -127,7 +131,11 @@ export async function enqueueFlexTeamAsk(input: FlexTeamAskInput): Promise<boole
     if (!isFlexLinkedAssignment(input.assignment)) return false;
     const a = input.assignment;
     const s = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
-    const ref = db.doc(`tenants/${input.tenantId}/flex_team_asks/${input.kind}__${input.assignmentId}`);
+    // Daily-confirm crews ask once per workday, not once per assignment (2026-09-11).
+    const askId = input.workDate
+      ? `${input.kind}__${input.assignmentId}__${input.workDate}`
+      : `${input.kind}__${input.assignmentId}`;
+    const ref = db.doc(`tenants/${input.tenantId}/flex_team_asks/${askId}`);
     const snap = await ref.get();
     if (snap.exists) return false;
     await ref.set({
@@ -135,11 +143,12 @@ export async function enqueueFlexTeamAsk(input: FlexTeamAskInput): Promise<boole
       status: 'pending',
       tenantId: input.tenantId,
       assignmentId: input.assignmentId,
+      workDate: input.workDate ?? null,
       userId: s(a.userId) || s(a.candidateId) || s(a.workerId) || null,
       workerLabel: pickName(a),
       jobTitle: s(a.jobTitle) || s(a.title) || s(a.jobOrderName) || '',
       venue: s(a.locationName) || s(a.worksiteName) || s(a.venueName) || s(a.companyName) || '',
-      whenLabel: pickDateLabel(a),
+      whenLabel: pickDateLabel(input.startAt ? { ...a, startTime: input.startAt } : a),
       flexJobId: s(a.flexJobId) || s((a.refs as Record<string, unknown> | undefined)?.flexJobId) || null,
       detail: input.detail ?? null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),

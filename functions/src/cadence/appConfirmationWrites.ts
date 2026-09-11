@@ -7,6 +7,10 @@
  * 'sms'. Deliberately a separate module (not a refactor of the reply
  * handler) so shipping it does not force a redeploy of the SMS webhook
  * bundle mid-pilot; if the two ever drift, the reply handler is canonical.
+ *
+ * Daily-confirm crews (2026-09-11) pass `workDate`: the write lands on that
+ * workday's entry (`cortConfirmationDays`) and only that day's reminders are
+ * cancelled — see cadence/dailyConfirm.ts.
  */
 
 import * as admin from 'firebase-admin';
@@ -16,6 +20,9 @@ import {
   type ShiftReminderType,
 } from './shiftReminderProfile';
 import { notifyRecruitersOnWorkerEvent } from '../messaging/notifyRecruitersOnWorkerEvent';
+import { applyDailyDayPatch, cancelDailyRemindersForDay } from './dailyConfirmWrites';
+import { dayEntriesOf } from './dailyConfirm';
+import { enqueueRecruiterEscalation } from '../natalie/natalieAudit';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -81,9 +88,30 @@ export async function applyAppShiftConfirmation(args: {
   tenantId: string;
   assignmentId: string;
   uid: string;
+  assignment?: Record<string, unknown>;
+  workDate?: string;
 }): Promise<void> {
-  const { tenantId, assignmentId, uid } = args;
+  const { tenantId, assignmentId, uid, workDate } = args;
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const confirmedVia = { channel: 'app', byUid: uid };
+
+  if (workDate) {
+    await applyDailyDayPatch({
+      tenantId,
+      assignmentId,
+      workDate,
+      patch: { state: 'confirmed', confirmedAt: now, confirmedVia },
+    });
+    const cancelled = await cancelDailyRemindersForDay({
+      tenantId,
+      assignmentId,
+      workDate,
+      reminderTypes: ESCALATION_REMINDER_TYPES,
+      reason: 'cadence_confirmed_by_worker_app',
+    });
+    logger.info('[cadence_app] daily confirmation applied', { tenantId, assignmentId, workDate, uid, cancelledEscalations: cancelled });
+    return;
+  }
 
   await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
     {
@@ -91,10 +119,7 @@ export async function applyAppShiftConfirmation(args: {
         state: 'confirmed',
         confirmedAt: now,
         updatedAt: now,
-        confirmedVia: {
-          channel: 'app',
-          byUid: uid,
-        },
+        confirmedVia,
       },
     },
     { merge: true },
@@ -121,32 +146,49 @@ export async function applyAppShiftCancellation(args: {
   assignmentId: string;
   uid: string;
   assignment: Record<string, unknown>;
+  workDate?: string;
 }): Promise<void> {
-  const { tenantId, assignmentId, uid, assignment } = args;
+  const { tenantId, assignmentId, uid, assignment, workDate } = args;
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const cancelledVia = { channel: 'app', byUid: uid };
 
-  await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
-    {
-      cortConfirmation: {
-        state: 'cancelled',
-        cancelledAt: now,
-        updatedAt: now,
-        cancelledVia: {
-          channel: 'app',
-          byUid: uid,
+  let cancelled = 0;
+  if (workDate) {
+    await applyDailyDayPatch({
+      tenantId,
+      assignmentId,
+      workDate,
+      patch: { state: 'cancelled', cancelledAt: now, cancelledVia },
+      options: { assignmentFields: { needsRecruiterAttention: true } },
+    });
+    cancelled = await cancelDailyRemindersForDay({
+      tenantId,
+      assignmentId,
+      workDate,
+      reminderTypes: ALL_SHIFT_REMINDER_TYPES,
+      reason: 'cadence_cancelled_by_worker_app',
+    });
+  } else {
+    await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
+      {
+        cortConfirmation: {
+          state: 'cancelled',
+          cancelledAt: now,
+          updatedAt: now,
+          cancelledVia,
         },
+        needsRecruiterAttention: true,
       },
-      needsRecruiterAttention: true,
-    },
-    { merge: true },
-  );
+      { merge: true },
+    );
 
-  const cancelled = await cancelRemindersByType({
-    tenantId,
-    assignmentId,
-    reminderTypes: ALL_SHIFT_REMINDER_TYPES,
-    reason: 'cadence_cancelled_by_worker_app',
-  });
+    cancelled = await cancelRemindersByType({
+      tenantId,
+      assignmentId,
+      reminderTypes: ALL_SHIFT_REMINDER_TYPES,
+      reason: 'cadence_cancelled_by_worker_app',
+    });
+  }
 
   const jobTitle =
     normalize(assignment.jobTitle) ||
@@ -159,17 +201,32 @@ export async function applyAppShiftCancellation(args: {
     assignment,
     event: {
       kind: 'cadence_worker_cancelled',
-      title: `Worker cancelled ${jobTitle}`,
+      title: workDate ? `Worker cancelled ${jobTitle} (${workDate})` : `Worker cancelled ${jobTitle}`,
       snippet: 'Cancelled from the worker app shift-confirmation card.',
-      dedupeKey: `cadence_worker_cancelled__${assignmentId}`,
-      extra: { channel: 'app', byUid: uid },
+      dedupeKey: workDate
+        ? `cadence_worker_cancelled__${assignmentId}__${workDate}`
+        : `cadence_worker_cancelled__${assignmentId}`,
+      extra: { channel: 'app', byUid: uid, workDate: workDate ?? null },
     },
   });
+  if (workDate) {
+    // Standing crews: Natalie DMs the recruiter for that day, same as an SMS NO.
+    await enqueueRecruiterEscalation({
+      tenantId,
+      assignmentId,
+      assignment,
+      kind: 'cancelled',
+      workDate,
+      startAt: dayEntriesOf(assignment)[workDate]?.startAt,
+      detail: 'They tapped "Can\'t make it" in the worker app.',
+    });
+  }
 
   logger.info('[cadence_app] cancellation applied', {
     tenantId,
     assignmentId,
     uid,
+    workDate: workDate ?? null,
     cancelledReminders: cancelled,
   });
 }

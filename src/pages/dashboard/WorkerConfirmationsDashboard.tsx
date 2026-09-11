@@ -35,6 +35,11 @@ import { collection, documentId, getDocs, query, where } from 'firebase/firestor
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase';
 import PageHeader from '../../components/PageHeader';
+import {
+  dailyConfirmDayRows,
+  isDailyConfirmAssignment,
+  type DailyConfirmDayRow,
+} from '../../utils/dailyConfirmDays';
 
 /**
  * `late` is derived, not stored: the shift started ≥15 minutes ago, the
@@ -166,37 +171,52 @@ const WorkerConfirmationsDashboard: React.FC<{
       const from = today.toISOString().slice(0, 10);
       const toDate = new Date(today.getTime() + daysAhead * 24 * 3600 * 1000);
       const to = toDate.toISOString().slice(0, 10);
-      const snap = await getDocs(
-        query(
-          collection(db, `tenants/${tenantId}/assignments`),
-          where('startDate', '>=', from),
-          where('startDate', '<=', to),
+      const [snap, dailySnap] = await Promise.all([
+        getDocs(
+          query(
+            collection(db, `tenants/${tenantId}/assignments`),
+            where('startDate', '>=', from),
+            where('startDate', '<=', to),
+          ),
         ),
-      );
+        // Standing crews confirmed every workday (2026-09-11): startDate is each
+        // member's FIRST day, so the range query misses them — one row per
+        // workday comes from cortConfirmationDays instead.
+        getDocs(
+          query(
+            collection(db, `tenants/${tenantId}/assignments`),
+            where('cortConfirmation.dailyConfirm', '==', true),
+          ),
+        ),
+      ]);
       const matches = companyMatch.map((m) => m.toLowerCase()).filter(Boolean);
       const siteMatches = worksiteMatch.map((m) => m.toLowerCase()).filter(Boolean);
+      const inScope = (data: Record<string, unknown>): boolean => {
+        const st = normStatus(data.status ?? data.normalizedStatus);
+        if (st && !SCHEDULED_STATUSES.has(st)) return false;
+        if (matches.length > 0) {
+          const co = String(data.companyName ?? data.companyTitle ?? '').toLowerCase();
+          if (!matches.some((m) => co.includes(m))) return false;
+        }
+        if (siteMatches.length > 0) {
+          const site = String(
+            data.worksiteDisplayName ?? data.worksiteName ?? '',
+          ).toLowerCase();
+          if (!siteMatches.some((m) => site.includes(m))) return false;
+        }
+        return true;
+      };
       const raw = snap.docs
         .map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }))
-        .filter(({ data }) => {
-          const st = normStatus(data.status ?? data.normalizedStatus);
-          if (st && !SCHEDULED_STATUSES.has(st)) return false;
-          if (matches.length > 0) {
-            const co = String(data.companyName ?? data.companyTitle ?? '').toLowerCase();
-            if (!matches.some((m) => co.includes(m))) return false;
-          }
-          if (siteMatches.length > 0) {
-            const site = String(
-              data.worksiteDisplayName ?? data.worksiteName ?? '',
-            ).toLowerCase();
-            if (!siteMatches.some((m) => site.includes(m))) return false;
-          }
-          return true;
-        });
+        .filter(({ data }) => !isDailyConfirmAssignment(data) && inScope(data));
+      const daily = dailySnap.docs
+        .map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }))
+        .filter(({ data }) => inScope(data));
 
       // Worker names/phones — batch fetch the user docs in chunks of 30.
       const uids = Array.from(
         new Set(
-          raw
+          [...raw, ...daily]
             .map(({ data }) => String(data.userId ?? data.candidateId ?? '').trim())
             .filter(Boolean),
         ),
@@ -218,14 +238,21 @@ const WorkerConfirmationsDashboard: React.FC<{
         });
       }
 
-      const models: RowModel[] = raw.map(({ id, data }) => {
+      const toRow = (
+        id: string,
+        data: Record<string, unknown>,
+        day: DailyConfirmDayRow | null,
+      ): RowModel => {
         const uid = String(data.userId ?? data.candidateId ?? '').trim();
         const u = userMap.get(uid);
-        const cort = (data.cortConfirmation ?? undefined) as
+        // A daily-crew row reads its own workday's entry, never the mirror.
+        const cort = (day ? day.entry : data.cortConfirmation ?? undefined) as
           | Record<string, unknown>
           | undefined;
         const cortState = normStatus(cort?.state);
-        const startMs = resolveStartMs(data);
+        const startMs = day
+          ? day.startMs ?? resolveStartMs({ startDate: day.workDate, startTime: day.startTime })
+          : resolveStartMs(data);
         const sinceStart = Number.isFinite(startMs) ? Date.now() - startMs : NaN;
         const lateNow = sinceStart >= LATE_AFTER_MS && sinceStart < 6 * 60 * 60 * 1000;
         const status: ConfirmationStatus =
@@ -255,13 +282,19 @@ const WorkerConfirmationsDashboard: React.FC<{
             data.worksiteDisplayName ?? data.worksiteName ?? '',
           ).trim(),
           companyName: String(data.companyName ?? '').trim(),
-          startDate: String(data.startDate ?? ''),
-          startTime: toShortTime(data.startTime),
+          startDate: day ? day.workDate : String(data.startDate ?? ''),
+          startTime: toShortTime(day ? day.startTime : data.startTime),
           status,
           respondedAt: fmtRespondedAt(cort),
           lateTextedAt,
         };
-      });
+      };
+      const models: RowModel[] = [
+        ...raw.map(({ id, data }) => toRow(id, data, null)),
+        ...daily.flatMap(({ id, data }) =>
+          dailyConfirmDayRows(data, from, to).map((day) => toRow(id, data, day)),
+        ),
+      ];
 
       models.sort((a, b) => {
         if (a.startDate !== b.startDate) return a.startDate.localeCompare(b.startDate);

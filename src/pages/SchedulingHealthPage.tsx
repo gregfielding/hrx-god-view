@@ -41,6 +41,7 @@ import { httpsCallable } from 'firebase/functions';
 import { collection, getDocs, limit, query, where } from 'firebase/firestore';
 
 import { db, functions } from '../firebase';
+import { dailyConfirmDayRows, isDailyConfirmAssignment } from '../utils/dailyConfirmDays';
 import { useAuth } from '../contexts/AuthContext';
 
 interface StaleRow {
@@ -156,15 +157,22 @@ const SchedulingHealthPage: React.FC = () => {
           limit(1000),
         ),
       );
+      // Standing crews confirmed every workday (2026-09-11): startDate is each
+      // member's FIRST day, so the range query above misses them — query the
+      // flag and add one row per workday from cortConfirmationDays.
+      const dailyCrews = await getDocs(
+        query(
+          collection(db, 'tenants', tenantId, 'assignments'),
+          where('cortConfirmation.dailyConfirm', '==', true),
+          limit(500),
+        ),
+      );
       const pendingRows: ConfirmRow[] = [];
       const declinedRows: ConfirmRow[] = [];
       let confirmed = 0;
-      upcoming.forEach((docSnap) => {
-        const a = docSnap.data() as Record<string, any>;
-        const cort = a.cortConfirmation as { state?: string } | undefined;
-        if (!cort?.state) return;
+      const place = (id: string, a: Record<string, any>, date: string, startTime: string, state: string): void => {
         const row: ConfirmRow = {
-          assignmentId: docSnap.id,
+          assignmentId: id,
           workerName:
             String(a.workerDisplayName || '').trim() ||
             `${String(a.firstName || '').trim()} ${String(a.lastName || '').trim()}`.trim() ||
@@ -173,9 +181,9 @@ const SchedulingHealthPage: React.FC = () => {
           worksiteName: String(a.worksiteName || a.worksiteDisplayName || a.companyName || '').trim(),
           jobTitle: String(a.jobTitle || '').trim(),
           jobOrderId: String(a.jobOrderId || '').trim(),
-          date: String(a.startDate || '').trim(),
-          startTime: String(a.startTime || '').trim(),
-          state: String(cort.state || '').trim().toLowerCase(),
+          date,
+          startTime,
+          state,
         };
         const status = String(a.status || '').trim().toLowerCase();
         if (row.state === 'cancelled' || row.state === 'no_show') {
@@ -186,6 +194,25 @@ const SchedulingHealthPage: React.FC = () => {
           pendingRows.push(row);
         } else {
           confirmed += 1;
+        }
+      };
+      upcoming.forEach((docSnap) => {
+        const a = docSnap.data() as Record<string, any>;
+        if (isDailyConfirmAssignment(a)) return; // one row per workday below
+        const cort = a.cortConfirmation as { state?: string } | undefined;
+        if (!cort?.state) return;
+        place(
+          docSnap.id,
+          a,
+          String(a.startDate || '').trim(),
+          String(a.startTime || '').trim(),
+          String(cort.state || '').trim().toLowerCase(),
+        );
+      });
+      dailyCrews.forEach((docSnap) => {
+        const a = docSnap.data() as Record<string, any>;
+        for (const day of dailyConfirmDayRows(a, todayIso, horizonIso)) {
+          if (day.state) place(docSnap.id, a, day.workDate, day.startTime, day.state);
         }
       });
       const byStart = (x: ConfirmRow, y: ConfirmRow): number =>
@@ -416,7 +443,7 @@ const SchedulingHealthPage: React.FC = () => {
           </Typography>
           <Stack spacing={1}>
             {confirmDeclined.slice(0, 20).map((r) => (
-              <Stack key={r.assignmentId} direction="row" alignItems="center" spacing={1.5}>
+              <Stack key={`${r.assignmentId}__${r.date}`} direction="row" alignItems="center" spacing={1.5}>
                 <Typography variant="body2" flex={1}>
                   <b>{r.workerName}</b> — {friendlyDate(r.date)}
                   {r.startTime ? ` at ${friendlyTime(r.startTime)}` : ''}
@@ -462,7 +489,7 @@ const SchedulingHealthPage: React.FC = () => {
           </Typography>
           <Stack spacing={1}>
             {confirmPending.slice(0, 25).map((r) => (
-              <Stack key={r.assignmentId} direction="row" alignItems="center" spacing={1.5}>
+              <Stack key={`${r.assignmentId}__${r.date}`} direction="row" alignItems="center" spacing={1.5}>
                 <Typography variant="body2" flex={1}>
                   <b>{r.workerName}</b> — {friendlyDate(r.date)}
                   {r.startTime ? ` at ${friendlyTime(r.startTime)}` : ''}

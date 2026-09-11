@@ -233,7 +233,8 @@ export function applyClaimedFence(
   assignment: Record<string, unknown>,
   resolved: ResolvedShiftReminderProfile,
 ): ResolvedShiftReminderProfile {
-  if (!isClaimedAssignment(assignment)) return resolved;
+  // Daily-confirm crews are careers — never claimed; leave their track alone.
+  if (!isClaimedAssignment(assignment) || resolved.dailyConfirm) return resolved;
   const base = resolved.profile;
   if (base.id === 'career_placement' || base.id === 'open_shift' || base.id === 'gig_claimed') return resolved;
   const baseSteps = base.id === 'cort_gig' || base.id === 'gig_standard' ? base.steps : GIG_STANDARD_STEPS;
@@ -329,16 +330,22 @@ async function getTenantProfileId(tenantId: string): Promise<ShiftReminderProfil
  * added optional `locationIds` so a sequence can target one venue inside a
  * national account (Oakland Arena lives under Legends National Account).
  */
-interface SequenceTargeting {
+export interface SequenceTargeting {
   sequenceId: string;
   active: boolean;
   accountIds: string[];
   locationIds: string[];
   workerTypes: string[];
   occurrence: 'first_shift' | 'every_shift';
-  /** Which gig track the sequence applies (doc field `track`). Careers never
-   *  come from targeting — the career fence routes them before this scan. */
+  /** Which gig track the sequence applies (doc field `track`). */
   profileId: 'cort_gig' | 'gig_standard';
+  /**
+   * Greg 2026-09-11 (CORT Woodridge): opt the CAREER placements at the
+   * targeted venues into this track, asked once per scheduled workday. Only
+   * honored with accountIds AND locationIds, workerTypes 'career', and
+   * occurrence 'every_shift' (see careerOptInProblems) — never account-wide.
+   */
+  includeCareer: boolean;
 }
 
 async function getSequenceTargetings(tenantId: string): Promise<SequenceTargeting[] | null> {
@@ -362,6 +369,7 @@ async function getSequenceTargetings(tenantId: string): Promise<SequenceTargetin
         occurrence: t.occurrence === 'every_shift' ? 'every_shift' : 'first_shift',
         // Legacy docs (no track field) keep the CORT cadence they always ran.
         profileId: track === 'gig_standard' ? 'gig_standard' : 'cort_gig',
+        includeCareer: t.includeCareer === true,
       });
     }
     return out.length > 0 ? out : null;
@@ -374,12 +382,102 @@ async function getSequenceTargetings(tenantId: string): Promise<SequenceTargetin
   }
 }
 
+/** Why a targeting doc can't opt careers in — [] means it validly does. */
+export function careerOptInProblems(t: SequenceTargeting): string[] {
+  const problems: string[] = [];
+  if (!t.includeCareer) problems.push('includeCareer_not_set');
+  if (!t.active) problems.push('inactive');
+  if (t.accountIds.length === 0) problems.push('no_accountIds');
+  if (t.locationIds.length === 0) problems.push('no_locationIds');
+  if (!t.workerTypes.includes('career')) problems.push('workerTypes_missing_career');
+  if (t.occurrence !== 'every_shift') problems.push('occurrence_not_every_shift');
+  return problems;
+}
+
+/**
+ * Account + venue match. `accountLineage` is the assignment's accountId
+ * followed by its ancestors (child → national), so a sequence that targets a
+ * national account covers every per-location child account without listing
+ * each one (2026-09-11: CORT job orders carry `autoLoc_*` child accounts, and
+ * the national-only `cort_gig` doc matched nothing until 74 ids were pasted in).
+ */
+export function targetingMatchesAccountAndLocation(
+  t: SequenceTargeting,
+  assignment: Record<string, unknown>,
+  accountLineage: ReadonlyArray<string>,
+): boolean {
+  if (accountLineage.length === 0 || t.accountIds.length === 0) return false;
+  if (!accountLineage.some((id) => t.accountIds.includes(id))) return false;
+  const locId = String(assignment?.locationId ?? '').trim();
+  if (t.locationIds.length > 0 && (!locId || !t.locationIds.includes(locId))) return false;
+  return true;
+}
+
+/** First sequence that validly opts this CAREER assignment into daily confirmation. */
+export function selectCareerDailyConfirmSequence(
+  targetings: ReadonlyArray<SequenceTargeting>,
+  assignment: Record<string, unknown>,
+  accountLineage: ReadonlyArray<string>,
+): SequenceTargeting | null {
+  for (const t of targetings) {
+    if (careerOptInProblems(t).length > 0) continue;
+    if (targetingMatchesAccountAndLocation(t, assignment, accountLineage)) return t;
+  }
+  return null;
+}
+
+/** Gig sequences matching this assignment, in doc order. first_shift docs still
+ *  need the async prior-completion check before one wins. */
+export function gigSequenceCandidates(
+  targetings: ReadonlyArray<SequenceTargeting>,
+  assignment: Record<string, unknown>,
+  accountLineage: ReadonlyArray<string>,
+): SequenceTargeting[] {
+  return targetings.filter(
+    (t) => t.active && t.workerTypes.includes('gig') && targetingMatchesAccountAndLocation(t, assignment, accountLineage),
+  );
+}
+
+const ACCOUNT_LINEAGE_TTL_MS = 5 * 60 * 1000;
+const accountLineageCache = new Map<string, { lineage: string[]; at: number }>();
+
+/** accountId + up to 3 ancestors via tenants/{t}/accounts/{id}.parentAccountId. Fail-open to [accountId]. */
+async function getAccountLineage(tenantId: string, accountId: string): Promise<string[]> {
+  if (!accountId) return [];
+  const key = `${tenantId}/${accountId}`;
+  const hit = accountLineageCache.get(key);
+  if (hit && Date.now() - hit.at < ACCOUNT_LINEAGE_TTL_MS) return hit.lineage;
+  const lineage = [accountId];
+  try {
+    let current = accountId;
+    for (let depth = 0; depth < 3; depth += 1) {
+      const snap = await db.doc(`tenants/${tenantId}/accounts/${current}`).get();
+      const parent = String(snap.get('parentAccountId') ?? '').trim();
+      if (!parent || lineage.includes(parent)) break;
+      lineage.push(parent);
+      current = parent;
+    }
+  } catch (err) {
+    logger.warn('shiftReminderProfile.account_lineage_failed', {
+      tenantId,
+      accountId,
+      error: (err as Error)?.message || String(err),
+    });
+  }
+  accountLineageCache.set(key, { lineage, at: Date.now() });
+  return lineage;
+}
+
 export interface ResolvedShiftReminderProfile {
   profile: ShiftReminderProfile;
   /** The messagingSequences doc that matched, when the profile came from
    *  targeting — lets dispatch load that sequence's copy overrides. Null
    *  for fences, per-assignment overrides, and the legacy tenant switch. */
   sequenceId: string | null;
+  /** A career opt-in matched: materialize the steps once per scheduled
+   *  workday from weeklySchedule (cadence/dailyConfirm.ts), not once from
+   *  the assignment's first day. */
+  dailyConfirm?: boolean;
 }
 
 /**
@@ -397,6 +495,23 @@ export async function resolveShiftReminderProfile(args: {
   return applyClaimedFence(args.assignment, base);
 }
 
+/**
+ * The fences, pure (unit-tested): Open Shift → open_shift, no exception;
+ * career → the daily-confirm opt-in when a sequence validly targets its
+ * venue, else career_placement. Null = not fenced; the gig path continues.
+ */
+export function resolveFencedProfile(
+  assignment: Record<string, unknown>,
+  targetings: ReadonlyArray<SequenceTargeting> | null,
+  accountLineage: ReadonlyArray<string>,
+): ResolvedShiftReminderProfile | null {
+  if (assignment?.isOpenShift === true) return { profile: OPEN_SHIFT_PROFILE, sequenceId: null };
+  if (String(assignment?.jobOrderType ?? '').trim().toLowerCase() !== 'career') return null;
+  const optIn = targetings ? selectCareerDailyConfirmSequence(targetings, assignment, accountLineage) : null;
+  if (optIn) return { profile: PROFILES_BY_ID[optIn.profileId], sequenceId: optIn.sequenceId, dailyConfirm: true };
+  return { profile: CAREER_PLACEMENT_PROFILE, sequenceId: null };
+}
+
 async function resolveShiftReminderProfileBase(args: {
   tenantId: string;
   assignment: Record<string, unknown>;
@@ -406,12 +521,42 @@ async function resolveShiftReminderProfileBase(args: {
   // Hard product fences (Greg, 2026-08-29): the confirm/check-in cadence is
   // for gig SHIFT work only. Careers get their own quiet track (first-day
   // welcome + morning-of note — never confirmation demands or no-show
-  // probes); Open Shift (standing-crew, date-range) assignments get the
-  // plain two-step reminders. No targeting doc, tenant switch, or
-  // per-assignment override can pull either into the confirm cadence.
-  if (assignment?.isOpenShift === true) return { profile: OPEN_SHIFT_PROFILE, sequenceId: null };
-  if (String(assignment?.jobOrderType ?? '').trim().toLowerCase() === 'career') {
-    return { profile: CAREER_PLACEMENT_PROFILE, sequenceId: null };
+  // probes); Open Shift (standing-crew, date-range) assignments get their own
+  // welcome + check-in track. No tenant switch or per-assignment override can
+  // pull either into the confirm cadence, and Open Shifts have no exception.
+  //
+  // ONE narrow career exception (Greg, 2026-09-11 — CORT Woodridge ran 27%
+  // no-show on Indeed Flex's scorecard): a messagingSequences doc with
+  // `targeting.includeCareer` that names BOTH accounts and venues (plus
+  // workerTypes 'career' + every_shift — see careerOptInProblems) opts the
+  // careers at exactly those venues into the track, asked every scheduled
+  // workday (`dailyConfirm` → workerShiftRemindersV2 expands weeklySchedule).
+  // Every other career stays fenced. Don't widen this into an account-wide
+  // or tenant-wide switch, and don't move the fence below the override.
+  const acctId = String(assignment?.accountId ?? '').trim();
+  const isCareer =
+    assignment?.isOpenShift !== true && String(assignment?.jobOrderType ?? '').trim().toLowerCase() === 'career';
+  let careerTargetings: SequenceTargeting[] | null = null;
+  let careerLineage: string[] = [];
+  if (isCareer) {
+    careerTargetings = await getSequenceTargetings(tenantId);
+    if (careerTargetings?.some((t) => t.includeCareer)) careerLineage = await getAccountLineage(tenantId, acctId);
+  }
+  const fenced = resolveFencedProfile(assignment, careerTargetings, careerLineage);
+  if (fenced) {
+    if (isCareer && !fenced.dailyConfirm) {
+      for (const t of careerTargetings ?? []) {
+        // A doc that WOULD match but is missing a guard rail: say so, since
+        // the fence wins silently otherwise.
+        if (!t.includeCareer || !targetingMatchesAccountAndLocation(t, assignment, careerLineage)) continue;
+        logger.warn('shiftReminderProfile.career_opt_in_ignored', {
+          tenantId,
+          sequenceId: t.sequenceId,
+          problems: careerOptInProblems(t),
+        });
+      }
+    }
+    return fenced;
   }
 
   // Honor the override ONLY when the field is actually set: normalizeProfileId
@@ -427,15 +572,8 @@ async function resolveShiftReminderProfileBase(args: {
 
   const targetings = await getSequenceTargetings(tenantId);
   if (targetings) {
-    const acctId = String(assignment?.accountId ?? '').trim();
-    const locId = String(assignment?.locationId ?? '').trim();
-    for (const targeting of targetings) {
-      if (!targeting.active || targeting.accountIds.length === 0) continue;
-      if (!acctId || !targeting.accountIds.includes(acctId)) continue;
-      if (targeting.locationIds.length > 0 && (!locId || !targeting.locationIds.includes(locId))) {
-        continue;
-      }
-      if (!targeting.workerTypes.includes('gig')) continue;
+    const lineage = await getAccountLineage(tenantId, acctId);
+    for (const targeting of gigSequenceCandidates(targetings, assignment, lineage)) {
       if (targeting.occurrence === 'first_shift') {
         // "First shift at account (until completion)": once the worker has a
         // COMPLETED/ended assignment at this account, later shifts drop to
@@ -490,7 +628,9 @@ function resolveShiftReminderProfileSyncBase(args: {
   tenantProfile: ShiftReminderProfileId | null | undefined;
   assignment: Record<string, unknown>;
 }): ShiftReminderProfile {
-  // Same hard fences as the async resolver: gig shift work only.
+  // Same hard fences as the async resolver: gig shift work only. Careers stay
+  // fenced here unconditionally — the daily-confirm opt-in needs the targeting
+  // docs, which only the async resolver reads.
   if (args.assignment?.isOpenShift === true) return OPEN_SHIFT_PROFILE;
   if (String(args.assignment?.jobOrderType ?? '').trim().toLowerCase() === 'career') {
     return CAREER_PLACEMENT_PROFILE;

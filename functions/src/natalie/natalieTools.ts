@@ -43,7 +43,7 @@ export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: 'worker_status',
     description:
-      "Everything current about one worker: AccuSource background-check status (passed / needs_review / failed / in_progress / none, with detail), upcoming and recent assignments (job, site, start, confirmation state, check-in, no-show, cancellation), whether they were texted for a late check-in, recruiter notes, and their last few SMS exchanges. Needs the worker's HRX user id from find_worker.",
+      "Everything current about one worker: AccuSource background-check status (passed / needs_review / failed / in_progress / none, with detail), upcoming and recent assignments (job, site, start, confirmation state, check-in, no-show, cancellation), whether they were texted for a late check-in, recruiter notes, and their last few SMS exchanges. Standing crews confirmed every workday also carry dailyConfirmations (each day's state for the last 5 and next 4 workdays). Needs the worker's HRX user id from find_worker.",
     input_schema: { type: 'object', properties: { userId: { type: 'string' } }, required: ['userId'] },
   },
   {
@@ -267,6 +267,22 @@ async function findWorker(tenantId: string, query: string): Promise<unknown> {
   return { matches: out.slice(0, 8), note: out.length === 0 ? 'No worker matched. Try a different spelling, the phone number, or the email.' : undefined };
 }
 
+/**
+ * Standing crews on daily confirmation (2026-09-11) carry one state per
+ * workday; `confirmation` above is only the current day. Last 5 + next 4 days
+ * so "did she confirm tomorrow?" / "how's he been this week?" have answers.
+ */
+function dailyConfirmationSummary(a: Record<string, unknown>): Array<{ date: string; start: string | null; state: string; via: string | null }> {
+  const days = (a.cortConfirmationDays ?? {}) as Record<string, Record<string, unknown>>;
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+  const dates = Object.keys(days).sort();
+  return [...dates.filter((d) => d < today).slice(-5), ...dates.filter((d) => d >= today).slice(0, 4)].map((date) => {
+    const e = days[date] ?? {};
+    const via = (e.cancelledVia ?? e.checkedInVia ?? e.confirmedVia) as Record<string, unknown> | undefined;
+    return { date, start: s(e.startTime) || null, state: s(e.state) || 'none', via: s(via?.channel) || null };
+  });
+}
+
 async function workerStatus(tenantId: string, userId: string): Promise<unknown> {
   const u = await db.collection('users').doc(userId).get();
   if (!u.exists) return { error: 'No such user id' };
@@ -283,6 +299,7 @@ async function workerStatus(tenantId: string, userId: string): Promise<unknown> 
         start: tsToIso(a.startTime ?? a.startDate ?? a.shiftDate),
         status: s(a.status),
         confirmation: s(cort.state) || 'none',
+        dailyConfirmations: cort.dailyConfirm === true ? dailyConfirmationSummary(a) : undefined,
         checkedInVia: s((cort.checkedInVia as Record<string, unknown> | undefined)?.channel) || null,
         lateCheckinTextedAt: tsToIso(cort.lateCheckinTextedAt),
         noShowDetectedAt: tsToIso(cort.noShowDetectedAt),

@@ -345,4 +345,121 @@ as a cadence failure.
   [[project_portal_worker]] ("Late check-in ask").
 - T+30 no-show probe is UNMUTED for Flex-linked assignments (real clock-in
   feed via the portal worker's 10-minute timesheet watch); still muted
-  elsewhere.
+  elsewhere. **⚠️ CORRECTED 2026-09-11 — see below: that dispatcher gate
+  was never committed.**
+
+## 2026-09-11 — Career daily-confirm opt-in (CORT Woodridge)
+
+> Greg 2026-09-11: Indeed Flex's scorecard (week of 8/31–9/6) had CORT
+> Woodridge at 73% fill / 27% no-show on 15 loader/crew places → every-shift
+> YES/NO for that crew; "utilize Natalie here as much as possible".
+
+**Why it was a build, not a targeting change.** JO #121 ("CORT Woodbridge
+Warehouse", `nPlOOwja4AN1tPctNCU4`) is a CAREER order; its live assignments
+are open-ended Mon–Fri 05:00–13:30 weeklySchedules (Sat/Sun keys present but
+`enabled:false`; tz from worksiteState IL → America/Chicago). The career
+fence routed them to the quiet track, and every reminder anchored to each
+assignment's FIRST day (7/06–8/28), so no later day was ever asked. A single
+`cortConfirmation.state` couldn't represent a week either: the Flex punch
+feed had stamped all 4 `checked_in` off an 8/31 clock-in — a PRESERVED state
+that silently blocked every future ask.
+
+**The exception — the fence stays** (`resolveFencedProfile`,
+`cadence/shiftReminderProfile.ts`, unit-tested in
+`__tests__/cadence/careerOptIn.test.ts`):
+- Open Shift → `open_shift`, no exception.
+- Career → opted in ONLY by a messagingSequences doc with an empty
+  `careerOptInProblems`: `targeting.includeCareer: true`, `active`, non-empty
+  `accountIds` AND `locationIds`, `workerTypes` includes `'career'`,
+  `occurrence: 'every_shift'`. Anything short of that stays
+  `career_placement`; a doc that would match but misses a guard logs
+  `shiftReminderProfile.career_opt_in_ignored`. Per-assignment overrides still
+  can't touch careers; the sync resolver keeps careers fenced.
+- **Parent matching (all sequences, item 3):** targeting now matches the
+  assignment's account LINEAGE — `accountId` + up to 3
+  `tenants/{t}/accounts/{id}.parentAccountId` ancestors (5-min cache). A doc
+  naming CORT national covers every `autoLoc_*` child; the 74 child ids pasted
+  into `cort_gig` this morning are now redundant but harmless.
+
+**Per-workday materialization** (`cadence/dailyConfirm.ts` pure +
+`cadence/dailyConfirmWrites.ts` + `upsertDailyConfirmReminderDocs` in
+`workerShiftRemindersV2.ts`; tests `__tests__/cadence/dailyConfirm.test.ts`):
+- `enumerateWorkDays`: enabled weeklySchedule days from today (worksite-local
+  calendar, DST-safe) through today+3, never before startDate/after endDate.
+- Each day runs the track's steps through the shared planner. Docs are
+  `{type}__{YYYY-MM-DD}` with `workDate` + `dailyConfirm: true`; `dedupeKey`
+  and the per-channel lifecycle dedupe scope include the workDate (without
+  that, Tuesday's SMS would dedupe against Monday's).
+- Rolling horizon: a silent self-re-arming `daily_confirm_topup` doc (all
+  channels false) fires at 01:00 local; the existing 5-minute dispatcher
+  re-runs the scheduler for that assignment (`runDailyConfirmTopUp`). No new
+  function, index, or collection-group query.
+- Re-plan rules: a day whose ask doc already exists re-plans WITHOUT the
+  late-fill synth (otherwise the 1 AM top-up would text "confirm now" at
+  1:02 AM for today's 5 AM shift); a genuine late fill (new crew member)
+  never sends before 8 AM local and is dropped if 8 AM is inside 45 min of
+  start.
+- Terminal per-day docs older than 14 days are deleted at top-up.
+  `weeklySchedule` is a material resync field for careers (key-order-stable
+  compare).
+- Timeline for a 5 AM crew day (cort_gig): ask 8 AM the day before → nudges
+  10 AM / noon while silent → re-confirm 5 PM → worksite details + clock-in
+  link 4:45 AM → HERE ask 5:00 → late check-in 5:15 (cancelled at dispatch,
+  see correction) → no-show probe 5:30 (muted). A worker who confirms at 8 AM
+  still gets ~5 texts/workday; confirmed days skip the ask ladder.
+
+**Per-day state.** `assignment.cortConfirmationDays[YYYY-MM-DD]` =
+`{state, workDate, startAt, startTime, endTime, profileId, sequenceId,
+confirmedAt/Via, cancelledAt/Via, checkedInAt/Via, lastAskedAt, …}`, kept 45
+days. `cortConfirmation` becomes a MIRROR of the current cadence day (earliest
+day whose start + 12h is still ahead) with `dailyConfirm: true` + `workDate`,
+written in the same transaction as every day change (`applyDailyDayPatch`),
+so single-shift readers keep working. Everything that gates or routes reads
+the map:
+- dispatcher: `dailyConfirmDispatchBlockReason` (notificationsSuppressed /
+  retroactive, opt-in withdrawn, past endDate, day unscheduled) +
+  `dailyDaySuppressReason` (declined / no-show / on-site day gets nothing; a
+  confirmed day skips the ask ladder) + stale checks against the DAY's start;
+- reply handler: one `ActiveCadence` per seeded day (yesterday → +5d), so
+  YES / NO / HERE bind to the most-recently-asked DAY; receipts name the
+  workday; a NO cancels only that day's docs;
+- `respondToAssignment` cadence decisions take an optional `workDate`
+  (default: the mirror's day);
+- Flex punch feed `stampCheckInFromPunch` stamps the punch's workDate;
+- Scheduling Health + Worker Confirmations dashboard also query
+  `cortConfirmation.dailyConfirm == true` and add one row per workday
+  (`src/utils/dailyConfirmDays.ts`) — a crew member's `startDate` is their
+  first day, so the date-range query never found them;
+- withdrawal (resolution no longer daily): pending future days removed,
+  mirror → `{dailyConfirm:false, dailyConfirmEndedAt, lastWorkDate}`;
+- first materialization keeps the legacy single state as its own day
+  (`checkedInVia.workDate`, `migratedFromSingleState: true`).
+
+**Natalie.**
+- Last call unanswered: when a daily day's `assignment_reminder_22h_final`
+  dispatches (only possible while that day is still pending) Natalie DMs the
+  JO's assigned recruiters (`natalie_escalations` kind `unreachable`, one per
+  workday); a later worker reply relays into that DM thread.
+- NO by SMS or app → `cancelled` escalation per workday (+ Flex team ask, id
+  per workday, when Flex-linked).
+- Morning brief facts gain `dailyCrews` per site (today confirmed/checked-in
+  vs scheduled, who hasn't answered or is out, yesterday's no-shows/declines).
+- `worker_status` tool returns `dailyConfirmations` (last 5 + next 4 days).
+
+**Settings UI.** SequenceTargetingCard: "Career crews: confirm every workday"
+(disabled until an account AND a venue are picked; turning it on adds Career
+to worker types and sets Every shift; warns with the missing guard rails).
+☠️ `coerceTargeting` used to rebuild targeting from known keys only — saving
+the card would have silently WIPED `includeCareer`. It round-trips now, but
+only once hosting is deployed.
+
+**☠️ Correction — the 2026-09-07 late check-in "dispatcher gate" was never
+committed.** b8164ac4 added the step, copy, and dashboard only;
+`findFlexClockIn` / `flexLinkedForProbe` / the Flex no-show unmute exist only
+in docs. On main — and in the deployed dispatcher, whose source was diffed
+byte-for-byte on 2026-09-11 — `assignment_late_checkin_15m` is cancelled at
+dispatch as `assignment_start_in_past` (it isn't in the post-start
+allow-list), nothing writes `lateCheckinTextedAt`, and the T+30 probe is
+muted everywhere (`messagingConfig/noShowDetection` absent). Verify
+"deployed" claims against the function's source zip
+(`gcloud functions describe … buildConfig.source.storageSource`), not docs.

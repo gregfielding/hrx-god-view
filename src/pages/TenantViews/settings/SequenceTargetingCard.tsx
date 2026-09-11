@@ -174,6 +174,17 @@ const SequenceTargetingCard: React.FC<Props> = ({
     [targeting.accountIds, accountsById],
   );
 
+  // Mirrors the backend guard rails (functions shiftReminderProfile.careerOptInProblems).
+  const careerOptInGaps = useMemo(() => {
+    const gaps: string[] = [];
+    if (!targeting.active) gaps.push('the sequence is Active');
+    if (targeting.accountIds.length === 0) gaps.push('an account is selected');
+    if ((targeting.locationIds ?? []).length === 0) gaps.push('a venue is selected');
+    if (!targeting.workerTypes.includes('career')) gaps.push('Worker type includes Career');
+    if (targeting.occurrence !== 'every_shift') gaps.push('Occurrence is "Every shift"');
+    return gaps;
+  }, [targeting]);
+
   const isDirty =
     JSON.stringify(targeting) !== JSON.stringify(saved.targeting) ||
     track !== saved.track ||
@@ -294,8 +305,8 @@ const SequenceTargetingCard: React.FC<Props> = ({
               ))}
             </Select>
             <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
-              Careers are never targeted here — they automatically get the quiet placement track
-              (first-day welcome + morning-of note).
+              Careers get the quiet placement track (first-day welcome + morning-of note) unless
+              &ldquo;Career crews: confirm every workday&rdquo; is turned on below.
             </Typography>
           </FormControl>
 
@@ -436,6 +447,50 @@ const SequenceTargetingCard: React.FC<Props> = ({
               ))}
             </Select>
           </FormControl>
+
+          {/* Career crews — daily confirmation opt-in (Greg 2026-09-11, CORT Woodridge) */}
+          <FormControlLabel
+            control={
+              <Switch
+                checked={targeting.includeCareer === true}
+                disabled={
+                  targeting.includeCareer !== true &&
+                  (targeting.accountIds.length === 0 || (targeting.locationIds ?? []).length === 0)
+                }
+                onChange={(_, checked) =>
+                  setTargeting((prev) => ({
+                    ...prev,
+                    includeCareer: checked,
+                    ...(checked
+                      ? {
+                          workerTypes: prev.workerTypes.includes('career')
+                            ? prev.workerTypes
+                            : [...prev.workerTypes, 'career' as SequenceWorkerType],
+                          occurrence: 'every_shift' as SequenceOccurrence,
+                        }
+                      : {}),
+                  }))
+                }
+              />
+            }
+            label={
+              <Stack>
+                <Typography variant="body2" fontWeight={500}>
+                  Career crews: confirm every workday
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Career placements at the venues above get a YES/NO text for each scheduled day.
+                  Needs at least one account AND one venue — it never applies to a whole account.
+                </Typography>
+              </Stack>
+            }
+            sx={{ ml: 0, alignItems: 'flex-start' }}
+          />
+          {targeting.includeCareer === true && careerOptInGaps.length > 0 && (
+            <Alert severity="warning" variant="outlined">
+              Career crews won&apos;t get this sequence until {careerOptInGaps.join(', ')}.
+            </Alert>
+          )}
 
           {/* Message wording — per-step SMS overrides, no deploy needed */}
           <Divider />

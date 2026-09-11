@@ -15,6 +15,23 @@ import { shouldSendNotification } from './utils/notificationSettings';
 import { markLifecycleEventIfFirst, releaseLifecycleEvent } from './messaging/lifecycleDedupe';
 import { planReminderSchedule } from './cadence/reminderSchedulePlanner';
 import {
+  DAILY_CONFIRM_DOC_RETENTION_DAYS,
+  DAILY_CONFIRM_HORIZON_DAYS,
+  DAILY_CONFIRM_TOPUP_DOC_ID,
+  addDaysIso,
+  dailyConfirmDispatchBlockReason,
+  dailyDaySuppressReason,
+  dayEntriesOf,
+  dayStateOf,
+  enumerateWorkDays,
+  isDailyConfirmAssignment,
+  localDateIso,
+  nextTopUpMs,
+  parseDailyReminderDocId,
+  planDailyConfirmReminders,
+} from './cadence/dailyConfirm';
+import { applyDailyDayPatch, seedDailyConfirmDays, withdrawDailyConfirm } from './cadence/dailyConfirmWrites';
+import {
   getSequenceCopyOverride,
   getTenantSmsBrand,
   renderCadenceTemplate,
@@ -78,6 +95,9 @@ const LEGACY_REMINDER_TYPES: ReminderType[] = ['shift_reminder_24h', 'shift_remi
 
 type ReminderType =
   | ShiftReminderType
+  // Daily-confirm crews (2026-09-11): silent, self-re-arming doc that re-runs
+  // the scheduler to roll the per-workday horizon forward. Never a message.
+  | 'daily_confirm_topup'
   // Legacy values kept for backward-compatible reads during rollout.
   | 'shift_reminder_24h'
   | 'shift_reminder_4h';
@@ -108,6 +128,8 @@ const HOURS_BY_TYPE: Record<ReminderType, number> = {
   openshift_weekly_digest: 0,
   // Claim Shift track — synthesized ~1 min after the claim, not an offset.
   gig_claim_confirmation: 0,
+  // Daily-confirm top-up — fires at 01:00 worksite-local, not an offset.
+  daily_confirm_topup: 0,
   shift_reminder_24h: 24,
   shift_reminder_4h: 4,
 };
@@ -128,6 +150,7 @@ const DOC_ID_BY_TYPE: Record<ReminderType, string> = {
   openshift_welcome: 'openshift_welcome',
   openshift_weekly_digest: 'openshift_weekly_digest',
   gig_claim_confirmation: 'gig_claim_confirmation',
+  daily_confirm_topup: DAILY_CONFIRM_TOPUP_DOC_ID,
   shift_reminder_24h: 'shift_reminder_24h',
   shift_reminder_4h: 'shift_reminder_4h',
 };
@@ -523,8 +546,27 @@ function formatStartInTimezone(start: admin.firestore.Timestamp, timezone?: stri
   }
 }
 
+/** JSON with sorted keys — writers store weeklySchedule days with different key orders. */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
 function shouldResync(before: Record<string, unknown> | null, after: Record<string, unknown>): boolean {
   if (!before) return true;
+  // Daily-confirm crews (2026-09-11) expand weeklySchedule into per-workday
+  // reminders, so a schedule edit on a career must re-materialize. Scoped to
+  // careers so gig assignments' denorm writes don't churn resyncs.
+  if (
+    String(after.jobOrderType ?? '').trim().toLowerCase() === 'career' &&
+    stableStringify(before.weeklySchedule) !== stableStringify(after.weeklySchedule)
+  ) {
+    return true;
+  }
   const materialFields = [
     'status',
     'userId',
@@ -621,6 +663,239 @@ async function cleanupLegacyReminderDocsForAssignment(
   return cleaned;
 }
 
+/**
+ * Daily-confirm crews (Greg 2026-09-11, CORT Woodridge): the profile's steps
+ * once per scheduled workday over a rolling horizon (cadence/dailyConfirm.ts),
+ * each day's docs keyed `{type}__{YYYY-MM-DD}`, plus the self-re-arming
+ * `daily_confirm_topup` doc the dispatcher fires at 01:00 local to roll the
+ * horizon forward. Never materializes past today + DAILY_CONFIRM_HORIZON_DAYS.
+ */
+async function upsertDailyConfirmReminderDocs(args: {
+  tenantId: string;
+  assignmentId: string;
+  assignment: Record<string, unknown>;
+  workerId: string;
+  profileId: string;
+  steps: ShiftReminderStep[];
+  sequenceId: string | null;
+  timezone: string;
+  shiftExtras?: ShiftPayloadExtras;
+  deepLink: string;
+  assignmentStatusSnapshot: string;
+  scheduleMode: string;
+  nowMs: number;
+}): Promise<void> {
+  const {
+    tenantId,
+    assignmentId,
+    assignment,
+    workerId,
+    profileId,
+    sequenceId,
+    timezone,
+    deepLink,
+    assignmentStatusSnapshot,
+    scheduleMode,
+    nowMs,
+  } = args;
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const todayIso = localDateIso(nowMs, timezone);
+  const horizonEndIso = addDaysIso(todayIso, DAILY_CONFIRM_HORIZON_DAYS);
+  const workDays = enumerateWorkDays({
+    weeklySchedule: assignment.weeklySchedule,
+    startDate: assignment.startDate,
+    endDate: assignment.endDate,
+    timezone,
+    nowMs,
+  });
+
+  // Day state first, so a doc the dispatcher claims moments from now already
+  // finds its day (and the mirror's dailyConfirm flag) on the assignment.
+  await seedDailyConfirmDays({ tenantId, assignmentId, workDays, todayIso, horizonEndIso, profileId, sequenceId, nowMs });
+
+  const subRef = db.collection(`tenants/${tenantId}/assignments/${assignmentId}/${REMINDER_SUBCOLLECTION}`);
+  const existingSnap = await subRef.where('type', '==', REMINDER_KIND).get();
+  const existing = new Map(existingSnap.docs.map((d) => [d.id, d]));
+  const existingAskDays = new Set<string>();
+  for (const d of existingSnap.docs) {
+    const parsed = parseDailyReminderDocId(d.id);
+    if (parsed?.type === 'assignment_reminder_24h') existingAskDays.add(parsed.workDate);
+  }
+  const rows = planDailyConfirmReminders({
+    steps: args.steps,
+    workDays,
+    dayStates: Object.fromEntries(workDays.map((d) => [d.workDate, dayStateOf(assignment, d.workDate)])),
+    existingAskDays,
+    nowMs,
+    timezone,
+    scheduleMode,
+    profileId,
+  });
+
+  const writes: Promise<unknown>[] = [];
+  const active = new Set<string>([DAILY_CONFIRM_TOPUP_DOC_ID]);
+  const payloadByDay = new Map<string, ReminderPayload>();
+  for (const row of rows) {
+    active.add(row.docId);
+    let payload = payloadByDay.get(row.workDate);
+    if (!payload) {
+      payload = buildPayload(
+        assignment,
+        admin.firestore.Timestamp.fromMillis(row.startMs),
+        admin.firestore.Timestamp.fromMillis(row.endMs),
+        timezone,
+        args.shiftExtras,
+      );
+      payloadByDay.set(row.workDate, payload);
+    }
+    const docRef = subRef.doc(row.docId);
+    const existingStatus = normalizeStatus(existing.get(row.docId)?.get('status'));
+    if (existingStatus === 'sent' || existingStatus === 'failed') {
+      writes.push(
+        docRef.set(
+          { workerId, tenantId, assignmentId, deepLink, payload, resolvedTimezone: timezone, assignmentStatusSnapshot, updatedAt: now },
+          { merge: true },
+        ),
+      );
+      continue;
+    }
+    const cancelReason = row.forceCancelReason ?? (row.scheduledForMs <= nowMs ? 'skipped_past_schedule' : null);
+    writes.push(
+      docRef.set(
+        {
+          type: REMINDER_KIND,
+          reminderType: row.type,
+          workerId,
+          tenantId,
+          assignmentId,
+          deepLink,
+          scheduledFor: admin.firestore.Timestamp.fromMillis(row.scheduledForMs),
+          status: cancelReason ? 'cancelled' : 'pending',
+          channels: { inbox: true, push: true, sms: true },
+          payload,
+          resolvedTimezone: timezone,
+          scheduleMode,
+          scheduledOffsetMinutes: Math.round(row.offsetHours * 60),
+          reminderProfile: profileId,
+          sequenceId: sequenceId ?? admin.firestore.FieldValue.delete(),
+          dailyConfirm: true,
+          workDate: row.workDate,
+          floorDeferred: row.deferred,
+          floorDeferredReason: row.deferred && row.deferredReason ? row.deferredReason : admin.firestore.FieldValue.delete(),
+          rawScheduledForMs: row.deferred ? row.rawScheduledForMs : admin.firestore.FieldValue.delete(),
+          assignmentStatusSnapshot,
+          createdAt: now,
+          updatedAt: now,
+          dedupeKey: `${assignmentId}_${row.type}_${row.workDate}`,
+          attempts: 0,
+          maxAttempts: MAX_ATTEMPTS,
+          version: REMINDER_VERSION,
+          lock: admin.firestore.FieldValue.delete(),
+          lastError: cancelReason ?? admin.firestore.FieldValue.delete(),
+          sentAt: admin.firestore.FieldValue.delete(),
+          cancelledAt: cancelReason ? now : admin.firestore.FieldValue.delete(),
+          cancelReason: cancelReason ?? admin.firestore.FieldValue.delete(),
+          claimedAt: admin.firestore.FieldValue.delete(),
+          claimedBy: admin.firestore.FieldValue.delete(),
+          claimExpiresAt: admin.firestore.FieldValue.delete(),
+          delivery: admin.firestore.FieldValue.delete(),
+        },
+        { merge: true },
+      ),
+    );
+  }
+
+  writes.push(
+    subRef.doc(DAILY_CONFIRM_TOPUP_DOC_ID).set(
+      {
+        type: REMINDER_KIND,
+        reminderType: 'daily_confirm_topup',
+        workerId,
+        tenantId,
+        assignmentId,
+        deepLink,
+        scheduledFor: admin.firestore.Timestamp.fromMillis(nextTopUpMs(nowMs, timezone)),
+        status: 'pending',
+        channels: { inbox: false, push: false, sms: false },
+        resolvedTimezone: timezone,
+        reminderProfile: profileId,
+        sequenceId: sequenceId ?? admin.firestore.FieldValue.delete(),
+        dailyConfirm: true,
+        horizonEndDate: horizonEndIso,
+        assignmentStatusSnapshot,
+        ...(existing.has(DAILY_CONFIRM_TOPUP_DOC_ID) ? {} : { createdAt: now }),
+        updatedAt: now,
+        dedupeKey: `${assignmentId}_daily_confirm_topup`,
+        attempts: 0,
+        maxAttempts: MAX_ATTEMPTS,
+        version: REMINDER_VERSION,
+        lock: admin.firestore.FieldValue.delete(),
+        lastError: admin.firestore.FieldValue.delete(),
+        cancelledAt: admin.firestore.FieldValue.delete(),
+        cancelReason: admin.firestore.FieldValue.delete(),
+        claimedAt: admin.firestore.FieldValue.delete(),
+        claimedBy: admin.firestore.FieldValue.delete(),
+        claimExpiresAt: admin.firestore.FieldValue.delete(),
+      },
+      { merge: true },
+    ),
+  );
+
+  // Reconcile: cancel what the horizon no longer has (an unscheduled day, the
+  // career track's first-day docs); leave a past day's leftovers to the
+  // dispatcher; delete terminal per-day docs past retention so an open-ended
+  // crew's subcollection doesn't grow forever.
+  const pruneBefore = addDaysIso(todayIso, -DAILY_CONFIRM_DOC_RETENTION_DAYS);
+  const expired: admin.firestore.DocumentReference[] = [];
+  for (const [id, docSnap] of existing) {
+    if (active.has(id)) continue;
+    const parsed = parseDailyReminderDocId(id);
+    if (isTerminalReminderStatus(docSnap.get('status'))) {
+      if (parsed && parsed.workDate < pruneBefore) expired.push(docSnap.ref);
+      continue;
+    }
+    if (parsed && parsed.workDate < todayIso) continue;
+    const reason = parsed ? 'daily_confirm_day_unscheduled' : `profile_changed_to_daily_${profileId}`;
+    writes.push(
+      docSnap.ref.set(
+        {
+          status: 'cancelled',
+          cancelledAt: now,
+          updatedAt: now,
+          cancelReason: reason,
+          lastError: reason,
+          claimedAt: admin.firestore.FieldValue.delete(),
+          claimedBy: admin.firestore.FieldValue.delete(),
+          claimExpiresAt: admin.firestore.FieldValue.delete(),
+          lock: admin.firestore.FieldValue.delete(),
+        },
+        { merge: true },
+      ),
+    );
+  }
+  for (let i = 0; i < expired.length; i += 400) {
+    const batch = db.batch();
+    expired.slice(i, i + 400).forEach((ref) => batch.delete(ref));
+    writes.push(batch.commit());
+  }
+
+  writes.push(
+    db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
+      { scheduledNotificationSyncAt: now, scheduledNotificationVersion: REMINDER_VERSION },
+      { merge: true },
+    ),
+  );
+  await Promise.all(writes);
+  logger.info('[worker_shift_reminders] daily confirm synced', {
+    tenantId,
+    assignmentId,
+    sequenceId,
+    workDates: workDays.map((d) => d.workDate),
+    docs: rows.length,
+    pruned: expired.length,
+  });
+}
+
 async function upsertReminderDocs(tenantId: string, assignmentId: string, assignment: Record<string, unknown>): Promise<void> {
   const workerId = normalize(assignment.userId || assignment.candidateId);
   if (!workerId) {
@@ -655,7 +930,7 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   // Resolve which profile applies (default two-step vs CORT extended cadence).
-  const { profile, sequenceId } = await resolveShiftReminderProfile({ tenantId, assignment });
+  const { profile, sequenceId, dailyConfirm } = await resolveShiftReminderProfile({ tenantId, assignment });
 
   const debugOverrideMinutes = await getDebugOverrideMinutes(tenantId);
   const scheduleMode = debugOverrideMinutes ? 'debug_short' : 'production_default';
@@ -669,6 +944,27 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
     }
     return step;
   });
+
+  // Career crew opted into daily confirmation: per-workday docs, not one
+  // set anchored to the assignment's first day.
+  if (dailyConfirm) {
+    await upsertDailyConfirmReminderDocs({
+      tenantId,
+      assignmentId,
+      assignment,
+      workerId,
+      profileId: profile.id,
+      steps: effectiveSteps,
+      sequenceId,
+      timezone: resolvedTimezone,
+      shiftExtras,
+      deepLink,
+      assignmentStatusSnapshot,
+      scheduleMode,
+      nowMs,
+    });
+    return;
+  }
 
   const writes: Promise<unknown>[] = [];
 
@@ -902,6 +1198,12 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
         ),
       );
     }
+  }
+
+  // The sequence stopped opting this career in (doc deactivated, venue
+  // changed, assignment moved): retire its per-workday state.
+  if (isDailyConfirmAssignment(assignment)) {
+    writes.push(withdrawDailyConfirm({ tenantId, assignmentId, todayIso: localDateIso(nowMs, resolvedTimezone) }));
   }
 
   await Promise.all(writes);
@@ -1215,6 +1517,62 @@ function nextWeeklyDigestMs(fromMs: number, timezone: string): number {
   return fromMs + 7 * 24 * 60 * 60 * 1000;
 }
 
+/**
+ * Daily-confirm top-up (2026-09-11): re-run the scheduler for one crew
+ * assignment so its per-workday horizon rolls forward. The scheduler re-arms
+ * this doc for the next 01:00; if the assignment stopped qualifying, its
+ * reconcile cancels the doc instead and the chain ends.
+ */
+async function runDailyConfirmTopUp(
+  docSnap: admin.firestore.QueryDocumentSnapshot,
+  reminder: ReminderDoc,
+): Promise<void> {
+  const retire = (reason: string) =>
+    docSnap.ref.update({
+      status: 'cancelled',
+      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      cancelReason: reason,
+      lastError: reason,
+      lock: admin.firestore.FieldValue.delete(),
+    });
+  const assignmentSnap = await db.doc(`tenants/${reminder.tenantId}/assignments/${reminder.assignmentId}`).get();
+  if (!assignmentSnap.exists) {
+    await retire('assignment_missing');
+    return;
+  }
+  const assignment = assignmentSnap.data() as Record<string, unknown>;
+  if (assignment.retroactive === true || assignment.notificationsSuppressed === true) {
+    await retire('notifications_suppressed');
+    return;
+  }
+  const status = normalizeStatus(assignment.status);
+  if (!isConfirmedStatus(status) || isCancelLikeStatus(status)) {
+    await retire(`assignment_status_${status || 'unknown'}`);
+    return;
+  }
+  try {
+    await upsertReminderDocs(reminder.tenantId, reminder.assignmentId, assignment);
+    const after = await docSnap.ref.get();
+    if (normalizeStatus(after.get('status')) === 'processing') await retire('daily_confirm_not_rearmed');
+  } catch (err: any) {
+    const exceeded = Number(reminder.attempts || 0) >= Number(reminder.maxAttempts || MAX_ATTEMPTS);
+    await docSnap.ref.update({
+      status: exceeded ? 'failed' : 'pending',
+      scheduledFor: exceeded ? reminder.scheduledFor : admin.firestore.Timestamp.fromMillis(Date.now() + RETRY_BACKOFF_MS),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastError: err?.message || String(err),
+      lock: admin.firestore.FieldValue.delete(),
+    });
+    logger.error('[worker_shift_reminders] daily confirm top-up failed', {
+      tenantId: reminder.tenantId,
+      assignmentId: reminder.assignmentId,
+      error: err?.message || String(err),
+      willRetry: !exceeded,
+    });
+  }
+}
+
 async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapshot): Promise<void> {
   const nowTs = admin.firestore.Timestamp.now();
   const lockExpiresAt = admin.firestore.Timestamp.fromMillis(nowTs.toMillis() + CLAIM_TTL_MS);
@@ -1249,14 +1607,24 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   const claimedSnap = await docSnap.ref.get();
   if (!claimedSnap.exists) return;
   const reminder = claimedSnap.data() as ReminderDoc;
+  if (reminder.reminderType === 'daily_confirm_topup') {
+    await runDailyConfirmTopUp(docSnap, reminder);
+    return;
+  }
   const maxAttempts = Number(reminder.maxAttempts || MAX_ATTEMPTS);
   const canonicalReminderType = toCanonicalReminderType(reminder.reminderType);
+  // Daily-confirm crews (2026-09-11): one doc per step PER WORKDAY.
+  const reminderWorkDate = normalize((reminder as unknown as Record<string, unknown>).workDate);
   // The weekly digest recurs on one doc — scope its per-channel dedupe keys
   // to the fire date so week N+1 isn't suppressed as a duplicate of week N.
+  // Per-workday docs scope to their workDate for the same reason (Tuesday's
+  // ask must not dedupe against Monday's).
   const dedupeScope =
     canonicalReminderType === 'openshift_weekly_digest'
       ? `${canonicalReminderType}_${reminder.scheduledFor.toDate().toISOString().slice(0, 10)}`
-      : canonicalReminderType;
+      : reminderWorkDate
+        ? `${canonicalReminderType}_${reminderWorkDate}`
+        : canonicalReminderType;
   const reminderProfileId = normalize((reminder as unknown as Record<string, unknown>).reminderProfile);
   // Worker language drives the message body (bodies were English-only until
   // 2026-08-29). Fail-open to English on any read error.
@@ -1349,10 +1717,15 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
 
   const assignmentData = assignmentSnap.data() as Record<string, unknown>;
   const assignmentStatus = normalizeStatus(assignmentData.status);
-  const assignmentStart = resolveAssignmentStart(
-    assignmentData,
-    resolveTimezone(assignmentData, null),
-  );
+  // A per-workday doc's start is ITS day. The crew member's assignment start
+  // is their first day (weeks back) and would suppress every step as
+  // assignment_start_in_past.
+  const assignmentStart = reminderWorkDate
+    ? toTimestamp(reminder.payload?.startTime)
+    : resolveAssignmentStart(
+      assignmentData,
+      resolveTimezone(assignmentData, null),
+    );
 
   // Most reminders are pre-shift and must be suppressed once the shift has
   // started. The exceptions are:
@@ -1410,6 +1783,36 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     return;
   }
 
+  // Daily-confirm crews: assignment-level reasons this workday's step must
+  // not go out though its doc is still pending — notifications suppressed,
+  // opt-in withdrawn, past endDate, or the day dropped from weeklySchedule
+  // since the last top-up.
+  if (reminderWorkDate) {
+    const dailyBlock = dailyConfirmDispatchBlockReason(
+      assignmentData,
+      reminderWorkDate,
+      normalize(reminder.resolvedTimezone) || resolveTimezone(assignmentData, null),
+    );
+    if (dailyBlock) {
+      logger.info('[worker_shift_reminders] reminder suppressed', {
+        reason: dailyBlock,
+        assignmentId: reminder.assignmentId,
+        userId: reminder.workerId,
+        reminderType: canonicalReminderType,
+        workDate: reminderWorkDate,
+      });
+      await docSnap.ref.update({
+        status: 'cancelled',
+        cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        cancelReason: dailyBlock,
+        lastError: dailyBlock,
+        lock: admin.firestore.FieldValue.delete(),
+      });
+      return;
+    }
+  }
+
   // Open-shift digest: stop the chain once the assignment window has ended
   // (endDate is a YYYY-MM-DD string on most docs, a Timestamp on some).
   if (reminder.reminderType === 'openshift_weekly_digest') {
@@ -1442,7 +1845,10 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   //     clock-in URL), but are pointless — and harmful — once cancelled.
   //   - The T-24h reminder itself is the one that asks for the reply, so we
   //     never suppress it here.
-  const cortState = normalizeStatus((assignmentData.cortConfirmation as Record<string, unknown> | undefined)?.state);
+  // Daily-confirm crews gate on THIS workday's state, never the mirror.
+  const cortState = reminderWorkDate
+    ? dayStateOf(assignmentData, reminderWorkDate)
+    : normalizeStatus((assignmentData.cortConfirmation as Record<string, unknown> | undefined)?.state);
   // confirm_now counts as an escalation for gating: it nudges for a
   // YES/CANCEL, so a reply either way makes it moot.
   const isEscalation =
@@ -1459,7 +1865,12 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   const isReconfirm = reminder.reminderType === 'assignment_reconfirm_4h';
 
   let cadenceSuppressReason = '';
-  if (isEscalation && (cortState === 'confirmed' || cortState === 'cancelled')) {
+  // Per-workday crews: a declined / no-show / on-site day gets nothing more
+  // and a confirmed day no ask ladder (the daily top-up re-plans every day).
+  const dailySuppressReason = reminderWorkDate ? dailyDaySuppressReason(reminder.reminderType, cortState) : null;
+  if (dailySuppressReason) {
+    cadenceSuppressReason = dailySuppressReason;
+  } else if (isEscalation && (cortState === 'confirmed' || cortState === 'cancelled')) {
     cadenceSuppressReason = `cadence_state_${cortState}_escalation_not_needed`;
   } else if (isPostConfirmOperational && cortState === 'cancelled') {
     cadenceSuppressReason = 'cadence_cancelled_by_worker';
@@ -1473,6 +1884,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       userId: reminder.workerId,
       reminderType: canonicalReminderType,
       cortState,
+      workDate: reminderWorkDate || null,
       scheduledTime: reminder.scheduledFor.toDate().toISOString(),
       actualSendTime: new Date().toISOString(),
     });
@@ -1486,6 +1898,22 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       lock: admin.firestore.FieldValue.delete(),
     });
     return;
+  }
+
+  // Natalie (2026-09-11): a daily crew member's last call going out means
+  // they've ignored the ask and a nudge for that workday. DM the assigned
+  // recruiters now (noon the day before a 5 AM start) while there's still
+  // time to line up a backup; any later reply relays into that thread.
+  if (reminderWorkDate && reminder.reminderType === 'assignment_reminder_22h_final') {
+    await enqueueRecruiterEscalation({
+      tenantId: reminder.tenantId,
+      assignmentId: reminder.assignmentId,
+      assignment: assignmentData,
+      kind: 'unreachable',
+      workDate: reminderWorkDate,
+      startAt: reminder.payload.startTime,
+      detail: "They haven't answered my confirmation texts for that day, so I'm sending a last call now. I'll post here if they reply.",
+    });
   }
 
   // Phase 2B: silent dispatch for assignment_noshow_check.
@@ -1591,19 +2019,33 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     try {
       // Flip state to no_show and raise the recruiter-attention flag BEFORE
       // notifying, so the recruiter, clicking through the feed entry, sees
-      // a consistent view.
-      await db.doc(`tenants/${reminder.tenantId}/assignments/${reminder.assignmentId}`).set(
-        {
-          cortConfirmation: {
+      // a consistent view. Daily-confirm crews flip only this workday.
+      if (reminderWorkDate) {
+        await applyDailyDayPatch({
+          tenantId: reminder.tenantId,
+          assignmentId: reminder.assignmentId,
+          workDate: reminderWorkDate,
+          patch: {
             state: 'no_show',
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             noShowDetectedAt: admin.firestore.FieldValue.serverTimestamp(),
             priorState: priorCortState,
           },
-          needsRecruiterAttention: true,
-        },
-        { merge: true },
-      );
+          options: { assignmentFields: { needsRecruiterAttention: true } },
+        });
+      } else {
+        await db.doc(`tenants/${reminder.tenantId}/assignments/${reminder.assignmentId}`).set(
+          {
+            cortConfirmation: {
+              state: 'no_show',
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              noShowDetectedAt: admin.firestore.FieldValue.serverTimestamp(),
+              priorState: priorCortState,
+            },
+            needsRecruiterAttention: true,
+          },
+          { merge: true },
+        );
+      }
 
       await notifyRecruitersOnWorkerEvent({
         tenantId: reminder.tenantId,
@@ -1613,7 +2055,9 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
           kind: 'cadence_no_show',
           title: 'Possible no-show',
           snippet: `${reminder.payload.jobTitle || 'Worker'} has not checked in 30 minutes after start (${startLabel}).`,
-          dedupeKey: `cadence_no_show__${reminder.assignmentId}`,
+          dedupeKey: reminderWorkDate
+            ? `cadence_no_show__${reminder.assignmentId}__${reminderWorkDate}`
+            : `cadence_no_show__${reminder.assignmentId}`,
           extra: {
             reminderType: 'assignment_noshow_check',
             priorCortState,
@@ -1633,14 +2077,21 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
         assignment: assignmentData as Record<string, unknown>,
         kind: 'no_show',
         detail: 'no check-in 30 minutes after start',
+        workDate: reminderWorkDate || undefined,
+        startAt: reminderWorkDate ? reminder.payload.startTime : undefined,
       });
       // Natalie DMs the assigned recruiter (roadmap Phase 1.3) — not just a dashboard flag.
+      const lateCheckinTextedAt = reminderWorkDate
+        ? dayEntriesOf(assignmentData)[reminderWorkDate]?.lateCheckinTextedAt
+        : ((assignmentData as Record<string, unknown>).cortConfirmation as Record<string, unknown> | undefined)?.lateCheckinTextedAt;
       await enqueueRecruiterEscalation({
         tenantId: reminder.tenantId,
         assignmentId: reminder.assignmentId,
         assignment: assignmentData as Record<string, unknown>,
         kind: 'no_show',
-        detail: (assignmentData as Record<string, unknown>).cortConfirmation && ((assignmentData as Record<string, unknown>).cortConfirmation as Record<string, unknown>).lateCheckinTextedAt ? 'I texted at T+15 and got no reply.' : undefined,
+        detail: lateCheckinTextedAt ? 'I texted at T+15 and got no reply.' : undefined,
+        workDate: reminderWorkDate || undefined,
+        startAt: reminderWorkDate ? reminder.payload.startTime : undefined,
       });
     } catch (err: any) {
       notifyError = err?.message || String(err);
@@ -1971,15 +2422,30 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       // routing back to the old earliest-first behaviour.
       if (CONFIRMATION_ASK_REMINDER_TYPES.includes(canonicalReminderType as ShiftReminderType)) {
         try {
-          await db.doc(`tenants/${reminder.tenantId}/assignments/${reminder.assignmentId}`).set(
-            {
-              cortConfirmation: {
+          if (reminderWorkDate) {
+            // Daily crews: the ask was about ONE workday — stamp that day so
+            // the worker's YES binds to it (the mirror follows in the same
+            // transaction).
+            await applyDailyDayPatch({
+              tenantId: reminder.tenantId,
+              assignmentId: reminder.assignmentId,
+              workDate: reminderWorkDate,
+              patch: {
                 lastAskedAt: admin.firestore.FieldValue.serverTimestamp(),
                 lastAskedReminderType: canonicalReminderType,
               },
-            },
-            { merge: true },
-          );
+            });
+          } else {
+            await db.doc(`tenants/${reminder.tenantId}/assignments/${reminder.assignmentId}`).set(
+              {
+                cortConfirmation: {
+                  lastAskedAt: admin.firestore.FieldValue.serverTimestamp(),
+                  lastAskedReminderType: canonicalReminderType,
+                },
+              },
+              { merge: true },
+            );
+          }
         } catch (err) {
           logger.warn('[worker_shift_reminders] lastAskedAt stamp failed', {
             assignmentId: reminder.assignmentId,

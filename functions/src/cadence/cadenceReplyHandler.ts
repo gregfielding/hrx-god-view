@@ -44,6 +44,8 @@ import { enqueueFlexTeamAsk } from '../messaging/slackAsNatalie';
 import { enqueueRecruiterEscalation, enqueueWorkerReplyRelay } from '../natalie/natalieAudit';
 import { ALL_SHIFT_REMINDER_TYPES, type ShiftReminderType } from './shiftReminderProfile';
 import { getTenantSmsBrand } from './sequenceCopyOverrides';
+import { dayEntriesOf, expandDailyCadenceDays, isDailyConfirmAssignment } from './dailyConfirm';
+import { applyDailyDayPatch, cancelDailyRemindersForDay } from './dailyConfirmWrites';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -171,6 +173,14 @@ export interface ActiveCadence {
   state: string;
   /** When we last ASKED this worker to confirm this shift (0 = never). */
   lastAskedAtMs: number;
+  /**
+   * Daily-confirm crews (2026-09-11): the workday this cadence is. One
+   * assignment expands into one ActiveCadence per seeded day, so a YES/NO
+   * binds to a single day's state. Absent for single-shift assignments.
+   */
+  workDate?: string;
+  /** HH:MM start of that workday (receipt label). */
+  workStartTime?: string;
 }
 
 /**
@@ -201,9 +211,29 @@ async function loadWorkerCadenceAssignments(workerId: string): Promise<ActiveCad
   if (snap.empty) return [];
 
   const out: ActiveCadence[] = [];
+  const now = Date.now();
   for (const docSnap of snap.docs) {
     const data = docSnap.data() as Record<string, unknown>;
     const cort = data.cortConfirmation as Record<string, unknown> | undefined;
+    if (isDailyConfirmAssignment(data)) {
+      // One cadence per seeded workday (yesterday → horizon): a late YES/HERE
+      // around a shift that just started, and every day we could have asked.
+      const tenantId = docSnap.ref.parent.parent?.id;
+      if (!tenantId) continue;
+      for (const day of expandDailyCadenceDays(data, now - 24 * 60 * 60 * 1000, now + 5 * 24 * 60 * 60 * 1000)) {
+        out.push({
+          tenantId,
+          assignmentId: docSnap.id,
+          assignment: data,
+          startMs: day.startMs,
+          state: day.state,
+          lastAskedAtMs: day.lastAskedAtMs,
+          workDate: day.workDate,
+          workStartTime: day.startTime,
+        });
+      }
+      continue;
+    }
     const state = normalizeLower(cort?.state);
     if (!state) continue;
 
@@ -338,36 +368,56 @@ async function applyConfirmation(active: ActiveCadence, context: {
   matchedToken: string | null;
   messageSid?: string;
 }): Promise<void> {
-  const { tenantId, assignmentId } = active;
+  const { tenantId, assignmentId, workDate } = active;
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const confirmedVia = {
+    channel: 'sms',
+    matchedToken: context.matchedToken,
+    twilioMessageSid: context.messageSid || null,
+    phoneE164: context.phoneE164,
+  };
 
-  await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
-    {
-      cortConfirmation: {
-        state: 'confirmed',
-        confirmedAt: now,
-        updatedAt: now,
-        confirmedVia: {
-          channel: 'sms',
-          matchedToken: context.matchedToken,
-          twilioMessageSid: context.messageSid || null,
-          phoneE164: context.phoneE164,
+  if (workDate) {
+    // Daily-confirm crew: this workday only — Tuesday stays pending.
+    await applyDailyDayPatch({
+      tenantId,
+      assignmentId,
+      workDate,
+      patch: { state: 'confirmed', confirmedAt: now, confirmedVia },
+    });
+  } else {
+    await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
+      {
+        cortConfirmation: {
+          state: 'confirmed',
+          confirmedAt: now,
+          updatedAt: now,
+          confirmedVia,
         },
       },
-    },
-    { merge: true },
-  );
+      { merge: true },
+    );
+  }
 
-  const cancelled = await cancelRemindersByType({
-    tenantId,
-    assignmentId,
-    reminderTypes: ESCALATION_REMINDER_TYPES,
-    reason: 'cadence_confirmed_by_worker',
-  });
+  const cancelled = workDate
+    ? await cancelDailyRemindersForDay({
+      tenantId,
+      assignmentId,
+      workDate,
+      reminderTypes: ESCALATION_REMINDER_TYPES,
+      reason: 'cadence_confirmed_by_worker',
+    })
+    : await cancelRemindersByType({
+      tenantId,
+      assignmentId,
+      reminderTypes: ESCALATION_REMINDER_TYPES,
+      reason: 'cadence_confirmed_by_worker',
+    });
 
   logger.info('[cadence_reply] confirmation applied', {
     tenantId,
     assignmentId,
+    workDate: workDate ?? null,
     cancelledEscalations: cancelled,
     matchedToken: context.matchedToken,
   });
@@ -389,33 +439,54 @@ async function applyCancellation(active: ActiveCadence, context: {
   messageSid?: string;
   messageBody: string;
 }): Promise<void> {
-  const { tenantId, assignmentId, assignment } = active;
+  const { tenantId, assignmentId, assignment, workDate } = active;
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const cancelledVia = {
+    channel: 'sms',
+    matchedToken: context.matchedToken,
+    twilioMessageSid: context.messageSid || null,
+    phoneE164: context.phoneE164,
+  };
+  // Daily-confirm crew: NO drops this workday only — the rest of the week stays on.
+  const dayStartAt = workDate ? dayEntriesOf(assignment)[workDate]?.startAt : undefined;
 
-  await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
-    {
-      cortConfirmation: {
-        state: 'cancelled',
-        cancelledAt: now,
-        updatedAt: now,
-        cancelledVia: {
-          channel: 'sms',
-          matchedToken: context.matchedToken,
-          twilioMessageSid: context.messageSid || null,
-          phoneE164: context.phoneE164,
+  if (workDate) {
+    await applyDailyDayPatch({
+      tenantId,
+      assignmentId,
+      workDate,
+      patch: { state: 'cancelled', cancelledAt: now, cancelledVia },
+      options: { assignmentFields: { needsRecruiterAttention: true } },
+    });
+  } else {
+    await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
+      {
+        cortConfirmation: {
+          state: 'cancelled',
+          cancelledAt: now,
+          updatedAt: now,
+          cancelledVia,
         },
+        needsRecruiterAttention: true,
       },
-      needsRecruiterAttention: true,
-    },
-    { merge: true },
-  );
+      { merge: true },
+    );
+  }
 
-  const cancelled = await cancelRemindersByType({
-    tenantId,
-    assignmentId,
-    reminderTypes: ALL_SHIFT_REMINDER_TYPES,
-    reason: 'cadence_cancelled_by_worker',
-  });
+  const cancelled = workDate
+    ? await cancelDailyRemindersForDay({
+      tenantId,
+      assignmentId,
+      workDate,
+      reminderTypes: ALL_SHIFT_REMINDER_TYPES,
+      reason: 'cadence_cancelled_by_worker',
+    })
+    : await cancelRemindersByType({
+      tenantId,
+      assignmentId,
+      reminderTypes: ALL_SHIFT_REMINDER_TYPES,
+      reason: 'cadence_cancelled_by_worker',
+    });
 
   // Alert recruiters via dashboardFeed — best-effort, don't block caller.
   const jobTitle = normalize(assignment.jobTitle || assignment.jobOrderName || assignment.title) || 'Shift';
@@ -425,13 +496,16 @@ async function applyCancellation(active: ActiveCadence, context: {
     assignment,
     event: {
       kind: 'cadence_worker_cancelled',
-      title: `Worker cancelled ${jobTitle}`,
+      title: workDate ? `Worker cancelled ${jobTitle} (${workDate})` : `Worker cancelled ${jobTitle}`,
       snippet: `Inbound SMS "${context.matchedToken || '—'}": "${truncateSnippet(context.messageBody)}"`,
-      dedupeKey: `cadence_worker_cancelled__${assignmentId}`,
+      dedupeKey: workDate
+        ? `cadence_worker_cancelled__${assignmentId}__${workDate}`
+        : `cadence_worker_cancelled__${assignmentId}`,
       extra: {
         matchedToken: context.matchedToken,
         twilioMessageSid: context.messageSid || null,
         phoneE164: context.phoneE164,
+        workDate: workDate ?? null,
       },
     },
   });
@@ -444,6 +518,8 @@ async function applyCancellation(active: ActiveCadence, context: {
     assignment,
     kind: 'cancelled',
     detail: context.matchedToken ? `replied ${context.matchedToken} by text` : undefined,
+    workDate,
+    startAt: dayStartAt,
   });
   await enqueueRecruiterEscalation({
     tenantId,
@@ -451,11 +527,14 @@ async function applyCancellation(active: ActiveCadence, context: {
     assignment,
     kind: 'cancelled',
     detail: `Their text: "${truncateSnippet(context.messageBody)}"`,
+    workDate,
+    startAt: dayStartAt,
   });
 
   logger.info('[cadence_reply] cancellation applied', {
     tenantId,
     assignmentId,
+    workDate: workDate ?? null,
     cancelledReminders: cancelled,
     matchedToken: context.matchedToken,
   });
@@ -472,36 +551,55 @@ async function applyCheckIn(active: ActiveCadence, context: {
   matchedToken: string | null;
   messageSid?: string;
 }): Promise<void> {
-  const { tenantId, assignmentId } = active;
+  const { tenantId, assignmentId, workDate } = active;
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const checkedInVia = {
+    channel: 'sms',
+    matchedToken: context.matchedToken,
+    twilioMessageSid: context.messageSid || null,
+    phoneE164: context.phoneE164,
+  };
+  const redundant = [...ESCALATION_REMINDER_TYPES, ...CHECKIN_REDUNDANT_REMINDER_TYPES];
 
-  await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
-    {
-      cortConfirmation: {
-        state: 'checked_in',
-        checkedInAt: now,
-        updatedAt: now,
-        checkedInVia: {
-          channel: 'sms',
-          matchedToken: context.matchedToken,
-          twilioMessageSid: context.messageSid || null,
-          phoneE164: context.phoneE164,
+  let cancelled: number;
+  if (workDate) {
+    await applyDailyDayPatch({
+      tenantId,
+      assignmentId,
+      workDate,
+      patch: { state: 'checked_in', checkedInAt: now, checkedInVia },
+    });
+    cancelled = await cancelDailyRemindersForDay({
+      tenantId,
+      assignmentId,
+      workDate,
+      reminderTypes: redundant,
+      reason: 'cadence_checked_in_by_worker',
+    });
+  } else {
+    await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).set(
+      {
+        cortConfirmation: {
+          state: 'checked_in',
+          checkedInAt: now,
+          updatedAt: now,
+          checkedInVia,
         },
       },
-    },
-    { merge: true },
-  );
-
-  const cancelled = await cancelRemindersByType({
-    tenantId,
-    assignmentId,
-    reminderTypes: [...ESCALATION_REMINDER_TYPES, ...CHECKIN_REDUNDANT_REMINDER_TYPES],
-    reason: 'cadence_checked_in_by_worker',
-  });
+      { merge: true },
+    );
+    cancelled = await cancelRemindersByType({
+      tenantId,
+      assignmentId,
+      reminderTypes: redundant,
+      reason: 'cadence_checked_in_by_worker',
+    });
+  }
 
   logger.info('[cadence_reply] check-in applied', {
     tenantId,
     assignmentId,
+    workDate: workDate ?? null,
     cancelledReminders: cancelled,
     matchedToken: context.matchedToken,
   });
@@ -526,7 +624,7 @@ async function applyWalkOffWarning(active: ActiveCadence, context: {
   messageSid?: string;
   messageBody: string;
 }): Promise<void> {
-  const { tenantId, assignmentId, assignment } = active;
+  const { tenantId, assignmentId, assignment, workDate } = active;
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   // Stamp the risk flag. We keep the last 3 triggers in an array so repeat
@@ -535,6 +633,8 @@ async function applyWalkOffWarning(active: ActiveCadence, context: {
     {
       walkOffRisk: {
         isAtRisk: true,
+        // Daily-confirm crews: which workday the distress text was about.
+        workDate: workDate ?? null,
         lastTriggeredAt: now,
         lastMatchedPhrase: context.matchedToken,
         lastMessageBody: truncateSnippet(context.messageBody, 500),
@@ -769,6 +869,11 @@ export async function handleCadenceReply(
     messageSid: twilioMessageSid,
     messageBody,
   };
+  // Receipts name the shift from startDate/startTime; a daily crew's
+  // assignment startDate is their FIRST day, so label the workday instead.
+  const receiptAssignment = active.workDate
+    ? { ...active.assignment, startDate: active.workDate, startTime: active.workStartTime || active.assignment.startTime }
+    : active.assignment;
 
   try {
     switch (classification.intent) {
@@ -782,7 +887,7 @@ export async function handleCadenceReply(
           phoneE164,
           assignmentId: active.assignmentId,
           intent: 'confirmation',
-          assignment: active.assignment,
+          assignment: receiptAssignment,
           lang: user.lang,
           alreadyConfirmed: wasAlreadyConfirmed,
         });
@@ -796,7 +901,7 @@ export async function handleCadenceReply(
           phoneE164,
           assignmentId: active.assignmentId,
           intent: 'cancellation',
-          assignment: active.assignment,
+          assignment: receiptAssignment,
           lang: user.lang,
         });
         break;
@@ -808,7 +913,7 @@ export async function handleCadenceReply(
           phoneE164,
           assignmentId: active.assignmentId,
           intent: 'check_in',
-          assignment: active.assignment,
+          assignment: receiptAssignment,
           lang: user.lang,
         });
         break;
@@ -820,7 +925,7 @@ export async function handleCadenceReply(
           phoneE164,
           assignmentId: active.assignmentId,
           intent: 'walk_off_warning',
-          assignment: active.assignment,
+          assignment: receiptAssignment,
           lang: user.lang,
         });
         break;

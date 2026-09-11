@@ -220,10 +220,17 @@ export interface SequenceTargeting {
    * whole account.
    */
   locationIds?: string[];
+  /**
+   * Greg 2026-09-11 (CORT Woodridge): career placements at the selected venues get this track
+   * once per scheduled workday. The backend only honors it together with accountIds AND
+   * locationIds, workerTypes including 'career', and occurrence 'every_shift' — it can never
+   * apply account-wide. coerceTargeting must round-trip it or a save wipes the opt-in.
+   */
+  includeCareer?: boolean;
 }
 
-/** Which reminder track a sequence applies. Careers never come from targeting —
- *  the backend fences jobOrderType 'career' into its own quiet track. */
+/** Which reminder track a sequence applies. Careers are fenced into their own quiet track
+ *  unless a sequence opts one venue's careers in with `includeCareer`. */
 export type SequenceTrack = 'gig_standard' | 'cort_gig';
 
 export const SEQUENCE_TRACK_LABELS: Record<SequenceTrack, string> = {

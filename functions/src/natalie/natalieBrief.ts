@@ -42,6 +42,14 @@ export interface BriefFacts {
   todayShifts: { total: number; unconfirmed: unknown[]; flexLinked: number };
   yesterdayLateNoAnswer: unknown[];
   yesterdayNoShows: number;
+  /** Standing crews asked to confirm every workday (2026-09-11), per site. */
+  dailyCrews: Array<{
+    site: string;
+    job: string;
+    today: { scheduled: number; confirmed: number; checkedIn: number; pending: number; declined: number };
+    notConfirmedToday: Array<{ worker: string; start: string; state: string; assignmentId: string }>;
+    yesterday: { noShows: number; declined: number };
+  }>;
   portal: unknown;
   emailNeedingReply: unknown[];
   weekly?: Record<string, number>;
@@ -106,6 +114,43 @@ export async function gatherBriefFacts(tenantId: string): Promise<BriefFacts> {
     }
   }
 
+  // Daily-confirm crews (2026-09-11): standing career crews asked every
+  // workday. Their assignment startTime is each member's FIRST day, so the
+  // query above never sees them — read today's / yesterday's per-day state.
+  const dailyCrews: BriefFacts['dailyCrews'] = [];
+  try {
+    const todayIso = today.start.toLocaleDateString('en-CA', { timeZone: TZ });
+    const yesterdayIso = yesterday.start.toLocaleDateString('en-CA', { timeZone: TZ });
+    const crewSnap = await db.collection(`tenants/${tenantId}/assignments`).where('cortConfirmation.dailyConfirm', '==', true).limit(500).get();
+    const bySite = new Map<string, BriefFacts['dailyCrews'][number]>();
+    for (const d of crewSnap.docs) {
+      const a = d.data() as Record<string, unknown>;
+      if (['cancelled', 'canceled', 'declined', 'ended', 'completed'].includes(s(a.status).toLowerCase())) continue;
+      const days = (a.cortConfirmationDays ?? {}) as Record<string, Record<string, unknown>>;
+      const site = s(a.locationName) || s(a.worksiteName) || s(a.companyName) || 'site';
+      const crew = bySite.get(site) ?? { site, job: s(a.jobTitle) || s(a.title), today: { scheduled: 0, confirmed: 0, checkedIn: 0, pending: 0, declined: 0 }, notConfirmedToday: [], yesterday: { noShows: 0, declined: 0 } };
+      const t = days[todayIso];
+      if (t) {
+        const st = s(t.state);
+        crew.today.scheduled += 1;
+        if (st === 'confirmed') crew.today.confirmed += 1;
+        else if (st === 'checked_in') crew.today.checkedIn += 1;
+        else if (st === 'cancelled' || st === 'no_show') crew.today.declined += 1;
+        else crew.today.pending += 1;
+        if (st !== 'confirmed' && st !== 'checked_in' && crew.notConfirmedToday.length < 15) {
+          crew.notConfirmedToday.push({ worker: `${s(a.workerFirstName) || s(a.firstName)} ${(s(a.workerLastName) || s(a.lastName)).charAt(0)}`.trim() || s(a.workerName) || 'worker', start: s(t.startTime), state: st || 'no response', assignmentId: d.id });
+        }
+      }
+      const y = days[yesterdayIso];
+      if (y?.state === 'no_show') crew.yesterday.noShows += 1;
+      if (y?.state === 'cancelled') crew.yesterday.declined += 1;
+      bySite.set(site, crew);
+    }
+    dailyCrews.push(...[...bySite.values()].filter((c) => c.today.scheduled > 0 || c.yesterday.noShows + c.yesterday.declined > 0));
+  } catch (err) {
+    logger.warn('[natalie] brief: daily crew read failed', { err: err instanceof Error ? err.message : String(err) });
+  }
+
   // Yesterday: late check-in texts with no check-in afterwards, and no-shows.
   const yAsg = await db.collection(`tenants/${tenantId}/assignments`).where('startTime', '>=', admin.firestore.Timestamp.fromDate(yesterday.start)).where('startTime', '<', admin.firestore.Timestamp.fromDate(yesterday.end)).limit(500).get();
   const yesterdayLateNoAnswer: unknown[] = [];
@@ -145,7 +190,7 @@ export async function gatherBriefFacts(tenantId: string): Promise<BriefFacts> {
     emailNeedingReply = [];
   }
 
-  return { dateLabel: today.label, isMonday, unacceptedFlexRequests, expiredFlexRequests, headcountChanges, fieldglassLast24h: fg, todayShifts: { total: todayAsg.size, unconfirmed, flexLinked }, yesterdayLateNoAnswer, yesterdayNoShows, portal, emailNeedingReply, weekly };
+  return { dateLabel: today.label, isMonday, unacceptedFlexRequests, expiredFlexRequests, headcountChanges, fieldglassLast24h: fg, todayShifts: { total: todayAsg.size, unconfirmed, flexLinked }, yesterdayLateNoAnswer, yesterdayNoShows, dailyCrews, portal, emailNeedingReply, weekly };
 }
 
 /** Deterministic fallback if the model is unavailable. */
@@ -156,11 +201,14 @@ export function renderBriefFallback(f: BriefFacts): string {
   const fg = f.fieldglassLast24h as { passes: number; updated: number; closed: number };
   lines.push(`• Fieldglass (24h): ${fg.passes} passes, ${fg.updated} updated, ${fg.closed} closed`);
   lines.push(`• Today: ${f.todayShifts.total} shifts, ${f.todayShifts.unconfirmed.length} unconfirmed`);
+  for (const c of f.dailyCrews) {
+    lines.push(`• ${c.site} crew today: ${c.today.confirmed + c.today.checkedIn}/${c.today.scheduled} confirmed, ${c.today.pending} no answer, ${c.today.declined} out`);
+  }
   lines.push(`• Yesterday: ${f.yesterdayNoShows} no-shows, ${f.yesterdayLateNoAnswer.length} late-text no-answers`);
   return lines.join('\n');
 }
 
-const BRIEF_SYSTEM = `You are Natalie Brooks, C1 Staffing's recruiting assistant, writing the team's morning brief in Slack. You are given facts as JSON. Write a short, scannable brief in Slack mrkdwn (*bold*, "•" bullets, <url|text> links; no headers, no tables). Lead with what needs a human today (unaccepted Flex requests — each with its book-by time, since Flex revokes unbooked headcount about 4 hours after posting — unconfirmed shifts, yesterday's no-answers). Then, if any, one line for Flex requests that EXPIRED unbooked in the last 36h (a miss to own, not a to-do: name the job ids, dates and headcount lost) and one line for headcount changes Flex made. Then a one-line portal health note. Name workers by the label given; link ONLY items that carry an assignmentId, as <https://hrxone.com/assignments/{assignmentId}|job>. Flex requests have no HRX link — write their Flex job id in plain text (e.g. 545618) and link the list once as <https://hrxone.com/shifts/log|Flex request log>. Unread emails: sender and subject only. If a list is empty, say so in three words or fewer, don't invent items. Aim for 8–14 lines. On Mondays add a 3–5 line "Last week I…" section from the weekly counts (plain words, no jargon). No sign-off.`;
+const BRIEF_SYSTEM = `You are Natalie Brooks, C1 Staffing's recruiting assistant, writing the team's morning brief in Slack. You are given facts as JSON. Write a short, scannable brief in Slack mrkdwn (*bold*, "•" bullets, <url|text> links; no headers, no tables). Lead with what needs a human today (unaccepted Flex requests — each with its book-by time, since Flex revokes unbooked headcount about 4 hours after posting — unconfirmed shifts, yesterday's no-answers). Standing crews that confirm every workday arrive as dailyCrews: one line per site with today's confirmed + checked-in out of scheduled, naming (and linking) anyone who hasn't confirmed or said they're out, plus yesterday's no-shows/declines when non-zero. Then, if any, one line for Flex requests that EXPIRED unbooked in the last 36h (a miss to own, not a to-do: name the job ids, dates and headcount lost) and one line for headcount changes Flex made. Then a one-line portal health note. Name workers by the label given; link ONLY items that carry an assignmentId, as <https://hrxone.com/assignments/{assignmentId}|job>. Flex requests have no HRX link — write their Flex job id in plain text (e.g. 545618) and link the list once as <https://hrxone.com/shifts/log|Flex request log>. Unread emails: sender and subject only. If a list is empty, say so in three words or fewer, don't invent items. Aim for 8–14 lines. On Mondays add a 3–5 line "Last week I…" section from the weekly counts (plain words, no jargon). No sign-off.`;
 
 export async function composeBrief(facts: BriefFacts): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;

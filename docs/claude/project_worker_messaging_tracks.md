@@ -13,10 +13,18 @@ Routing happens in `functions/src/cadence/shiftReminderProfile.ts`
 (Greg 2026-08-29) that no targeting doc, tenant switch, or per-assignment
 override can cross:
 
-1. `assignment.isOpenShift === true` → **default** profile (plain 24h+2h).
-2. `assignment.jobOrderType === 'career'` → **career_placement** profile.
-3. Per-assignment `shiftReminderProfile` override (rare, QA).
-4. `messagingSequences/{id}.targeting` docs (accountIds + optional
+1. `assignment.isOpenShift === true` → **open_shift** profile (welcome +
+   bi-weekly check-in, see Decisions #2). No exception.
+2. `assignment.jobOrderType === 'career'` → **career_placement** profile —
+   UNLESS a messagingSequences doc validly opts that VENUE's careers in
+   (`targeting.includeCareer` + accountIds AND locationIds + workerTypes
+   'career' + every_shift; Greg 2026-09-11, CORT Woodridge) → the doc's
+   cort_gig / gig_standard track, asked **once per scheduled workday** from
+   weeklySchedule with per-day state (`cortConfirmationDays`). Details in
+   project_shift_confirmation_cadence.md.
+3. Per-assignment `shiftReminderProfile` override (rare, QA; never careers).
+4. `messagingSequences/{id}.targeting` docs (accountIds matched against the
+   assignment's account + its parent lineage since 2026-09-11 + optional
    locationIds + workerTypes + occurrence first_shift|every_shift) →
    **cort_gig** or **gig_standard**. When ANY targeting doc exists, the
    docs govern; non-matching gig assignments fall to **default**.

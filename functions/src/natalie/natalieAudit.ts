@@ -113,16 +113,22 @@ export interface EscalationInput {
   assignment: Record<string, unknown>;
   kind: 'no_show' | 'unreachable' | 'cancelled';
   detail?: string;
+  /** Daily-confirm crews (2026-09-11): one escalation per (kind, assignment, workday). */
+  workDate?: string;
+  /** That workday's start (Timestamp) — the DM's "when", instead of the assignment's first day. */
+  startAt?: unknown;
 }
 
-/** Queue a recruiter DM (drained by the inbox tick). Idempotent per (kind, assignment). */
+/** Queue a recruiter DM (drained by the inbox tick). Idempotent per (kind, assignment[, workDate]). */
 export async function enqueueRecruiterEscalation(input: EscalationInput): Promise<boolean> {
   try {
     const cfg = await db.doc('app_config/natalie').get();
     if (cfg.get('escalationsEnabled') === false) return false;
     const s = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
     const a = input.assignment;
-    const id = `${input.kind}__${input.assignmentId}`;
+    const id = input.workDate
+      ? `${input.kind}__${input.assignmentId}__${input.workDate}`
+      : `${input.kind}__${input.assignmentId}`;
     const ref = db.collection('natalie_escalations').doc(id);
     if ((await ref.get()).exists) return false;
     await ref.set({
@@ -135,7 +141,8 @@ export async function enqueueRecruiterEscalation(input: EscalationInput): Promis
       workerName: `${s(a.workerFirstName) || s(a.firstName)} ${s(a.workerLastName) || s(a.lastName)}`.trim() || s(a.workerName) || null,
       jobTitle: s(a.jobTitle) || s(a.title) || s(a.jobOrderName) || null,
       site: s(a.locationName) || s(a.worksiteName) || s(a.companyName) || null,
-      startTime: a.startTime ?? a.startDate ?? a.shiftDate ?? null,
+      startTime: input.startAt ?? a.startTime ?? a.startDate ?? a.shiftDate ?? null,
+      workDate: input.workDate ?? null,
       status: 'pending',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });

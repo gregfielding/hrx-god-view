@@ -524,3 +524,34 @@ it with `experienceType: 'PAYMENT_HISTORY'` and the worker's known
 read/open a `pdfUrl`.
 
 - 2026-09-11 web-only, no c1_app counterpart: worker "Get the app" banner (`WorkerAppDownloadBanner`, ships off behind `tenants/{C1}/settings/workerAppBanner`). It advertises the native app, so the app itself needs nothing.
+
+## 2026-09-11 — daily-confirm crews: shift confirmation is per WORKDAY now (app card doesn't know yet)
+
+Backend (CORT Woodridge build, `docs/claude/project_shift_confirmation_cadence.md`):
+career crews opted in by a venue-scoped messagingSequences doc
+(`targeting.includeCareer`) get the YES/NO ask for EACH scheduled workday.
+State is per day in `assignment.cortConfirmationDays[YYYY-MM-DD].state`;
+`cortConfirmation` is only a MIRROR of the current cadence day and carries
+`dailyConfirm: true`, `workDate`, `startTime`, `endTime`. The web recruiter
+views (Scheduling Health, Worker Confirmations) read the per-day map; no
+worker-facing WEB view reads cortConfirmation, so nothing else changed on web.
+
+**App gap** (`lib/features/dashboard/presentation/widgets/shift_confirmation_card.dart`,
+`lib/shared/models/assignment_model.dart`): `_pendingConfirmation` requires
+`shiftConfirmationState == 'pending'` AND the assignment's own start
+(`startAtWithTime ?? startDate`) after now − 2h. A daily crew member's
+assignment start is their FIRST day (weeks ago), so the card never shows for
+them — safe (no wrong writes), but the in-app twin of the SMS ask is missing
+for exactly the crews with the worst no-show rate. Fix:
+- `AssignmentModel`: `bool get dailyConfirm` (`cortConfirmation.dailyConfirm == true`),
+  `String? get confirmationWorkDate` (`cortConfirmation.workDate`), and that
+  day's start = `workDate` + `cortConfirmation.startTime` (worksite wall
+  clock, same convention as startDate + startTime).
+- Card: when `dailyConfirm`, filter/sort/label on the workday start
+  ("Monday, Sep 14 · 5:00 AM") instead of the assignment start.
+- `respondToAssignment` `cadence_confirm` / `cadence_cancel`: send
+  `workDate` (defaults to the mirror's day when omitted; rejects a day with
+  no state). ⚠️ That callable change is on main but `respondToAssignment`
+  was NOT redeployed with the Woodridge build (last deploy 2026-09-07; its
+  bundle also carries unrelated placements changes) — deploy it together
+  with the app change.
