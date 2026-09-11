@@ -3786,8 +3786,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       const interviewedBefore =
         (userProfile as any)?.hasWorkerAiPrescreenInterview === true ||
         (userProfile as any)?.interviewStatus === 'completed';
-      const prescreenTo =
-        jobId && submittedUid && !interviewedBefore
+      // C1 Events hires everyone who applies (2026-09-11): payroll setup comes
+      // first, and the payroll page offers the interview as optional.
+      const eventsApply = Boolean(jobId && submittedUid && posting?.hiringEntityId === 'c1_events_llc');
+      const prescreenTo = eventsApply
+        ? `/c1/workers/earnings?welcome=events&applicationId=${encodeURIComponent(`${submittedUid}_${jobId}`)}`
+        : jobId && submittedUid && !interviewedBefore
           ? `/c1/workers/prescreen?applicationId=${encodeURIComponent(`${submittedUid}_${jobId}`)}&entry=apply_wizard_inline`
           : returnTo;
       return (
@@ -3796,8 +3800,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             to={prescreenTo}
             delayMs={1500}
             headlineKey="apply.applicationSubmittedMessage"
-            subheadKey={jobId && submittedUid ? 'apply.nextInterviewSubhead' : 'apply.settingUpPayroll'}
-            helperKey={jobId && submittedUid ? 'apply.nextInterviewHelper' : 'apply.settingUpPayrollHelper'}
+            subheadKey={!eventsApply && jobId && submittedUid ? 'apply.nextInterviewSubhead' : 'apply.settingUpPayroll'}
+            helperKey={!eventsApply && jobId && submittedUid ? 'apply.nextInterviewHelper' : 'apply.settingUpPayrollHelper'}
             applicationsPath={applicationsPath}
             jobsBoardPath={jobsBoardPath}
             t={t}

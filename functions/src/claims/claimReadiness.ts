@@ -17,7 +17,10 @@
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 
+import { HttpsError } from 'firebase-functions/v2/https';
+
 import { claimError, evaluateClaimReadiness } from './claimShiftPolicy';
+import type { ClaimSetupStage } from './claimShiftPolicy';
 
 const SETUP_STARTED_MSG =
   "Set up payroll to claim this shift. We've started it for you — add your tax form and direct deposit (a few minutes).";
@@ -146,5 +149,61 @@ async function evereeConfirmsOnboardingComplete(args: {
       error: e instanceof Error ? e.message : String(e),
     });
     return false;
+  }
+}
+
+export interface ClaimPrepareResult {
+  success: true;
+  ready: boolean;
+  stage: 'ready' | ClaimSetupStage;
+  entityId: string | null;
+}
+
+/** Maps the gate's outcome to the `claim_prepare` response; rethrows every other refusal. */
+export function claimPrepareResultFrom(outcome: { passed: true; entityId: string | null } | { passed: false; error: unknown }): ClaimPrepareResult {
+  if (!('error' in outcome)) return { success: true, ready: true, stage: 'ready', entityId: outcome.entityId };
+  const err = outcome.error;
+  const details = err instanceof HttpsError ? (err.details as { code?: unknown; stage?: unknown; entityId?: unknown } | undefined) : undefined;
+  if (details?.code === 'setup_required') {
+    return {
+      success: true,
+      ready: false,
+      stage: details.stage === 'started' ? 'started' : 'in_progress',
+      entityId: typeof details.entityId === 'string' ? details.entityId : null,
+    };
+  }
+  throw err;
+}
+
+/**
+ * `respondToAssignment` decision `claim_prepare` (step 5, 2026-09-11): runs ONLY
+ * the payroll-readiness gate for a claim-enabled posting and books nothing —
+ * the "Finish setup to claim" button calls it so a C1 Events worker's
+ * onboarding starts (and a finished-in-Everee worker is confirmed live) before
+ * the client routes to payroll setup or opens the claim sheet. Not-hired /
+ * ended refusals throw exactly like a claim.
+ */
+export async function prepareClaimForWorker(args: {
+  db: admin.firestore.Firestore;
+  tenantId: string;
+  uid: string;
+  jobOrderId: string;
+  jobPostId?: string | null;
+}): Promise<ClaimPrepareResult> {
+  const { db, tenantId, uid, jobOrderId } = args;
+  const jobOrderSnap = await db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`).get();
+  if (!jobOrderSnap.exists) throw new HttpsError('not-found', 'Job order not found');
+  const jobOrder = (jobOrderSnap.data() || {}) as Record<string, unknown>;
+  let posting: Record<string, unknown> | null = null;
+  if (args.jobPostId) {
+    const postSnap = await db.doc(`tenants/${tenantId}/job_postings/${args.jobPostId}`).get();
+    const data = (postSnap.data() || {}) as Record<string, unknown>;
+    if (postSnap.exists && String(data.jobOrderId || '') === jobOrderId) posting = data;
+  }
+  try {
+    await assertClaimPayrollReady({ db, tenantId, uid, jobOrderId, jobOrder, posting });
+    return claimPrepareResultFrom({ passed: true, entityId: resolveClaimHiringEntityId(jobOrder, posting) || null });
+  } catch (error: unknown) {
+    return claimPrepareResultFrom({ passed: false, error });
   }
 }

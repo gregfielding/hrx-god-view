@@ -63,6 +63,10 @@ import {
   type FormattedHeadshotGateError,
 } from '../utils/avatarVerification/formatHeadshotGateError';
 import { formatClaimShiftError } from '../utils/claimShift/formatClaimShiftError';
+import { useClaimReadiness } from '../hooks/useClaimReadiness';
+import { claimNeedsSetup } from '../utils/claimShift/claimReadiness';
+import { prepareClaim } from '../utils/claimShift/prepareClaim';
+import { clearPendingClaim, savePendingClaim } from '../utils/claimShift/pendingClaim';
 import HeadshotGateCard from '../components/worker/HeadshotGateCard';
 import { formatDistanceToNow, format } from 'date-fns';
 import { enUS, es as esLocale } from 'date-fns/locale';
@@ -199,6 +203,33 @@ const JobPostingDetail: React.FC = () => {
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimGate, setClaimGate] = useState<FormattedHeadshotGateError | null>(null);
   const [claimSetupRequired, setClaimSetupRequired] = useState(false);
+  // Step 5 (2026-09-11): pre-render "Finish setup to claim" from the worker's
+  // own employment + Everee link at this posting's hiring entity. The server
+  // gate stays authoritative.
+  const claimReadiness = useClaimReadiness(
+    posting?.claimShiftEnabled === true ? posting?.tenantId ?? null : null,
+    user?.uid,
+    posting?.hiringEntityId ?? null,
+  );
+  const claimSetupNeeded = claimNeedsSetup(claimReadiness.kind);
+  const [claimPreparing, setClaimPreparing] = useState(false);
+
+  // Back from payroll setup: `?claim=<shiftId>&date=<day>` reopens the claim
+  // sheet for that shift once the posting and its shifts have loaded.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const claimShiftId = params.get('claim');
+    if (!claimShiftId || !user?.uid || !posting || posting.claimShiftEnabled !== true) return;
+    if (loadingShifts || dynamicShifts.length === 0) return;
+    const claimDate = params.get('date') || undefined;
+    params.delete('claim');
+    params.delete('date');
+    clearPendingClaim();
+    openClaimSheetNow(claimShiftId, claimDate);
+    const rest = params.toString();
+    navigate(`${location.pathname}${rest ? `?${rest}` : ''}`, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search, user?.uid, Boolean(posting), posting?.claimShiftEnabled, loadingShifts, dynamicShifts.length]);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [applicationData, setApplicationData] = useState<any>(null);
@@ -1845,6 +1876,12 @@ const JobPostingDetail: React.FC = () => {
             // interview; repeat workers stay on the posting — their fresh
             // application auto-completes server-side from the answer bank,
             // so the interview page would be noise (2026-08-29, Greg).
+            // C1 Events hires everyone who applies (2026-09-11): payroll setup
+            // comes first; the payroll page offers the interview as optional.
+            if (posting.hiringEntityId === 'c1_events_llc') {
+              navigate(`/c1/workers/earnings?welcome=events&applicationId=${encodeURIComponent(`${user.uid}_${postId}`)}`);
+              return;
+            }
             const { hasCompletedPrescreen } = await import('../utils/quickApplicationSubmit');
             if (!(await hasCompletedPrescreen(user.uid))) {
               navigate(
@@ -2586,7 +2623,7 @@ const JobPostingDetail: React.FC = () => {
   };
 
   // ---- Claim Shift -------------------------------------------------------
-  const openClaimSheet = (shiftId: string, date?: string) => {
+  const openClaimSheetNow = (shiftId: string, date?: string) => {
     // Guests take the normal apply/sign-in path; the claim sheet needs a
     // signed-in worker (the server keys everything on auth.uid).
     if (!user?.uid) {
@@ -2600,6 +2637,46 @@ const JobPostingDetail: React.FC = () => {
     setClaimError(null);
     setClaimGate(null);
     setClaimSheet({ shiftId, date });
+  };
+
+  /**
+   * Row / header claim CTA. A worker whose payroll isn't finished at this
+   * posting's hiring entity sees "Finish setup to claim" (step 5, 2026-09-11):
+   * `claim_prepare` starts C1 Events onboarding and asks Everee live, then a
+   * ready worker gets the claim sheet and everyone else goes to payroll setup
+   * with the shift remembered for "Back to your shift".
+   */
+  const openClaimSheet = (shiftId: string, date?: string) => {
+    if (!user?.uid || !claimSetupNeeded || !posting?.jobOrderId || !resolvedTenantId) {
+      openClaimSheetNow(shiftId, date);
+      return;
+    }
+    if (claimPreparing) return;
+    setClaimPreparing(true);
+    void (async () => {
+      try {
+        const res = await prepareClaim({ tenantId: resolvedTenantId, jobOrderId: posting.jobOrderId, jobPostId: postId ?? null });
+        if (res.ready) {
+          openClaimSheetNow(shiftId, date);
+          return;
+        }
+        savePendingClaim({
+          tenantId: resolvedTenantId,
+          postId: postId ?? '',
+          path: location.pathname,
+          shiftId,
+          date: date ?? null,
+          entityId: res.entityId || String(posting.hiringEntityId || ''),
+        });
+        navigate('/c1/workers/earnings');
+      } catch (err) {
+        openClaimSheetNow(shiftId, date);
+        const claimErr = formatClaimShiftError(err);
+        setClaimError(claimErr ? claimErr.message : t('jobs.claimErrorGeneric'));
+      } finally {
+        setClaimPreparing(false);
+      }
+    })();
   };
 
   const closeClaimSheet = () => {
@@ -2860,6 +2937,11 @@ const JobPostingDetail: React.FC = () => {
 
   // Claim Shift: per-posting recruiter opt-in, gigs with bookable shifts only.
   const claimEnabled = posting?.claimShiftEnabled === true && posting?.jobType === 'gig' && !isExpressInterest;
+  const claimCtaLabel = claimPreparing
+    ? t('jobs.claimPreparing')
+    : claimSetupNeeded
+      ? t('jobs.claimFinishSetupCta')
+      : t('jobs.claimShift');
   const claimShiftObj = claimSheet
     ? (dynamicShifts as any[]).find((s) => String(s.shiftId) === claimSheet.shiftId) || null
     : null;
@@ -3386,7 +3468,7 @@ const JobPostingDetail: React.FC = () => {
                   },
                 }}
               >
-                {claimEnabled ? t('jobs.claimShift') : t('jobs.applyForJob')}
+                {claimEnabled ? claimCtaLabel : t('jobs.applyForJob')}
               </Button>
             ))}
         </Box>
@@ -3825,6 +3907,7 @@ const JobPostingDetail: React.FC = () => {
                     onReapplyToShift={handleReapplyToShift}
                     claimEnabled={claimEnabled}
                     onClaimShift={openClaimSheet}
+                    claimCtaLabel={claimCtaLabel}
                     jobPostId={postId}
                     tenantId={resolvedTenantId}
                     language={displayLanguage}
@@ -4273,7 +4356,7 @@ const JobPostingDetail: React.FC = () => {
                   px: 2.5,
                 }}
               >
-                {claimEnabled ? t('jobs.claimShift') : t('jobs.applyForJob')}
+                {claimEnabled ? claimCtaLabel : t('jobs.applyForJob')}
               </Button>
             </Box>
           );
@@ -4557,7 +4640,23 @@ const JobPostingDetail: React.FC = () => {
             sx={{ mt: 2 }}
             action={
               claimSetupRequired ? (
-                <Button color="inherit" size="small" onClick={() => navigate('/c1/workers/earnings')}>
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => {
+                    if (claimSheet && resolvedTenantId) {
+                      savePendingClaim({
+                        tenantId: resolvedTenantId,
+                        postId: postId ?? '',
+                        path: location.pathname,
+                        shiftId: claimSheet.shiftId,
+                        date: claimSheet.date ?? null,
+                        entityId: String(posting?.hiringEntityId || ''),
+                      });
+                    }
+                    navigate('/c1/workers/earnings');
+                  }}
+                >
                   {t('jobs.claimFinishSetup')}
                 </Button>
               ) : undefined

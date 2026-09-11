@@ -21,7 +21,7 @@ import {
   query,
   where,
 } from 'firebase/firestore';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import StretchedRowLink from '../../../components/StretchedRowLink';
 import { Box, Button, Card, CardActionArea, CircularProgress, Stack, Typography } from '@mui/material';
 import { db } from '../../../firebase';
@@ -42,6 +42,7 @@ import {
   type PayrollWorkerKind,
 } from '../../../utils/payrollEntityDisplay';
 import PaymentIssueBanner from '../../../components/worker/PaymentIssueBanner';
+import { EventsAppliedBanner, PendingClaimBanner } from '../../../components/worker/PayrollClaimBanners';
 import { nextPayday } from '../../../utils/nextPayday';
 
 interface EvereeEntityInfo {
@@ -109,6 +110,9 @@ function useEvereeEntityInfos(
 
 const WorkerPayrollIndex: React.FC = () => {
   const { user, tenantId, tenantIds } = useAuth();
+  // Just applied to a C1 Events posting (step 5): onboarding is being created
+  // server-side, so an empty hub means "setting up", not "no account".
+  const arrivedFromEventsApply = new URLSearchParams(useLocation().search).get('welcome') === 'events';
   const uid = user?.uid;
   const scopeTenantId = tenantId || tenantIds[0];
   const [map, setMap] = useState<Record<string, string> | null>(null);
@@ -322,9 +326,23 @@ const WorkerPayrollIndex: React.FC = () => {
         <Typography variant="h5" component="h1" gutterBottom>
           {t('nav.payroll')}
         </Typography>
-        <Typography variant="body2" color="text.secondary" paragraph>
-          No payroll account yet — contact your recruiter if you were expecting access.
-        </Typography>
+        <EventsAppliedBanner />
+        <PendingClaimBanner />
+        {arrivedFromEventsApply ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
+            <CircularProgress size={20} />
+            <Box>
+              <Typography variant="body2">{t('jobs.eventsPayrollSettingUp')}</Typography>
+              <Typography variant="caption" color="text.secondary">
+                {t('jobs.eventsPayrollSettingUpHelper')}
+              </Typography>
+            </Box>
+          </Box>
+        ) : (
+          <Typography variant="body2" color="text.secondary" paragraph>
+            No payroll account yet — contact your recruiter if you were expecting access.
+          </Typography>
+        )}
         <Button variant="outlined" component={Link} to="/c1/workers/dashboard">
           Back to dashboard
         </Button>
@@ -340,6 +358,8 @@ const WorkerPayrollIndex: React.FC = () => {
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>
         {t('earnings.chooseEmployer')}
       </Typography>
+      <EventsAppliedBanner />
+      <PendingClaimBanner />
       <PaymentIssueBanner rows={payRows} />
       {/* Payday strip (2026-08-28): the #1 payroll question, answered before
           it's asked. With no pay history yet, set the expectation instead. */}

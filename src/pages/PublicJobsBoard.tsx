@@ -1,4 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
+import ClaimSetupCard from '../components/worker/ClaimSetupCard';
+import { useClaimReadiness } from '../hooks/useClaimReadiness';
+import { claimNeedsSetup } from '../utils/claimShift/claimReadiness';
+import { prepareClaim } from '../utils/claimShift/prepareClaim';
 import {
   Box,
   Typography,
@@ -203,6 +207,40 @@ const PublicJobsBoard: React.FC = () => {
 
   const [jobs, setJobs] = useState<PublicJobPosting[]>([]);
   const [filteredJobs, setFilteredJobs] = useState<PublicJobPosting[]>([]);
+  // Step 5 (2026-09-11): a signed-in worker who can't claim C1 Events shifts
+  // yet sees a pinned "Finish setup to claim shifts" card.
+  const claimSetupTarget = useMemo(
+    () => jobs.find((j) => j.claimShiftEnabled === true && j.hiringEntityId === 'c1_events_llc' && Boolean(j.jobOrderId)) ?? null,
+    [jobs],
+  );
+  const boardClaimReadiness = useClaimReadiness(
+    claimSetupTarget ? claimSetupTarget.tenantId : null,
+    claimSetupTarget ? user?.uid : null,
+    claimSetupTarget ? 'c1_events_llc' : null,
+  );
+  const [claimSetupBusy, setClaimSetupBusy] = useState(false);
+  const showClaimSetupCard =
+    Boolean(claimSetupTarget && user?.uid) &&
+    !boardClaimReadiness.loading &&
+    (claimNeedsSetup(boardClaimReadiness.kind) || (boardClaimReadiness.kind === 'ready' && !boardClaimReadiness.photoReady));
+  const handleBoardFinishSetup = async () => {
+    if (!claimSetupTarget?.jobOrderId || !user?.uid) return;
+    // Payroll done, photo missing → the profile page takes the headshot.
+    if (boardClaimReadiness.kind === 'ready') {
+      navigate('/c1/workers/profile');
+      return;
+    }
+    setClaimSetupBusy(true);
+    try {
+      // Starts C1 Events onboarding so the payroll page has a setup to show.
+      await prepareClaim({ tenantId: claimSetupTarget.tenantId, jobOrderId: claimSetupTarget.jobOrderId, jobPostId: claimSetupTarget.id });
+    } catch (err) {
+      console.warn('claim_prepare failed', err);
+    } finally {
+      setClaimSetupBusy(false);
+    }
+    navigate('/c1/workers/earnings');
+  };
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -1325,6 +1363,12 @@ const PublicJobsBoard: React.FC = () => {
             // First-time interviewees go into the stand-out interview;
             // repeat workers see the posting's submitted state — their
             // application auto-completes from the answer bank server-side.
+            // C1 Events hires everyone who applies (2026-09-11): payroll setup
+            // comes first; the payroll page offers the interview as optional.
+            if (job.hiringEntityId === 'c1_events_llc') {
+              navigate(`/c1/workers/earnings?welcome=events&applicationId=${encodeURIComponent(`${user.uid}_${job.id}`)}`);
+              return;
+            }
             const { hasCompletedPrescreen } = await import('../utils/quickApplicationSubmit');
             if (await hasCompletedPrescreen(user.uid)) {
               navigate(`/c1/jobs-board/${job.id}`, { replace: true });
@@ -1783,6 +1827,14 @@ const PublicJobsBoard: React.FC = () => {
         )}
       </Paper>
 
+      {showClaimSetupCard ? (
+        <ClaimSetupCard
+          photoReady={boardClaimReadiness.photoReady}
+          payrollReady={boardClaimReadiness.payrollReady}
+          busy={claimSetupBusy}
+          onFinishSetup={() => void handleBoardFinishSetup()}
+        />
+      ) : null}
       {filteredJobs.length === 0 ? (
         <Alert severity="info">
           {t('jobs.noJobsFound')}

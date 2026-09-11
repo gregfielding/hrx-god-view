@@ -1741,6 +1741,23 @@ export const respondToAssignment = onCall(
     });
   }
 
+  // Claim prepare (step 5, 2026-09-11): readiness only, books nothing — the
+  // "Finish setup to claim" button. See claims/claimReadiness.ts.
+  if ((decision as string) === 'claim_prepare') {
+    const prepData = (request.data || {}) as { jobOrderId?: string; jobPostId?: string | null };
+    if (!tenantId || !prepData.jobOrderId) {
+      throw new HttpsError('invalid-argument', 'tenantId and jobOrderId are required to prepare a claim');
+    }
+    const { prepareClaimForWorker } = await import('./claims/claimReadiness');
+    return prepareClaimForWorker({
+      db: admin.firestore(),
+      tenantId,
+      uid: request.auth.uid,
+      jobOrderId: String(prepData.jobOrderId),
+      jobPostId: prepData.jobPostId ?? null,
+    });
+  }
+
   if (
     !tenantId ||
     !assignmentId ||

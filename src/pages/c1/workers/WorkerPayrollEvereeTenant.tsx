@@ -70,6 +70,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { deleteField, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { PendingClaimBanner } from '../../../components/worker/PayrollClaimBanners';
 import {
   Alert,
   Box,
@@ -1126,6 +1127,8 @@ const WorkerPayrollEvereeTenant: React.FC = () => {
       }}
     >
       <WorkerPageHeader title={t('nav.payroll')} backTo="/c1/workers/earnings" />
+      {/* Step 5: finished setup here after "Finish setup to claim" → "Back to your shift". */}
+      <PendingClaimBanner />
       {bankPushNotice ? (
         <Alert severity="info" sx={{ mb: 1 }} onClose={() => setBankPushNotice('')}>
           {bankPushNotice}

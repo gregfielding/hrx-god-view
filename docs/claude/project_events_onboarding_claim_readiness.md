@@ -1,6 +1,6 @@
 # Onboarding + Claim readiness — C1 Events hire-everyone, gate at Claim (decided 2026-09-11)
 
-**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) DEPLOYED 2026-09-11 13:30 PT (app half ships with the next app build); S2 (C1 Events hire-on-apply, forward-only) + group hiring RETIRED — DEPLOYED 2026-09-11 14:06–14:08 PT; S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
+**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) DEPLOYED 2026-09-11 13:30 PT (app half ships with the next app build); S2 (C1 Events hire-on-apply, forward-only) + group hiring RETIRED — DEPLOYED 2026-09-11 14:06–14:08 PT; S4/S5 (claim-readiness UI, web + app) BUILT 2026-09-11, NOT DEPLOYED; S6 not built.** Greg, 2026-09-11, while the native apps are in
 store review. Companion to [[project_tier_system_claim_shift_spec]] (Claim
 Shift v1) and [[project_worker_onboarding_everee]] (the completion curve).
 Build slices at the bottom; web + app ship together (parity rule).
@@ -165,6 +165,47 @@ interview — left as is, no demotion), pending proposals 1 (unaffected).
   Ships with the next app build.
 - **Not in S1** (S4/S5): pre-rendering "Finish setup to claim" on the board
   before the tap, and returning the worker to the shift after setup.
+
+## ✅ S4/S5 BUILT 2026-09-11 — claim-readiness UI (not deployed yet)
+
+- **Server**: `respondToAssignment` decision **`claim_prepare`** `{ tenantId,
+  jobOrderId, jobPostId }` → `{ success, ready, stage: 'ready'|'started'|'in_progress',
+  entityId }` (`prepareClaimForWorker` in `claims/claimReadiness.ts`). Runs ONLY
+  the payroll gate — starts C1 Events onboarding for a never-hired worker, asks
+  Everee live when in progress — and books nothing; not-hired / ended throw
+  like a claim. 3 mocha tests (`claimPrepare.test.ts`).
+- **Web readiness mirror**: `src/utils/claimShift/claimReadiness.ts`
+  (payroll rule C + `evaluateClaimReadiness` + headshot rule = server
+  `evaluateHeadshotGate` without the grace period) and the live hook
+  `src/hooks/useClaimReadiness.ts` (worker's own `entity_employments` query,
+  Everee link doc — missing link may be permission-denied → "no link" — and
+  `users/{uid}`).
+- **Posting page** (`JobPostingDetail` + `ShiftSelector.claimCtaLabel`):
+  claim rows, header and sticky CTAs read **"Finish setup to claim"** when the
+  worker needs setup at the posting's hiring entity. Tap → `claim_prepare` →
+  ready opens the claim sheet; otherwise the shift is saved as a **pending
+  claim** (`src/utils/claimShift/pendingClaim.ts`, localStorage, 24h) and the
+  worker goes to `/c1/workers/earnings`. The sheet's setup_required "Finish
+  setup" also saves it. `?claim=<shiftId>&date=<day>` reopens the sheet.
+- **Payroll pages**: `PendingClaimBanner` (hub + per-employer Everee page) —
+  "Finish your payroll setup below…" until ready, then **"Back to your shift"**;
+  `EventsAppliedBanner` on the hub for `?welcome=events&applicationId=` —
+  "You're in! Set up payroll to start working" + optional "Take the interview"
+  (only if never interviewed). An empty hub after an Events apply shows
+  "Setting up your payroll…" instead of "No payroll account yet".
+- **Jobs board**: `ClaimSetupCard` pinned for a signed-in worker when a
+  claim-enabled C1 Events posting is listed and they need setup (or only the
+  photo): checklist Profile photo approved · Payroll set up, "n of 2 done",
+  **Finish setup** → `claim_prepare` then payroll (photo-only → profile).
+  The spec said 3 steps (photo · W-9 · direct deposit): Firestore has no
+  reliable separate W-9 vs deposit signal mid-onboarding, so payroll is one step.
+- **C1 Events applies go to payroll first** (quick apply on the posting page
+  and jobs board, and the wizard's job apply): `/c1/workers/earnings?welcome=events`,
+  interview offered there as optional. Other postings unchanged.
+- **i18n** `jobs.claimFinishSetupCta / claimSetupCard* / claimSetupStep* /
+  claimSetupProgress / claimPreparing / pendingClaim* / eventsApplied* /
+  takeInterviewCta / eventsPayrollSettingUp*` EN/ES.
+- **App (S5)**: same model, strings and flows in c1_app (see its commit).
 
 ## ✅ S2 SHIPPED 2026-09-11 — C1 Events hires everyone who applies (forward-only; deployed 14:06 PT, e46cc102)
 

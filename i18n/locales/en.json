@@ -1360,7 +1360,22 @@
     "claimErrorSetupRequired": "Finish your payroll setup to claim shifts — it only takes a few minutes.",
     "claimErrorSetupStarted": "Set up payroll to claim this shift. We've started it for you — add your tax form and direct deposit (a few minutes).",
     "claimErrorNotHired": "This shift is for workers already hired with this company. Apply to a posting to get started.",
-    "claimFinishSetup": "Finish setup"
+    "claimFinishSetup": "Finish setup",
+    "claimFinishSetupCta": "Finish setup to claim",
+    "claimSetupCardTitle": "Finish setup to claim shifts",
+    "claimSetupCardBody": "Claim shifts instantly once your profile photo is approved and payroll is set up.",
+    "claimSetupStepPhoto": "Profile photo approved",
+    "claimSetupStepPayroll": "Payroll set up (tax form and direct deposit)",
+    "claimSetupProgress": "{done} of {total} done",
+    "claimPreparing": "Checking your setup…",
+    "pendingClaimBannerSetup": "Finish your payroll setup below, then come back to claim your shift.",
+    "pendingClaimBannerReady": "You're all set — claim your shift.",
+    "pendingClaimBackCta": "Back to your shift",
+    "eventsAppliedPayrollTitle": "You're in! Set up payroll to start working",
+    "eventsAppliedInterviewHint": "Optional: take the interview to qualify for Tier 2.",
+    "takeInterviewCta": "Take the interview",
+    "eventsPayrollSettingUp": "Setting up your payroll — this takes a few seconds.",
+    "eventsPayrollSettingUpHelper": "This page updates by itself."
   },
   "assignment": {
     "title": "Assignment",

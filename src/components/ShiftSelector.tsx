@@ -58,6 +58,8 @@ interface ShiftSelectorProps {
    */
   claimEnabled?: boolean;
   onClaimShift?: (shiftId: string, date?: string) => void;
+  /** Claim row label override ("Finish setup to claim", step 5); defaults to Claim Shift. */
+  claimCtaLabel?: string;
   /**
    * Map of `${shiftId}__${YYYY-MM-DD}` (day-scoped) or `${shiftId}`
    * (legacy) → assignmentId. Populated by `loadAppliedShifts` in
@@ -95,6 +97,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   onReapplyToShift,
   claimEnabled = false,
   onClaimShift,
+  claimCtaLabel,
   assignmentIdsByShiftKey = {},
   disabled = false,
   jobPostId,
@@ -600,7 +603,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                   onClick={() => onClaimShift(shift.shiftId, item.type === 'day' ? item.date : undefined)}
                   sx={{ minWidth: 160, fontWeight: 700 }}
                 >
-                  {isFull ? t('jobs.shiftFull') : t('jobs.claimShift')}
+                  {isFull ? t('jobs.shiftFull') : claimCtaLabel ?? t('jobs.claimShift')}
                 </Button>
               ) : isReapply ? (
                 // Worker pulled out of this shift earlier → goldenrod

@@ -1360,7 +1360,22 @@
     "claimErrorSetupRequired": "Completa tu configuración de nómina para reservar turnos; solo toma unos minutos.",
     "claimErrorSetupStarted": "Configura tu nómina para reservar este turno. Ya la empezamos por ti: agrega tu formulario de impuestos y tu depósito directo (unos minutos).",
     "claimErrorNotHired": "Este turno es para trabajadores ya contratados con esta empresa. Postúlate a una vacante para empezar.",
-    "claimFinishSetup": "Completar configuración"
+    "claimFinishSetup": "Completar configuración",
+    "claimFinishSetupCta": "Completa tu configuración para reservar",
+    "claimSetupCardTitle": "Completa tu configuración para reservar turnos",
+    "claimSetupCardBody": "Reserva turnos al instante cuando tu foto de perfil esté aprobada y tu nómina esté configurada.",
+    "claimSetupStepPhoto": "Foto de perfil aprobada",
+    "claimSetupStepPayroll": "Nómina configurada (formulario de impuestos y depósito directo)",
+    "claimSetupProgress": "{done} de {total} completados",
+    "claimPreparing": "Revisando tu configuración…",
+    "pendingClaimBannerSetup": "Completa tu nómina abajo y luego vuelve para reservar tu turno.",
+    "pendingClaimBannerReady": "¡Listo! Reserva tu turno.",
+    "pendingClaimBackCta": "Volver a tu turno",
+    "eventsAppliedPayrollTitle": "¡Estás dentro! Configura tu nómina para empezar a trabajar",
+    "eventsAppliedInterviewHint": "Opcional: haz la entrevista para calificar para el Nivel 2.",
+    "takeInterviewCta": "Hacer la entrevista",
+    "eventsPayrollSettingUp": "Estamos configurando tu nómina; tarda unos segundos.",
+    "eventsPayrollSettingUpHelper": "Esta página se actualiza sola."
   },
   "assignment": {
     "title": "Asignación",
