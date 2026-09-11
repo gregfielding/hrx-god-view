@@ -602,7 +602,10 @@ that step's sequence copy override, and logged under the wrong messageTypeId.
 It's now a switch that maps every `ShiftReminderType` to itself (only legacy
 names are renamed), so a new step is canonical by construction.
 
-Deploy targets: `dispatchScheduledWorkerReminders` + the inbound pair
-`handleInboundSms` / `twilioInboundSmsWebhook` (the reply handler ships in
-both). `onAssignmentConfirmedScheduleReminders` unchanged — profiles didn't
-change. First live late check-ins: Mon 2026-09-14 5:15 AM CT (Woodridge).
+Deployed 2026-09-11 12:04 PT from 6aeefa58 (named list, `--non-interactive`):
+`dispatchScheduledWorkerReminders` + the inbound pair `handleInboundSms` /
+`twilioInboundSmsWebhook` (the reply handler ships in both). All three source
+zips were diffed against main first; only older committed blobs differed.
+`onAssignmentConfirmedScheduleReminders` was not redeployed — profiles didn't
+change. First live late check-ins: Mon 2026-09-14 5:15 AM CT (the four
+Woodridge crew docs `assignment_late_checkin_15m__2026-09-14`).

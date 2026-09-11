@@ -12,6 +12,7 @@ released (say why).
 
 | When (PT) | Who | Target | What | Commit | Result | Notes |
 |---|---|---|---|---|---|---|
+| 2026-09-11 12:04 | Greg (Claude) | functions | `dispatchScheduledWorkerReminders`, `handleInboundSms`, `twilioInboundSmsWebhook` | 6aeefa58 | ✅ | T+15 late check-in gate (Flex punch lookup + feed-freshness guard, canonical-type fix); a NO after start now binds to the started shift (reply handler, so the inbound pair together). All three source zips diffed first: only older committed blobs differed. Built from a worktree with main's env files (shasum-identical), `--non-interactive`. T+30 probe still muted |
 | 2026-09-11 11:45 | Greg (Claude) | hosting | Per-host OTP autofill (web passes webOtpHost) + web push dedupe across origins | 55bcb9ea | ✅ | Retry with 8GB heap; main.c30b0508.js; deep links 200 on both hosts |
 | 2026-09-11 11:43 | Greg (Claude) | hosting | Per-host OTP autofill (web passes webOtpHost) + web push dedupe across origins | 55bcb9ea | ❌ | Build OOM (fork-ts-checker) — nothing uploaded; retry succeeded 11:45 |
 | 2026-09-11 11:36 | Greg (Claude) | functions | `sendOtp` | ba6e24ee | ✅ | SMS WebOTP line echoes the page host when it's ours (utils/webOtpHost.ts); callers that don't send it get PUBLIC_APP_HOST (unchanged behavior) |
