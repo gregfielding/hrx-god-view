@@ -466,3 +466,44 @@ allow-list), nothing writes `lateCheckinTextedAt`, and the T+30 probe is
 muted everywhere (`messagingConfig/noShowDetection` absent). Verify
 "deployed" claims against the function's source zip
 (`gcloud functions describe … buildConfig.source.storageSource`), not docs.
+
+**Rollout 2026-09-11** (Greg approved go-live, track `cort_gig`, hosting):
+- Commits `db60fb5f` (build) + `e4ba6363` (phantom-day fix), both on main.
+- Functions (named list) deployed 17:33Z: onAssignmentConfirmedScheduleReminders,
+  dispatchScheduledWorkerReminders, handleInboundSms, twilioInboundSmsWebhook,
+  natalieMorningBrief, natalieSlackInbox, indeedFlexTimesheetIngest. Before
+  deploying, each target's source zip was diffed against pre-change main: the
+  two webhooks and both Natalie functions were byte-identical; the trigger,
+  dispatcher and Flex ingest ran OLDER committed code (every differing file's
+  blob exists in git), so nothing deployed-only was lost. Trigger + dispatcher
+  redeployed ~17:45Z with the phantom-day fix. **Not redeployed:**
+  `respondToAssignment` — its per-day `workDate` support ships with the Flutter
+  card change (punch list).
+- Parent-matching blast radius, measured before deploy: 0 upcoming gig
+  assignments newly matched (cort_gig already listed every child).
+- `cort_woodridge_daily` created inactive, then activated; the 3 live crew
+  assignments without `notificationsSuppressed` re-synced by stamp-then-clear
+  (`functions/.scratch/woodridge_daily_resync.ts --write`; `--verify` prints
+  each member's per-day plan). `CyBf1wPkceyHaj8BntJT__3nNXCKi3ssUomaJIdXDk6EWGZ793`
+  has `notificationsSuppressed: true` and gets nothing — clear the flag and
+  re-sync if that worker should be asked too. First worker text: Sun 9/13
+  8:00 AM CT (Monday's ask); the Sat 1:00 AM top-up adds Tuesday.
+- Hosting: another session's hosting release (clean detached worktree at
+  `6e91b73c`, which already contained `db60fb5f`) shipped the Scheduling Health /
+  Worker Confirmations / Settings changes — verified in the live bundle, so this
+  session did no separate hosting deploy.
+- ☠️ Found at go-live: re-syncing at 12:40 PM, after that morning's 5 AM start,
+  seeded 9/11 as a never-asked `pending` day (phantom "hasn't confirmed" rows).
+  Fixed in `e4ba6363` (`isPhantomDay`: never create a day that already started;
+  drop started + pending + no-`lastAskedAt` entries on the next seed).
+- Verified after the second re-sync (~17:50Z): the 9/11 phantoms are gone.
+  Two members show `8/31 checked_in, 9/14 pending` with the mirror on Monday;
+  the third already has REAL per-day check-ins (9/04, 9/09, 9/10, 9/11) written
+  by the redeployed Flex punch feed (mirror = today, `checked_in`). Every
+  member's Monday plan is unchanged — Sun 8 AM ask → 10 AM / noon nudges →
+  5 PM re-confirm → Mon 4:45 AM details + clock-in → 5:00 HERE — plus the
+  Sat 1 AM top-up.
+- Rough edges still open: on a 5 AM start the worksite-details and clock-in
+  texts both land at 4:45 AM (the planner caps T-2h at T-15m); the T+15 late
+  check-in doc is always cancelled at dispatch (correction above); a confirmed
+  worker still gets ~4–5 texts per workday.
