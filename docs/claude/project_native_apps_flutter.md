@@ -750,22 +750,16 @@ promote it). iOS later, after App Review approval.
   Turn on: `cd functions && npx ts-node .scratch/set_worker_app_banner.ts android on`
   (`status` / `android off` too; the script is gitignored scratch — recreate
   from this doc if missing).
-- ☠️ Hosting build OOM (2026-09-11): `craco build`'s fork-ts-checker child hit
-  "JavaScript heap out of memory" from a clean worktree. The first run
-  aborted the build (nothing deployed); the retry with
-  `NODE_OPTIONS=--max-old-space-size=8192 npx firebase deploy --only hosting`
-  still logged the checker crash but webpack compiled and the release went
-  out. The type check is effectively skipped in that case, so run
-  `npx tsc --noEmit -p tsconfig.json` yourself before deploying. Pipe deploy
-  output to a file, not `| tail`: a tail hides the exit code and the cause.
-
-## SMS short links open the app (c1_app 1.0.1, built 2026-09-11)
-Problem: every worker SMS link is rewritten to `https://hrxone.com/l/{slug}`
-(`functions/src/messaging/linkShortener.ts`, in both low-level senders), and
-neither iOS nor Android claimed `/l/*`. Phones never hand a server 302 to the
-app, so job/assignment texts ALWAYS opened the browser. Android also never
-claimed `/c1/jobs-board/` (what `buildWorkerJobPostUrl` sends).
-Fix (Greg chose "claim the short links"):
+- ☠️ Hosting build OOM (2026-09-11) — FIXED in `craco.config.js`: the crash was
+  CRA's ForkTsCheckerWebpackPlugin type-check CHILD process hitting
+  fork-ts-checker's default `typescript.memoryLimit` of 2048 MB ("JavaScript
+  heap out of memory" + `RpcIpcMessagePortClosedError`). `NODE_OPTIONS` only
+  sizes the webpack process, so retries with 8 GB were a coin flip (3 of 5
+  first attempts failed today). craco now sets `memoryLimit` to 6144 MB
+  (override with `TYPE_CHECK_MEMORY_MB`). Verified: plain `npm run build`, no
+  NODE_OPTIONS → child started with `--max-old-space-size=6144`, sampled peak
+  RSS ~2 GB (right at the old cap), compiled, exit 0. No NODE_OPTIONS needed
+  for hosting deploys anymore.
 - App: `lib/app/navigation/short_link_resolver.dart` — GET `/l/{slug}` on the
   tapped host with `followRedirects = false`, read `Location`, route via
   `AppDeepLinkParser`; homepage/login → dashboard; web-only pages
