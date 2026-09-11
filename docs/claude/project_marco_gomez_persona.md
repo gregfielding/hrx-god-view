@@ -98,8 +98,8 @@ W-2 workforce, anywhere in the U.S." Her OAuth scopes (gmail.modify/send/userinf
 settings, so it was set in the Gmail UI. Marco's copy: `functions/.scratch/marco-signature.html` — same
 template, `https://hrxone.com/brand/marco-gomez-512.jpg` (committed; resolves only after a hosting
 deploy), 737-264-6753, tagline "Event staffing, anywhere in the U.S. · Hablamos español" (C1 Events is
-1099, so the W-2 line would be wrong). ☠️ The 737 (like Natalie's 312) has voice pointed at Twilio's
-demo greeting — anyone calling the number in the signature hears the Twilio demo.
+1099, so the W-2 line would be wrong). Calls to the 737 (and Natalie's 312) play an EN/ES "no calls or voicemail, please text this number" message
+(set 2026-09-11; was Twilio's demo greeting).
 
 ## Build state
 **Slice 1–2 committed (not deployed)** — see the commit "feat(personas): Marco Gomez foundation":
@@ -189,7 +189,7 @@ plain-text signature in `sendEmail` either way.
    → exchange the code with a copy of `.scratch/slack-natalie-token-exchange.cjs` writing
    `MARCO_SLACK_USER_TOKEN` (new version; the check must show user `U0C14BDAX2P`).
 3. ✅ **Twilio** (2026-09-11): +1 737 264 6753 added to MG2dd6557d05d9be9044c996fa568a8a39's sender pool (pool =
-   737 + 312, sends pinned per persona). Still open: the 737's voice URL plays the Twilio demo — point it at Rosa.
+   737 + 312, sends pinned per persona). ✅ Voice (2026-09-11, Greg: no voicemail, ask them to text): both persona numbers play an EN/ES "please text this number" message and hang up (`.scratch/persona_voice_message.cjs`).
 4. **Slack channel**: create `#events-recruiting` (Rosa, Mark, Maria, Marco) and set
    `tenants/BCiP2bQ9CgVOCTfV6MhD/app_config/marco.homeChannelId`.
 5. **Deploy** (log it): `functions:natalieSlackInbox,functions:handleInboundSms,functions:twilioInboundSmsWebhook,functions:dispatchScheduledWorkerReminders`

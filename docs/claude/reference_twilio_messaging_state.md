@@ -12,7 +12,7 @@ Account "My first Twilio account" (Greg), verified via Claude-in-Chrome 2026-09-
 | +1 312 500 4352 | Local | direct webhook → `handleInboundSms` | main inbound line; NOT on any messaging service, NOT A2P registered |
 | +1 415 429 3750 | Local | Low Volume Mixed service MG98999c80df5bb34ceeb0af83d9b206b3 (campaign FAILED) | Greg: may become a general company line |
 | +1 312 663 8247 | Local | direct webhook → `handleInboundSms`; sole number in MG2dd6…'s sender pool (A2P campaign VERIFIED 2026-09-09) | Natalie Brooks (automation persona), bought 2026-09-06; outbound live from this number for every `natalie_*` message type |
-| +1 737 264 6753 | Local (Austin overlay; Twilio had zero 512 inventory 2026-09-08) | direct webhook → `handleInboundSms`, voice → demo.twilio.com welcome (same as 312) | **Marco Gomez** (second persona, works for Rosa — project_marco_gomez_persona.md), bought 2026-09-08 (PN54f9b011…). **In MG2dd6…'s sender pool since 2026-09-11** (Greg approved) alongside the 312; every `marco_*` message is pinned `From` this number (twilio.ts `personaSmsRoute`) |
+| +1 737 264 6753 | Local (Austin overlay; Twilio had zero 512 inventory 2026-09-08) | direct webhook → `handleInboundSms`, voice → EN/ES "no calls or voicemail, please text this number" message (twimlets echo, 2026-09-11) | **Marco Gomez** (second persona, works for Rosa — project_marco_gomez_persona.md), bought 2026-09-08 (PN54f9b011…). **In MG2dd6…'s sender pool since 2026-09-11** (Greg approved) alongside the 312; every `marco_*` message is pinned `From` this number (twilio.ts `personaSmsRoute`) |
 
 ## Messaging services
 
@@ -75,6 +75,15 @@ verified the same day). What changed and what's left:
   to a messaging service with an approved campaign (a second campaign, or MG2dd6… if the use case
   matches). 21703 is not in PERMANENT_SMS_ERROR_CODES, so the failed test did not stamp the
   recipient. 21703 was added to the sync fallback list next to 21705/30034.
+
+## 2026-09-11: persona voice lines — text-only message
+Both persona numbers (+1 312 663 8247 Natalie, +1 737 264 6753 Marco) used to point voice at Twilio's
+demo.twilio.com welcome, and both numbers are in email signatures. Greg: no voicemail, ask callers to text.
+`node functions/.scratch/persona_voice_message.cjs natalie|marco` sets VoiceUrl (GET) to Twilio's hosted echo
+twimlet with TwiML: English Say (Polly.Joanna) "you've reached <Name> with C1 Staffing… doesn't take calls or
+voicemail… please text this same number, we'll help you by text", Spanish Say (Polly.Mia, es-MX), Hangup. No
+deploy, no function. The script probes the twimlet first and refuses numbers with a voice app/trunk; SMS URLs
+stay on handleInboundSms. To change the wording, edit the script and re-run it.
 
 ## 2026-09-11: two personas share MG2dd6… — sends are pinned per persona
 Pool = +1 737 264 6753 (Marco) + +1 312 663 8247 (Natalie) (`node functions/.scratch/twilio-natalie-go-live.cjs`,
