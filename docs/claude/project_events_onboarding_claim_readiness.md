@@ -239,10 +239,34 @@ after these workers finished, and the mirror only runs on a completion event —
 so **271 of 7,423 C1 Events rows sit at `status: 'onboarding'` with Everee
 complete** (8 of the 10 on the Chiefs shift, Greg included). They can claim and
 get paid — the Claim gate reads Everee, not this row — but every recruiter
-surface reads them as unfinished. Fix = re-run the mirror for those 271 (no
-code change, no triggers listen on `entity_employments` writes). **Waiting on
-Greg's OK.** The other 5,417 `onboarding` rows never finished Everee — those
-are the real backlog, and the pool Marco's new follow-ups work.
+surface reads them as unfinished.
+
+**✅ FIXED 2026-09-11 (Greg: "fix this").** Two halves, because the backfill alone
+did not hold:
+
+1. **Re-mirrored the stale rows.** `mirrorEvereeOnboardingCompleteToEmployments`
+   re-run for every C1 Events row that is Everee-complete but not active
+   (`functions/.scratch/backfill_events_everee_complete_rows.ts`, one bulk read per
+   collection — a per-row link get took ~10 min for 7.4k rows). This session did
+   252 (0 failed); another of Greg's sessions re-mirrored 270 more at 16:02 under
+   the same approval — overlapping but idempotent, so no harm. C1 Events is now
+   ~2,257 green.
+2. **☠️ The engine sync was undoing it** —
+   `syncEntityEmploymentOnboardingFromWorkerOnboarding` fires on ANY
+   `worker_onboarding` write and rewrites `taxIdentityStatus` / `payrollStatus` /
+   `onboardingComplete` / `status` straight from the onboarding engine, which never
+   reads Everee. Two re-mirrored rows bounced back to amber within minutes, and
+   150/150 sampled Everee-complete Events workers have a pipeline doc, so the whole
+   cohort was exposed. **Guard shipped (71cfcb11, deployed 16:26 PT)**: for
+   entityKey `events` only, an Everee-complete worker (row stamps, else the
+   `everee_workers` link — the `isPayrollReadyForClaim` rule) keeps payroll + tax
+   identity `complete` and `onboardingComplete: true`, so the lifecycle fragment
+   leaves the row active. W-9 + direct deposit IS the whole worker requirement for
+   1099; the engine's handbook/policies steps are not, which is why 2,256 rows were
+   already active with `handbookStatus: 'not_started'`. Other entities unchanged.
+
+The other ~5,164 `onboarding` rows never finished Everee — their amber is correct,
+and they are the pool Marco's new follow-ups work.
 
 ## ✅ S4/S5 SHIPPED 2026-09-11 — claim-readiness UI (web live 14:35 PT, bb5c6c99; app c1_app 285c0b2)
 
