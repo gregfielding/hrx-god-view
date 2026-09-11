@@ -12,6 +12,7 @@ released (say why).
 
 | When (PT) | Who | Target | What | Commit | Result | Notes |
 |---|---|---|---|---|---|---|
+| 2026-09-11 13:40 | Greg (Claude) | hosting | Tier automation settings page scores with the Tier 2 interview gate (4faec962 web mirror) + CRA type-checker memory fix (b03b7e7a) | e45bd1dc | ✅ | Clean worktree at origin/main, 8GB heap; preflight rewrites=1, 803 files, main.c30b0508.js (unchanged — gate lives in a lazy chunk); postflight /jobs/job-orders 200. Server side of the gate was already live (scheduledOrchestrator + scheduledScoringDistribution 13:08) |
 | 2026-09-11 13:09 | Greg (Claude) | functions | `scheduledOrchestrator`, `scheduledScoringDistribution` | b8480560 | ✅ | Tier 2 now requires a completed interview (scoreTierPromotion hard gate, 4faec962) — hourly ramp/hiring-plan promotion + nightly sweep. Built from a clean worktree of origin/main; first attempt from 4faec962 aborted pre-deploy because d3f94fd9 (Sodexo intro) had landed |
 | 2026-09-11 13:15 | Greg (Claude) | functions | `natalieSlackInbox` | b8480560 | ✅ | Natalie 1-hour onboarding/screening follow-up check (6b5c7fab). Deployed after the 8 OnTrac Worker Reach blasts finished (574 SMS / 658 push) so no blast was cut off. Clean worktree at origin/main |
 | 2026-09-11 12:28 | Greg | functions | `sendJobOrderWorkerReachBlast`, `natalieSlackInbox` | b1fa3afa | ✅ | Worker Reach blasts run on job orders with no shifts (career postings blast the posting; no date, no ?invite=1). Deployed by Greg; both services updated 19:27Z, 8 min after the commit. Logged by Claude |
