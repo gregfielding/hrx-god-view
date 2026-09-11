@@ -512,6 +512,24 @@ keep hiring qualified applicants until we hit 30").
   raises the Illinois AEDT notice question (see
   [[project_tiered_shift_access]] compliance note).
 
+### 2026-09-11 OnTrac audit: interview scores never reached the scorecard; threshold 70 → 50
+
+- **Bug (fixed, e560c81e)**: `riskProfile.topRisks[]` rows carried `FieldValue.serverTimestamp()`;
+  Firestore rejects sentinels inside arrays, so `recomputeUserInterviewScoreSummary`'s user update
+  failed on every interview whose risk profile had top risks. `scoreSummary` +
+  `recruiterScoreSnapshot` went stale and the scorecard read the interview as 0/25 (1,968 of 2,757
+  workers interviewed in 120 days). The warning hid the cause: its `message` field is overwritten by
+  the logger's own message — log errors as `error`. Backfill re-ran the recompute for 1,963 workers
+  (0 failures; the scorer now sees the interview for all of them).
+- **The 70 bar was unreachable before hire**: background + drug (20) only complete after onboarding,
+  app installed (5) starts 2026-10-01, and applicants list no skills (10), so ~65 was the pre-hire
+  ceiling. After the backfill 0 workers qualified at 70.
+- **Greg 2026-09-11: threshold 50.** At write time 1,607 of 14,043 Tier 3 worker profiles qualify
+  (none without an interview) — the nightly sweep promotes them; 9 were live applicants on OnTrac
+  hiring-plan JOs, which the hourly plan sweep promotes and onboards (real Everee + AccuSource spend).
+  Note 50 = the full no-interview profile score (25+10+10+5), so the "no interview, no promotion"
+  guarantee in workerTierScoring.ts now rests on nobody maxing every profile factor.
+
 ## Credential verification (built 2026-09-08)
 
 The "badges" conversation (Qwick/Instawork parity) produced the first
