@@ -72,10 +72,11 @@ describeWithEmulator('Admin SDK semantic — set/merge vs update with dotted-str
     expect(data['workerAttestations.eVerifyWillingness']).to.equal('Yes');
 
     // Bug behavior: nested map is NOT created.
-    const nestedExists =
+    const nestedExists = !!(
       data.workerAttestations &&
       typeof data.workerAttestations === 'object' &&
-      'eVerifyWillingness' in data.workerAttestations;
+      'eVerifyWillingness' in data.workerAttestations
+    );
     expect(nestedExists, 'nested workerAttestations.eVerifyWillingness should NOT exist').to.equal(
       false,
     );
