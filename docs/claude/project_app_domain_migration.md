@@ -248,3 +248,22 @@ Greg's (see the report artifact).
 - Conclusion under option 1: no Slack or Twilio change needed. Only a future
   hrxone.com retirement would touch them (keep-list: `/c1/apply`, `/signup`,
   `/privacy`, `/terms`, `/consent`, `/sms-optin.html`, `/sms-privacy`).
+
+### Everee + SendGrid checked 2026-09-11 (read-only)
+- Everee dashboard (app.everee.com → Settings → Integrations hub → Everee API):
+  C1 Select LLC (tenant 3133) and C1 Events LLC (3138) each have ONE webhook,
+  target `https://us-central1-hrx1-d3beb.cloudfunctions.net/evereeWebhook`,
+  enabled — unaffected by the domain move. No embed allowed-domain /
+  frame-ancestors setting exists in the dashboard, and account settings have
+  no hrxone.com. The embed returnUrl follows the page origin; an end-to-end
+  embed test on app.c1staffing.com still needs a worker with an active Everee
+  onboarding session (the reviewer demo account isn't enrolled).
+- SendGrid: the ONLY template is "Worker Invitation Template"
+  `d-36383cd72987421fa5335e9ea7db10d9` (active). Its footer hardcodes
+  `https://app.hrxone.com/support` and `https://app.hrxone.com/privacy`
+  (HTML + plain text, 4 hits). Both return 200 today (`/support` is only the
+  SPA shell — there's no top-level /support route; `/c1/workers/support`
+  redirects to payroll-help). At the flip: edit the template footer to
+  `https://www.c1staffing.com/support` and `https://app.c1staffing.com/privacy`.
+  ☠️ Add the `app.hrxone.com` custom domain to the retirement keep-list — sent
+  invites link to it.
