@@ -1,6 +1,6 @@
 # Onboarding + Claim readiness — C1 Events hire-everyone, gate at Claim (decided 2026-09-11)
 
-**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) DEPLOYED 2026-09-11 13:30 PT (app half ships with the next app build); S2 (C1 Events hire-on-apply, forward-only) BUILT 2026-09-11, NOT DEPLOYED; S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
+**Status: DECIDED. S0 (readiness check) DONE; S3 (interview required for Tier 2) SHIPPED + DEPLOYED 2026-09-11 13:09 PT; S1 (claim payroll gate, web + app error handling) DEPLOYED 2026-09-11 13:30 PT (app half ships with the next app build); S2 (C1 Events hire-on-apply, forward-only) + group hiring RETIRED — DEPLOYED 2026-09-11 14:06–14:08 PT; S4–S6 not built.** Greg, 2026-09-11, while the native apps are in
 store review. Companion to [[project_tier_system_claim_shift_spec]] (Claim
 Shift v1) and [[project_worker_onboarding_everee]] (the completion curve).
 Build slices at the bottom; web + app ship together (parity rule).
@@ -166,7 +166,7 @@ interview — left as is, no demotion), pending proposals 1 (unaffected).
 - **Not in S1** (S4/S5): pre-rendering "Finish setup to claim" on the board
   before the tap, and returning the worker to the shift after setup.
 
-## ✅ S2 BUILT 2026-09-11 — C1 Events hires everyone who applies (forward-only, not deployed yet)
+## ✅ S2 SHIPPED 2026-09-11 — C1 Events hires everyone who applies (forward-only; deployed 14:06 PT, e46cc102)
 
 - `functions/src/recruiter/eventsEntityAutoHire.ts`, called from
   `onApplicationHiringSignalsChangedAutoOnboard` (no new function; trigger
