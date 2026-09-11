@@ -484,10 +484,20 @@ muted everywhere (`messagingConfig/noShowDetection` absent). Verify
 - `cort_woodridge_daily` created inactive, then activated; the 3 live crew
   assignments without `notificationsSuppressed` re-synced by stamp-then-clear
   (`functions/.scratch/woodridge_daily_resync.ts --write`; `--verify` prints
-  each member's per-day plan). `CyBf1wPkceyHaj8BntJT__3nNXCKi3ssUomaJIdXDk6EWGZ793`
-  has `notificationsSuppressed: true` and gets nothing — clear the flag and
-  re-sync if that worker should be asked too. First worker text: Sun 9/13
-  8:00 AM CT (Monday's ask); the Sat 1:00 AM top-up adds Tuesday.
+  each member's per-day plan). The 4th, `CyBf1wPkceyHaj8BntJT__3nNXCKi3ssUomaJIdXDk6EWGZ793`,
+  carried `notificationsSuppressed: true` — left by the 2026-07-17 phase0
+  stale-cleanup auto-complete that was later restored to confirmed, not a
+  do-not-contact (the worker has timesheets through 9/11). Cleared at Greg's
+  request the same afternoon (`notificationsSuppressedClearedAt/By/Reason`
+  audit stamp; `functions/.scratch/woodridge_unsuppress_resync.ts`) and
+  re-synced onto the identical plan. The write itself sends nothing:
+  `logAssignmentUpdated` and `onAssignmentUpdatedPush` only fire on a
+  normalized status change. All 4 crew members are on the cadence. First
+  worker text: Sun 9/13 8:00 AM CT (Monday's ask); the Sat 1:00 AM top-up
+  adds Tuesday. ☠️ Generalizable: silent lifecycle writes (stale cleanup,
+  AssignmentDrawer edits, triage) leave `notificationsSuppressed: true`
+  behind on assignments that are later restored — check it before assuming a
+  live worker is deliberately silenced.
 - Hosting: another session's hosting release (clean detached worktree at
   `6e91b73c`, which already contained `db60fb5f`) shipped the Scheduling Health /
   Worker Confirmations / Settings changes — verified in the live bundle, so this
