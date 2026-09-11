@@ -23,7 +23,7 @@
 - Pure web app (CRA, no Capacitor/RN wrapper) → Firebase phone auth on web = invisible reCAPTCHA.
 - Firebase Auth **phone provider already enabled**; authorized domains include hrxone.com, app.hrxone.com.
 - Six auth entry points: `src/pages/Login.tsx`, `src/components/AuthDialog.tsx` (jobs-board signup),
-  `src/components/apply/Wizard.tsx` (step 0 creates the account — password + confirm), `OnboardingProfileForm.tsx`,
+  `src/components/apply/Wizard.tsx` (step 0 creates the account — password + confirm), `OnboardingProfileForm.tsx` (removed 2026-09-11 with the dead invite-token chain),
   `src/pages/UserOnboarding.tsx`, `src/pages/SetupPassword.tsx` (invite claim), plus `functions/src/auth/inviteUser.ts`.
   All four self-service paths mint NEW Auth uids when a Firestore doc already exists → see
   [[feedback_auth_uid_orphan_footgun]] — phone auth must go through ONE shared "resolve account by phone" path.

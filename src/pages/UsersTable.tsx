@@ -46,7 +46,6 @@ const UsersTable = () => {
   const [isEnd, setIsEnd] = useState(false);
   const firstLoadRef = useRef(true);
   const navigate = useNavigate();
-  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
 
   useEffect(() => {
     if (role === 'HRX') {
@@ -224,32 +223,6 @@ const UsersTable = () => {
           </Box>
         </>
       )}
-
-      {/* Floating Action Button for Invitations */}
-      {/* <Tooltip title="Invite User">
-        <Fab
-          color="primary"
-          aria-label="invite user"
-          sx={{
-            position: 'fixed',
-            bottom: 16,
-            right: 16,
-          }}
-          onClick={() => setInviteDialogOpen(true)}
-        >
-          <PersonAddIcon />
-        </Fab>
-      </Tooltip> */}
-
-      {/* Invitation Dialog */}
-      {/* <UserInvitationDialog
-        open={inviteDialogOpen}
-        onClose={() => setInviteDialogOpen(false)}
-        onSuccess={() => {
-          // Refresh the users list after successful invitation
-          fetchUsers();
-        }}
-      /> */}
     </Box>
   );
 };

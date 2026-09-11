@@ -67,9 +67,8 @@ Known unstable/incomplete areas:
 - Login redirect (`src/pages/Login.tsx`):
   - worker-ish users (`<5`) are sent to `/{tenantSlug}/users/{uid}` currently.
   - admin/internal (`>=5`) to `/`.
-- Public onboarding routes exist:
-  - `/onboarding/profile`
-  - `/invite/:token` -> onboarding flow (legacy; the only link-minting UI, `UserInvitationDialog`, is commented out)
+- No standalone public onboarding routes remain. Workers enter via the apply flow (`/apply/...`) and phone login (`/login/phone`).
+  - Legacy invite-token chain removed from the web client 2026-09-11: `/invite/:token` (`InviteTokenValidator`) -> `/onboarding/profile` (`OnboardingProfileForm`), plus the never-mounted `UserInvitationDialog`. Zero callers; prod `invites` collection was empty. Backing callables (`createInviteToken`, `validateInviteToken`, `markInviteTokenUsed`, `assignOrgToUser`) are slated for deletion. Flutter has nothing to mirror.
   - `/onboarding/complete` was a placeholder with fake app-store links — removed 2026-09-11
 
 ### Null `securityLevel` handling
@@ -163,8 +162,8 @@ Route map is documented in `docs/WORKER_ROUTES.md`. Worker-relevant routes:
 - Key file: `src/pages/c1/workers/support.tsx`
 
 ### Login / onboarding (worker-relevant)
-- Paths: `/login`, `/invite/:token`, `/onboarding/profile`
-- Mirror: **Yes** for auth entry and onboarding bootstrapping
+- Paths: `/login` (`/login/phone`, `/login/email`); onboarding bootstrapping happens in the apply flow (`/invite/:token` and `/onboarding/profile` removed 2026-09-11)
+- Mirror: **Yes** for auth entry
 - Caveat: web currently redirects worker login to `/{tenantSlug}/users/{uid}` which is not the worker profile route.
 
 ---

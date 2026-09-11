@@ -8,7 +8,7 @@ When a worker has an existing Firestore `users/{uid}` doc and then self-services
 
 - `src/Wizard.tsx:1582`
 - `src/AuthDialog.tsx:347` (verify path — may have drifted)
-- `src/OnboardingProfileForm.tsx:161` (verify path)
+- ~~`src/OnboardingProfileForm.tsx:161`~~ — removed 2026-09-11 (dead `/invite/:token` chain)
 - `functions/src/auth/inviteUser.ts`
 
 **How to apply:**

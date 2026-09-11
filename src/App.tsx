@@ -110,7 +110,6 @@ const UserLanguagePreferences = lazy(() => import('./pages/Admin/UserLanguagePre
 const HelloMessageManagement = lazy(() => import('./pages/Admin/HelloMessageManagement'));
 const AutoContextEngineNew = lazy(() => import('./pages/Admin/AutoContextEngine'));
 const AISelfImprovement = lazy(() => import('./pages/Admin/AISelfImprovement'));
-import InviteTokenValidator from './components/InviteTokenValidator';
 import WorkerRoute from './auth/WorkerRoute';
 import C1WorkerLayout from './layouts/C1WorkerLayout';
 const C1WorkersIndex = lazy(() => import('./pages/c1/workers/index'));
@@ -132,7 +131,6 @@ const C1WorkerPayrollHelp = lazy(() => import('./pages/c1/workers/payrollHelp'))
 const C1WorkerPayHistory = lazy(() => import('./pages/c1/workers/payHistory'));
 const C1WorkerPayrollSettings = lazy(() => import('./pages/c1/workers/payrollSettings'));
 const PayrollTicketsPage = lazy(() => import('./pages/PayrollTicketsPage'));
-import OnboardingProfileForm from './components/OnboardingProfileForm';
 const Help = lazy(() => import('./pages/Help'));
 const HelpManagement = lazy(() => import('./pages/Admin/HelpManagement'));
 const DataOperations = lazy(() => import('./pages/Admin/DataOperations'));
@@ -596,8 +594,6 @@ function App() {
       {/* Slack persona OAuth landing — shows the one-time code instead of bouncing to /login. */}
       <Route path="/slack/oauth/callback" element={<SlackOAuthCallback />} />
       <Route path="/setup-password" element={<SetupPassword />} />
-      <Route path="/invite/:token" element={<InviteTokenValidator />} />
-      <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
       {/* /c1/apply moved under ConditionalWorkerLayout 2026-08-29 (signup-flow
           review finding 7) — same shell behavior as /apply/:slug/:jobId: no
           chrome while signed out, real worker chrome once the OTP gate signs
