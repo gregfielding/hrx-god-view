@@ -85,7 +85,6 @@
     "eslint-config-google": "^0.14.0",
     "eslint-plugin-import": "^2.25.4",
     "firebase-functions-test": "^3.1.0",
-    "mocha": "^10.4.0",
     "sinon": "^17.0.1",
     "ts-jest": "^29.4.12",
     "ts-node": "^10.9.2",
