@@ -195,10 +195,34 @@ describe('dailyConfirm — per-day state map + mirror', () => {
       workDays,
       todayIso: '2026-09-14',
       horizonEndIso: '2026-09-17',
+      nowMs,
     });
     expect(seeds.create.map((d) => d.workDate)).to.deep.equal(['2026-09-17']);
     expect(seeds.refresh.map((d) => d.workDate)).to.deep.equal(['2026-09-14']);
     expect(seeds.remove.sort()).to.deep.equal(['2026-07-01', '2026-09-15']);
+  });
+
+  it('never seeds a day that started before anyone was asked, and drops such phantoms (Woodridge go-live, Fri 9/11)', () => {
+    const nowMs = cdt('2026-09-11T12:40:00'); // that morning's 5 AM shift is long over
+    const workDays = enumerateWorkDays({ weeklySchedule: WOODRIDGE_WEEK, startDate: '', endDate: '', timezone: TZ, nowMs });
+    const fresh = planDailyDaySeeds({ existingDays: {}, workDays, todayIso: '2026-09-11', horizonEndIso: '2026-09-14', nowMs });
+    expect(fresh.create.map((d) => d.workDate)).to.deep.equal(['2026-09-14']);
+
+    const seeded = planDailyDaySeeds({
+      existingDays: {
+        '2026-09-11': { state: 'pending', startAt: ts(cdt('2026-09-11T05:00:00')), startTime: '05:00', endTime: '13:30' },
+        '2026-09-10': { state: 'pending', startAt: ts(cdt('2026-09-10T05:00:00')), lastAskedAt: ts(cdt('2026-09-09T08:00:00')) },
+        '2026-09-14': { state: 'pending', startAt: ts(cdt('2026-09-14T05:00:00')), startTime: '05:00', endTime: '13:30' },
+      },
+      workDays,
+      todayIso: '2026-09-11',
+      horizonEndIso: '2026-09-14',
+      nowMs,
+    });
+    // Asked-but-silent 9/10 stays — that's the real "didn't confirm" signal.
+    expect(seeded.remove).to.deep.equal(['2026-09-11']);
+    expect(seeded.refresh).to.deep.equal([]);
+    expect(seeded.create).to.deep.equal([]);
   });
 
   it('the current day is today until 12h after start, then tomorrow', () => {

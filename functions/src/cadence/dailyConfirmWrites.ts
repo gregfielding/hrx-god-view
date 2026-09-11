@@ -149,6 +149,7 @@ export async function seedDailyConfirmDays(args: {
       workDays: args.workDays,
       todayIso: args.todayIso,
       horizonEndIso: args.horizonEndIso,
+      nowMs: args.nowMs,
     });
     for (const day of plan.create) {
       const entry: DayEntry = {
@@ -186,7 +187,9 @@ export async function seedDailyConfirmDays(args: {
     // `checked_in` indefinitely). Keep that fact as its own day entry.
     const legacy = data.cortConfirmation as Record<string, unknown> | undefined;
     const legacyDate = (legacy?.checkedInVia as Record<string, unknown> | undefined)?.workDate;
-    const touched = new Set([...plan.create, ...plan.refresh].map((d) => d.workDate));
+    // One write per field path per transaction — never migrate onto a date
+    // this seed already creates, refreshes, or deletes.
+    const touched = new Set([...[...plan.create, ...plan.refresh].map((d) => d.workDate), ...plan.remove]);
     if (
       legacy &&
       legacy.dailyConfirm !== true &&

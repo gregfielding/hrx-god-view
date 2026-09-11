@@ -280,15 +280,34 @@ export interface DaySeedPlan {
 }
 
 /**
- * Reconcile the per-day map with the enumerated schedule: create missing days,
- * refresh times that moved (state is kept), drop still-pending days the
- * schedule no longer has, and age out entries past retention.
+ * A day that started while still pending and was never asked about. Seeding
+ * one (a re-sync or new crew member after that day's start) would put a false
+ * "hasn't confirmed" row on Scheduling Health and in Natalie's brief — found on
+ * the Woodridge go-live, 2026-09-11 12:40 PM, for that morning's 5 AM shift.
+ */
+function isPhantomDay(entry: DayEntry | undefined, nowMs: number): boolean {
+  const startMs = toMillisLoose(entry?.startAt);
+  return (
+    String(entry?.state ?? '').trim().toLowerCase() === 'pending' &&
+    !entry?.lastAskedAt &&
+    startMs !== null &&
+    startMs <= nowMs
+  );
+}
+
+/**
+ * Reconcile the per-day map with the enumerated schedule: create missing days
+ * that haven't started, refresh times that moved (state is kept), drop
+ * still-pending days the schedule no longer has, drop phantom days (started,
+ * never asked), and age out entries past retention. An asked-but-silent day is
+ * kept — that's the real "didn't confirm" signal.
  */
 export function planDailyDaySeeds(args: {
   existingDays: Record<string, DayEntry>;
   workDays: WorkDay[];
   todayIso: string;
   horizonEndIso: string;
+  nowMs: number;
   retentionDays?: number;
 }): DaySeedPlan {
   const plan: DaySeedPlan = { create: [], refresh: [], remove: [] };
@@ -296,9 +315,10 @@ export function planDailyDaySeeds(args: {
   for (const day of args.workDays) {
     const cur = args.existingDays[day.workDate];
     if (!cur) {
-      plan.create.push(day);
+      if (day.startMs > args.nowMs) plan.create.push(day);
       continue;
     }
+    if (isPhantomDay(cur, args.nowMs)) continue; // removed below
     const moved =
       toMillisLoose(cur.startAt) !== day.startMs ||
       String(cur.startTime ?? '') !== day.startTime ||
@@ -307,7 +327,7 @@ export function planDailyDaySeeds(args: {
   }
   const retireBefore = addDaysIso(args.todayIso, -(args.retentionDays ?? DAILY_CONFIRM_DAY_RETENTION_DAYS));
   for (const [date, entry] of Object.entries(args.existingDays)) {
-    if (date < retireBefore) {
+    if (date < retireBefore || isPhantomDay(entry, args.nowMs)) {
       plan.remove.push(date);
       continue;
     }
