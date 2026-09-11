@@ -46,17 +46,22 @@ function getA2PCampaign() {
   return TWILIO_A2P_CAMPAIGN.value() || process.env.TWILIO_A2P_CAMPAIGN;
 }
 
+import { PERSONAS, personaForMessageType } from './natalie/personas';
+
 /**
- * Natalie Brooks' own A2P 10DLC messaging service (campaign approved 2026-09-09; sender pool =
- * +1 312 663 8247 and +1 737 264 6753). Texts she sends — every messageTypeId starting with
- * "natalie_" — go out from her number so workers see one consistent sender and can reply to her
- * directly. Everything else stays on the C1 Messaging toll-free 888. If the pool is empty/unready,
- * Twilio answers 21705/30034 and the existing fallback below retries from the 888.
- * Override/disable with env NATALIE_MESSAGING_SERVICE_SID (empty string = off).
+ * Persona texts (Natalie Brooks, Marco Gomez — natalie/personas.ts): every messageTypeId starting
+ * with a persona prefix ("natalie_", "marco_") goes through the approved A2P 10DLC service (campaign
+ * approved 2026-09-09) PINNED to that persona's own number, so workers see one consistent sender and
+ * reply to them directly. Both numbers share the sender pool, so the pin is what stops sticky sender
+ * from texting a Natalie message from Marco's 737. Everything else stays on the C1 Messaging
+ * toll-free 888. If the pool is empty/unready or the number isn't in it yet, the fallback below
+ * retries from the 888. Override/disable with env NATALIE_MESSAGING_SERVICE_SID (empty string = off).
  */
 const NATALIE_MESSAGING_SERVICE_SID = process.env.NATALIE_MESSAGING_SERVICE_SID ?? 'MG2dd6557d05d9be9044c996fa568a8a39';
-function isNatalieMessage(messageTypeId?: string): boolean {
-  return typeof messageTypeId === 'string' && messageTypeId.startsWith('natalie_');
+function personaSmsRoute(messageTypeId?: string): { serviceSid: string; from: string } | null {
+  const persona = personaForMessageType(messageTypeId);
+  if (!persona || !NATALIE_MESSAGING_SERVICE_SID) return null;
+  return { serviceSid: NATALIE_MESSAGING_SERVICE_SID, from: PERSONAS[persona].fromNumber };
 }
 
 // Initialize CORS middleware
@@ -1327,7 +1332,8 @@ export async function sendWorkerMessageInternal(
       client = getTwilioClient();
       messagingPhoneNumber = getMessagingPhoneNumber();
       a2pCampaign = getA2PCampaign();
-      if (isNatalieMessage(context?.messageTypeId) && NATALIE_MESSAGING_SERVICE_SID) a2pCampaign = NATALIE_MESSAGING_SERVICE_SID;
+      const personaRoute = personaSmsRoute(context?.messageTypeId);
+      if (personaRoute) a2pCampaign = personaRoute.serviceSid;
     } catch (configError: any) {
       logger.error('Failed to load Twilio configuration:', configError);
       return {
@@ -1356,7 +1362,10 @@ export async function sendWorkerMessageInternal(
     // Prefer Messaging Service when configured (sticky sender, throughput)
     if (a2pCampaign && a2pCampaign.trim() !== '') {
       messageParams.messagingServiceSid = a2pCampaign;
-      logger.info(`Using A2P messaging service: ${a2pCampaign}`);
+      // Persona texts: a specific sender from the service's pool (Twilio honors From alongside MessagingServiceSid).
+      const pinned = personaSmsRoute(context?.messageTypeId);
+      if (pinned && pinned.serviceSid === a2pCampaign) messageParams.from = pinned.from;
+      logger.info(`Using A2P messaging service: ${a2pCampaign}${messageParams.from ? ` from ${messageParams.from}` : ''}`);
     } else if (messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
       messageParams.from = messagingPhoneNumber;
       logger.info(`Using direct phone number: ${messagingPhoneNumber}`);
@@ -1374,8 +1383,8 @@ export async function sendWorkerMessageInternal(
     try {
       messageResult = await client.messages.create(messageParams);
     } catch (twilioError: any) {
-      // When using Messaging Service, fall back to direct number on invalid SID (21705), no eligible sender in the pool yet (21703 — seen 2026-09-09 minutes after adding Natalie's numbers), or A2P (30034)
-      if (([21703, 21705, 30034].includes(Number(twilioError.code))) && messageParams.messagingServiceSid && messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
+      // When using Messaging Service, fall back to direct number on invalid SID (21705), no eligible sender in the pool yet (21703 — seen 2026-09-09 minutes after adding Natalie's numbers), A2P (30034), or a pinned persona From that isn't in the pool yet (21606 / 21712 — Marco's 737 before the go-live script)
+      if (([21606, 21703, 21705, 21712, 30034].includes(Number(twilioError.code))) && messageParams.messagingServiceSid && messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
         logger.warn(`Messaging Service failed (${twilioError.code}), falling back to direct number ${messagingPhoneNumber}. Error: ${twilioError.message}`);
         try {
           messageResult = await client.messages.create({

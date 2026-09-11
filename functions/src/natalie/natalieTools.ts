@@ -12,6 +12,7 @@ import { NATALIE_DISPLAY_NAME, NATALIE_HRX_UID, recordNatalieAction, registerFol
 import { readInbox, sendEmail } from './natalieMailbox';
 import { bookInFlexIfLinked, candidatesForJobOrder, offerShiftToWorker, placeWorkerOnShift, upcomingShifts, workerReachBlast } from './natalieFill';
 import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
+import type { PersonaId } from './personas';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -32,6 +33,8 @@ export interface NatalieToolContext {
   askedByName: string;
   /** Where the ask came from — outcomes get posted back here. */
   slack?: SlackRef;
+  /** Who is answering (personas.ts) — authorship, SMS signature and sender number follow it. Default natalie. */
+  persona?: PersonaId;
 }
 
 export const NATALIE_TOOLS: Anthropic.Beta.BetaTool[] = [

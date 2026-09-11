@@ -27,6 +27,8 @@ const db = admin.firestore();
 
 /** Bind on any function that calls drainFlexTeamAsks / postAsNatalie. */
 export const NATALIE_SLACK_USER_TOKEN = defineSecret('NATALIE_SLACK_USER_TOKEN');
+/** Marco Gomez's user token (app "Marco Gomez (HRX)", functions/.scratch/slack-marco-app-manifest.json). postAsNatalie works with it unchanged. */
+export const MARCO_SLACK_USER_TOKEN = defineSecret('MARCO_SLACK_USER_TOKEN');
 
 /** #dev — internal review channel until app_config points at the Flex channel. */
 export const DEFAULT_FLEX_ASK_CHANNEL = 'C08U7U0FL03';

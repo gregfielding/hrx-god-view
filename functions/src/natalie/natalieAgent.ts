@@ -2,10 +2,14 @@
  * Natalie's brain for Slack: one Claude tool-use loop per inbound message,
  * with the thread's prior turns as context. Posting is done by the caller
  * (natalieSlackInbox) with her user token so replies appear as her.
+ *
+ * The same loop answers as Marco Gomez (2026-09-11, personas.ts) with his own
+ * system prompt and the tool subset that fits C1 Events work.
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from 'firebase-functions/v2';
 import { NATALIE_TOOLS, runNatalieTool, type NatalieToolContext } from './natalieTools';
+import type { PersonaId } from './personas';
 
 export const NATALIE_MODEL = process.env.NATALIE_MODEL || 'claude-opus-5';
 const MAX_TOOL_ROUNDS = 8;
@@ -39,10 +43,47 @@ Style (Slack):
 - Refer to people by first name. Times in the site's local time when known. Include HRX links from the tools when they help.
 - You are speaking as yourself; no sign-off is needed.`;
 
+export const MARCO_SYSTEM_PROMPT = `You are Marco Gomez, recruiting assistant at C1 Staffing. You work with Rosa Govea's events team (Rosa, Mark, Maria) on Slack, and you own the C1 Events accounts: Venue Smart (festivals, concerts, stadiums, golf and race events all over the country), Black Caviar Catering, Contigo Catering, Proof of the Pudding and G6 Catering. Oakland Arena (Legends) is Danny's, and your teammate Natalie Brooks handles everything outside C1 Events (Sodexo, Indeed Flex, OnTrac, C1 Select) — if someone asks you about those, say so and point them to Natalie.
+
+C1 Events workers are 1099 independent contractors paid through Everee (contractor agreement, W-9, direct deposit — no I-9 or E-Verify). Many of them speak Spanish.
+
+How you work:
+- The conversation history you are given is the real Slack transcript (a DM: the whole recent DM; a channel: the thread plus recent messages). Read it before answering. A short reply like "yes", "yes please", "do it", "correct" answers YOUR most recent question or proposal — act on it exactly as you proposed.
+- Use the tools to look things up before answering. Never guess at worker status or order status; if a tool returns nothing, say so plainly.
+- Take the action when it was clearly requested (text a worker, offer a shift, place someone, add a note, make a task). If the request is ambiguous about WHICH worker, event, or shift, ask one short clarifying question instead of guessing.
+- Background checks: worker_status and candidates_for_job_order show the real AccuSource result. Never place or offer a shift to someone whose check is FAILED; flag them instead.
+- Onboarding follow-ups run on their own for your accounts: when someone starts a worker's onboarding (or orders a screening) you check their steps at 1h, 24h and 72h — Everee payroll/direct deposit, tax form, contractor paperwork, the AccuSource form, and the drug screen if one was ordered — text them about what's open, answer their replies by text, and post everything in the job order's thread. onboarding_followups shows who is stuck and what they said. Never remove someone from a job without a human saying so in the thread.
+- Texting workers: write every text in the worker's preferred language — worker_status shows it; when it is "es", write in natural, friendly Spanish. Texts come from your own number, 737-264-6753, signed "— Marco, C1 Staffing".
+- You do not work in Indeed Flex, Fieldglass, Craigslist, or email yet. Say so plainly and suggest Natalie or a person on the team.
+- Be honest about limits and errors. Do not invent phone numbers, names, pay, or times.
+
+Style (Slack):
+- Rosa's team is busy and not technical: short, warm, direct, plain English. Lead with the answer and one clear next step. Use Slack mrkdwn (*bold*, bullet lines with "•", links as <url|text>). No markdown headers, no tables.
+- Refer to people by first name. Times in the event's local time when known. Include HRX links from the tools when they help.
+- You are speaking as yourself; no sign-off is needed.`;
+
+/** Tools that do not fit a persona's work (portal / Flex / Fieldglass / Craigslist / unconnected mailbox). */
+const EXCLUDED_TOOLS: Record<PersonaId, ReadonlySet<string>> = {
+  natalie: new Set(),
+  marco: new Set(['portal_sync_status', 'request_portal_sync', 'list_flex_requests', 'accept_flex_request', 'book_in_flex', 'craigslist_queue', 'craigslist_mark_posted', 'read_inbox', 'send_email']),
+};
+
+export function toolsFor(persona: PersonaId): Anthropic.Beta.BetaTool[] {
+  return NATALIE_TOOLS.filter((t) => !EXCLUDED_TOOLS[persona].has(t.name));
+}
+
+/** Appended to Natalie's prompt only while Marco is live, so nobody is sent to a teammate who isn't answering yet. */
+const MARCO_HANDOFF_NOTE = `\n\nTeammate: C1 Events accounts (Venue Smart, Black Caviar, Contigo, Proof of the Pudding, G6 — everything on C1 Events except Oakland Arena) belong to Marco Gomez, who works with Rosa. If someone asks you to work one of those, point them to Marco.`;
+
+export function systemPromptFor(persona: PersonaId, opts: { marcoLive?: boolean } = {}): string {
+  if (persona === 'marco') return MARCO_SYSTEM_PROMPT;
+  return opts.marcoLive ? `${NATALIE_SYSTEM_PROMPT}${MARCO_HANDOFF_NOTE}` : NATALIE_SYSTEM_PROMPT;
+}
+
 export interface NatalieTurn {
   role: 'user' | 'assistant';
   text: string;
-  /** Slack user id or 'natalie'. */
+  /** Slack user id or the persona id ('natalie' / 'marco'). */
   by: string;
   byName?: string;
   ts?: string;
@@ -68,7 +109,10 @@ export async function answerAsNatalie(args: {
   history: NatalieTurn[];
   message: NatalieTurn;
   ctx: NatalieToolContext;
+  /** Marco is switched on (personas.loadPersonaRuntime) — Natalie then hands C1 Events asks to him. */
+  marcoLive?: boolean;
 }): Promise<NatalieAnswer> {
+  const persona: PersonaId = args.ctx.persona ?? 'natalie';
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     ...historyToMessages(args.history),
     { role: 'user', content: `${args.message.byName || args.message.by}: ${args.message.text}` },
@@ -82,8 +126,8 @@ export async function answerAsNatalie(args: {
     const res = await client().beta.messages.create({
       model: NATALIE_MODEL,
       max_tokens: 4096,
-      system: [{ type: 'text', text: NATALIE_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
-      tools: NATALIE_TOOLS,
+      system: [{ type: 'text', text: systemPromptFor(persona, { marcoLive: args.marcoLive }), cache_control: { type: 'ephemeral' } }],
+      tools: toolsFor(persona),
       tool_choice: round < MAX_TOOL_ROUNDS ? { type: 'auto' } : { type: 'none' },
       thinking: { type: 'adaptive' },
       output_config: { effort: 'medium' },
@@ -109,11 +153,13 @@ export async function answerAsNatalie(args: {
       let ok = true;
       let payload: unknown;
       try {
-        payload = await runNatalieTool(tu.name, toolInput, args.ctx);
+        payload = EXCLUDED_TOOLS[persona].has(tu.name)
+          ? { error: `${tu.name} is not one of your tools` }
+          : await runNatalieTool(tu.name, toolInput, args.ctx);
       } catch (err) {
         ok = false;
         payload = { error: err instanceof Error ? err.message : String(err) };
-        logger.warn('[natalie] tool failed', { tool: tu.name, err: String(err) });
+        logger.warn('[natalie] tool failed', { persona, tool: tu.name, err: String(err) });
       }
       toolCalls.push({ name: tu.name, input: toolInput, ok });
       results.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(payload).slice(0, 60_000), is_error: !ok });

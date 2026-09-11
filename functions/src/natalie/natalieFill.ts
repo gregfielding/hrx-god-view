@@ -23,6 +23,7 @@ import { NATALIE_DISPLAY_NAME, NATALIE_HRX_UID, recordNatalieAction, registerFol
 import { enqueuePortalAction } from '../integrations/portalActions/enqueuePortalAction';
 import { buildCareerDefaultWeeklySchedule, shiftHasUsableWeeklySchedule } from '../timesheets/careerWeeklySchedule';
 import { PUBLIC_APP_ORIGIN } from '../config/appOrigin';
+import { PERSONAS, smsSignature, workerLanguage, type PersonaId } from './personas';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -97,9 +98,9 @@ export async function upcomingShifts(tenantId: string, jobOrderId: string, limit
   return out;
 }
 
-function fmtDate(iso: string): string {
+function fmtDate(iso: string, lang: 'en' | 'es' = 'en'): string {
   const d = new Date(`${iso}T12:00:00Z`);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC' });
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(lang === 'es' ? 'es-US' : 'en-US', { weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC' });
 }
 function fmtTime(t: string): string {
   const m = /^(\d{1,2}):(\d{2})$/.exec(t);
@@ -316,10 +317,25 @@ export async function candidatesForJobOrder(tenantId: string, jobOrderId: string
   return { applicants: applicants.slice(0, limit), nearby: nearby.slice(0, limit), radiusMiles, note };
 }
 
+/**
+ * A shift is an Indeed Flex job only when the Flex pipeline created it (applyShiftRequest stamps
+ * source 'indeed_flex_apply') or a Flex request email carries its PO as the job id. An all-digit PO
+ * alone is not enough: Venue Smart's QBO purchase orders are all-digit too (1238, 2159 — 21 of 23
+ * C1 Events shift POs on 2026-09-11), and those used to stamp flexJobId and queue Flex bookings.
+ */
+export async function isFlexShift(tenantId: string, shift: Record<string, unknown>): Promise<boolean> {
+  const po = s(shift.poNumber);
+  if (!/^\d+$/.test(po)) return false;
+  if (s(shift.source) === 'indeed_flex_apply') return true;
+  const reqs = await db.collection(`tenants/${tenantId}/external_shift_requests`).where('event.jobId', '==', po).limit(5).get().catch(() => null);
+  return Boolean(reqs?.docs.some((d) => s(d.get('provider')) === 'indeed_flex'));
+}
+
 export async function placeWorkerOnShift(tenantId: string, jobOrderId: string, shiftId: string, userId: string, opts: { source: string; note?: string; actor?: string; status?: 'confirmed' | 'pending' }): Promise<{ placed: boolean; assignmentId: string; already?: boolean; error?: string }> {
   const loaded = await loadShift(tenantId, jobOrderId, shiftId);
   if (!loaded) return { placed: false, assignmentId: '', error: 'shift not found' };
   const { jo, shift, ref } = loaded;
+  const flexJob = await isFlexShift(tenantId, shift);
   const u = (await db.collection('users').doc(userId).get()).data() as Record<string, unknown> | undefined;
   if (!u) return { placed: false, assignmentId: '', error: 'user not found' };
   const assignmentId = `${shiftId}__${userId}__${ref.date}`;
@@ -383,7 +399,7 @@ export async function placeWorkerOnShift(tenantId: string, jobOrderId: string, s
     latestStatus: opts.status ?? 'confirmed',
     placementMode: 'assign_now',
     assignmentSource: opts.source,
-    ...(ref.poNumber ? { flexJobId: ref.poNumber, poNumber: ref.poNumber } : {}),
+    ...(ref.poNumber ? { poNumber: ref.poNumber, ...(flexJob ? { flexJobId: ref.poNumber } : {}) } : {}),
     ...(s(shift.clockInUrl) ? { clockInUrl: s(shift.clockInUrl) } : {}),
     notes: opts.note ?? `Placed by ${NATALIE_DISPLAY_NAME}`,
     createdBy: opts.actor ?? NATALIE_HRX_UID,
@@ -412,7 +428,7 @@ export async function placeWorkerOnShift(tenantId: string, jobOrderId: string, s
 export async function bookInFlexIfLinked(tenantId: string, jobOrderId: string, shiftId: string, userId: string, opts: { slack?: SlackRef; askedByName?: string | null; askedBySlackUserId?: string | null } = {}): Promise<{ queued: boolean; actionId?: string; flexJobId?: string; reason?: string }> {
   const loaded = await loadShift(tenantId, jobOrderId, shiftId);
   if (!loaded) return { queued: false, reason: 'shift not found' };
-  const flexJobId = loaded.ref.poNumber && /^\d+$/.test(loaded.ref.poNumber) ? loaded.ref.poNumber : null;
+  const flexJobId = (await isFlexShift(tenantId, loaded.shift)) ? loaded.ref.poNumber : null;
   if (!flexJobId) return { queued: false, reason: 'shift is not a Flex job' };
   const u = (await db.collection('users').doc(userId).get()).data() as Record<string, unknown> | undefined;
   const workerName = `${s(u?.firstName)} ${s(u?.lastName)}`.trim();
@@ -432,14 +448,32 @@ export async function bookInFlexIfLinked(tenantId: string, jobOrderId: string, s
   return { queued: true, actionId: res.id, flexJobId };
 }
 
-export function composeOffer(firstName: string, ref: ShiftRef, extra?: string): string {
-  const when = `${fmtDate(ref.date)}, ${fmtTime(ref.startTime)}–${fmtTime(ref.endTime)}`;
-  const pay = ref.payRate ? `, $${ref.payRate.toFixed(2)}/hr` : '';
+export function composeOffer(firstName: string, ref: ShiftRef, extra?: string, opts: { persona?: PersonaId; lang?: 'en' | 'es' } = {}): string {
+  const persona = opts.persona ?? 'natalie';
+  const lang = opts.lang ?? 'en';
+  const me = PERSONAS[persona].firstName;
+  const when = `${fmtDate(ref.date, lang)}, ${fmtTime(ref.startTime)}–${fmtTime(ref.endTime)}`;
   const where = ref.address ? ` (${ref.address})` : '';
-  return `Hi ${firstName} — Natalie with C1 Staffing. We have a ${ref.title} shift at ${ref.site}${where} on ${when}${pay}${extra ? `. ${extra}` : ''}. Want it? Reply YES and I'll get you set up, or NO if not. — Natalie, C1 Staffing`;
+  if (lang === 'es') {
+    const pago = ref.payRate ? `, $${ref.payRate.toFixed(2)}/hora` : '';
+    return `Hola ${firstName} — soy ${me} de C1 Staffing. Tenemos un turno de ${ref.title} en ${ref.site}${where} el ${when}${pago}${extra ? `. ${extra}` : ''}. ¿Te interesa? Responde SÍ y te apunto, o NO si no puedes. ${smsSignature(persona, 'es')}`;
+  }
+  const pay = ref.payRate ? `, $${ref.payRate.toFixed(2)}/hr` : '';
+  return `Hi ${firstName} — ${me} with C1 Staffing. We have a ${ref.title} shift at ${ref.site}${where} on ${when}${pay}${extra ? `. ${extra}` : ''}. Want it? Reply YES and I'll get you set up, or NO if not. ${smsSignature(persona)}`;
 }
 
-export async function offerShiftToWorker(input: { tenantId: string; userId: string; jobOrderId: string; shiftId: string; extra?: string; askedBySlackUserId?: string; askedByName?: string; slack?: SlackRef }): Promise<{ sent: boolean; error?: string; to?: string; text?: string }> {
+/** Pure: the "you're set" text after a YES. */
+export function composeOfferConfirmation(offer: { title?: string; site?: string; date?: string; startTime?: string }, opts: { persona?: PersonaId; lang?: 'en' | 'es' } = {}): string {
+  const persona = opts.persona ?? 'natalie';
+  const lang = opts.lang ?? 'en';
+  const when = `${fmtDate(s(offer.date), lang)} ${fmtTime(s(offer.startTime))}`;
+  return lang === 'es'
+    ? `Listo, quedas confirmado para ${s(offer.title)} en ${s(offer.site)} el ${when}. Llega 15 minutos antes; te mandaremos un recordatorio antes del turno. ¡Gracias! ${smsSignature(persona, 'es')}`
+    : `You're set for ${s(offer.title)} at ${s(offer.site)} on ${when}. Please arrive 15 minutes early; you'll get a check-in reminder before the shift. Thank you! ${smsSignature(persona)}`;
+}
+
+export async function offerShiftToWorker(input: { tenantId: string; userId: string; jobOrderId: string; shiftId: string; extra?: string; askedBySlackUserId?: string; askedByName?: string; slack?: SlackRef; persona?: PersonaId }): Promise<{ sent: boolean; error?: string; to?: string; text?: string }> {
+  const persona = input.persona ?? 'natalie';
   const { tenantId, userId, jobOrderId, shiftId } = input;
   const loaded = await loadShift(tenantId, jobOrderId, shiftId);
   if (!loaded) return { sent: false, error: 'shift not found' };
@@ -450,9 +484,10 @@ export async function offerShiftToWorker(input: { tenantId: string; userId: stri
   if (u.smsOptIn === false || u.smsBlockedSystem === true || u.phoneInvalid === true) return { sent: false, error: 'worker cannot be texted (opted out, blocked, or invalid number)' };
   const bg = await backgroundSummary(tenantId, userId);
   if (bg.status === 'failed') return { sent: false, error: `not offered — background check FAILED in HRX (${bg.detail}); a recruiter must decide` };
-  const text = composeOffer(s(u.firstName) || 'there', loaded.ref, input.extra);
+  const lang = workerLanguage(u);
+  const text = composeOffer(s(u.firstName) || (lang === 'es' ? '' : 'there'), loaded.ref, input.extra, { persona, lang });
   const { sendWorkerMessageInternal } = await import('../twilio');
-  const r = await sendWorkerMessageInternal(to, text, { tenantId, userId, source: 'system', messageTypeId: 'natalie_offer', systemContext: true } as never);
+  const r = await sendWorkerMessageInternal(to, text, { tenantId, userId, source: 'system', messageTypeId: `${PERSONAS[persona].smsPrefix}offer`, systemContext: true } as never);
   if (!r.success) return { sent: false, error: r.error ?? r.errorCode ?? 'send failed', to: `…${to.slice(-4)}` };
   const now = admin.firestore.FieldValue.serverTimestamp();
   await db.collection('natalie_sms_watches').doc(userId).set(
@@ -463,6 +498,8 @@ export async function offerShiftToWorker(input: { tenantId: string; userId: stri
       workerName: `${s(u.firstName)} ${s(u.lastName)}`.trim(),
       slack: input.slack ?? null,
       context: `offer ${loaded.ref.title} ${loaded.ref.date}`,
+      persona,
+      lang,
       offer: { jobOrderId, shiftId, date: loaded.ref.date, title: loaded.ref.title, site: loaded.ref.site, startTime: loaded.ref.startTime, endTime: loaded.ref.endTime },
       status: 'active',
       createdAt: now,
@@ -487,7 +524,9 @@ export async function acceptOfferFromReply(watch: Record<string, unknown>, reply
     await recordNatalieAction({ tenantId, kind: 'offer_blocked_background', summary: `${s(watch.workerName) || 'Worker'} said YES but their background check is FAILED (${bg.detail}) — NOT placed; recruiter decision needed`, userId, jobOrderId: offer.jobOrderId });
     return { placed: false, message: `NOT placed — background check FAILED in HRX (${bg.detail}); a recruiter needs to decide` };
   }
-  const res = await placeWorkerOnShift(tenantId, offer.jobOrderId, offer.shiftId, userId, { source: 'natalie_offer_accepted', note: `Accepted Natalie's text offer ("${replyText.slice(0, 60)}")` });
+  const persona: PersonaId = watch.persona === 'marco' ? 'marco' : 'natalie';
+  const P = PERSONAS[persona];
+  const res = await placeWorkerOnShift(tenantId, offer.jobOrderId, offer.shiftId, userId, { source: `${persona}_offer_accepted`, note: `Accepted ${P.firstName}'s text offer ("${replyText.slice(0, 60)}")`, actor: P.hrxUid ?? persona });
   const u = (await db.collection('users').doc(userId).get()).data() as Record<string, unknown> | undefined;
   const to = u ? phoneE164(u) : '';
   const when = `${fmtDate(offer.date)} ${fmtTime(offer.startTime)}`;
@@ -495,7 +534,7 @@ export async function acceptOfferFromReply(watch: Record<string, unknown>, reply
     if (to) {
       try {
         const { sendWorkerMessageInternal } = await import('../twilio');
-        await sendWorkerMessageInternal(to, `You're set for ${offer.title} at ${offer.site} on ${when}. Please arrive 15 minutes early; you'll get a check-in reminder before the shift. Thank you! — Natalie, C1 Staffing`, { tenantId, userId, source: 'system', messageTypeId: 'natalie_offer_confirmed', systemContext: true } as never);
+        await sendWorkerMessageInternal(to, composeOfferConfirmation(offer, { persona, lang: workerLanguage(u) }), { tenantId, userId, source: 'system', messageTypeId: `${P.smsPrefix}offer_confirmed`, systemContext: true } as never);
       } catch (err) {
         logger.warn('[natalie] offer confirmation text failed', { err: String(err) });
       }
