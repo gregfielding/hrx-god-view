@@ -721,11 +721,15 @@ export async function runOnboardingCheckpoints(tokensIn: string | PersonaTokens)
       if (sent.success) sentThisTick += 1;
       let resent = '';
       if (cp === 'h72' && snapshot.everee.inviteSent && !snapshot.everee.complete && f.hiringEntityId) {
-        try {
-          const { runPayrollOnboardingInviteResend } = await import('../messaging/payrollInviteResend');
-          const r = await runPayrollOnboardingInviteResend({ tenantId: f.tenantId, userId: f.userId, hiringEntityId: f.hiringEntityId, initiatedByUid: who.persona, assignmentId: f.assignmentId });
-          resent = r.ok ? ' I also re-sent their Everee onboarding link.' : ` (Everee link resend skipped: ${s((r as { skipReason?: string }).skipReason) || 'not ok'})`;
-        } catch (e) { resent = ` (Everee link resend failed: ${String(e).slice(0, 120)})`; }
+        // The C1 Events checkpoint text already carries the payroll link, so no second text for them.
+        const { resendPayrollInviteOrTextLink } = await import('./payrollInviteFallback');
+        const r = await resendPayrollInviteOrTextLink({
+          db, tenantId: f.tenantId, userId: f.userId, hiringEntityId: f.hiringEntityId, assignmentId: f.assignmentId,
+          firstName: f.firstName, persona: who.persona, lang,
+          textLinkWhenSkipped: f.hiringEntityId !== C1_EVENTS_ENTITY_ID,
+          sendSms: (t, messageTypeId) => sendSms(f, t, messageTypeId),
+        });
+        resent = r.invited ? ' I also re-sent their Everee onboarding link.' : ` (${r.note})`;
       }
       const transcript = [...(f.transcript ?? []), { at: new Date().toISOString(), dir: 'out' as const, text }].slice(-30);
       let next = NEXT[cp];
@@ -833,11 +837,14 @@ export async function drainSmsConversations(tokensIn: string | PersonaTokens): P
           const r = await sendSms(f, portalLinkText(f.firstName, snap.background.portalLink, snap.background.packageName, false, { persona: who.persona, lang }), `${P.smsPrefix}bg_portal_link`);
           notes.push(r.success ? 'resent the AccuSource form link' : 'AccuSource link resend failed');
         } else if (a === 'resend_everee_invite' && f.hiringEntityId) {
-          try {
-            const { runPayrollOnboardingInviteResend } = await import('../messaging/payrollInviteResend');
-            const r = await runPayrollOnboardingInviteResend({ tenantId: f.tenantId, userId: f.userId, hiringEntityId: f.hiringEntityId, initiatedByUid: who.persona, assignmentId: f.assignmentId });
-            notes.push(r.ok ? 'resent the Everee onboarding invite' : `Everee resend skipped (${s((r as { skipReason?: string }).skipReason) || 'not ok'})`);
-          } catch (e) { notes.push(`Everee resend failed: ${String(e).slice(0, 100)}`); }
+          // He just told them the link is on its way — so if the invite can't send (both Everee
+          // entities have no payroll URL), text them the payroll page instead of promising air.
+          const { resendPayrollInviteOrTextLink } = await import('./payrollInviteFallback');
+          const r = await resendPayrollInviteOrTextLink({
+            db, tenantId: f.tenantId, userId: f.userId, hiringEntityId: f.hiringEntityId, assignmentId: f.assignmentId,
+            firstName: f.firstName, persona: who.persona, lang, sendSms: (text, messageTypeId) => sendSms(f, text, messageTypeId),
+          });
+          notes.push(r.note);
         } else if (a === 'escalate') {
           notes.push(`needs a recruiter: ${decision.note || 'see their text'}`);
         }
@@ -930,11 +937,12 @@ export async function runClaimVerifications(tokensIn: string | PersonaTokens): P
       }
       const sent = await sendSms(f, text, messageTypeId);
       if (stillOpen.some((x) => /I-9|Everee|tax|handbook|policies/.test(x)) && f.hiringEntityId) {
-        try {
-          const { runPayrollOnboardingInviteResend } = await import('../messaging/payrollInviteResend');
-          const r = await runPayrollOnboardingInviteResend({ tenantId: f.tenantId, userId: f.userId, hiringEntityId: f.hiringEntityId, initiatedByUid: who.persona, assignmentId: f.assignmentId });
-          notes.push(r.ok ? 'also re-sent their Everee onboarding invite' : `Everee resend skipped (${s((r as { skipReason?: string }).skipReason) || 'not ok'})`);
-        } catch (e) { notes.push(`Everee resend failed: ${String(e).slice(0, 100)}`); }
+        const { resendPayrollInviteOrTextLink } = await import('./payrollInviteFallback');
+        const r = await resendPayrollInviteOrTextLink({
+          db, tenantId: f.tenantId, userId: f.userId, hiringEntityId: f.hiringEntityId, assignmentId: f.assignmentId,
+          firstName: f.firstName, persona: who.persona, lang, sendSms: (t, messageTypeId) => sendSms(f, t, messageTypeId),
+        });
+        notes.push(r.note);
       }
       const transcript = [...(f.transcript ?? []), { at: new Date().toISOString(), dir: 'out' as const, text }].slice(-30);
       await d.ref.set({ ...clear, transcript, ...(sent.success ? { lastTextAt: admin.firestore.FieldValue.serverTimestamp() } : {}) }, { merge: true });
