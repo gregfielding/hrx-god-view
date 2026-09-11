@@ -203,7 +203,7 @@ const QboClassesPage: React.FC = () => {
         out.push(cur);
         return out;
       };
-      const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim());
+      const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter((l) => l.trim());
       const header = parseLine(lines[0]).map((h) => h.trim().toLowerCase());
       const col = (n: string): number => header.findIndex((h) => h.includes(n));
       const iDate = col('finalized'); const iClient = col('client'); const iVenue = col('venue');
