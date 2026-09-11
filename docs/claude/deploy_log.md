@@ -12,7 +12,8 @@ released (say why).
 
 | When (PT) | Who | Target | What | Commit | Result | Notes |
 |---|---|---|---|---|---|---|
-| 2026-09-11 11:43 | Greg (Claude) | hosting | Per-host OTP autofill (web passes webOtpHost) + web push dedupe across origins | 55bcb9ea | ❌ | Build OOM (fork-ts-checker) — nothing uploaded; retrying |
+| 2026-09-11 11:45 | Greg (Claude) | hosting | Per-host OTP autofill (web passes webOtpHost) + web push dedupe across origins | 55bcb9ea | ✅ | Retry with 8GB heap; main.c30b0508.js; deep links 200 on both hosts |
+| 2026-09-11 11:43 | Greg (Claude) | hosting | Per-host OTP autofill (web passes webOtpHost) + web push dedupe across origins | 55bcb9ea | ❌ | Build OOM (fork-ts-checker) — nothing uploaded; retry succeeded 11:45 |
 | 2026-09-11 11:36 | Greg (Claude) | functions | `sendOtp` | ba6e24ee | ✅ | SMS WebOTP line echoes the page host when it's ours (utils/webOtpHost.ts); callers that don't send it get PUBLIC_APP_HOST (unchanged behavior) |
 | 2026-09-11 10:46 | Greg (Claude) | functions | `triggerAINoteReview`, `triggerAINoteReviewHttp`, `updateLocationAssociationHttp` | 025a811e | ✅ | CORS now echoes app.c1staffing.com; memory 256MiB → 512MiB |
 | 2026-09-11 10:41 | Greg (Claude) | functions | `triggerAINoteReviewHttp`, `updateLocationAssociationHttp` | 16f8e975 | ❌ | Cloud Run startup probe failed: 256MiB OOM on cold start. Old revisions kept serving |
