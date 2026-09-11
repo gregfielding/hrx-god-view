@@ -32,6 +32,12 @@ import {
 } from './shared/hiringLifecycleFirestore';
 import { filterDnrRecipients } from './dnr/filterDnrRecipients';
 import { ASSIGNMENT_STATUS_QUERY_LIVE, isAssignmentTerminalNormalized } from './utils/assignmentStatusNormalize';
+import {
+  buildCareerDefaultWeeklySchedule,
+  firstEnabledTimes,
+  sanitizeCareerWeeklyScheduleInput,
+  shiftHasUsableWeeklySchedule,
+} from './timesheets/careerWeeklySchedule';
 import { sendNotificationAndPush } from './messaging/unifiedWorkerNotifications';
 import {
   buildWorkerAssignmentResponseUrl,
@@ -719,7 +725,15 @@ export const placementsCreateAssignments = onCall(
     applyDate = null,
     applyDates = null,
     allowOverlapping = false,
+    weeklySchedule: requestedWeeklySchedule = null,
   } = (request.data || {}) as {
+    /**
+     * Career workdays from the Placements prompt — `{ '1': { enabled, startTime,
+     * endTime }, … }`. Only honored for a CAREER JO onto a shift with no
+     * weeklySchedule of its own; invalid/empty falls back to Mon–Fri at the
+     * shift's times (see timesheets/careerWeeklySchedule.ts).
+     */
+    weeklySchedule?: unknown;
     tenantId?: string;
     jobOrderId?: string;
     shiftId?: string;
@@ -1304,6 +1318,25 @@ export const placementsCreateAssignments = onCall(
     return { success: failed.length === 0, created, skipped, failed };
   }
 
+  // Career placements onto a shift with no recurring schedule of its own
+  // (single-date shifts — Fieldglass auto-created ones especially) get their
+  // workweek stamped HERE: the recruiter's pick from the Placements workdays
+  // prompt, else Mon–Fri at the shift's times. Left unset, the denorm trigger
+  // used to key the schedule to the shift date's weekday only → one timesheet
+  // row per week (JO #404 / #479, 2026-09-11). Shifts that DO carry a
+  // weeklySchedule keep the trigger's verbatim copy. Never isOpenShift — see
+  // timesheets/careerWeeklySchedule.ts.
+  const careerWeeklySchedule =
+    isCareerJob && !shiftHasUsableWeeklySchedule(shift)
+      ? sanitizeCareerWeeklyScheduleInput(requestedWeeklySchedule) ??
+        buildCareerDefaultWeeklySchedule(
+          effectiveStartDate || shiftDate,
+          String(shift.startTime || shift.defaultStartTime || ''),
+          String(shift.endTime || shift.defaultEndTime || ''),
+        )
+      : null;
+  const careerScheduleTimes = careerWeeklySchedule ? firstEnabledTimes(careerWeeklySchedule) : null;
+
   for (const userId of uniqueUserIds) {
     try {
       const userSnap = await db.doc(`users/${userId}`).get();
@@ -1470,6 +1503,9 @@ export const placementsCreateAssignments = onCall(
             onboardingInstanceId: assignmentRef.id,
             onboardingStatus,
             onboardingPercent: 0,
+            // A re-hire gets the same career workweek as a fresh hire (the
+            // old doc may still carry the one-weekday schedule).
+            ...(careerWeeklySchedule ? { weeklySchedule: careerWeeklySchedule } : {}),
             // Clear cancellation fields
             canceledAt: admin.firestore.FieldValue.delete(),
             cancellationReason: admin.firestore.FieldValue.delete(),
@@ -1547,8 +1583,9 @@ export const placementsCreateAssignments = onCall(
           status: 'pending',
           startDate: effectiveStartDate || '',
           endDate: resolvedEndDate,
-          startTime: shift.startTime || shift.defaultStartTime || '',
-          endTime: shift.endTime || shift.defaultEndTime || '',
+          startTime: careerScheduleTimes?.startTime || shift.startTime || shift.defaultStartTime || '',
+          endTime: careerScheduleTimes?.endTime || shift.endTime || shift.defaultEndTime || '',
+          ...(careerWeeklySchedule ? { weeklySchedule: careerWeeklySchedule } : {}),
           payRate: resolvedPayRate,
           billRate: resolvedBillRate,
           timesheetMode: jobOrder.timesheetMode || 'mobile',

@@ -172,6 +172,10 @@ interface Shift {
   shiftTitle?: string;
   spotsRemaining?: number;
   staffNeeded?: number;
+  shiftType?: string;
+  defaultStartTime?: string;
+  defaultEndTime?: string;
+  weeklySchedule?: Record<string, { enabled?: boolean; startTime?: string; endTime?: string } | undefined>;
 }
 
 /**
@@ -2630,6 +2634,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         sourceType: selectedWorkforce || 'manual',
         sourceId: selectedWorkforce.startsWith('group_') ? selectedWorkforce.replace('group_', '') : null,
       };
+      // Career workdays picked in the prompt (a batch shares one pick). Absent
+      // → the server's Mon–Fri default for career single-date shifts.
+      const careerSchedule = workerIds
+        .map((uid) => chosenCareerScheduleByWorkerRef.current.get(uid))
+        .find(Boolean);
+      if (careerSchedule) basePayload.weeklySchedule = careerSchedule;
       if (options?.allowOverlapping) {
         // Recruiter explicitly overrode the overlap guard via the
         // "Assign anyway" snackbar action (or programmatically). Server
@@ -2818,6 +2828,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       const createdUserIds = created
         .map((c: { userId: string }) => c?.userId)
         .filter(Boolean) as string[];
+      // Workdays pick is spent once the hire lands; skipped workers keep it
+      // for the "Assign anyway" retry.
+      createdUserIds.forEach((uid) => chosenCareerScheduleByWorkerRef.current.delete(uid));
       if (createdUserIds.length > 0 && shiftForAssign?.id) {
         clearDeclineMarkersForShift(createdUserIds, shiftForAssign.id).catch(() => {});
       }
@@ -2843,6 +2856,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   // already calls setError() with a recruiter-readable message.
   const handleAssignToShift = async (worker: Worker, shift: Shift | undefined) => {
     if (!shift || !worker.id) return;
+    // Career single-date shift: pick weekly workdays first (re-enters here).
+    if (!ensureCareerWorkdays([worker], shift, () => void handleAssignToShift(worker, shift))) return;
     try {
       // P1c: an expanded per-day card scopes pool-side offers to its day.
       await assignWorkersToShift([worker.id], expandedDay || selectedDay || undefined);
@@ -2990,6 +3005,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     // duplicate clicks are also prevented by the chip becoming
     // un-clickable.
     if (pendingHireWorkerIds.has(worker.id)) return;
+    // Career single-date shift: pick weekly workdays first (re-enters here).
+    if (!ensureCareerWorkdays([worker], selectedShift, () => void handleConfirmPlacement(worker))) return;
     setConfirmingPlacementUserId(worker.id);
     // Optimistic — flip the chip from "Click to Hire" → "Accepted"
     // before the callable RTT. Reverted in the catch block on failure.
@@ -3689,6 +3706,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     const selected = displayedAssignedWorkers.filter((w) => selectedAssignmentWorkerIds.has(w.id));
     const placedOnly = selected.filter((w) => w.isPlacementOnly);
     if (placedOnly.length === 0 || !selectedShift) return;
+    // Career single-date shift: one workdays pick for the batch (re-enters here).
+    if (!ensureCareerWorkdays(placedOnly, selectedShift, () => void handleBulkAccept())) return;
     setBulkAcceptBusy(true);
     try {
       setError(null);
@@ -4150,6 +4169,80 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     days: Array<{ date: string; applied: boolean; checked: boolean; locked?: boolean }>;
   } | null>(null);
 
+  /**
+   * Career workdays (2026-09-11): a CAREER hire onto a shift with no weekly
+   * schedule of its own (a single-date shift — Fieldglass auto-created ones
+   * especially) is still a standing weekly role. Ask which weekdays they work
+   * so the assignment's weeklySchedule gives the timesheet a row per workday;
+   * it used to be keyed to the shift date's weekday only (one row a week).
+   * The pick is stashed per worker and sent by assignWorkersToShift; any path
+   * that doesn't ask gets the server default (Mon–Fri at the shift's times).
+   */
+  const chosenCareerScheduleByWorkerRef = useRef<
+    Map<string, Record<string, { enabled: true; startTime: string; endTime: string }>>
+  >(new Map());
+  const [careerWorkdaysPrompt, setCareerWorkdaysPrompt] = useState<{
+    workerIds: string[];
+    workerLabel: string;
+    days: number[];
+    startTime: string;
+    endTime: string;
+    resume: () => void;
+  } | null>(null);
+
+  const shiftNeedsCareerWorkdays = (shift: Shift | null | undefined): boolean => {
+    if (!shift) return false;
+    if (String((jobOrder as any)?.jobType || '').toLowerCase() !== 'career') return false;
+    // Open shifts are standing crews with no fixed times — different model.
+    if (String(shift.shiftType || '').toLowerCase() === 'open') return false;
+    const ws = shift.weeklySchedule;
+    const hasOwnSchedule =
+      !!ws && Object.values(ws).some((d) => d?.enabled === true && !!d.startTime && !!d.endTime);
+    return !hasOwnSchedule;
+  };
+
+  /** True when the hire can go ahead now; otherwise opens the workdays prompt,
+   *  which calls `resume` once the recruiter confirms (Cancel = no hire). */
+  const ensureCareerWorkdays = (
+    workersToHire: Worker[],
+    shift: Shift | null | undefined,
+    resume: () => void,
+  ): boolean => {
+    if (workersToHire.length === 0 || !shiftNeedsCareerWorkdays(shift)) return true;
+    if (workersToHire.every((w) => chosenCareerScheduleByWorkerRef.current.has(w.id))) return true;
+    const shiftDay = String(shift?.shiftDate || '').slice(0, 10);
+    const startDow = /^\d{4}-\d{2}-\d{2}$/.test(shiftDay)
+      ? new Date(`${shiftDay}T12:00:00Z`).getUTCDay()
+      : null;
+    // Mon–Fri, plus the start day when it's a weekend (matches the server default).
+    const days = [1, 2, 3, 4, 5];
+    if (startDow === 0 || startDow === 6) days.push(startDow);
+    const first = workersToHire[0];
+    setCareerWorkdaysPrompt({
+      workerIds: workersToHire.map((w) => w.id),
+      workerLabel:
+        workersToHire.length === 1
+          ? first.displayName || [first.firstName, first.lastName].filter(Boolean).join(' ') || 'this worker'
+          : `these ${workersToHire.length} workers`,
+      days: days.sort((a, b) => a - b),
+      startTime: String(shift?.defaultStartTime || shift?.startTime || '').slice(0, 5),
+      endTime: String(shift?.defaultEndTime || shift?.endTime || '').slice(0, 5),
+      resume,
+    });
+    return false;
+  };
+
+  const confirmCareerWorkdaysPrompt = () => {
+    if (!careerWorkdaysPrompt) return;
+    const { workerIds, days, startTime, endTime, resume } = careerWorkdaysPrompt;
+    if (days.length === 0 || !startTime || !endTime) return;
+    const schedule: Record<string, { enabled: true; startTime: string; endTime: string }> = {};
+    for (const d of days) schedule[String(d)] = { enabled: true, startTime, endTime };
+    workerIds.forEach((uid) => chosenCareerScheduleByWorkerRef.current.set(uid, schedule));
+    setCareerWorkdaysPrompt(null);
+    resume();
+  };
+
   const tryPlaceWorker = (worker: Worker, targetShiftId: string, targetDay?: string | null) => {
     // P1a: dropping on a multi-day gig card with no specific day selected
     // opens the day picker (worker's applied days pre-checked) instead of
@@ -4160,6 +4253,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     // day checked AND locked ("also add to the remaining days?") — other
     // days pre-check per the worker's applied days only.
     const targetShift = shifts.find((s) => s.id === targetShiftId);
+    // Career single-date shift: pick weekly workdays first (re-enters here).
+    if (!ensureCareerWorkdays([worker], targetShift, () => tryPlaceWorker(worker, targetShiftId, targetDay))) {
+      return;
+    }
     const jobTypeForPrompt = String((jobOrder as any)?.jobType || '').toLowerCase();
     const isMultiDayTarget =
       jobTypeForPrompt === 'gig' &&
@@ -4312,6 +4409,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       pendingHireShiftByWorkerRef.current.delete(uid);
       // Undone hire must not leak its day choice into the next drop.
       chosenHireDatesByWorkerRef.current.delete(uid);
+      chosenCareerScheduleByWorkerRef.current.delete(uid);
     });
     pendingUndoHiresRef.current.clear();
     setUndoHireCount(0);
@@ -5732,6 +5830,83 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             </Button>
           }
         />
+
+        {/* Career workdays prompt (2026-09-11): a career hire onto a single-date
+            shift picks the worker's weekly days (Mon–Fri pre-checked, shift
+            times) so their timesheet gets a row for each workday. */}
+        <Dialog open={!!careerWorkdaysPrompt} onClose={() => setCareerWorkdaysPrompt(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>Which days will {careerWorkdaysPrompt?.workerLabel} work?</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              This is an ongoing job. Pick the days they work each week — their timesheet gets a row for
+              each one. You can change this later on the assignment.
+            </Typography>
+            <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 0.75, mb: 2 }}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((label, dow) => {
+                const checked = !!careerWorkdaysPrompt?.days.includes(dow);
+                return (
+                  <Chip
+                    key={label}
+                    label={label}
+                    color={checked ? 'primary' : 'default'}
+                    variant={checked ? 'filled' : 'outlined'}
+                    onClick={() =>
+                      setCareerWorkdaysPrompt((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              days: checked
+                                ? prev.days.filter((d) => d !== dow)
+                                : [...prev.days, dow].sort((a, b) => a - b),
+                            }
+                          : prev,
+                      )
+                    }
+                  />
+                );
+              })}
+            </Stack>
+            <Stack direction="row" spacing={1.5}>
+              <TextField
+                label="Start time"
+                type="time"
+                size="small"
+                fullWidth
+                value={careerWorkdaysPrompt?.startTime ?? ''}
+                onChange={(e) =>
+                  setCareerWorkdaysPrompt((prev) => (prev ? { ...prev, startTime: e.target.value } : prev))
+                }
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                label="End time"
+                type="time"
+                size="small"
+                fullWidth
+                value={careerWorkdaysPrompt?.endTime ?? ''}
+                onChange={(e) =>
+                  setCareerWorkdaysPrompt((prev) => (prev ? { ...prev, endTime: e.target.value } : prev))
+                }
+                InputLabelProps={{ shrink: true }}
+              />
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setCareerWorkdaysPrompt(null)}>Cancel</Button>
+            <Button
+              variant="contained"
+              disabled={
+                !careerWorkdaysPrompt?.days.length ||
+                !careerWorkdaysPrompt?.startTime ||
+                !careerWorkdaysPrompt?.endTime
+              }
+              onClick={confirmCareerWorkdaysPrompt}
+            >
+              Hire for {careerWorkdaysPrompt?.days.length ?? 0} day
+              {(careerWorkdaysPrompt?.days.length ?? 0) === 1 ? '' : 's'} a week
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         {/* P1a: multi-day hire day picker — which days is this worker being
             added to? Applied days pre-checked; nothing is committed until

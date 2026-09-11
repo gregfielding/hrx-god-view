@@ -21,6 +21,7 @@ import { resolveRadiusRecipientUids } from '../jobOrderAutoMessagingRadius';
 import { resolveWorksiteCoordinates, runJobOrderAutoMessagingForShift } from '../jobOrderAutoMessaging';
 import { NATALIE_DISPLAY_NAME, NATALIE_HRX_UID, recordNatalieAction, registerFollowup, type SlackRef } from './natalieAudit';
 import { enqueuePortalAction } from '../integrations/portalActions/enqueuePortalAction';
+import { buildCareerDefaultWeeklySchedule, shiftHasUsableWeeklySchedule } from '../timesheets/careerWeeklySchedule';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -325,6 +326,17 @@ export async function placeWorkerOnShift(tenantId: string, jobOrderId: string, s
   const existing = await aRef.get();
   if (existing.exists && !['cancelled', 'canceled', 'declined'].includes(s(existing.get('status')).toLowerCase())) return { placed: false, assignmentId, already: true };
   const dow = new Date(`${ref.date}T12:00:00Z`).getUTCDay();
+  // Career orders are ongoing standing roles — same rules as
+  // placementsCreateAssignments: endDate stays '' (a stamped end hides the
+  // worker from Career Assignments, JO #404 2026-09-03) and the week is
+  // Mon–Fri at the shift's times unless the shift carries its own weekly
+  // schedule (the denorm trigger copies that). The one-weekday shape is for
+  // one-day gigs only (2026-09-11: career workers got one timesheet row/week).
+  const isCareer = s(jo.jobType).toLowerCase() === 'career';
+  const careerSchedule =
+    isCareer && !shiftHasUsableWeeklySchedule(shift)
+      ? buildCareerDefaultWeeklySchedule(ref.date, ref.startTime, ref.endTime)
+      : null;
   const addr = (jo.worksiteAddress ?? {}) as Record<string, unknown>;
   const now = admin.firestore.FieldValue.serverTimestamp();
   const doc: Record<string, unknown> = {
@@ -340,7 +352,7 @@ export async function placeWorkerOnShift(tenantId: string, jobOrderId: string, s
     phone: s(u.phone || u.phoneE164),
     workerDisplayName: `${s(u.firstName)} ${s(u.lastName)}`.trim(),
     startDate: ref.date,
-    endDate: ref.date,
+    endDate: isCareer ? '' : ref.date,
     startTime: ref.startTime,
     endTime: ref.endTime,
     payRate: ref.payRate,
@@ -361,7 +373,11 @@ export async function placeWorkerOnShift(tenantId: string, jobOrderId: string, s
     jobTitle: ref.title,
     shiftTitle: ref.title,
     hiringEntityId: s(jo.hiringEntityId) || null,
-    weeklySchedule: { [String(dow)]: { enabled: true, startTime: ref.startTime, endTime: ref.endTime } },
+    ...(isCareer
+      ? careerSchedule
+        ? { weeklySchedule: careerSchedule }
+        : {}
+      : { weeklySchedule: { [String(dow)]: { enabled: true, startTime: ref.startTime, endTime: ref.endTime } } }),
     status: opts.status ?? 'confirmed',
     latestStatus: opts.status ?? 'confirmed',
     placementMode: 'assign_now',

@@ -65,6 +65,7 @@ import {onCall, HttpsError} from "firebase-functions/v2/https";
 import {logger} from "firebase-functions/v2";
 
 import {resolveLegacyAssignmentHiringEntityId} from "../jobOrders/backfillLegacyAssignmentsCallable";
+import {buildCareerDefaultWeeklySchedule} from "./careerWeeklySchedule";
 
 const DEFAULT_LIMIT = 1000;
 const MAX_LIMIT = 5000;
@@ -624,11 +625,37 @@ async function resolveWeeklySchedule(args: ResolverArgs): Promise<WeeklySchedule
   const shiftDate = pickStringField(shift, ["shiftDate"]);
   const defaultStart = pickStringField(shift, ["defaultStartTime"]);
   const defaultEnd = pickStringField(shift, ["defaultEndTime"]);
+
+  // **CAREER ONGOING PLACEMENTS (2026-09-11).** A career assignment that
+  // isn't a per-day doc is a standing weekly role; a single-date shift's
+  // weekday is only its START day. Synthesizing a one-DOW schedule from it
+  // gave full-time workers one timesheet row per week (Fieldglass single-
+  // date shifts, JO #404 Prairie View / #479 Pembroke Hill). Stamp the
+  // career default (Mon–Fri + a weekend start day) instead. Per-day career
+  // docs (startDate === endDate) keep the single-DOW path below.
+  if (!isPerDay && (await isCareerAssignment(args))) {
+    return buildCareerDefaultWeeklySchedule(
+      startDate || shiftDate,
+      pickStringField(shift, ["defaultStartTime", "startTime"]),
+      pickStringField(shift, ["defaultEndTime", "endTime"]),
+    );
+  }
+
   // For per-day assignments use the assignment's own date (not the shift's
   // canonical shiftDate) so the synthesized DOW matches what the resolver
   // will compute when iterating the period.
   const effectiveDate = isPerDay ? startDate : shiftDate;
   return synthesizeSingleDowSchedule(effectiveDate, defaultStart, defaultEnd);
+}
+
+/** Career = the assignment's own `jobOrderType` stamp when present (every
+ *  placement writer denormalizes it), else the parent JO's `jobType`. */
+async function isCareerAssignment(args: ResolverArgs): Promise<boolean> {
+  const stamped = pickStringField(args.assignmentData, ["jobOrderType"]).toLowerCase();
+  if (stamped) return stamped === "career";
+  const jobOrderId = pickStringField(args.assignmentData, ["jobOrderId"]);
+  const jo = await readJoDoc(args.fdb, args.tenantId, jobOrderId, args.caches);
+  return String(jo?.jobType ?? "").trim().toLowerCase() === "career";
 }
 
 /** Returns the first enabled day with valid start/end strings from a
