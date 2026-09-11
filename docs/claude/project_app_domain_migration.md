@@ -267,3 +267,25 @@ Greg's (see the report artifact).
   `https://www.c1staffing.com/support` and `https://app.c1staffing.com/privacy`.
   ☠️ Add the `app.hrxone.com` custom domain to the retirement keep-list — sent
   invites link to it.
+
+### Google Cloud OAuth + AccuSource checked 2026-09-11 (read-only)
+- Google Auth Platform (project hrx1-d3beb — open it as gregpfielding@gmail.com;
+  g.fielding@c1staffing.com lacks `clientauthconfig.clients.list`): app "HRX One",
+  publishing status Testing (no verification required). Branding home page,
+  privacy policy AND terms links are all `https://app.hrxone.com`; authorized
+  domains include `hrxone.com`.
+- OAuth web clients — "HRX Web Integration v2", "HRX Gmail Integration",
+  "HRX ONE WEB APP": JavaScript origins = localhost:3000, app.hrxone.com,
+  hrxone.com (+ hrx1-d3beb.web.app on the first two); NONE list
+  app.c1staffing.com. Redirect URIs are all cloudfunctions.net
+  (`gmailOAuthCallback`, `handleCalendarCallback`) → unaffected. The web app
+  has no client-side Google sign-in (OAuth runs server-side via those
+  callbacks), so the missing origin shouldn't break anything; add
+  `https://app.c1staffing.com` to each client's JS origins at the flip anyway
+  (cheap insurance). Consent-screen links can stay on app.hrxone.com while it
+  serves; if it's ever retired, add `c1staffing.com` as an authorized domain and
+  repoint the three links.
+- AccuSource SourceDirect (`www.accusourcedirect.com` → API v1.0 → WebHooks):
+  NOT checked — the portal was at its login screen in Claude's Chrome. Greg
+  to confirm whether the 13 webhook slots use `hrxone.com/api/integrations/accusource/webhooks`
+  (keep-list) or the cloudfunctions URL.
