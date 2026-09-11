@@ -215,14 +215,10 @@ const OnboardingProfileForm: React.FC = () => {
 
       setSuccess(true);
 
-      // Navigate to completion screen after a brief delay
+      // Redirect home after a brief delay (the /onboarding/complete placeholder
+      // screen with fake app-store links was removed 2026-09-11).
       setTimeout(() => {
-        navigate('/onboarding/complete', {
-          state: {
-            userProfile,
-            orgData: onboardingData.orgData,
-          },
-        });
+        navigate('/');
       }, 2000);
     } catch (err: any) {
       setError(err.message || 'Failed to create account');
@@ -425,7 +421,7 @@ const OnboardingProfileForm: React.FC = () => {
               Account Created Successfully!
             </Typography>
             <Typography variant="body1" color="text.secondary">
-              Redirecting to completion screen...
+              Redirecting...
             </Typography>
           </CardContent>
         </Card>

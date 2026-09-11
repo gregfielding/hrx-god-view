@@ -133,7 +133,6 @@ const C1WorkerPayHistory = lazy(() => import('./pages/c1/workers/payHistory'));
 const C1WorkerPayrollSettings = lazy(() => import('./pages/c1/workers/payrollSettings'));
 const PayrollTicketsPage = lazy(() => import('./pages/PayrollTicketsPage'));
 import OnboardingProfileForm from './components/OnboardingProfileForm';
-import OnboardingCompleteScreen from './components/OnboardingCompleteScreen';
 const Help = lazy(() => import('./pages/Help'));
 const HelpManagement = lazy(() => import('./pages/Admin/HelpManagement'));
 const DataOperations = lazy(() => import('./pages/Admin/DataOperations'));
@@ -599,7 +598,6 @@ function App() {
       <Route path="/setup-password" element={<SetupPassword />} />
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
-      <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
       {/* /c1/apply moved under ConditionalWorkerLayout 2026-08-29 (signup-flow
           review finding 7) — same shell behavior as /apply/:slug/:jobId: no
           chrome while signed out, real worker chrome once the OTP gate signs

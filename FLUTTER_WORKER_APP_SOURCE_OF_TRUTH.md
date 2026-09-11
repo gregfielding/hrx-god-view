@@ -69,8 +69,8 @@ Known unstable/incomplete areas:
   - admin/internal (`>=5`) to `/`.
 - Public onboarding routes exist:
   - `/onboarding/profile`
-  - `/onboarding/complete`
-  - `/invite/:token` -> onboarding flow
+  - `/invite/:token` -> onboarding flow (legacy; the only link-minting UI, `UserInvitationDialog`, is commented out)
+  - `/onboarding/complete` was a placeholder with fake app-store links — removed 2026-09-11
 
 ### Null `securityLevel` handling
 - Null is treated as `0` in worker routing logic.
@@ -163,7 +163,7 @@ Route map is documented in `docs/WORKER_ROUTES.md`. Worker-relevant routes:
 - Key file: `src/pages/c1/workers/support.tsx`
 
 ### Login / onboarding (worker-relevant)
-- Paths: `/login`, `/invite/:token`, `/onboarding/profile`, `/onboarding/complete`
+- Paths: `/login`, `/invite/:token`, `/onboarding/profile`
 - Mirror: **Yes** for auth entry and onboarding bootstrapping
 - Caveat: web currently redirects worker login to `/{tenantSlug}/users/{uid}` which is not the worker profile route.
 
