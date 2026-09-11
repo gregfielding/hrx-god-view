@@ -761,3 +761,32 @@ call. `PUT .../position` requires `effectiveDate` and can only edit the
 position ACTIVE on that date (rate/hours — good for fixing the $20 default
 to the real rate); pointing it at a pre-start date 500s with "No active
 position present", and it can never move the start date itself.
+
+## 24. Payments/payables READ-side facts (verified live 2026-09-11, returned-funds fix)
+
+- **Returned funds re-route the deposit, not the status.** After ~30–45 days
+  of a bounced deposit Everee sends the money to the company funding account:
+  the payment reads `PAID / DEPOSITED`, and `depositList` gains (or keeps) a
+  row for the COMPANY bank account (C1 Events: Relay "Business Checking",
+  `bankAccountId` 4027) carrying the amount, `updatedAt` = the return time.
+  The worker's row, if still there, has `amounts.amount` "0.00". One returned
+  payment had an EMPTY `depositList` instead. Detection lives in
+  `functions/src/payroll/fundsReturnedDetection.ts`; see
+  [[feature_payroll_payment_issue_sweep]].
+- **No company bank-account endpoint.** `/api/v2/companies/{id}` works but has
+  no bank/funding fields; `/company`, `/funding-accounts`, `/bank-accounts`,
+  `/fundings/{companyFundingId}` etc. all 404. Funding accounts are therefore
+  configured on the entity doc (`evereeFundingAccounts`). Don't infer them from
+  "an account that receives deposits for several employees" — a family sharing
+  one account (bankAccountId 790804) looks identical.
+- **Bounced payments get re-issued.** 25732936 carries `prevPaymentId`
+  25507657; the worker's payables still point at the ORIGINAL `paymentId`.
+- **Payables list:** items carry `paymentId`, `paymentStatus`, `label`,
+  `earningAmount`, `earningTimestamp` — but **no `externalId`**, and the
+  `external-ids=` query filter is **ignored** (a real id and a bogus id both
+  return all 7,013). `external-worker-id=` (singular) IS honored. Import
+  payable labels carry the work date ("Contractor pay — Venue — 2026-08-01 —
+  5.5 hrs"); grid contractor labels don't.
+- **Payments list:** `sort=id,desc` is honored (newest first) and list rows
+  include `depositList` + `fundingList`. `GET /api/v2/payments/{id}` returns
+  the same shape (plus `employee` with the FULL SSN — sanitize on arrival).

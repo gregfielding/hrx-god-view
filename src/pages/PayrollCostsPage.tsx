@@ -54,6 +54,7 @@ import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import PageHeader from '../components/PageHeader';
 import WorkersCompMonthlyCard from '../components/payroll/WorkersCompMonthlyCard';
+import ReturnedDepositsCard, { ReturnedDepositIssue } from '../components/payroll/ReturnedDepositsCard';
 
 const usd = (n: unknown): string =>
   Number(n ?? 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -293,6 +294,12 @@ const PayrollCostsPage: React.FC<PayrollCostsPageProps> = ({ report }) => {
     totalAmount: number;
   } | null>(null);
 
+  /** Returned-deposit issue the open off-cycle dialog repays (the server marks it repaid). */
+  const [ocIssueId, setOcIssueId] = useState<string | null>(null);
+  /** Bumped after a repay so the Returned deposits card reloads. */
+  const [issuesRefreshKey, setIssuesRefreshKey] = useState(0);
+  const entityNames = useMemo(() => Object.fromEntries(entities.map((e) => [e.id, e.name])), [entities]);
+
   // Debounced worker search for the off-cycle dialog.
   useEffect(() => {
     if (!ocOpen || ocWorkerQuery.trim().length < 2 || !tenantId) return;
@@ -504,7 +511,28 @@ const PayrollCostsPage: React.FC<PayrollCostsPageProps> = ({ report }) => {
     setOcJo(null);
     setOcNotes('');
     setOcDupWarning(null);
+    setOcIssueId(null);
     void ensureJoOptions();
+  };
+
+  /**
+   * "Repay via off-cycle" on the Returned deposits card: the same dialog,
+   * prefilled, and linked to the issue so the server marks it repaid.
+   */
+  const openRepayFromIssue = (issue: ReturnedDepositIssue) => {
+    openOffCycle();
+    if (issue.uid) {
+      const worker = { id: issue.uid, name: issue.workerName, email: null };
+      setOcWorker(worker);
+      setOcWorkerOpts([worker]);
+    }
+    setOcEntity(issue.entityId);
+    setOcReason('payroll_correction');
+    setOcDate(issue.linkedWorkDates[0] || issue.payDate || todayIso());
+    setOcGross(issue.owed.toFixed(2));
+    setOcGrossTouched(true);
+    setOcNotes(`Repays returned deposit — Everee payment ${issue.paymentId} (paid ${issue.payDate}) came back to C1.`);
+    setOcIssueId(issue.id);
   };
 
   const submitOffCycle = async (overrideDuplicateWarning = false) => {
@@ -532,11 +560,13 @@ const PayrollCostsPage: React.FC<PayrollCostsPageProps> = ({ report }) => {
         ...(ocJo ? { jobOrderId: ocJo.id } : {}),
         notes: ocNotes,
         ...(overrideDuplicateWarning ? { overrideDuplicateWarning: true } : {}),
+        ...(ocIssueId ? { sourcePaymentIssueId: ocIssueId } : {}),
       });
       const d = res.data as {
         total?: number;
         status?: string;
         duplicateWarning?: { workDate: string; totalHours: number; totalAmount: number };
+        paymentIssueMarked?: boolean;
       };
       // Duplicate-pay guard: nothing was sent — ask before paying twice.
       if (d.status === 'duplicate_warning' && d.duplicateWarning) {
@@ -545,7 +575,15 @@ const PayrollCostsPage: React.FC<PayrollCostsPageProps> = ({ report }) => {
       }
       setOcDupWarning(null);
       setOcOpen(false);
-      setOcSuccess(`Payment of ${usd(d.total)} for ${ocWorker.name} sent to Everee.`);
+      setOcSuccess(
+        `Payment of ${usd(d.total)} for ${ocWorker.name} sent to Everee.` +
+          (ocIssueId
+            ? d.paymentIssueMarked
+              ? ' The returned deposit is marked repaid.'
+              : ' Couldn’t mark the returned deposit repaid — use “Already repaid” on the card.'
+            : ''),
+      );
+      if (ocIssueId) setIssuesRefreshKey((k) => k + 1);
       await load();
     } catch (err) {
       setOcError(err instanceof Error ? err.message : String(err));
@@ -619,6 +657,15 @@ const PayrollCostsPage: React.FC<PayrollCostsPageProps> = ({ report }) => {
 
       {tab === 0 && (
         <>
+      {tenantId && (
+        <ReturnedDepositsCard
+          tenantId={tenantId}
+          entityId={entityId}
+          entityNames={entityNames}
+          refreshKey={issuesRefreshKey}
+          onRepay={openRepayFromIssue}
+        />
+      )}
       <Card sx={{ mb: 2 }}>
         <CardContent>
           <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
@@ -1006,12 +1053,18 @@ const PayrollCostsPage: React.FC<PayrollCostsPageProps> = ({ report }) => {
       )}
 
       <Dialog open={ocOpen} onClose={() => !ocSaving && setOcOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>New off-cycle payment</DialogTitle>
+        <DialogTitle>{ocIssueId ? 'Repay returned deposit' : 'New off-cycle payment'}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Sends the payment to Everee right away and records it against the job order so it shows
             in payroll costs.
           </Typography>
+          {ocIssueId && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Prefilled from the returned deposit. Pick the job order and send — the deposit is marked
+              repaid once Everee accepts the payment.
+            </Alert>
+          )}
           {ocError && (
             <Alert severity="error" sx={{ mb: 2 }} onClose={() => setOcError(null)}>
               {ocError}

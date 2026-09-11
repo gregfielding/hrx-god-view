@@ -196,7 +196,11 @@ DEPOSITED`, and `GET /api/v2/payments/{id}` shows the `depositList` bank
 switched to C1's own Relay business checking (`updatedAt` = the return
 time). `payrollPaymentIssueSweep` sees no issue anymore and marks the
 `payroll_payment_issues` doc `resolved` — **wrong: the worker was never
-paid.** (Fix chip filed: detect funds-returned in the sweep.)
+paid.** **Fixed in code 2026-09-11** — the sweep now detects the re-routed
+deposit, writes `funds_returned` itself (same fields as below), flags the
+linked entries, and the Payroll Costs page lists what's owed with a one-click
+off-cycle repay. See [[feature_payroll_payment_issue_sweep]]; the manual
+pattern below is the fallback for anything the sweep can't link.
 
 Identify the workers without the attachment: open `deposit_returned` /
 just-auto-resolved issue docs whose `grossAmount`s sum to the email total

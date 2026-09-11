@@ -36,6 +36,54 @@ const db = admin.firestore();
 const trim = (v: unknown): string => String(v ?? '').trim();
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+/**
+ * Close the returned-deposit issue an off-cycle payment repays (Payroll Costs
+ * "Returned deposits" card, 2026-09-11) so the card stops listing the debt.
+ * Only an issue still owed on the same hiring entity is touched — the worker
+ * may differ (legacy Everee profiles carry a name, not the HRX uid). Never
+ * throws: the money already went out.
+ */
+async function markPaymentIssueRepaid(args: {
+  tenantId: string;
+  issueId: string;
+  hiringEntityId: string;
+  workerId: string;
+  offcycleId: string;
+  total: number;
+  actorUid: string | null;
+}): Promise<boolean> {
+  if (!/^[\w-]{1,200}$/.test(args.issueId)) return false;
+  try {
+    const ref = db.doc(`tenants/${args.tenantId}/payroll_payment_issues/${args.issueId}`);
+    const snap = await ref.get();
+    const status = String(snap.get('status') ?? '');
+    if (!snap.exists || snap.get('entityId') !== args.hiringEntityId) return false;
+    if (status !== 'funds_returned' && status !== 'deposit_unconfirmed') return false;
+    await ref.set(
+      {
+        status: 'funds_returned_repaid',
+        stillOwed: false,
+        repaidVia: `offcycle_payments/${args.offcycleId}`,
+        repaidAmount: args.total,
+        repaidWorkerId: args.workerId,
+        repaidByUid: args.actorUid,
+        repaidAt: admin.firestore.FieldValue.serverTimestamp(),
+        unconfirmedReason: admin.firestore.FieldValue.delete(),
+        unconfirmedAt: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    return true;
+  } catch (e) {
+    logger.warn('[offCyclePayments] could not mark payment issue repaid', {
+      issueId: args.issueId,
+      message: (e instanceof Error ? e.message : String(e)).slice(0, 200),
+    });
+    return false;
+  }
+}
+
 export type OffCycleReason =
   | 'missed_hours'
   | 'late_timesheet'
@@ -178,6 +226,9 @@ export interface OffCyclePaymentInput {
   /** Payroll help-desk ticket that authorized this correction, when the
    *  payment originates from the tickets console (2026-08-25). */
   sourceTicketId?: string | null;
+  /** `payroll_payment_issues` doc this payment repays — the Payroll Costs
+   *  "Returned deposits" card (2026-09-11). Marked repaid on success. */
+  sourcePaymentIssueId?: string | null;
 }
 
 /**
@@ -401,6 +452,7 @@ export async function createOffCyclePaymentInternal(
           : null,
       createdByUid: input.actorUid ?? null,
       sourceTicketId: trim(input.sourceTicketId) || null,
+      sourcePaymentIssueId: trim(input.sourcePaymentIssueId) || null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       status: 'pending' as const,
     };
@@ -499,7 +551,18 @@ export async function createOffCyclePaymentInternal(
         sentToEvereeAt: admin.firestore.FieldValue.serverTimestamp(),
         everee: { payables: results, payRunId: payRunId ?? null, payoutError: payoutError ?? null },
       });
-      return { id: docRef.id, status: 'sent_to_everee', total: base.total, label, payRunId, payoutError };
+      const paymentIssueMarked = base.sourcePaymentIssueId
+        ? await markPaymentIssueRepaid({
+            tenantId,
+            issueId: base.sourcePaymentIssueId,
+            hiringEntityId,
+            workerId,
+            offcycleId: docRef.id,
+            total: base.total,
+            actorUid: input.actorUid ?? null,
+          })
+        : undefined;
+      return { id: docRef.id, status: 'sent_to_everee', total: base.total, label, payRunId, payoutError, paymentIssueMarked };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await docRef.update({ status: 'error', errorMessage: message.slice(0, 500) });
@@ -530,6 +593,7 @@ export const createOffCyclePayment = onCall(
       perDiemAmount: Number(request.data?.perDiemAmount) || 0,
       overrideDuplicateWarning: request.data?.overrideDuplicateWarning === true,
       actorUid: request.auth?.uid ?? null,
+      sourcePaymentIssueId: trim(request.data?.sourcePaymentIssueId),
     });
   },
 );

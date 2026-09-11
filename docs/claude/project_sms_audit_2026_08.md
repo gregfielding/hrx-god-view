@@ -102,10 +102,15 @@ are now bound on scheduledOrchestrator for this. Doctrine: **Everee owns
 good-news payment notifications (never duplicate); HRX owns action-needed**
 (observed: workers sat on returned deposits for a month under Everee's
 email-only notice). Guardrails: per-payment max 3 reminders 5 days apart,
-one-worker-one-cadence across multiple stuck payments, auto-resolve when
-the payment clears (Everee retries deposits itself once the account is
-fixed). State/ops queue: `tenants/{t}/payroll_payment_issues` (status
-open/resolved, notifySkipReason for no_phone / no_user_doc — e.g. legacy
+one-worker-one-cadence across multiple stuck payments, resolve when the
+payment clears (Everee retries deposits itself once the account is fixed) —
+☠️ but since 2026-09-11 a cleared `deposit_returned` is only `resolved` with a
+deposit to a NON-company account: Everee also "clears" a bounced deposit by
+sending the money back to C1, which is now `funds_returned` (worker still
+owed, never re-texted) or `deposit_unconfirmed` — see
+[[feature_payroll_payment_issue_sweep]]. State/ops queue:
+`tenants/{t}/payroll_payment_issues` (status open / resolved /
+funds_returned* / deposit_unconfirmed, notifySkipReason for no_phone / no_user_doc — e.g. legacy
 imports whose Everee externalWorkerId is a NAME, not a uid: Aitiana Garza).
 Detection signals live in `payHistory/mapPayments.ts#derivePaymentIssue`
 (same source as the worker-facing fix-your-deposit banner on Earnings/Pay
