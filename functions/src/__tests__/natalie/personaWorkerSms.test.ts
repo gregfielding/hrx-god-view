@@ -1,5 +1,6 @@
-import { classifySender, describeShift, emailsInText, matchNameAmongAccounts, parseWorkerDecision, phoneFormatVariants, recentReplyCount, workerSmsSystemPrompt } from '../../natalie/personaWorkerSms';
+import { anonymousContext, classifySender, describeShift, emailsInText, matchNameAmongAccounts, parseWorkerDecision, phoneFormatVariants, recentReplyCount, signInHelpLine, workerSmsSystemPrompt } from '../../natalie/personaWorkerSms';
 import { payrollLinkText, payrollUrlForEntity } from '../../natalie/payrollInviteFallback';
+import { PUBLIC_APP_ORIGIN } from '../../config/appOrigin';
 
 const T = 'BCiP2bQ9CgVOCTfV6MhD';
 
@@ -67,6 +68,25 @@ describe('workerSmsSystemPrompt guardrails', () => {
     expect(p).toContain("don't deny it");
     expect(p).toContain('Never make or promise hiring decisions');
     expect(p).toContain(persona === 'marco' ? "Rosa's team" : 'a recruiter');
+  });
+});
+
+describe('sign-in help (issue #43 — a worker asked for a username and password)', () => {
+  it('the sign-in line states there is no password and links the phone sign-in page', () => {
+    const line = signInHelpLine();
+    expect(line).toContain('no username or password');
+    expect(line).toContain(`${PUBLIC_APP_ORIGIN}/login`);
+    expect(line).toContain('6-digit code');
+  });
+  it('an unidentified texter still gets it — it reveals nothing personal', () => {
+    const ctx = anonymousContext({ kind: 'unknown' }, false);
+    expect(ctx).toContain(signInHelpLine());
+    expect(anonymousContext({ kind: 'ambiguous', count: 3 }, false)).toContain(signInHelpLine());
+  });
+  it.each(['natalie', 'marco'] as const)('%s answers sign-in trouble instead of promising credentials', (persona) => {
+    const p = workerSmsSystemPrompt(persona);
+    expect(p).toContain('there is no username or password to share');
+    expect(p).toContain('sign-in line from CONTEXT');
   });
 });
 

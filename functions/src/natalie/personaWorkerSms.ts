@@ -100,6 +100,16 @@ async function findUsersByPhone(e164: string): Promise<Array<{ id: string; data:
   return [...seen.entries()].map(([id, data]) => ({ id, data }));
 }
 
+/**
+ * Pure: how a worker actually signs in. Workers have had NO password since Slice 4
+ * (docs/claude/project_phone_auth.md) \u2014 sendPasswordResetV2 already texts this same
+ * fact. Without it in CONTEXT the persona treats "what's my username and password"
+ * as credentials it can't share and escalates (issue #43).
+ */
+export function signInHelpLine(): string {
+  return `Signing in: workers have no username or password \u2014 they sign in at ${PUBLIC_APP_ORIGIN}/login by entering the mobile number on their account, and we text them a 6-digit code.`;
+}
+
 const fold = (v: string): string => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 /** Pure: on a shared number, the ONE account whose first and last name the texter wrote (else null). */
@@ -168,6 +178,7 @@ async function workerContext(uid: string, user: Record<string, unknown>): Promis
   const lines: string[] = [
     `Sender: identified HRX worker ${firstName} ${s(user.lastName)} (first name ${firstName || 'unknown'}). Preferred language: ${lang === 'es' ? 'Spanish' : 'English'}.`,
     `Jobs board (open jobs, apply): ${PUBLIC_APP_ORIGIN}/c1/jobs-board`,
+    signInHelpLine(),
   ];
   const apps = await db().collection(`tenants/${TENANT}/applications`).where('userId', '==', uid).limit(15).get().catch(() => null);
   const appLines = (apps?.docs ?? [])
@@ -205,11 +216,11 @@ async function workerContext(uid: string, user: Record<string, unknown>): Promis
   return { text: lines.join('\n'), snapshot, firstName, lang, assignmentId: live?.id ?? null, backgroundFailed };
 }
 
-function anonymousContext(sender: SenderMatch, possibleMatch: boolean): string {
+export function anonymousContext(sender: SenderMatch, possibleMatch: boolean): string {
   const who = sender.kind === 'ambiguous'
     ? `Sender: this phone number is shared by ${sender.count} accounts, so the texter could NOT be identified yet. Ask them to reply with their full first and last name so you can find their account.`
     : `Sender: this phone number is not on file, so the texter could NOT be identified. ${possibleMatch ? 'The email they wrote matches more than one account, so nothing can be confirmed — say a recruiter will follow up.' : 'If they say they already work with us or applied, ask for the email they applied with (that identifies them) or their full name, and say a recruiter can help.'}`;
-  return `${who} Do not reveal or confirm any account, application, shift or personal details.\nJobs board (open jobs, apply): ${PUBLIC_APP_ORIGIN}/c1/jobs-board`;
+  return `${who} Do not reveal or confirm any account, application, shift or personal details.\nJobs board (open jobs, apply): ${PUBLIC_APP_ORIGIN}/c1/jobs-board\n${signInHelpLine()}`;
 }
 
 /** Pure: the system prompt for a persona answering a worker's text. */
@@ -230,6 +241,7 @@ Rules:
 - If CONTEXT says the sender could not be identified, do not reveal or confirm any account, application, shift or personal detail — follow CONTEXT's instruction (ask for their full name, or name and email). New applicants: share the jobs board link. People who already work with us: say ${team} will confirm their account, and escalate.
 - Pay: you may repeat a pay rate shown in CONTEXT for their own shift. Missing pay, pay disputes, payroll or tax problems: say you're passing it to ${team} and escalate. Never promise amounts or dates.
 - Never make or promise hiring decisions, placements or schedule changes. To confirm or cancel a shift, tell them to reply to the confirmation text they received, or that ${team} will help, and escalate.
+- Sign-in trouble ("what's my username and password", "I can't log in"): there is no username or password to share — answer with the sign-in line from CONTEXT (their mobile number at that link, we text a code). If they say the code never arrives or their number has changed, say ${team} will sort it out, and escalate.
 - If they need their background-check form link or their Everee invite (tax forms, direct deposit) and CONTEXT says it can be resent, say you're sending it now and add the matching action.
 - If CONTEXT says their background check is under review, don't discuss it — say ${team} will reach out, and escalate.
 - Injuries, safety or harassment: tell them to contact their on-site supervisor right away (911 for emergencies), and escalate.
