@@ -10,6 +10,15 @@
  *
  * So: try the real resend, and when it can't send, text the worker the HRX payroll page (the same
  * URL the hire-time invite uses) so the promise is kept. The Slack note always names the skip reason.
+ *
+ * Greg 2026-09-11 ("do option 1"): rather than hand-configuring `payrollSettings.onboardingUrl` on the
+ * two Everee entities to switch the legacy path back on, the fallback now sends exactly what the
+ * recruiter's own Resend button sends — `resolveWorkerOnboardingLink` for the URL and
+ * `buildOnboardingReminderSmsBody` for the copy (see `resendOnboardingPayrollLinkCallable`). That gets
+ * a 1099 C1 Events worker the contractor wording with no I-9 mention, and a W-2 worker the
+ * "W-4, I-9, and payroll setup" wording, instead of one generic line for both. We reuse those two
+ * functions rather than the callable itself, whose `canManageOnboarding` gate is meant for a signed-in
+ * recruiter, not a persona. The ad-hoc payroll-page text below stays as the last resort.
  */
 import * as admin from 'firebase-admin';
 
@@ -52,6 +61,62 @@ export async function payrollUrlForEntity(
   return evereeTenantId ? buildWorkerPayrollEvereeTenantUrl(evereeTenantId) : '';
 }
 
+/** Pure: which reminder copy an entity gets. 1099 events workers must never be told to do an I-9. */
+export function reminderVariantForEntityKey(entityKey: string): 'standard' | 'events' {
+  return String(entityKey || '').trim().toLowerCase() === 'events' ? 'events' : 'standard';
+}
+
+/** Pure: the recruiter's copy, signed by the persona who promised in the thread to send it. */
+export function signAsPersona(body: string, persona: PersonaId, lang?: 'en' | 'es'): string {
+  const text = String(body || '').trim();
+  const sig = smsSignature(persona, lang === 'es' ? 'es' : 'en');
+  return !text || text.endsWith(sig) ? text : `${text}\n${sig}`;
+}
+
+/**
+ * The same SMS the recruiter's Resend button sends, for this worker at this entity.
+ * Returns null when the link or the copy can't be built — the caller then falls back to the
+ * entity payroll page text below.
+ */
+export async function buildOnboardingResendSms(args: {
+  db: admin.firestore.Firestore;
+  tenantId: string;
+  userId: string;
+  hiringEntityId: string;
+  firstName: string;
+  persona: PersonaId;
+  lang?: 'en' | 'es';
+}): Promise<{ link: string; variant: 'standard' | 'events'; body: string } | null> {
+  const entityId = String(args.hiringEntityId || '').trim();
+  if (!entityId) return null;
+  try {
+    const [{ resolveWorkerOnboardingLink }, { buildOnboardingReminderSmsBody }, { deriveEntityKeyFromName }] =
+      await Promise.all([
+        import('../integrations/everee/resolveWorkerOnboardingLink'),
+        import('../onboarding/processWorkerOnboardingReminders'),
+        import('../onboarding/workerOnboardingPipeline'),
+      ]);
+    const snap = await args.db.doc(`tenants/${args.tenantId}/entities/${entityId}`).get();
+    const data = (snap?.data() ?? {}) as Record<string, unknown>;
+    // Entity docs predating the entityKey migration only have a name (same reconstruction the
+    // callable does, minus its backfill write — a persona reply is not the place to repair data).
+    const entityKey = String(data.entityKey || '').trim() || deriveEntityKeyFromName(String(data.name || ''));
+    const variant = reminderVariantForEntityKey(entityKey);
+    const { link } = await resolveWorkerOnboardingLink({
+      tenantId: args.tenantId,
+      entityId,
+      pipelineId: `${args.userId}__${entityKey}`,
+      context: 'personaPayrollInviteFallback',
+    });
+    if (!link) return null;
+    const lang = args.lang === 'es' ? 'es' : 'en';
+    const body = buildOnboardingReminderSmsBody(args.firstName, link, lang, variant);
+    return { link, variant, body: signAsPersona(body, args.persona, lang) };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Resend the payroll onboarding invite; if it skips or throws, text the worker the payroll link.
  * `sendSms` is the caller's sender (keeps Twilio out of here and makes this testable).
@@ -89,6 +154,27 @@ export async function resendPayrollInviteOrTextLink(args: {
     return {
       note: `the Everee invite couldn't send (${skipReason}) — the text they just got already carries the payroll link`,
       textedLink: false,
+      invited: false,
+    };
+  }
+
+  // What the recruiter's Resend button would have sent — right copy for W-2 vs 1099, right link.
+  const resend = await buildOnboardingResendSms({
+    db: args.db,
+    tenantId: args.tenantId,
+    userId: args.userId,
+    hiringEntityId: args.hiringEntityId,
+    firstName: args.firstName,
+    persona: args.persona,
+    lang: args.lang,
+  });
+  if (resend) {
+    const sentResend = await args.sendSms(resend.body, `${PERSONAS[args.persona].smsPrefix}payroll_link`);
+    return {
+      note: sentResend.success
+        ? `the Everee invite couldn't send (${skipReason}) — texted them the onboarding link instead (${resend.variant} copy): ${resend.link}`
+        : `:warning: the Everee invite couldn't send (${skipReason}) and the onboarding link text failed (${sentResend.error || 'unknown'})`,
+      textedLink: sentResend.success,
       invited: false,
     };
   }
